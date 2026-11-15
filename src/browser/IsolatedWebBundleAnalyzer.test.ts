@@ -7,6 +7,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import type {
   AnalyzeWebBundleInput,
@@ -23,6 +24,7 @@ import {
   WebBundleAnalysisAdmission,
   type WebBundleAnalysisWorkerPort,
 } from "./IsolatedWebBundleAnalyzer.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const origin = "https://app.example.test";
 const noSourceMaps: WebBundleAnalysis["observations"]["source_maps"] = {
@@ -267,6 +269,26 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
   });
 });
 
+it("refuses work after close with REA's own cancellation reason, not an absent one", async () => {
+  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
+    analyze: async (script) => ok(analyzeCapturedWebScript(script)),
+    close: async () => {},
+  }));
+  await analyzer.close();
+  const captured = inspection(["fetch('/one');"]);
+
+  const reserved = await analyzer.reserve();
+  const analyzed = await analyzer.analyze(captured, noSourceMaps, input);
+
+  for (const result of [reserved, analyzed]) {
+    if (result.ok) throw new Error("Closed analyzer accepted work");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(OwnerCancellation.ownerClosed);
+  }
+  if (analyzed.ok) throw new Error("Closed analyzer accepted work");
+  expect(analyzed.error.partialObservation).toBe(captured);
+});
+
 it("retains all completed facts when cancellation arrives during worker close", async () => {
   const captured = inspection(["fetch('/one');", "fetch('/two');"]);
   const closeStarted = deferred<void>();
@@ -319,8 +341,8 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
       close: async () => {
         closeAttempts += 1;
         if (closeAttempts <= 2) throw closeFailure;
-        closeFailure.resolveCleanup();
-        primary.resolveCleanup();
+        releaseOwnedCleanup(closeFailure);
+        releaseOwnedCleanup(primary);
       },
     }),
     admission,

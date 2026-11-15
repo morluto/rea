@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -119,17 +120,20 @@ await withVerifierCleanup(async () => {
   const tool = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_packet_capture",
   );
-  assert.ok(tool?.outputSchema);
+  assert.ok(tool);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(tool.inputSchema));
-  assert.ok(ajv.validateSchema(tool.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(tool.name)));
   const inspect = async (input) => {
     const response = await client.callTool({
       name: tool.name,
       arguments: input,
     });
     assert.ok(
-      ajv.validate(tool.outputSchema, response.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(tool.name),
+        response.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const evidence = parseEvidence(
@@ -275,10 +279,10 @@ await withVerifierCleanup(async () => {
   const pcapTool = (await client.listTools()).tools.find(
     (t) => t.name === "inspect_pcap_capture",
   );
-  assert.ok(pcapTool?.outputSchema);
+  assert.ok(pcapTool);
   const pcapAjv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(pcapAjv.validateSchema(pcapTool.inputSchema));
-  assert.ok(pcapAjv.validateSchema(pcapTool.outputSchema));
+  assert.ok(pcapAjv.validateSchema(canonicalOutputSchema(pcapTool.name)));
   for (const capturePath of [path, bluetooth]) {
     const capinfosOutput = (
       await execute(
@@ -315,7 +319,10 @@ await withVerifierCleanup(async () => {
       arguments: { path: capturePath, detail: "summary" },
     });
     assert.ok(
-      pcapAjv.validate(pcapTool.outputSchema, response.structuredContent),
+      pcapAjv.validate(
+        canonicalOutputSchema(pcapTool.name),
+        response.structuredContent,
+      ),
       pcapAjv.errorsText(),
     );
     const summary = parseEvidence(
@@ -392,9 +399,9 @@ await withVerifierCleanup(async () => {
   const discovery = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_packet_fields",
   );
-  assert.ok(discovery?.outputSchema);
+  assert.ok(discovery);
   assert.ok(ajv.validateSchema(discovery.inputSchema));
-  assert.ok(ajv.validateSchema(discovery.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(discovery.name)));
   const nativeProfile = join(root.path, "native-profile");
   await mkdir(nativeProfile);
   const native = (
@@ -421,7 +428,10 @@ await withVerifierCleanup(async () => {
       arguments: input,
     });
     assert.ok(
-      ajv.validate(discovery.outputSchema, response.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(discovery.name),
+        response.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const evidence = parseEvidence(

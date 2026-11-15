@@ -1,5 +1,6 @@
-import { readFile, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -120,18 +121,17 @@ it.each([
 );
 
 // POSIX modes are verified only off Windows; the Windows mode request has its own case below.
-it.runIf(process.platform !== "win32")(
+it.skipIf(process.platform === "win32")(
   "secures fx permissions on owned directory and staged file, including a semantic no-op",
   async () => {
     const { path, directory } = await settingsFixture(
       '{"mcp":{"rea":{"type":"local","command":["/fixture/server path","","a\'b","--mcp"],"enabled":true}}}',
     );
-    const { chmod } = await import("node:fs/promises");
     await chmod(directory, 0o755);
     await chmod(path, 0o644);
     const client = {
       ...clientFor(path, "fx", "fx"),
-      privateProfile: true,
+      privateProfile: { home: tmpdir() },
     } as const;
     const result = await registerMcpClient(
       client,
@@ -264,7 +264,7 @@ it.runIf(process.platform === "win32")(
     const { path } = await settingsFixture("{}");
     const client = {
       ...clientFor(path, "fx", "fx"),
-      privateProfile: true,
+      privateProfile: { home: tmpdir() },
     } as const;
     const result = await registerMcpClient(
       client,
@@ -336,14 +336,37 @@ it.each([
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "refuses to make the home folder private through a linked profile path",
+  async () => {
+    const { path, directory } = await settingsFixture("{}");
+    await chmod(directory, 0o755);
+    const links = await createTestTempDirectory("rea-private-profile-link-");
+    await symlink(dirname(directory), join(links, "parent"));
+    const linked = join(links, "parent", basename(directory), basename(path));
+    const result = await registerMcpClient(
+      { ...clientFor(linked, "fx", "fx"), privateProfile: { home: directory } },
+      launcher,
+      undefined,
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("home folder") },
+    });
+    expect((await stat(directory)).mode & 0o777).toBe(0o755);
+    expect(await readFile(path, "utf8")).toBe("{}");
+  },
+);
+
 // Only the POSIX path opens the private directory to verify its mode.
-it.runIf(process.platform !== "win32")(
+it.skipIf(process.platform === "win32")(
   "retains the private directory close owner during a semantic no-op",
   async () => {
     const { path } = await settingsFixture("{}");
     const client = {
       ...clientFor(path, "fx", "fx"),
-      privateProfile: true,
+      privateProfile: { home: tmpdir() },
     } as const;
     expect(
       await registerMcpClient(client, launcher, undefined, resources),

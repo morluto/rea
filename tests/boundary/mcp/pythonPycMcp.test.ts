@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -146,9 +147,11 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
       readOnlyHint: false,
       idempotentHint: true,
     });
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Missing inspect_python_pyc output schema");
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     const ajv = schemaValidation.assertions;
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const root = await createTestTempDirectory("rea-python-pyc-mcp-");
@@ -212,7 +215,7 @@ it("advertised pyc output schema preserves historical signed fields", async () =
     const advertised = (await client.listTools()).tools.find(
       (tool) => tool.name === "inspect_python_pyc",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Missing inspect_python_pyc output schema");
     const root = await createTestTempDirectory("rea-python-pyc-mcp-flags-");
     for (const testCase of [

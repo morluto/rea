@@ -1053,3 +1053,40 @@ it("refuses generic rows that exceed the report budget and keeps the requested p
     await provider.close();
   }
 });
+
+it("reports the exceeded native-link maximum in the public refusal", async () => {
+  const root = await createTestTempDirectory("rea-il2cpp-link-limit-");
+  const path = join(root, "global-metadata.dat");
+  const binaryPath = join(root, "GameAssembly.dylib");
+  await writeFile(path, createLinkedIl2cppMetadataFixture().bytes);
+  // 80 copies of the two-slot module array exceed the 64 candidate arrays
+  // the fallback search compares; x86-64 makes that fallback run.
+  const base = createIl2cppBinaryFixture({
+    codeRegistration: false,
+    codeReference: true,
+  });
+  const crafted = Buffer.concat([
+    base,
+    ...Array.from({ length: 80 }, () => base.subarray(0x500, 0x510)),
+  ]);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 64);
+  crafted.writeBigUInt64LE(BigInt(crafted.length), 80);
+  crafted.writeUInt32LE(0x01000007, 4);
+  crafted.writeUInt32LE(3, 8);
+  await writeFile(binaryPath, crafted);
+  const provider = new Il2cppMetadataProvider();
+  try {
+    const result = await provider.inspect({ path, binary_path: binaryPath });
+    if (result.ok) throw new Error("Expected the link budget refusal");
+    expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    expect(result.error).toMatchObject({
+      resource: "capacity",
+      reportedLimits: {
+        boundary: "native-index-capacity",
+        maximum_entries: 64,
+      },
+    });
+  } finally {
+    await provider.close();
+  }
+});

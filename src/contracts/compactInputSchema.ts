@@ -1,18 +1,19 @@
+import { advertisedInputDialectViolations } from "./advertisedDialect.js";
+import { projectToAdvertisedDialect } from "./advertisedDialectProjection.js";
 import {
   COMPACT_SCHEMA_MAX_DEPTH,
-  hasGatewayIncompatibleShape,
   inlineWithinBudget,
   isSchemaObject,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
   stripAnnotations,
-  typeArrayItemUnions,
 } from "./compactJsonSchema.js";
 
-// Kimi expands schema-local references before sending tools to Moonshot.
-// Compact advertisements must fit after expansion, independently of client
-// reference handling. Canonical server-side validation remains unchanged.
+// The compact input presentation: every advertised input schema is self-contained
+// (clients such as Kimi expand references before sending tools to Moonshot),
+// inside the per-tool byte budget, and in the portable advertised dialect.
+// Canonical server-side validation remains unchanged.
 
 export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
 
@@ -24,6 +25,8 @@ export interface CompactInputSchemaPresentation {
 export interface CompactedInputSchema {
   readonly schema: Record<string, unknown>;
   readonly presentation: AdvertisedInputSchemaPresentation;
+  /** Input guidance the schema does not carry; it joins the tool description. */
+  readonly guidance: readonly string[];
 }
 
 const INPUT_REDUCED_ANNOTATION =
@@ -57,12 +60,17 @@ const retainRootPropertyGuidance = (
   return { ...stripped, properties };
 };
 
+const withinDialect = (schema: Record<string, unknown>): boolean =>
+  advertisedInputDialectViolations({
+    name: "input",
+    inputSchema: schema,
+  }).length === 0;
+
 /**
  * Render an advertised input schema within a per-schema byte budget for
- * providers that validate the literal serialized schema size. Validation
- * keywords and the canonical contract are preserved; only
- * annotation prose and, for structurally oversized schemas, nested
- * validation detail leave the advertised form.
+ * providers that validate the literal serialized schema size. The complete
+ * validation structure is projected into the portable dialect when it fits;
+ * otherwise only root properties and their types remain.
  */
 export const compactAdvertisedInputSchema = (
   schema: Record<string, unknown>,
@@ -72,34 +80,75 @@ export const compactAdvertisedInputSchema = (
   const inline =
     expanded === undefined
       ? undefined
-      : typeArrayItemUnions(retainRootPropertyGuidance(schema, expanded));
+      : projectToAdvertisedDialect(
+          retainRootPropertyGuidance(schema, expanded),
+        );
   if (
     inline !== undefined &&
-    serializedBytes(inline) <= budgetBytes &&
-    schemaDepth(inline) <= COMPACT_SCHEMA_MAX_DEPTH &&
-    !hasGatewayIncompatibleShape(inline)
+    serializedBytes(inline.schema) <= budgetBytes &&
+    schemaDepth(inline.schema) <= COMPACT_SCHEMA_MAX_DEPTH &&
+    withinDialect(inline.schema)
   )
-    return { schema: inline, presentation: "inline" };
-  const reduced = reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION);
-  if (serializedBytes(reduced) <= budgetBytes)
-    return { schema: reduced, presentation: "reduced" };
+    return { ...inline, presentation: "inline" };
+  const reduced = projectToAdvertisedDialect(
+    reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION),
+  );
+  if (serializedBytes(reduced.schema) <= budgetBytes)
+    return { ...reduced, presentation: "reduced" };
   // A future contract with an extreme root-property count still advertises
   // an honest, budget-fitting shape instead of an oversized one.
   return {
-    schema: reduceToShallowProperties(
-      { type: "object" },
-      INPUT_REDUCED_ANNOTATION,
+    ...projectToAdvertisedDialect(
+      reduceToShallowProperties({ type: "object" }, INPUT_REDUCED_ANNOTATION),
     ),
     presentation: "reduced",
   };
 };
 
+// Registration needs the guidance and the SDK later needs the schema; both
+// read one projection of the same memoized canonical schema object.
+const compacted = new WeakMap<object, Map<number, CompactedInputSchema>>();
+
+/** The advertised input for the selected presentation, with its guidance. */
+export const presentAdvertisedInput = (
+  schema: Record<string, unknown>,
+  compactPresentation: CompactInputSchemaPresentation,
+): Pick<CompactedInputSchema, "schema" | "guidance"> => {
+  const { budgetBytes } = compactPresentation;
+  let byBudget = compacted.get(schema);
+  if (byBudget === undefined) compacted.set(schema, (byBudget = new Map()));
+  let presented = byBudget.get(budgetBytes);
+  if (presented === undefined)
+    byBudget.set(
+      budgetBytes,
+      (presented = compactAdvertisedInputSchema(schema, budgetBytes)),
+    );
+  return presented;
+};
+
 /** Return the JSON schema clients receive for the selected input presentation. */
 export const presentAdvertisedInputSchema = (
   schema: Record<string, unknown>,
-  compactPresentation: CompactInputSchemaPresentation | undefined,
+  compactPresentation: CompactInputSchemaPresentation,
 ): Record<string, unknown> =>
-  compactPresentation === undefined
-    ? schema
-    : compactAdvertisedInputSchema(schema, compactPresentation.budgetBytes)
-        .schema;
+  presentAdvertisedInput(schema, compactPresentation).schema;
+
+/** The tool description followed by the input guidance its schema omits. */
+export function describeAdvertisedTool(
+  description: string,
+  guidance: readonly string[],
+): string;
+export function describeAdvertisedTool(
+  description: string | undefined,
+  guidance: readonly string[],
+): string | undefined;
+export function describeAdvertisedTool(
+  description: string | undefined,
+  guidance: readonly string[],
+): string | undefined {
+  if (guidance.length === 0) return description;
+  const input = guidance.join(" ");
+  return description === undefined || description === ""
+    ? input
+    : `${description}\n\n${input}`;
+}

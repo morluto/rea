@@ -15,6 +15,7 @@ import {
   type WebBundleWorkerMessage,
   WEB_BUNDLE_WORKER_LIMITS,
 } from "./WebBundleAnalysisWorkerProtocol.js";
+import { JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 
 const makeScript = (text: string): IncludedScript => ({
   script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
@@ -60,6 +61,7 @@ const writeSource = async (
 
 const startServer = async (
   root: string,
+  analyzer = "analyzeCapturedWebScript",
 ): Promise<{
   readonly process: ChildProcessWithoutNullStreams;
   readonly next: () => Promise<WebBundleWorkerMessage>;
@@ -71,10 +73,15 @@ const startServer = async (
   ).href;
   const analyzerUrl = new URL("../domain/webBundleAnalyzer.ts", import.meta.url)
     .href;
+  const workUrl = new URL(
+    "../domain/javascript/javascriptSemanticWorkAllowance.ts",
+    import.meta.url,
+  ).href;
   const program = `
     const { serveWebBundleAnalysisWorker } = await import(${JSON.stringify(serverUrl)});
     const { analyzeCapturedWebScript } = await import(${JSON.stringify(analyzerUrl)});
-    await serveWebBundleAnalysisWorker(analyzeCapturedWebScript);
+    const { JavaScriptSemanticWorkMeter } = await import(${JSON.stringify(workUrl)});
+    await serveWebBundleAnalysisWorker(${analyzer});
   `;
   const child = spawn(
     process.execPath,
@@ -138,6 +145,38 @@ const closeServer = async (
   }
 };
 
+it("reports a fixed work refusal as a resource failure with its limit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-web-worker-work-"));
+  let worker: ChildProcessWithoutNullStreams | undefined;
+  onTestFinished(async () => {
+    if (worker !== undefined) await closeServer(worker);
+    await rm(root, { recursive: true, force: true });
+  });
+  const server = await startServer(
+    root,
+    "() => new JavaScriptSemanticWorkMeter(0).charge()",
+  );
+  worker = server.process;
+  expect(await server.next()).toMatchObject({ kind: "ready" });
+  const input = sourceDescriptor(makeScript("fetch('/work');"));
+  const id = randomUUID();
+  await writeSource(root, id, input.bytes);
+  await send(worker, {
+    kind: "analyze",
+    id,
+    source: input.descriptor,
+    result_budget_bytes: WEB_BUNDLE_WORKER_LIMITS.resultBytes,
+  });
+  expect(await server.next()).toMatchObject({ kind: "phase", id });
+  expect(await server.next()).toEqual({
+    kind: "failure",
+    id,
+    reason: "resource",
+    limits: { [JAVASCRIPT_MEMBER_MUTATION_WORK_LIMIT]: 0 },
+    message: expect.stringMatching(/more than 0 alias states/u),
+  });
+});
+
 const framingServer = async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-web-worker-framing-"));
   let worker: ChildProcessWithoutNullStreams | undefined;
@@ -151,7 +190,9 @@ const framingServer = async () => {
   return { root, ...server };
 };
 
-it("serves fragmented and coalesced LF/CRLF requests as separate jobs", async () => {
+// Pipe writes do not fix read boundaries: BoundedControlLines.test.ts owns every
+// split-chunk case deterministically. These worker tests prove the server wiring.
+it("serves split and coalesced LF/CRLF requests as separate jobs", async () => {
   const server = await framingServer();
   const input = sourceDescriptor(makeScript("fetch('/framed');"));
   const ids = [randomUUID(), randomUUID()];
@@ -164,7 +205,6 @@ it("serves fragmented and coalesced LF/CRLF requests as separate jobs", async ()
   for (const id of ids) await writeSource(server.root, id, input.bytes);
   const first = JSON.stringify(requests[0]);
   await writeInput(server.process, first.slice(0, 17));
-  await new Promise((resolve) => setTimeout(resolve, 50));
   await writeInput(
     server.process,
     `${first.slice(17)}\n${JSON.stringify(requests[1])}\r\n`,
@@ -182,7 +222,7 @@ it.each([
   ["multibyte", Buffer.from("é🙂")],
   ["replacement-decoded", Buffer.from([0xff])],
 ] as const)(
-  "accepts an exact-budget %s JSON request with fragmented UTF-8 and split CRLF",
+  "accepts an exact-budget %s JSON request written in split UTF-8 and CRLF writes",
   async (_name, text) => {
     const server = await framingServer();
     const input = sourceDescriptor(makeScript("fetch('/exact-budget');"));
@@ -211,13 +251,10 @@ it.each([
       WEB_BUNDLE_WORKER_LIMITS.protocolBytes,
     );
     await writeInput(server.process, frame.subarray(0, prefix.length + 1));
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await writeInput(
       server.process,
       Buffer.concat([frame.subarray(prefix.length + 1), Buffer.from("\r")]),
     );
-    // Let the worker consume the terminal CR before delivering its LF.
-    await new Promise((resolve) => setTimeout(resolve, 50));
     await writeInput(server.process, "\n");
     expect(await server.next()).toMatchObject({ kind: "phase", id });
     expect(await server.next()).toMatchObject({ kind: "complete", id });

@@ -28,7 +28,7 @@ export const artifactFileAdmissionFailure = (
     return new ArtifactReaderFailure(
       "integrity",
       `${diagnosticLabel} source changed during admission: ${path}`,
-      { cause },
+      { cause, integrityCheck: "container-identity" },
     );
   if (cause instanceof NonRegularFileReadError)
     return new ArtifactReaderFailure(

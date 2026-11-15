@@ -29,6 +29,10 @@ import {
   type ArtifactFilePrimaryFacts,
 } from "./ArtifactFileOperation.js";
 import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   asarHeaderAdmissionRecovery,
@@ -52,14 +56,16 @@ import { readStableArtifact } from "./readStableArtifact.js";
 import {
   projectArtifactCloseFailure,
   projectStableArtifactFailure,
+  readerIntegrityFailure,
 } from "./StableArtifactFailure.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type {
   ArtifactInventoryResult,
@@ -73,7 +79,10 @@ import {
 import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
 import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import type { ArtifactAdmissionLimit } from "../domain/artifactOperationError.js";
+import type {
+  ArtifactAdmissionLimit,
+  ArtifactIntegrityCheck,
+} from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
@@ -248,9 +257,7 @@ export class ReleaseExposureReader implements ReleaseExposurePort {
     try {
       return await this.#resources.run(async () => {
         if (options?.signal?.aborted)
-          throw new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          });
+          throw cancelledBy(OPERATION, options.signal);
         const info = await lstat(input.path);
         if (info.isSymbolicLink())
           throw new AnalysisInputError(OPERATION, undefined, [
@@ -329,7 +336,8 @@ const scanFile = async (
       asarHeaderAdmission: context.asarHeaderAdmission,
     });
   } catch (cause) {
-    rethrowReadFailure(cause);
+    // This inventory rereads the selected artifact itself.
+    rethrowReadFailure(cause, "container-identity");
     // A named admission owns its recovery; keep it typed as the directory scan does.
     if (cause instanceof ArtifactReaderFailure && cause.admission !== undefined)
       throw cause;
@@ -434,7 +442,7 @@ const consumeInventory = async (
   }
   if (failed) throw failure;
   if (result === undefined)
-    throw new Error("Release exposure scan produced no result.");
+    throw invariantViolation("Release exposure scan produced no result.");
   return result;
 };
 
@@ -553,10 +561,7 @@ const scanOccurrences = async (
   if (input.snapshot !== null)
     await examineSelectedFile(state, input, rootFormat, input.snapshot);
   for (const occurrence of occurrences) {
-    if (input.signal?.aborted)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: input.signal.reason,
-      });
+    if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     if (
       !input.directory &&
       occurrence.parent_occurrence_id === null &&
@@ -2237,7 +2242,9 @@ const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
     return decoded.complete
       ? decoded
       : { text: `${decoded.text}\n${bytes.toString("utf8")}`, complete: false };
-  } catch {
+  } catch (cause: unknown) {
+    // A broken internal assumption is a REA defect, not an undecodable plist.
+    if (cause instanceof InternalInvariantError) throw cause;
     return { text: bytes.toString("utf8"), complete: false };
   }
 };
@@ -2416,6 +2423,7 @@ const examinePdb = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Member changed during acquisition: ${filePath}`,
+        { integrityCheck: "member-identity" },
       );
     readPdb(state, snapshot.bytes, filePath);
   } catch (cause) {
@@ -2589,6 +2597,7 @@ const embeddedPackageFormat = async (
           throw new ArtifactReaderFailure(
             "integrity",
             `Member changed during acquisition: ${filePath}`,
+            { integrityCheck: "member-identity" },
           );
       }
       return { kind: "absent" };
@@ -2780,10 +2789,7 @@ const scanUnexpandedContainer = async (
     return;
   }
   for (const entry of entries) {
-    if (input.signal?.aborted)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: input.signal.reason,
-      });
+    if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     const location = `${filePath}/${entry.path}`;
     if (hasCompanionName(entry.path)) state.companionPaths.add(location);
     noteUnfollowedMapLink(state, entry.kind, entry.path, location);
@@ -2949,8 +2955,7 @@ const openContainer = async (
     );
     return null;
   }
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(OPERATION, signal);
   const reader = createArtifactReader(filePath, format, {
     environment: process.env,
     unreadableDirectories: "omit",
@@ -2980,7 +2985,7 @@ const containerEntries = async (
   const traversal = new ArtifactTraversalObservation();
   let count = 0;
   let truncated = false;
-  for await (const entry of container.reader.entries(signal, traversal)) {
+  for await (const entry of traversal.entries(container.reader, signal)) {
     count += 1;
     if (count > CONTAINER_LIST_LIMIT) {
       if (!truncated) {
@@ -3040,8 +3045,7 @@ const readStreamBounded = async (
   let failure: unknown;
   try {
     for await (const chunk of stream) {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
       const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       chunks.push(piece);
       total += piece.length;
@@ -3061,7 +3065,9 @@ const readStreamBounded = async (
       hash !== undefined &&
       hash.digest("hex") !== expected.sha256
     )
-      throw new ArtifactReaderFailure("integrity", expected.changed);
+      throw new ArtifactReaderFailure("integrity", expected.changed, {
+        integrityCheck: "member-identity",
+      });
   } catch (cause) {
     failure = cause;
   }
@@ -3108,6 +3114,7 @@ const readSpan = async (
           throw new ArtifactReaderFailure(
             "integrity",
             `Artifact changed before read: ${filePath}`,
+            { integrityCheck: "member-identity" },
           );
         if (offset + length > observed.size) return null;
         // Charge bytes as they arrive, so a read that fails after partial
@@ -3120,10 +3127,7 @@ const readSpan = async (
           (bytesRead) => {
             state.memberBytesRead += bytesRead - charged;
             charged = bytesRead;
-            if (signal?.aborted)
-              throw new AnalysisCancelledError(OPERATION, {
-                cause: signal.reason,
-              });
+            if (signal?.aborted) throw cancelledBy(OPERATION, signal);
           },
         );
         const after = await handle.stat();
@@ -3131,6 +3135,7 @@ const readSpan = async (
           throw new ArtifactReaderFailure(
             "integrity",
             `Artifact changed during read: ${filePath}`,
+            { integrityCheck: "member-identity" },
           );
         state.memberBytesRead += bytes.length - charged;
         return Buffer.from(bytes);
@@ -3162,6 +3167,7 @@ const readDiskMember = async (
       throw new ArtifactReaderFailure(
         "integrity",
         `Member changed during acquisition: ${filePath}`,
+        { integrityCheck: "member-identity" },
       );
     return { kind: "bytes", bytes: snapshot.bytes };
   } catch (cause) {
@@ -3182,17 +3188,30 @@ const readDiskMember = async (
   }
 };
 
-const asReadFailure = (cause: unknown): unknown =>
+/**
+ * A file that changed while being read is a changed release member, unless the
+ * caller is reading the selected artifact itself.
+ */
+const asReadFailure = (
+  cause: unknown,
+  integrityCheck: ArtifactIntegrityCheck = "member-identity",
+): unknown =>
   cause instanceof RegularFileChangedError
-    ? new ArtifactReaderFailure("integrity", cause.message, { cause })
+    ? new ArtifactReaderFailure("integrity", cause.message, {
+        cause,
+        integrityCheck,
+      })
     : cause;
 
 /**
  * A read that left cleanup unfinished is never a skipped member, whatever its
  * reason: only the error tells the caller a descriptor is still retained.
  */
-const rethrowReadFailure = (cause: unknown): void => {
-  const failure = asReadFailure(cause);
+const rethrowReadFailure = (
+  cause: unknown,
+  integrityCheck?: ArtifactIntegrityCheck,
+): void => {
+  const failure = asReadFailure(cause, integrityCheck);
   if (failure instanceof AnalysisError) throw failure;
   if (
     failure instanceof ArtifactReaderFailure &&
@@ -3224,8 +3243,7 @@ const listSiblings = async (
   try {
     let truncated = false;
     for (;;) {
-      if (signal?.aborted)
-        throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
       const entry = await owner.handle.read();
       if (entry === null) break;
       if (entries.length >= SIBLING_LIST_LIMIT) {
@@ -3270,10 +3288,7 @@ const scanSiblings = async (
   const directory = dirname(input.path);
   const own = basename(input.path);
   for (const entry of await listSiblings(directory, state, input)) {
-    if (input.signal?.aborted)
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: input.signal.reason,
-      });
+    if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     if (entry.name === own) continue;
     const sibling = appendCallerPath(directory, entry.name);
     if (hasCompanionName(entry.name)) {
@@ -3634,17 +3649,16 @@ const releaseExposureFailurePrimary = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
+    return readerIntegrityFailure(OPERATION, path, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+    return cancelledBy(
+      OPERATION,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure

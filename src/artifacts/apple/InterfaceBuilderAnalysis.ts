@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
-import { TextDecoder } from "node:util";
+import {
+  isHostLimitFailure,
+  ParseFailureError,
+} from "../../domain/parseFailure.js";
+import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
-import { decodeBinaryPlistValue } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import {
+  plistDuplicateKeyLimitations,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
 
 import { appleResourceKeyFields } from "../../domain/apple/appleAssetCatalog.js";
 import {
@@ -35,7 +43,6 @@ import {
   type PlistDecodePreflight,
 } from "./PropertyListDecodeBudget.js";
 import {
-  interfaceBuilderDecodeBudgetFailure,
   InterfaceBuilderDecodeBudget,
   InterfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
@@ -64,6 +71,7 @@ import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
@@ -116,6 +124,7 @@ const decodeInterfaceBuilderBundle = async (
   const unknownDates = new Map<string, number>();
   const datePrecisionOverlaps = new Map<string, number>();
   const unknownScalars = new Map<string, number>();
+  const duplicateKeys = new Map<string, PlistDuplicateKeys>();
   const nonFiniteReals = new Map<string, number>();
   const negativeZeroReals = new Map<string, number>();
   let omitted = 0;
@@ -211,7 +220,6 @@ const decodeInterfaceBuilderBundle = async (
               numberProjection: true,
               uidProjection: true,
               budget: "the aggregate Interface Builder decode budget",
-              fail: interfaceBuilderDecodeBudgetFailure,
             },
           );
           decodeBudget.reserve(
@@ -228,6 +236,7 @@ const decodeInterfaceBuilderBundle = async (
           unknownDateCount,
           unknownScalarCount,
           numberLiterals,
+          duplicateKeys: repeatedKeys,
         } = nib === null
           ? decodePlist(bytes, xmlText, scalarPlan)
           : {
@@ -235,6 +244,7 @@ const decodeInterfaceBuilderBundle = async (
               unknownDateCount: 0,
               unknownScalarCount: 0,
               numberLiterals: undefined,
+              duplicateKeys: undefined,
             };
         requireInterfaceBuilderArchive(raw);
         if (nib !== null && nib.unexaminedSources.length > 0)
@@ -253,6 +263,8 @@ const decodeInterfaceBuilderBundle = async (
           datePrecisionOverlaps.set(entry.path, datePrecisionOverlapCount);
         if (unknownScalarCount !== 0)
           unknownScalars.set(entry.path, unknownScalarCount);
+        if (repeatedKeys !== undefined && repeatedKeys.replaced > 0)
+          duplicateKeys.set(entry.path, repeatedKeys);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
         documents.push({
           relativePath: entry.path,
@@ -273,10 +285,18 @@ const decodeInterfaceBuilderBundle = async (
         if (input.signal?.aborted === true) throw cause;
         // Read/identity failures describe source acquisition, not bad content.
         if (cause instanceof ArtifactReaderFailure) throw cause;
+        // A broken internal assumption is a REA defect, not an invalid archive.
+        if (cause instanceof InternalInvariantError) throw cause;
         if (cause instanceof InterfaceBuilderDecodeBudgetExceeded) {
           // A document rejected while decoding, e.g. beyond the shared depth
           // limit, retains no representation; later documents keep its share.
           recordOmittedArchive(entry.path, cause.reason);
+          continue;
+        }
+        // A plist decode budget or nesting limit is not evidence the archive
+        // is malformed; it is omitted against the shared budget.
+        if (cause instanceof ParseFailureError && cause.kind === "limit") {
+          recordOmittedArchive(entry.path, "aggregate_decode_budget_exhausted");
           continue;
         }
         if (cause instanceof UnsupportedBinaryPlistUidError) {
@@ -306,6 +326,7 @@ const decodeInterfaceBuilderBundle = async (
       unknownDates,
       datePrecisionOverlaps,
       unknownScalars,
+      duplicateKeys,
       nonFiniteReals,
       negativeZeroReals,
       invalid,
@@ -369,7 +390,7 @@ const selectInterfaceBuilderCandidates = async (
   let unclassifiedSymlinks = 0;
   let firstUnclassifiedSymlink: string | undefined;
   let total = 0;
-  for await (const entry of reader.entries(signal, traversal)) {
+  for await (const entry of traversal.entries(reader, signal)) {
     if (entry.kind === "symlink") {
       if (
         isInterfaceBuilderArchive(entry.path) ||
@@ -389,7 +410,7 @@ const selectInterfaceBuilderCandidates = async (
     retainCandidate(candidates, entry, capacity);
   }
   if (unclassifiedSymlinks > 0)
-    traversal.onCoverage({
+    traversal.record({
       status: "unknown",
       limitations: [
         `Interface Builder discovery did not follow ${unclassifiedSymlinks} symlink(s); whether they contain archives is unknown. First path: ${JSON.stringify(firstUnclassifiedSymlink)}.`,
@@ -441,6 +462,7 @@ const finalizeHierarchyCoverage = (
     unknownDates: ReadonlyMap<string, number>;
     datePrecisionOverlaps: ReadonlyMap<string, number>;
     unknownScalars: ReadonlyMap<string, number>;
+    duplicateKeys: ReadonlyMap<string, PlistDuplicateKeys>;
     nonFiniteReals: ReadonlyMap<string, number>;
     negativeZeroReals: ReadonlyMap<string, number>;
     invalid: readonly string[];
@@ -460,6 +482,7 @@ const finalizeHierarchyCoverage = (
     unknownDates,
     datePrecisionOverlaps,
     unknownScalars,
+    duplicateKeys,
     nonFiniteReals,
     negativeZeroReals,
     invalid,
@@ -604,6 +627,11 @@ const finalizeHierarchyCoverage = (
       ...[...unknownScalars].map(
         ([path, count]) => `${path}: ${unknownScalarLimitation(count)}`,
       ),
+      ...[...duplicateKeys].flatMap(([path, repeated]) =>
+        plistDuplicateKeyLimitations(repeated).map(
+          (limitation) => `${path}: ${limitation}`,
+        ),
+      ),
       ...[...nonFiniteReals].map(
         ([path, count]) => `${path}: ${nonFiniteRealLimitation(count)}`,
       ),
@@ -702,7 +730,7 @@ const projectNibArchive = (
     try {
       // NSString's NS.bytes representation is UTF-8. A failed conversion
       // does not establish a replacement-character class, title or selector.
-      value = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      value = strictUtf8Decoder("preserve").decode(
         Buffer.from(encoded, "base64"),
       );
     } catch {
@@ -1042,14 +1070,15 @@ const readEntry = async (
 
 /**
  * The shared parser bounds plist value nesting before its recursive decode and
- * reports the limit as a RangeError; that is an omitted archive, not a
+ * reports the limit as a `limit` parse failure, which the document loop omits.
+ * A host stack or capacity limit is likewise an omitted archive, not a
  * malformed one.
  */
 const parseXmlWithinDecodeBudget = (text: string) => {
   try {
     return parseXmlPropertyList(text);
   } catch (cause: unknown) {
-    if (cause instanceof RangeError)
+    if (cause instanceof Error && isHostLimitFailure(cause))
       throw new InterfaceBuilderDecodeBudgetExceeded(
         "aggregate_decode_budget_exhausted",
         cause.message,
@@ -1068,16 +1097,14 @@ const decodePlist = (
   readonly unknownDateCount: number;
   readonly unknownScalarCount: number;
   readonly numberLiterals: PlistNumberLiterals;
+  readonly duplicateKeys: PlistDuplicateKeys;
 } => {
   const binary = hasBinaryPlistSignature(bytes);
   const binaryScalarMetadata = binary
     ? scanBinaryPlistScalars(bytes, scalarPlan)
     : undefined;
-  const { value, numberLiterals } = binary
-    ? {
-        value: decodeBinaryPlistValue(bytes, scalarPlan, binaryScalarMetadata),
-        numberLiterals: binaryScalarMetadata!.literals,
-      }
+  const { value, numberLiterals, duplicateKeys } = binary
+    ? decodeBinaryPropertyList(bytes, scalarPlan, binaryScalarMetadata)
     : parseXmlWithinDecodeBudget(xmlText ?? decodeXmlPlistText(bytes));
   const projected = projectPlistValue(value);
   return {
@@ -1085,5 +1112,6 @@ const decodePlist = (
     unknownDateCount: projected.unknownDateCount,
     unknownScalarCount: projected.unknownScalarCount,
     numberLiterals,
+    duplicateKeys,
   };
 };

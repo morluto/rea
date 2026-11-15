@@ -599,6 +599,10 @@ describe("decompile_all external functions", () => {
         expect(resumed.error.userMessage).toContain("not a compatible export");
     },
   );
+});
+
+describe("decompile_all pseudocode absence", () => {
+  const directory = useOutputDirectory();
 
   it("reports a null pseudocode result as no pseudocode, not as text of the wrong type", async () => {
     const { tools } = harness({ fail: { "0x2000": "null" } });
@@ -611,6 +615,61 @@ describe("decompile_all external functions", () => {
       failures: [{ address: "0x2000", code: "no_pseudocode" }],
     });
   });
+
+  it.each([
+    ["fits", "Flow exceeded maximum instructions"],
+    ["exceeds the inline budget", "x".repeat(4_096)],
+  ] as const)(
+    "keeps the provider's null-pseudocode reason on the inline row while it %s",
+    async (_case, reason) => {
+      const { port } = harness();
+      const absence = { kind: "provider-failure", reason } as const;
+      const reporting: AnalysisOperationPort = {
+        execute: (operation, parameters, options) =>
+          operation === "procedure_pseudo_code" &&
+          parameters.procedure === "0x2000"
+            ? Promise.resolve(
+                ok(
+                  createAnalysisExecution(null, provider, {
+                    analysisProfile: profile,
+                    pseudocodeAbsence: absence,
+                  }),
+                ),
+              )
+            : port.execute(operation, parameters, options),
+      };
+      const result = await run(new EnhancedTools(reporting), directory());
+      if (!result.ok) throw result.error;
+      const [failure] = (
+        result.value as { failures: Record<string, unknown>[] }
+      ).failures;
+      expect(failure).toMatchObject({
+        address: "0x2000",
+        code: "no_pseudocode",
+      });
+      // Name goes first, then the reason; the index always keeps both.
+      if (reason.length < 100)
+        expect(failure).toMatchObject({
+          name: "Foo::helper",
+          pseudocode_absence: absence,
+        });
+      else {
+        expect(failure).not.toHaveProperty("name");
+        expect(failure).not.toHaveProperty("pseudocode_absence");
+      }
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(
+        index.functions.find(({ address }) => address === "0x2000"),
+      ).toMatchObject({ pseudocode_absence: absence });
+    },
+  );
 });
 
 describe("decompile_all resume", () => {

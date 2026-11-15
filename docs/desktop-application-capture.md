@@ -35,7 +35,11 @@ rea capture-desktop-application --executable gnucash --argument /home/ada/books.
 
 Desktop entries are looked up in `$XDG_DATA_HOME/applications` and then each
 `$XDG_DATA_DIRS` directory; an entry installed as a symbolic link, as flatpak
-and Nix do, is followed to its file. The entry's `Exec` line is expanded with no files;
+and Nix do, is followed to its file. An XDG base folder variable counts only
+when its value is an absolute path, as the XDG Base Directory Specification
+requires, so a relative value leaves the home default in use instead of
+naming a folder under the working directory. The entry's `Exec` line is
+expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
 entry's `Path` or the home directory. When the line starts with
 `env NAME=value`, the program is found on the `PATH` those assignments set,

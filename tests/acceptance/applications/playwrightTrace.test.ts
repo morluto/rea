@@ -164,7 +164,6 @@ cliTest(
     const fixture = await playwrightTraceFixture({ resources: true });
     const { client, call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       PLAYWRIGHT_BROWSERS_PATH: "/rea-no-browser-required",
     });
     const schemas = await advertisedMcpToolSchemas(
@@ -172,10 +171,12 @@ cliTest(
       "inspect_playwright_trace",
     );
     expect(
-      schemas.ajv.validate(schemas.inputSchema, { path: fixture.path }),
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
+        path: fixture.path,
+      }),
     ).toBe(true);
     expect(
-      schemas.ajv.validate(schemas.inputSchema, {
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
         path: fixture.path,
         view: {
           kind: "playwright-trace",

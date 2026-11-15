@@ -23,11 +23,10 @@ import {
   buildMethodItems,
 } from "./managedMemberComparisonItems.js";
 import { keyMembers } from "./managedMemberComparisonMatch.js";
-import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const boundedTextSchema = z.string().min(1);
 
 const memberComparisonShape = <Source extends z.ZodType>(source: Source) => ({
   left: source,
@@ -133,7 +132,7 @@ const comparisonItemSchema = <
 
 const comparisonItemContextShape = {
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 };
 
 const methodComparisonItemSchema = comparisonItemSchema(
@@ -182,9 +181,8 @@ const comparisonSideSchema = z.strictObject({
         code: z.literal("resource-limit"),
       }),
     )
-    .optional()
     .describe(
-      "Resource-limit diagnostics reported by this source; an empty array means none were reported. Historical comparisons omit this field; omission does not establish that no resource limit occurred.",
+      "Resource-limit diagnostics reported by this source; an empty array means none were reported.",
     ),
 });
 
@@ -221,7 +219,7 @@ export const managedMemberComparisonResultSchema = z.strictObject({
     right_status: z.enum(["complete", "partial", "unavailable"]),
   }),
   evidence_links: z.array(evidenceIdSchema).length(2),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type ManagedMemberComparisonResult = z.infer<
@@ -290,9 +288,6 @@ export const compareManagedMembers = (
       right.result.metadata.status === "complete" &&
       hasCompleteMethodRows(right.result),
     scope,
-    signatureResolutionExamined:
-      hasSignatureResolution(left.result) &&
-      hasSignatureResolution(right.result),
     sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,

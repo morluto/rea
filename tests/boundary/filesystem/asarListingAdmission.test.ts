@@ -6,7 +6,10 @@ import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { readAsarListing } from "../../../src/artifacts/AsarListing.js";
+import {
+  BLOCK_INTEGRITY_LIMITATION,
+  readAsarListing,
+} from "../../../src/artifacts/AsarListing.js";
 import { resolveAsarHeaderAdmission } from "../../../src/artifacts/AsarHeader.js";
 import {
   asarHeaderBytes,
@@ -545,14 +548,7 @@ it("retains uninterpreted integrity declarations through packed and unpacked inv
     const row = occurrence(name);
     expect(row.declared_integrity).toEqual({ algorithm: "sha256", digest });
     expect(row.hash_status).toBe("verified");
-    expect(row.limitations).toEqual([
-      expect.stringContaining(
-        "block integrity declarations were not validated",
-      ),
-    ]);
-    expect(row.limitations[0]).toContain(
-      "does not establish block integrity or Electron runtime acceptance",
-    );
+    expect(row.limitations).toEqual([BLOCK_INTEGRITY_LIMITATION]);
   }
   for (const [name, declaration, reason] of [
     ["unsupported", unsupported, "unsupported algorithm"],
@@ -624,11 +620,7 @@ it.each([
       algorithm: "sha256",
       digest: "a".repeat(64),
     });
-    expect(entries[0]?.limitations).toEqual([
-      expect.stringContaining(
-        "block integrity declarations were not validated",
-      ),
-    ]);
+    expect(entries[0]?.limitations).toEqual([BLOCK_INTEGRITY_LIMITATION]);
   },
 );
 

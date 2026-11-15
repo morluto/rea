@@ -7,7 +7,7 @@ import { MAX_DEVICETREE_FILE_BYTES } from "../domain/firmware/devicetree.js";
 import {
   ArtifactReaderFailure,
   copyArtifactEntry,
-  sameArtifactEntry,
+  assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
@@ -94,11 +94,11 @@ export class FitArtifactReader implements ArtifactReader {
     return this.#scope.run(async () => {
       this.#assertOpen(signal);
       const stored = this.#entries.get(entry.adapterKey);
-      if (stored === undefined || !sameArtifactEntry(entry, stored))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "FIT entry does not match its owning inventory",
-        );
+      assertProducedEntry(
+        entry,
+        stored,
+        "FIT entry does not match its owning inventory",
+      );
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)
@@ -208,11 +208,10 @@ export class FitArtifactReader implements ArtifactReader {
     this.#assertOpen(signal);
     this.#entries = entries;
     this.#metadata = structure.metadata;
-    if (structure.limitations.length > 0)
-      this.#coverage = {
-        status: "complete",
-        limitations: structure.limitations,
-      };
+    this.#coverage = {
+      status: "complete",
+      limitations: structure.limitations,
+    };
   }
 
   /** One streamed pass per image feeds every supported digest. */
@@ -242,6 +241,7 @@ export class FitArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `FIT image ${image.name} ${hash.node} ${hash.algo} does not match: declared ${hash.value.toString("hex")}, computed ${computed.toString("hex")}`,
+          { integrityCheck: "declared-digest" },
         );
     }
   }

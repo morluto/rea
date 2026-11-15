@@ -142,10 +142,8 @@ it.runIf(supportedHost).each(["decoded", "failed"] as const)(
       expect(output).toMatchObject({
         code: "execution_failure",
         details: {
-          diagnostics: {
-            exit_code: 2,
-            captured_output: { stdout: "decoder output" },
-          },
+          diagnostics: { exit_code: 2 },
+          captured_output: { stdout: "decoder output" },
         },
       });
       expect(output).not.toHaveProperty("details.cleanup");
