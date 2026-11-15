@@ -10,6 +10,8 @@ const files = vi.hoisted(() => ({
   present: new Set<string>(),
   /** Paths whose stat never settles, like an unreachable network directory. */
   stalled: new Set<string>(),
+  /** Paths the caller may not inspect. */
+  denied: new Set<string>(),
   statted: [] as string[],
 }));
 vi.mock("node:fs/promises", async (original) => ({
@@ -18,12 +20,15 @@ vi.mock("node:fs/promises", async (original) => ({
     files.statted.push(path);
     if (files.stalled.has(path)) return new Promise<never>(() => undefined);
     if (files.present.has(path)) return { isFile: () => true };
+    if (files.denied.has(path))
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
     throw Object.assign(new Error("missing"), { code: "ENOENT" });
   },
 }));
 beforeEach(() => {
   files.present.clear();
   files.stalled.clear();
+  files.denied.clear();
   files.statted.length = 0;
 });
 
@@ -97,6 +102,20 @@ it("refuses a network-share executable before launch with a drive-letter remedy"
   );
   expect(launches).toEqual([]);
   expect(String(failure)).toContain("drive letter");
+});
+
+it("reports an uninspectable Windows command candidate with its path and code, not as missing", async () => {
+  files.denied.add("C:\\Tools\\ida-mcp.EXE");
+  const { launches, failure } = await observeLaunch("ida-mcp", {
+    SYSTEMROOT: "C:\\Windows",
+    PATH: "C:\\Tools",
+    PATHEXT: ".EXE",
+  });
+  expect(launches).toEqual([]);
+  expect(String(failure)).toContain(
+    'candidate "C:\\\\Tools\\\\ida-mcp.EXE" could not be inspected (EACCES)',
+  );
+  expect(String(failure)).not.toContain("was not found");
 });
 
 it("closes while a Windows command lookup is stalled on an unreachable PATH directory", async () => {

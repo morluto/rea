@@ -157,13 +157,19 @@ const idaStdioLauncher =
           })
         : (options.signal?.reason ??
             new Error("IDA MCP command lookup was interrupted"));
-    if (!found.ok)
+    if (!found.ok) {
+      const failure = found.error;
+      // An unreadable candidate is not a missing command: keep the path and
+      // filesystem code so a denied install is distinguishable from none.
       throw new Error(
-        found.error.kind === "invalid_extension"
+        failure.kind === "invalid_extension"
           ? "Windows PATHEXT must contain filename extensions, not paths"
-          : `IDA MCP command ${JSON.stringify(options.command)} was not found at its path or on the registration PATH/PATHEXT`,
-        { cause: found.error },
+          : failure.kind === "inspection"
+            ? `IDA MCP command candidate ${JSON.stringify(failure.path)} could not be inspected (${failure.code ?? "unknown error"})`
+            : `IDA MCP command ${JSON.stringify(options.command)} was not found at its path or on the registration PATH/PATHEXT`,
+        { cause: failure.kind === "inspection" ? failure.cause : failure },
       );
+    }
     const command = found.value;
     // The owned Windows launcher creates processes from drive paths only.
     if (!/^[a-z]:\\/iu.test(command))
