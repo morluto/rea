@@ -239,6 +239,23 @@ const observeJadxFailure = (
       kind: "output",
       reason: "JADX response violated the pinned upstream protocol",
     };
+  if (observed?.kind === "output_limit")
+    return new AnalysisResourceConstraintError(
+      request.operation,
+      "transport",
+      `${observed.cause.message}; no partial Evidence was returned.`,
+      {
+        [observed.scope === "frame"
+          ? "max_response_bytes"
+          : "max_operation_bytes"]: observed.ceiling.limit,
+      },
+      {
+        cause: observed.cause,
+        // REA bounds JADX stdio output at fixed sizes with no runtime override.
+        retryable: false,
+        fixedAllowance: observed.ceiling,
+      },
+    );
   if (observed?.kind === "protocol")
     return {
       ...diagnostic,
