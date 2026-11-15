@@ -448,9 +448,8 @@ export const webBundleAnalysisSchema = z.object({
   route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
-    // Older saved observations omit this field; current analyses retain the
-    // validated HTTP(S) target origin or null when no browser origin exists.
-    target_origin: recordedBrowserOriginSchema.nullable().optional(),
+    // The validated HTTP(S) target origin, or null when no browser origin exists.
+    target_origin: recordedBrowserOriginSchema.nullable(),
     scripts_observed: z.int().min(0),
     scripts_analyzed: z.int().min(0),
     source_artifacts: z.array(webTextArtifactSummarySchema),

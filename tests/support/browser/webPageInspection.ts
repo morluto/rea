@@ -74,6 +74,7 @@ export const createWebPageInspection = (
       items: scripts.map(
         ({ source, scriptKey, url, origin: scriptOrigin, cdpHash }) => ({
           script_key: scriptKey,
+          frame_id: null,
           url,
           origin: scriptOrigin,
           cdp_hash: cdpHash,

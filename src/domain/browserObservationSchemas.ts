@@ -60,14 +60,12 @@ const browserAxNodeSchema = z.object({
   name: z.string().nullable(),
   description: z.string().nullable(),
   ignored: z.boolean(),
-  states: z
-    .array(
-      z.object({
-        name: z.string(),
-        value: z.union([z.boolean(), z.number(), z.string()]),
-      }),
-    )
-    .default([]),
+  states: z.array(
+    z.object({
+      name: z.string(),
+      value: z.union([z.boolean(), z.number(), z.string()]),
+    }),
+  ),
 });
 const browserResourceReconciliationSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("exact"), resource_key: z.string() }),
@@ -82,7 +80,7 @@ const browserResourceReconciliationSchema = z.discriminatedUnion("status", [
 ]);
 const browserScriptSchema = z.object({
   script_key: z.string().regex(/^scr_[a-f0-9]{64}(?:_[0-9]+)?$/u),
-  frame_id: z.string().nullable().default(null),
+  frame_id: z.string().nullable(),
   url: z.string(),
   origin: z.string().nullable(),
   ...cdpScriptMetadataSchema.shape,
@@ -185,8 +183,8 @@ const browserWorkerSchema = z.object({
   url: z.string(),
   origin: z.string().nullable(),
   attached: z.boolean(),
-  opener_target_id: z.string().nullable().default(null),
-  parent_frame_id: z.string().nullable().default(null),
+  opener_target_id: z.string().nullable(),
+  parent_frame_id: z.string().nullable(),
 });
 const browserCspSourceSchema = z.object({
   kind: z.enum([
