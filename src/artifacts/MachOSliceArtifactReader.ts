@@ -9,6 +9,7 @@ import {
   type ArtifactTraversalOptions,
   streamChunkToBuffer,
   readArtifactFileChunks,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -18,11 +19,6 @@ import {
   XcrunCommandRunner,
   type NativeCommandRunner,
 } from "../native/CommandRunner.js";
-import {
-  parseLipoOutputResult,
-  LipoFieldRetentionError,
-  type LipoArchitecture,
-} from "../native/parsers/lipo.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
@@ -34,9 +30,13 @@ import {
   type ReadAt,
 } from "../domain/apple/machoLoadCommandReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
+import {
+  parseLipoOutputResult,
+  LipoFieldRetentionError,
+  type LipoArchitecture,
+} from "../domain/apple/lipo.js";
 
 /** Read-only universal Mach-O slice reader backed by native lipo metadata. */
 export class MachOSliceArtifactReader implements ArtifactReader {

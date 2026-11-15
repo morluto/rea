@@ -3,8 +3,8 @@ import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,
 } from "./NativeMachoSelectedSlice.js";
-import { parseLipoOutputResult } from "./parsers/lipo.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
+import { parseLipoOutputResult } from "../domain/apple/lipo.js";
 
 it("binds the lipo row to one FAT entry and its selected thin header", async () => {
   const bytes = Buffer.alloc(256);

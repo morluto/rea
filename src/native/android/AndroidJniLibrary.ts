@@ -9,8 +9,8 @@ import type {
   AndroidJniTableSlot,
 } from "../../domain/android/androidJniLibraryFacts.js";
 import { parseNativeExportsSteps } from "../exports/NativeExportParser.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -22,7 +22,7 @@ import {
   readElfPointerRelocationsSteps,
   ElfPointerRelocationFailure,
   type ElfPointerOverlay,
-} from "../metadata/ElfPointerRelocations.js";
+} from "../../domain/native/elfPointerRelocations.js";
 
 const MAXIMUM_STRING_BYTES = 65_535;
 const MAXIMUM_STRING_WORK = 64 * 1024 * 1024;

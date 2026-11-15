@@ -3,6 +3,7 @@ import type { ServerContext, ToolCallback } from "@modelcontextprotocol/server";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
@@ -134,16 +135,13 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   expect(unknown.isError, JSON.stringify(unknown)).not.toBe(true);
   const before = session.exportEvidenceBundle();
 
-  let resolveDispatched: (() => void) | undefined;
-  const dispatched = new Promise<void>((resolve) => {
-    resolveDispatched = resolve;
-  });
+  const dispatch = phaseArrival();
   const send = clientTransport.send.bind(clientTransport);
   vi.spyOn(clientTransport, "send").mockImplementation(
     async (message, ...args) => {
       await send(message, ...args);
       if ("method" in message && message.method === "tools/call")
-        resolveDispatched?.();
+        dispatch.arrive();
     },
   );
   let resolveCompleted: (() => void) | undefined;
@@ -171,7 +169,7 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
       () => "completed",
       (error: unknown) => error,
     );
-  await dispatched;
+  await dispatch.reached(cancellation, "import_evidence_bundle dispatch");
   // The real SDK ping completes while the dispatched file reader awaits I/O.
   await client.ping();
   controller.abort(new Error("SDK import cancellation verification"));

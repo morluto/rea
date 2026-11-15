@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js";
 import { scanReader } from "../../../src/artifacts/inventory/scanReader.js";
-import { hashStableRootArtifactHandle } from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
+import { hashStableRootArtifactHandle } from "../../../src/resources/StableRootArtifact.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { inesFixture } from "../../fixtures/ines.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -19,7 +19,7 @@ import {
   withArtifactFileHandle,
 } from "../../../src/resources/ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
-import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
+import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
 
 it.each(["close", "cancel"] as const)(
   "does not complete an iNES inventory after %s while paused",

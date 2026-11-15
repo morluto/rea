@@ -16,6 +16,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
 const createSession = () => ({
   sessionId: "00000000-0000-4000-8000-000000000001",
@@ -482,24 +483,15 @@ it.each([false, true])(
       "native resume failed",
       { diagnostics: { native_status: "resume_rejected" } },
     );
-    let markResumeEntered: (() => void) | undefined;
-    let finishResume:
-      | ((result: {
-          readonly ok: false;
-          readonly error: AnalysisCapabilityUnavailableError;
-        }) => void)
-      | undefined;
-    const resumeEntered = new Promise<void>((resolve) => {
-      markResumeEntered = resolve;
-    });
+    const resume = phaseGate<
+      void,
+      { readonly ok: false; readonly error: AnalysisCapabilityUnavailableError }
+    >();
     let closes = 0;
     const service = new FridaInstrumentationService(
       createProvider({
         resumeSession() {
-          markResumeEntered?.();
-          return new Promise((resolve) => {
-            finishResume = resolve;
-          });
+          return resume.hold();
         },
         async closeSession() {
           closes += 1;
@@ -533,9 +525,9 @@ it.each([false, true])(
       },
       controller.signal,
     );
-    await resumeEntered;
+    await resume.reached(pending, "native resume");
     controller.abort(abortReason);
-    finishResume?.({ ok: false, error: primary });
+    resume.release({ ok: false, error: primary });
     const result = await pending;
 
     expect(result.ok).toBe(false);
@@ -1021,14 +1013,7 @@ it.each([false, true])(
 );
 
 it("cleans up a session and returns typed cancellation after a pending start", async () => {
-  let finishStart: (() => void) | undefined;
-  let markStartCalled: (() => void) | undefined;
-  const startGate = new Promise<void>((resolve) => {
-    finishStart = resolve;
-  });
-  const startCalled = new Promise<void>((resolve) => {
-    markStartCalled = resolve;
-  });
+  const start = phaseGate();
   const closed: string[] = [];
   const provider: FridaInstrumentationPort = {
     async listDevices() {
@@ -1041,8 +1026,7 @@ it("cleans up a session and returns typed cancellation after a pending start", a
       };
     },
     async startSession() {
-      markStartCalled?.();
-      await startGate;
+      await start.hold();
       return {
         ok: true,
         value: {
@@ -1082,9 +1066,9 @@ it("cleans up a session and returns typed cancellation after a pending start", a
     { mode: "attach", deviceId: "local", pid: 10 },
     controller.signal,
   );
-  await startCalled;
+  await start.reached(pending, "provider session start");
   controller.abort(new Error("caller cancelled"));
-  finishStart?.();
+  start.release();
 
   const result = await pending;
   expect(result.ok).toBe(false);

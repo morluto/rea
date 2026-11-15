@@ -25,10 +25,10 @@ import {
   nativeDeadlineRecovery,
 } from "../domain/native/nativeDeadlines.js";
 import {
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   type NativeCommandFailure,
 } from "./CommandRunner.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 
 /** Operation-owned text for a command deadline or unavailable requirement. */
 export interface NativeCommandFailurePresentation {

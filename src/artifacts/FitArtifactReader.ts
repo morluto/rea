@@ -14,9 +14,9 @@ import {
   type ArtifactTraversalOptions,
   ArtifactResourceScope,
   assertArtifactReadActive,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   createFitDigest,
   readFitStructure,

@@ -410,11 +410,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             {
               userMessage: reason,
               diagnostics: versionProbe,
-              capturedOutput: {
-                stdout: version.stdout.text,
-                stderr: version.stderr.text,
-                truncated: version.diagnosticTruncated === true,
-              },
+              capturedOutput: capturedProviderOutput(version),
               remediationAction: wabtConfigurationRecoveryAction(),
             },
           );

@@ -19,21 +19,14 @@ import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { catalogIdentityForToolFamilies } from "../catalogIdentity.js";
+import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "../config/mcpToolCatalogProfile.js";
 import { createToolResultDelivery } from "./toolResult.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
-import {
-  parseMcpOutputSchemaProfile,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "../config/mcpOutputSchemaProfile.js";
-import {
-  COMPACT_INPUT_SCHEMA_PRESENTATION,
-  parseMcpInputSchemaProfile,
-} from "../config/mcpInputSchemaProfile.js";
+import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import { parseMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
@@ -44,7 +37,6 @@ import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
-import { registerWebScriptTool } from "./registerWebScriptTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerEnhancedTools } from "./registerEnhancedTools.js";
@@ -70,6 +62,11 @@ import { registerReverseEngineeringTools } from "./registerReverseEngineeringToo
 import { registerCutterTools } from "./registerCutterTools.js";
 import { registerGdbTools } from "./registerGdbTools.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
+import {
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly analysisSettings?: AnalysisSettings;
@@ -460,6 +457,7 @@ export const createServer = (
       registerServiceTools(
         server,
         {
+          cutterSessions: cutter,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
@@ -618,10 +616,11 @@ export const createServer = (
         analysisAdmission,
         artifactResources,
       );
-      registerWebScriptTool(server, { ...common, artifactResources });
       registerServiceTools(
         server,
         {
+          webScripts: artifactResources,
+          guidance: artifactResources,
           webModuleTrace,
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,

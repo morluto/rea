@@ -135,7 +135,7 @@ describe("process CLI file cancellation", () => {
         process.env,
         controller.signal,
       );
-      await reader.firstRead;
+      await reader.reached(pending, "first file read");
       controller.abort();
       reader.release();
       expect(await pending).toMatchObject({

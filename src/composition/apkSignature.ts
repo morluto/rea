@@ -1,7 +1,7 @@
 import { ApkSignatureService } from "../application/apkSignature/ApkSignatureService.js";
 import { ApkSignatureProvider } from "../apkSignature/ApkSignatureProvider.js";
 import { INSPECT_APK_SIGNATURE_CONTRACT } from "../contracts/apkSignature/apkSignatureToolContracts.js";
-import { cliCommandFor } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 
 /** Compose the in-process APK signature reader without acquisition or import-time I/O. */
 export const createApkSignatureService = (): ApkSignatureService =>

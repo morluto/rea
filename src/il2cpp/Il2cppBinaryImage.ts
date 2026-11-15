@@ -14,23 +14,23 @@ import {
   type BinaryContainer,
   type FileMappingIndex,
 } from "../domain/binaryContainer.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
 import {
   requireSelectedNativeImage,
   type SelectedNativeImage,
   type SliceSelectionInput,
   selectMachoSlice,
-} from "../native/metadata/MachoSliceSelection.js";
+} from "../domain/apple/machoSliceSelection.js";
 import {
   parsePointerFixupsSteps,
   type PointerFixups,
-} from "../native/AppleMachoFixups.js";
-import { parseMachoLayout } from "../native/AppleMachoSelection.js";
+} from "../domain/apple/appleMachoFixups.js";
+import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   readElfPointerValuesSteps,
   ElfPointerRelocationFailure,
   type ElfVirtualPointerWrites,
-} from "../native/metadata/ElfPointerRelocations.js";
+} from "../domain/native/elfPointerRelocations.js";
 import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
