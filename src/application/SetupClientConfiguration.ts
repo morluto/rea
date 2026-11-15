@@ -32,6 +32,7 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { DISCOVERED_REGISTRATION_SETTINGS } from "./SetupRegistrationEnvironment.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -639,6 +640,7 @@ export const clientRefreshRefusal = async (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
+  platform: NodeJS.Platform,
   resources?: ArtifactResourceScope,
 ): Promise<ClientRefreshRefusal | undefined> => {
   const refused = (remediation: string): ClientRefreshRefusal => ({
@@ -664,6 +666,7 @@ export const clientRefreshRefusal = async (
       providerEnvironment,
       command,
       refresh.value,
+      platform,
     );
     return discovered === undefined
       ? refused(refresh.value.refusal)
@@ -693,6 +696,7 @@ const discoveredInlineOverride = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   refresh: ClientRefresh,
+  platform: NodeJS.Platform,
 ): Promise<
   | {
       readonly origin: ClientInlineConfiguration["origin"];
@@ -704,13 +708,20 @@ const discoveredInlineOverride = async (
     client,
     refresh.sources,
     refresh.desired,
+    platform,
   );
   if (origin === undefined) return undefined;
-  const declared = inlineRegistrationEnvironment(refresh.sources);
+  // Setting names are matched by the platform's environment identity, so a
+  // Windows layer's `Java_Home` is the discovered `JAVA_HOME`.
+  const declared = snapshotEnvironment(
+    inlineRegistrationEnvironment(refresh.sources),
+    platform,
+  );
+  const selected = snapshotEnvironment(providerEnvironment, platform);
   const adopted = Object.fromEntries(
     DISCOVERED_REGISTRATION_SETTINGS.flatMap((setting) => {
       const value = declared[setting];
-      return Object.hasOwn(providerEnvironment, setting) || value === undefined
+      return Object.hasOwn(selected, setting) || value === undefined
         ? []
         : [[setting, value]];
     }),
@@ -724,8 +735,12 @@ const discoveredInlineOverride = async (
     refresh.parsed,
     refresh.sources,
   );
-  return inlineRegistrationOverride(client, refresh.sources, desired) ===
-    undefined
+  return inlineRegistrationOverride(
+    client,
+    refresh.sources,
+    desired,
+    platform,
+  ) === undefined
     ? { origin, settings }
     : undefined;
 };

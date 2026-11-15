@@ -13,6 +13,7 @@ import {
 } from "../../../src/application/SupportedClients.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
 import {
+  clientRefreshRefusal,
   configureClientConfiguration,
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
@@ -630,6 +631,32 @@ it("reports a Kilo registration whose KILO_CONFIG_CONTENT differs only in a disc
       }),
     ]);
   }
+});
+
+it("matches a discovered setting by Windows environment identity in KILO_CONFIG_CONTENT", async () => {
+  const home = await createTestTempDirectory("rea-kilo-update-discovered-win-");
+  const root = join(home, ".config", "kilo");
+  await mkdir(root, { recursive: true });
+  await writeFile(
+    join(root, "kilo.json"),
+    JSON.stringify({ mcp: { rea: { type: "local", command, enabled: true } } }),
+  );
+  const environment = {
+    KILO_CONFIG_CONTENT: JSON.stringify({
+      mcp: { rea: { environment: { Java_Home: "/opt/java" } } },
+    }),
+  };
+  const kilo = await kiloRow(home, environment);
+  if (kilo === undefined) throw new Error("Kilo row missing");
+  // `Java_Home` is the JAVA_HOME setup discovers on Windows, and a distinct
+  // name elsewhere.
+  expect(await clientRefreshRefusal(kilo, {}, command, "win32")).toMatchObject({
+    alignment: "unknown",
+    remediation: expect.stringContaining("KILO_CONFIG_CONTENT sets JAVA_HOME"),
+  });
+  expect(await clientRefreshRefusal(kilo, {}, command, "linux")).toMatchObject({
+    alignment: "refused",
+  });
 });
 
 it("inspects REA's Kilo entry that only KILO_CONFIG_CONTENT sets when no Kilo folder exists", async () => {

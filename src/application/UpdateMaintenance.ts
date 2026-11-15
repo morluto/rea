@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -169,6 +170,7 @@ export const existingMaintenanceScope = async (
       client,
       settings,
       command,
+      HOST_PLATFORM.platform,
       resources,
     );
     if (refusal !== undefined) {
