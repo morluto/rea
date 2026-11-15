@@ -1,6 +1,7 @@
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   readClientConfigurationFiles,
+  inlineRegistrationOverride,
   clientConfigurationForWrite,
   clientWriteDialect,
   effectiveClientConfiguration,
@@ -519,6 +520,7 @@ export const clientConfigurationAligned = async (
     }
     return (
       policy.value === undefined &&
+      inlineOverrideBlocker(client, files.value, desired) === undefined &&
       registrationCurrent(parsed, desired) &&
       (await privateProfileCurrent(client, original))
     );
@@ -620,19 +622,19 @@ const inspectClientDocument = async (
           : registrationOwnershipBlocker(client, inherited, "", files.value);
       if (ownershipBlocker !== undefined)
         return { status: "invalid", remediation: ownershipBlocker };
-      // This read establishes absence; do not reuse an earlier user-file policy.
-      const policy = await readClientPolicyBlock(
+      const desired = await clientConfigurationDesired(
         client,
+        providerEnvironment,
+        command,
         undefined,
-        await clientConfigurationDesired(
-          client,
-          providerEnvironment,
-          command,
-          undefined,
-          files.value,
-          resolveProviderRequestBudget,
-        ),
+        files.value,
+        resolveProviderRequestBudget,
       );
+      const override = inlineOverrideBlocker(client, files.value, desired);
+      if (override !== undefined)
+        return { status: "invalid", remediation: override };
+      // This read establishes absence; do not reuse an earlier user-file policy.
+      const policy = await readClientPolicyBlock(client, undefined, desired);
       if (!policy.ok) {
         throwCleanupFailure(policy.error);
         return {
@@ -676,6 +678,9 @@ const inspectClientDocument = async (
       files.value,
       resolveProviderRequestBudget,
     );
+    const override = inlineOverrideBlocker(client, files.value, desired);
+    if (override !== undefined)
+      return { status: "invalid", remediation: override };
     const policy = await readClientPolicyBlock(client, parsed, desired);
     if (!policy.ok) {
       throwCleanupFailure(policy.error);
@@ -733,6 +738,18 @@ const throwCleanupFailure = (error: ClientConfigurationFileError): void => {
   if (error.cleanupFailure !== undefined) throw error.cleanupFailure;
 };
 
+/** Setup cannot write around a read-only inline layer that overrides REA. */
+const inlineOverrideBlocker = (
+  client: SetupClient,
+  sources: readonly ClientConfigurationSource[],
+  desired: unknown,
+): string | undefined => {
+  const origin = inlineRegistrationOverride(client, sources, desired);
+  return origin === undefined
+    ? undefined
+    : `${origin} overrides REA's ${PRODUCT_IDENTITY.mcpServerKey} registration in ${client.configPath}, and REA does not edit it. Remove the ${PRODUCT_IDENTITY.mcpServerKey} server from ${origin} or make it match, then rerun setup.`;
+};
+
 /** Admit only absent or proven-owned rows that this setup would replace. */
 const registrationOwnershipBlocker = (
   client: SetupClient,
@@ -751,7 +768,15 @@ const registrationOwnershipBlocker = (
   if (effective !== undefined && Object.hasOwn(effective.servers, name))
     entries.push({
       value: effective.servers[name],
-      paths: client.configPaths ?? [client.configPath],
+      // An inline layer is named by its origin; it has no path.
+      paths: [
+        ...(client.configPaths ?? [client.configPath]),
+        ...sources.flatMap(({ inlineOrigin, servers }) =>
+          inlineOrigin !== undefined && Object.hasOwn(servers, name)
+            ? [inlineOrigin]
+            : [],
+        ),
+      ],
     });
   const fragment = parsed.servers[name];
   // A layered policy fragment inherits its launcher. Classify the effective

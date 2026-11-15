@@ -7,7 +7,10 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ClientConfigurationFormat } from "./ClientConfigurationDocument.js";
+import type {
+  ClientConfigurationFormat,
+  ClientInlineConfiguration,
+} from "./ClientConfigurationDocument.js";
 import {
   appDataRedirection,
   registrationWriteBlocker,
@@ -31,7 +34,6 @@ import {
   type McpRegistrationLocationContext,
   type McpRegistrationGlobalLocation,
   type McpRegistrationLocation,
-  type McpRegistrationInlineConfiguration,
 } from "./McpRegistrationLocations.js";
 
 /**
@@ -184,7 +186,7 @@ export interface McpRegistrationClient {
   readonly configPath: string;
   /** Complete known file layers in native precedence; configPath alone grants write authority. */
   readonly configPaths?: readonly string[];
-  readonly inlineConfiguration?: McpRegistrationInlineConfiguration;
+  readonly inlineConfiguration?: ClientInlineConfiguration;
   readonly scope: "global" | "project";
   readonly format: ClientConfigurationFormat;
   readonly privateProfile?: SetupClient["privateProfile"];

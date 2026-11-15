@@ -5,6 +5,11 @@ import {
   type ClientRootContext,
 } from "./ClientConfigRoots.js";
 import { present } from "./McpRegistrationLocations.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  parseClientConfiguration,
+  type ClientInlineConfiguration,
+} from "./ClientConfigurationDocument.js";
 
 /** Names from Kilo v7.8.27 loadGlobal and config-directory merge order. */
 export const KILO_GLOBAL_FILES = [
@@ -112,10 +117,33 @@ export const kiloExplicitDirectory = ({
 }: KiloLocationContext): string | undefined =>
   root.env.KILO_CONFIG_DIR ? path(root.env.KILO_CONFIG_DIR) : undefined;
 
+/**
+ * KILO_CONFIG_CONTENT, which Kilo merges over every file layer. A value Kilo
+ * would read but REA cannot parse is refused rather than ignored.
+ */
+export const kiloInlineConfiguration = (
+  root: ClientRootContext,
+): ClientInlineConfiguration | undefined => {
+  const text = root.env.KILO_CONFIG_CONTENT;
+  if (!text) return undefined;
+  try {
+    return {
+      origin: "KILO_CONFIG_CONTENT",
+      parsed: parseClientConfiguration(text, "kilo"),
+    };
+  } catch (cause: unknown) {
+    throw new ConfigurationError(
+      "KILO_CONFIG_CONTENT cannot be admitted as Kilo configuration. Repair that selected inline configuration; no settings were written.",
+      { cause },
+    );
+  }
+};
+
 /** Kilo's user-scope write target, its file layers in load order, and evidence. */
 export interface KiloGlobalLocation {
   readonly configPath: string;
   readonly configPaths: readonly string[];
+  readonly inlineConfiguration?: ClientInlineConfiguration;
   readonly markerPath: string;
   readonly discoveryPaths: readonly string[];
 }
@@ -198,10 +226,12 @@ export const kiloGlobalLocation = async (
     );
   } else layers.push(...observed);
   configPath ??= join(root, "kilo.json");
+  const inlineConfiguration = kiloInlineConfiguration(context.root);
   return {
     configPath,
     configPaths:
       layers.length === 0 ? [configPath] : layers.map((layer) => layer.path),
+    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
     markerPath: root,
     discoveryPaths: [kiloExtensionStorage(context.root)],
   };
