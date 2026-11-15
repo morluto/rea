@@ -283,8 +283,6 @@
     "src/captures/TsharkCaptureProvider.ts": 1,
     "src/config/parseConfig.ts": 2,
     "src/cutter/CutterBridgeClient.ts": 1,
-    "src/desktop/BuildComputerEnvironment.ts": 3,
-    "src/desktop/BuildSecretFiles.ts": 1,
     "src/domain/localPath.ts": 1,
     "src/electron/ElectronFusePath.ts": 1,
     "src/filesystem/ChangeTimeBaseline.ts": 2,
