@@ -49,8 +49,11 @@ import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
-  type AdmittedMachoSlice,
 } from "./AppleMachoSelection.js";
+import {
+  selectMachoSlice,
+  type AdmittedMachoSlice,
+} from "./metadata/MachoSliceSelection.js";
 import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import {
   createSwiftRelativeReader,
@@ -75,7 +78,25 @@ export function* decodeAppleDispatchMetadataSteps(
   objcClassImportAddressesComplete = true,
   admittedSlice?: AdmittedMachoSlice,
 ): Generator<void, ObjcSwiftMetadata, void> {
-  const layout = parseMachoLayout(bytes, architecture, admittedSlice);
+  const selected = selectMachoSlice(bytes, {
+    mode: "admitted",
+    architecture,
+    slice: admittedSlice,
+  });
+  if (!selected.ok) {
+    if (selected.error.kind === "malformed")
+      throw malformedInput("macho", selected.error.message);
+    // Admission bound this architecture and slice to these exact bytes, so a
+    // refusal is an inconsistency inside REA, not the caller's selection.
+    throw new ProviderAdapterError(IDENTITY.id, OPERATION, {
+      diagnostics: {
+        target_path: provenance.path,
+        refusal: selected.error.kind,
+        reason: selected.error.message,
+      },
+    });
+  }
+  const layout = parseMachoLayout(bytes, selected.value);
   const { segments, sections, offset } = layout;
   const fixups = yield* parsePointerFixupsSteps(
     bytes,
