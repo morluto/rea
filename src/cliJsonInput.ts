@@ -13,6 +13,11 @@ import {
   nativeJsonParseRequiredBytes,
 } from "./application/JsonInputFile.js";
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
+import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
+import { ProviderCleanupError } from "./domain/providerCleanupError.js";
+import { AnalysisError } from "./domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "./domain/analysisErrorCleanup.js";
+import { ArtifactResourceScope } from "./artifacts/ArtifactResourceScope.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -72,7 +77,9 @@ export const parseCliJsonInput = async (
             value,
             operation,
             signal,
-            undefined,
+            // The scope lets the file's owner retry a refused close before
+            // reporting it; a handle it cannot close stays retained there.
+            new ArtifactResourceScope(),
             options?.snapshot ?? false,
           );
     if (parsed.ok && signal?.aborted) return cancelled(signal.reason);
@@ -91,6 +98,8 @@ export const parseCliJsonInput = async (
           },
         };
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure)
+      return jsonFileCleanupError(value, operation, cause);
     if (cause instanceof JsonInputCancellationFailure)
       return cancelled(cause.reason);
     if (cause instanceof JsonInputPhysicalReadFailure) {
@@ -339,6 +348,52 @@ const inputError = (operation: string): JsonValue => ({
     ]),
   ),
 });
+
+/**
+ * The file's final close failed after its owner's retry, so the handle
+ * stays open with its owner until this one-shot process exits. Report the
+ * incomplete cleanup and the file, keeping a typed read failure that came
+ * first as the cleanup's primary failure.
+ */
+const jsonFileCleanupError = (
+  path: string,
+  operation: string,
+  failure: RegularFileCleanupFailure,
+) => {
+  const cleanup = new ProviderCleanupError(
+    "json-input-file",
+    [path],
+    {
+      reason:
+        failure.cleanupCause instanceof Error
+          ? failure.cleanupCause.message
+          : "file close failed",
+    },
+    { operation, cause: failure },
+  );
+  // The read's own refusal, thrown or returned as a failed result.
+  const { outcome } = failure;
+  const primary =
+    outcome.kind === "failed"
+      ? outcome.cause
+      : (outcome.value as { readonly ok?: unknown; readonly error?: unknown })
+            ?.ok === false
+        ? (outcome.value as { readonly error: unknown }).error
+        : undefined;
+  return {
+    ok: false as const,
+    error: {
+      error: "Application workflow failed",
+      ...projectAnalysisError(
+        primary instanceof AnalysisError
+          ? analysisErrorWithCleanupFailure(primary, cleanup, operation)
+          : cleanup,
+        "invocation",
+      ),
+      input_path: path,
+    },
+  };
+};
 
 const jsonFileReadError = (
   path: string,
