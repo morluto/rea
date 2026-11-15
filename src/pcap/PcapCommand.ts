@@ -38,7 +38,10 @@ import {
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
-import { PCAP_LIMITER_REMEDIATION } from "./PcapNativeBound.js";
+import {
+  attributePcapLimitedExit,
+  PCAP_LIMITER_REMEDIATION,
+} from "./PcapNativeBound.js";
 
 export type PcapCommandLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
@@ -342,13 +345,40 @@ export const runPcapCommand = async (options: {
             `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
             details,
           );
-        // Under a limiter, an exit status or stream failure does not prove
-        // whether the limiter or the selected tool failed.
-        if (selectedLimiter !== undefined)
-          return new AnalysisProtocolError(
-            `The bounded packet command failed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
-            details,
-          );
+        if (selectedLimiter !== undefined) {
+          if (failure.kind !== "exited" || failure.output === undefined)
+            return new AnalysisProtocolError(
+              `The bounded packet command failed before its exit was observed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
+              details,
+            );
+          const attributed = attributePcapLimitedExit(selectedLimiter, {
+            exitCode: failure.exitCode,
+            signal: failure.signal,
+            stderr: failure.output.snapshot.stderr.text,
+          });
+          if (attributed.stage === "limiter") {
+            const reason = `Selected capture limiter ${selectedLimiter} failed before starting ${command}: ${diagnostic}`;
+            return new AnalysisCapabilityUnavailableError(
+              "pcap",
+              operation,
+              reason,
+              {
+                ...details,
+                userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
+                remediationAction: PCAP_LIMITER_REMEDIATION,
+              },
+            );
+          }
+          if (attributed.stage === "tool-launch")
+            return pcapToolUnavailable(
+              operation,
+              attributed.refusal === "missing"
+                ? `Selected tool ${command} was not found: ${diagnostic}`
+                : `Selected tool ${command} exists but could not be executed: ${diagnostic}`,
+              details,
+            );
+          // Otherwise prlimit started the tool; its exit and output are the tool's.
+        }
         return pcapToolFailure(diagnostic, details);
       },
     });
