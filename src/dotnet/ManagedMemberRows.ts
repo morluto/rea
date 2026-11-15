@@ -47,6 +47,7 @@ import {
 import { methodBody } from "./ManagedMethodBodyReader.js";
 import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
 import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import type { ManagedTypeTokenLookup } from "./ManagedTypeNames.js";
 
 /**
  * Declaring-type tokens whose members are decoded in full; null selects every
@@ -144,9 +145,8 @@ export const parseFields = (
         kind: "field",
         identitySha256: memberTargetIdentity(
           name,
-          declared === undefined ? null : { table: 2, row: owned },
+          declared === undefined ? null : declarationTypeName(2, owned),
           decoded,
-          declarationTypeName,
         ),
       });
       fields.push({
@@ -235,17 +235,13 @@ export const parseMemberRefs = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   {
-    typeName,
+    typeToken,
     signatureTypeName,
     displayTypeName,
-    declarationTypeName,
   }: {
-    readonly typeName: (
-      reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
-    ) => string | null;
+    readonly typeToken: ManagedTypeTokenLookup;
     readonly signatureTypeName: SignatureTypeName;
     readonly displayTypeName: SignatureDisplayTypeName;
-    readonly declarationTypeName: DeclarationTypeName;
   },
 ): {
   readonly refs: readonly ManagedMemberRef[];
@@ -283,7 +279,7 @@ export const parseMemberRefs = (
               : `MemberRef parent coded index 0x${parentRaw.toString(16)} is invalid: ${parent.reason}`,
         });
       const parentToken = parent.kind === "valid" ? parent.token : null;
-      const parentName = typeName(parent.kind === "valid" ? parent : null);
+      const parentType = typeToken(parent.kind === "valid" ? parent : null);
       const decoded = budgetedSignature(
         sig,
         layout,
@@ -296,21 +292,20 @@ export const parseMemberRefs = (
         token,
         row_offset: rowOffset,
         parent_token: parentToken,
-        parent_name: parentName,
+        parent_name: parentType.name,
         name,
         signature: decoded,
       });
       core.set(token, {
         token,
         name,
-        declaringType: parentName,
+        declaringType: parentType.name,
         kind: decoded.kind,
         genericArity: signatureGenericArity(decoded),
         identitySha256: memberTargetIdentity(
           name,
-          parent.kind === "valid" ? parent : null,
+          parentType.identity,
           decoded,
-          declarationTypeName,
         ),
       });
     }, issues);
@@ -446,9 +441,8 @@ export const parseMethods = ({
           name,
           declared === undefined || owner === undefined
             ? null
-            : { table: 2, row: owner },
+            : declarationTypeName(2, owner),
           decoded,
-          declarationTypeName,
         ),
       });
       const read = methodBody(bytes, pe, rva, {

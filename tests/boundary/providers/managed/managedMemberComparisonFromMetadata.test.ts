@@ -513,7 +513,39 @@ describe("managed edge identity resolution", () => {
       });
   });
 
-  it("retains unknown identity for cyclic scope, TypeSpec and unresolved edges", () => {
+  it("compares members of a generic TypeSpec by its resolved instantiation", () => {
+    // MemberRef parent TypeSpec row 1: GENERICINST CLASS TypeRef(2) <argument>.
+    const onInstance = (argument: number, path?: string) => {
+      const observed = observeEdgeTarget({
+        memberRefParentRaw: 12,
+        typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, argument])],
+      });
+      return path === undefined
+        ? observed
+        : { ...observed, evidenceId: `ev_${hash(Buffer.from(path))}` };
+    };
+    const source = onInstance(8);
+    const copy = onInstance(8, "/fixture/typespec-copy.dll");
+    expect(source.result.coverage).toEqual({ state: "complete", issues: [] });
+    expect(source.result.call_edges[0]?.target_identity_sha256).toMatch(
+      /^[0-9a-f]{64}$/u,
+    );
+    expect(copy.result.call_edges[0]?.target_identity_sha256).toBe(
+      source.result.call_edges[0]?.target_identity_sha256,
+    );
+    expect(compareManagedMembers(source, copy).methods[0]?.status).toBe(
+      "unchanged",
+    );
+    // The same member on another instantiation is another call target.
+    expect(
+      compareManagedMembers(source, onInstance(0x0e)).methods[0],
+    ).toMatchObject({
+      status: "changed",
+      dimensions: ["call-target"],
+    });
+  });
+
+  it("retains unknown identity for cyclic scope, an unnamed TypeSpec operand and unresolved edges", () => {
     const cyclic = observeEdgeTarget({
       typeReferences: [
         { namespace: "Fixture", name: "Outer", enclosingRow: 3 },
@@ -523,9 +555,10 @@ describe("managed edge identity resolution", () => {
     expect(compareManagedMembers(cyclic, cyclic).methods[0]?.status).toBe(
       "unknown",
     );
+    // GENERICINST CLASS TypeRef(9), a row the fixture does not have.
     const spec = observeEdgeTarget({
       memberRefParentRaw: 12,
-      typeSpecSignatures: [Buffer.from([0x15, 0x12, 9, 1, 8])],
+      typeSpecSignatures: [Buffer.from([0x15, 0x12, (9 << 2) | 1, 1, 8])],
     });
     expect(compareManagedMembers(spec, spec).methods[0]?.status).toBe(
       "unknown",

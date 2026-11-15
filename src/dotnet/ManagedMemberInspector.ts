@@ -38,7 +38,7 @@ import {
 } from "./ManagedMemberInspectorCore.js";
 import { edgeTargets, methodSpecMethod } from "./ManagedMethodSpecs.js";
 import { managedSignatureTypeNames } from "./ManagedSignatureTypeNames.js";
-import { typeNameLookup } from "./ManagedTypeNames.js";
+import { typeTokenLookup } from "./ManagedTypeNames.js";
 import { managedTypeReferences } from "./ManagedTypeReferences.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
 import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
@@ -305,18 +305,18 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
       selected,
     });
-    const resolveTypeName = typeNameLookup(
+    const typeToken = typeTokenLookup(
       bytes,
       layout,
       ranges,
       issues,
       typeReferences,
+      { signatureTypeName, declarationTypeName },
     );
     const memberRefs = parseMemberRefs(bytes, layout, {
-      typeName: resolveTypeName,
+      typeToken,
       signatureTypeName,
       displayTypeName,
-      declarationTypeName,
     });
     appendManagedParseIssues(issues, memberRefs.issues);
     const methods = parseMethods({
@@ -394,7 +394,7 @@ export const inspectManagedMembersBytes = (
         exception_regions: method.body.exception_regions.map(
           (region, ordinal) => {
             const reference = catchTokens.get(ordinal) ?? null;
-            const classType = resolveTypeName(reference);
+            const classType = typeToken(reference).name;
             const identityResolved =
               reference === null
                 ? null

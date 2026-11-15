@@ -365,7 +365,7 @@ const managedCallEdgeSchema = z.object({
   target_identity_sha256: digestSchema
     .nullable()
     .describe(
-      "Nominal declaring-type/name/signature digest; null when unresolved. Does not establish assembly or runtime binding.",
+      "Nominal declaring-type/name/signature digest; a TypeSpec declaring type contributes its resolved instantiation. Null when unresolved. Does not establish assembly or runtime binding.",
     ),
   caller: z.string().nullable(),
   opcode: z.string(),
@@ -386,7 +386,7 @@ const managedFieldAccessSchema = z.object({
   target_identity_sha256: digestSchema
     .nullable()
     .describe(
-      "Nominal declaring-type/name/signature digest; null when unresolved. Does not establish assembly or runtime binding.",
+      "Nominal declaring-type/name/signature digest; a TypeSpec declaring type contributes its resolved instantiation. Null when unresolved. Does not establish assembly or runtime binding.",
     ),
   method: z.string().nullable(),
   opcode: z.string(),

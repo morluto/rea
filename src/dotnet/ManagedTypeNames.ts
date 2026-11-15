@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import type { ManagedTypeReferenceLookup } from "./ManagedTypeReferences.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   fullName,
   specSignatureFacts,
+  type DeclarationTypeName,
+  type SignatureTypeName,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
 import {
@@ -17,23 +20,44 @@ import {
 } from "./ManagedMetadataHeaps.js";
 import { readManagedValue } from "./ManagedReaderFailure.js";
 
+/** The facts a TypeDef, TypeRef, or TypeSpec token gives about its type. */
+export interface ManagedTypeTokenFacts {
+  /** Namespace-qualified name; a non-generic TypeSpec has none. */
+  readonly name: string | null;
+  /**
+   * Nominal identity digest: a TypeDef or TypeRef's name digest, or for a
+   * TypeSpec, a digest of its whole resolved signature (so `List<int>` and
+   * `List<string>` differ). Null when a name or operand is unresolved.
+   */
+  readonly identity: Buffer | null;
+}
+
+export type ManagedTypeTokenLookup = (
+  reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
+) => ManagedTypeTokenFacts;
+
+const UNKNOWN_TYPE: ManagedTypeTokenFacts = { name: null, identity: null };
+
 /**
- * Name the type a TypeDef, TypeRef, or generic-instantiation TypeSpec token
- * denotes, in the namespace-qualified form TypeDef `full_name` uses, once per
- * token. Other decoded TypeSpecs stay null: the type is unknown. Malformed or
- * unsupported rows and blobs are reported to `issues` and also stay null,
- * except that a TypeRef with an invalid ResolutionScope keeps its readable name.
+ * Name and identify the type a TypeDef, TypeRef, or TypeSpec token denotes,
+ * once per token. Names use the namespace-qualified form TypeDef `full_name`
+ * uses; a generic-instantiation TypeSpec is named by its generic type, and
+ * other decoded TypeSpecs have no name. Malformed or unsupported rows and
+ * blobs are reported to `issues` and stay unknown, except that a TypeRef with
+ * an invalid ResolutionScope keeps its readable name.
  */
-export const typeNameLookup = (
+export const typeTokenLookup = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   ranges: readonly TypeRange[],
   issues: ManagedParseIssue[],
   references: ManagedTypeReferenceLookup,
-): ((
-  reference: Pick<MetadataTokenFact, "table" | "row" | "token"> | null,
-) => string | null) => {
-  const names = new Map<string, string | null>();
+  identities: {
+    readonly signatureTypeName: SignatureTypeName;
+    readonly declarationTypeName: DeclarationTypeName;
+  },
+): ManagedTypeTokenLookup => {
+  const facts = new Map<string, ManagedTypeTokenFacts>();
   const definitionName = (table: 1 | 2, row: number): string | null => {
     if (table === 2) {
       metadataRowOffset(layout, 2, row);
@@ -44,9 +68,13 @@ export const typeNameLookup = (
       ? null
       : fullName(reference.namespace, reference.name);
   };
-  const specName = (row: number): string | null => {
+  const definition = (table: 1 | 2, row: number): ManagedTypeTokenFacts => ({
+    name: definitionName(table, row),
+    identity: identities.declarationTypeName(table, row),
+  });
+  const spec = (row: number): ManagedTypeTokenFacts => {
     const cursor = metadataRowCursor(bytes, layout, 27, row);
-    const spec = readMetadataBlob(
+    const blob = readMetadataBlob(
       bytes,
       layout,
       cursor.readIndex(layout.blobIndexSize),
@@ -57,26 +85,42 @@ export const typeNameLookup = (
       scope: `metadata.TypeSpec:${metadataToken(27, row)}`,
       offset: cursor.start,
     } as const;
-    const { nominalGenericType } = specSignatureFacts(layout, spec, owner);
-    return nominalGenericType === null
-      ? null
-      : definitionName(nominalGenericType.table, nominalGenericType.row);
+    const { nominalGenericType, resolvedSha256 } = specSignatureFacts(
+      layout,
+      blob,
+      owner,
+      identities.signatureTypeName,
+    );
+    return {
+      name:
+        nominalGenericType === null
+          ? null
+          : definitionName(nominalGenericType.table, nominalGenericType.row),
+      identity:
+        resolvedSha256 === null
+          ? null
+          : createHash("sha256")
+              .update("managed-type-spec-v1\0")
+              .update(Buffer.from(resolvedSha256, "hex"))
+              .digest(),
+    };
   };
   return (reference) => {
-    if (reference === null) return null;
+    if (reference === null) return UNKNOWN_TYPE;
     const { token, table, row } = reference;
-    if (names.has(token)) return names.get(token) ?? null;
-    const name =
+    const known = facts.get(token);
+    if (known !== undefined) return known;
+    const value =
       readManagedValue(
         () =>
           table === 27
-            ? specName(row)
+            ? spec(row)
             : table === 1 || table === 2
-              ? definitionName(table, row)
-              : null,
+              ? definition(table, row)
+              : UNKNOWN_TYPE,
         issues,
-      ) ?? null;
-    names.set(token, name);
-    return name;
+      ) ?? UNKNOWN_TYPE;
+    facts.set(token, value);
+    return value;
   };
 };

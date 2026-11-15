@@ -104,22 +104,18 @@ export interface MemberCore {
   readonly identitySha256?: string | null;
 }
 
+/**
+ * Nominal member identity from its owner's identity (a TypeDef or TypeRef name
+ * digest, or a TypeSpec signature digest), name and resolved signature.
+ */
 export const memberTargetIdentity = (
   name: string,
-  declaringType: Pick<MetadataTokenFact, "table" | "row"> | null,
+  owner: Buffer | null,
   signature: ManagedSignature,
-  typeName: DeclarationTypeName,
-): string | null => {
-  if (
-    declaringType === null ||
-    signature.resolved_sha256 === null ||
-    signature.parse_status !== "decoded"
-  )
-    return null;
-  const { table, row } = declaringType;
-  if (table !== 1 && table !== 2) return null;
-  const owner = typeName(table, row);
-  return owner === null
+): string | null =>
+  owner === null ||
+  signature.resolved_sha256 === null ||
+  signature.parse_status !== "decoded"
     ? null
     : createHash("sha256")
         .update("managed-member-nominal-v1\0")
@@ -127,7 +123,6 @@ export const memberTargetIdentity = (
         .update(Buffer.from(signature.resolved_sha256, "hex"))
         .update(name)
         .digest("hex");
-};
 
 export interface ParsedInstruction {
   readonly offset: number;
