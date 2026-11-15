@@ -16,6 +16,7 @@ import {
   parseXmlDocument,
 } from "../xmlDocument.js";
 import { expatXmlName } from "./expatXmlNames.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -92,7 +93,7 @@ const isKeyfile = (text: string): boolean => {
 export const decodeStateText = (bytes: Uint8Array): string | undefined => {
   if (bytes.subarray(0, 8192).includes(0)) return undefined;
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return decodeStrictUtf8(bytes, "preserve");
   } catch {
     return undefined;
   }

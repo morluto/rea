@@ -5,6 +5,7 @@ import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Opening and closing marker of a Deno compile data section. */
 export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
@@ -24,7 +25,8 @@ const specifierDecoder = new TextDecoder("utf-8", {
   fatal: true,
   ignoreBOM: true,
 });
-const jsonDecoder = new TextDecoder("utf-8", { fatal: true });
+// Section JSON is embedded binary content; a BOM there is content.
+const jsonDecoder = strictUtf8Decoder("preserve");
 
 const MEDIA_TYPE_NAMES = [
   "JavaScript",
