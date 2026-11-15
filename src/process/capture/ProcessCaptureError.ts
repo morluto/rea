@@ -4,7 +4,11 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../../artifacts/AnalysisCleanupLease.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../../domain/analysisErrorCore.js";
 import {
   ProcessOwnershipIdentityBatchFailure,
   isProcessOwnershipInspectionCancellation,
@@ -238,7 +242,7 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
     if (cancellation === undefined)
       for (const fact of processInspectionCancellations(inspectionFailure))
         this.retainSecondaryFailure(
-          new AnalysisCancelledError("capture_process", { cause: fact.reason }),
+          cancelledBy("capture_process", carriedReason(fact.reason)),
         );
   }
 }
@@ -317,9 +321,7 @@ export const retainCaptureInspectionCancellations = (
   if (inspection.reason === "cancelled" && primary !== inspection)
     analysisErrorWithCancellation(
       primary,
-      new AnalysisCancelledError("capture_process", {
-        cause: inspection.cause,
-      }),
+      cancelledBy("capture_process", carriedReason(inspection.cause)),
     );
   for (const secondary of inspection.secondaryFailures)
     if (secondary instanceof AnalysisCancelledError)

@@ -1,129 +1,68 @@
-import { inspectGpuCodeObjectsInputSchema } from "../domain/gpu/gpuCodeObjects.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { parseCliJsonOption } from "./cliJsonOption.js";
-import { z } from "incur";
 import type { Logger } from "pino";
-import type { CliInstance } from "./types.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { createGpuCodeObjectsService } from "../composition/gpu.js";
+
 import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
-import { withCommandCancellation } from "./commandCancellation.js";
+import { createGpuCodeObjectsService } from "../composition/gpu.js";
+import { GPU_TOOL_CONTRACTS } from "../contracts/gpu/gpuToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
 import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
+  deliverWithService,
+  registerContractCommand,
+} from "./contractCommand.js";
+import type { CliInstance } from "./types.js";
 
 /** One-shot summaries export the same complete observations used by MCP retained pages. */
 export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
-  cli.command(CLI_COMMANDS.inspectGpuCodeObjects, {
-    description:
-      "Inspect embedded CUDA/HIP targets and selected static kernel metadata",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local ELF/PE, CUDA fatbin, CUBIN, PTX or HIP bundle",
-      ),
-    }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      view: z
-        .string()
-        .optional()
-        .describe(
-          "JSON GPU object/kernel/PTX page selection; requires --detail summary and --evidence_output",
-        ),
-      analysis: z
-        .enum(["inventory", "kernels"])
-        .default("inventory")
-        .describe("Inventory GPU targets or decode selected kernel metadata"),
-      expected_sha256:
-        inspectGpuCodeObjectsInputSchema.shape.expected_sha256.describe(
-          "Inventory SHA-256 as 64 lowercase hex digits; required with --object_ids",
-        ),
-      object_ids: z
-        .string()
-        .optional()
-        .describe("JSON array of exact object IDs to decode"),
-      targets: z
-        .string()
-        .optional()
-        .describe("JSON array of exact target declarations to decode"),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectGpuCodeObjects, async () => {
-          const selectors: Partial<
-            Record<"object_ids" | "targets" | "view", unknown>
-          > = {};
-          for (const name of ["object_ids", "targets", "view"] as const) {
-            const value = options[name];
-            if (value === undefined) continue;
-            const decoded = parseCliJsonOption(
-              "inspect_gpu_code_objects",
-              name,
-              value,
-              `${name} must be valid JSON`,
-            );
-            if (!decoded.ok) return projectAnalysisError(decoded.error);
-            selectors[name] = decoded.value;
-          }
-          const rawInput = {
-            path: absoluteCallerPath(args.path),
-            analysis: options.analysis,
-            ...(options.expected_sha256 === undefined
-              ? {}
-              : { expected_sha256: options.expected_sha256 }),
-            ...selectors,
-            detail: options.detail,
-          };
-          const selected = inspectGpuCodeObjectsInputSchema.safeParse(rawInput);
-          if (!selected.success)
-            return projectAnalysisError(
-              analysisInputErrorFromIssues(
-                "inspect_gpu_code_objects",
-                selected.error.issues,
-                rawInput,
-              ),
-            );
-          const service = createGpuCodeObjectsService();
-          return deliverCliAnalysisEvidence({
-            callerInputPath: args.path,
-            run: () =>
-              service.inspect(
-                {
-                  path: selected.data.path,
-                  analysis: selected.data.analysis,
-                  ...(selected.data.expected_sha256 === undefined
-                    ? {}
-                    : { expected_sha256: selected.data.expected_sha256 }),
-                  ...(selected.data.object_ids === undefined
-                    ? {}
-                    : { object_ids: selected.data.object_ids }),
-                  ...(selected.data.targets === undefined
-                    ? {}
-                    : { targets: selected.data.targets }),
-                  detail: "complete",
-                },
-                { signal },
-              ),
-            service,
-            providerId: "gpu-code-objects",
-            operation: "inspect_gpu_code_objects",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-            ...(selected.data.view === undefined
-              ? {}
-              : {
-                  view: {
-                    kind: "gpu-code-objects" as const,
-                    ...selected.data.view,
-                  },
-                }),
-          });
-        }),
-      ),
-  });
+  const deliver = deliverWithService(
+    createGpuCodeObjectsService,
+    "gpu-code-objects",
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(GPU_TOOL_CONTRACTS, "inspect_gpu_code_objects"),
+    {
+      command: CLI_COMMANDS.inspectGpuCodeObjects,
+      description:
+        "Inspect embedded CUDA/HIP targets and selected static kernel metadata",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      viewDelivery: {
+        invalidJson: "view must be valid JSON",
+        kind: "gpu-code-objects",
+      },
+      runtimeJson: {
+        object_ids: "object_ids must be valid JSON",
+        targets: "targets must be valid JSON",
+      },
+      fields: {
+        path: {
+          description: "Local ELF/PE, CUDA fatbin, CUBIN, PTX or HIP bundle",
+        },
+        analysis: {
+          description:
+            "Inventory GPU targets or decode selected kernel metadata",
+        },
+        expected_sha256: {
+          name: "expected_sha256",
+          description:
+            "Inventory SHA-256 as 64 lowercase hex digits; required with --object_ids",
+        },
+        object_ids: {
+          name: "object_ids",
+          description: "JSON array of exact object IDs to decode",
+        },
+        targets: {
+          description: "JSON array of exact target declarations to decode",
+        },
+        view: {
+          description:
+            "JSON GPU object/kernel/PTX page selection; requires --detail summary and --evidence_output",
+        },
+      },
+    },
+    // The CLI delivers the summary itself, so the service returns complete
+    // Evidence; the contract's own default would retain a summary instead.
+    (input, context) => deliver({ ...input, detail: "complete" }, context),
+  );
 };

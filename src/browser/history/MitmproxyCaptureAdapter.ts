@@ -1,4 +1,5 @@
 import { access, stat } from "node:fs/promises";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,9 @@ export class MitmproxyCaptureAdapter implements HistoricalCaptureFormatAdapter {
   readonly identity = MITMPROXY_CAPTURE_PROVIDER_IDENTITY;
   constructor(readonly environment: Readonly<NodeJS.ProcessEnv>) {}
   snapshotConfiguration(): HistoricalCaptureFormatAdapter {
-    return new MitmproxyCaptureAdapter(snapshotEnvironment(this.environment));
+    return new MitmproxyCaptureAdapter(
+      snapshotEnvironment(this.environment, HOST_PLATFORM.platform),
+    );
   }
   async command(
     requestPath: string,

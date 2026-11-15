@@ -1,4 +1,5 @@
 import { Cli, z } from "incur";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
 import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
@@ -74,7 +75,10 @@ const registerCommands = (
  * every set of registrars; they apply to whichever commands were registered.
  */
 export const createCliShell = (options: CliShellOptions): CliInstance => {
-  const environment = snapshotEnvironment(options.selectedEnvironment);
+  const environment = snapshotEnvironment(
+    options.selectedEnvironment,
+    HOST_PLATFORM.platform,
+  );
   const defaultRegistration = parseClientRegistrationCommand(
     currentClientRegistrationCommand({ environment }),
   );

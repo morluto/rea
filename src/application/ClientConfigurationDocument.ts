@@ -38,9 +38,7 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type ClientConfigurationFormat =
   | NonNullable<SetupClient["format"]>
-  | "amp"
   | "fx"
-  | "zed"
   | "kilo"
   | "goose"
   | "copilot_cli_project";

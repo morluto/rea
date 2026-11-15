@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
@@ -724,9 +725,6 @@ const installSystemPackage = async (
     };
   return { status: "installed" };
 };
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 /** Retain the publisher's error and any vendor request facts it observed. */
 const publisherFailure = (

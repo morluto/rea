@@ -347,35 +347,23 @@ describe("native export encoding and failures", () => {
         },
       ],
     });
-    const olderRows = JSON.parse(
+    const withoutEncoding = JSON.parse(
       JSON.stringify(result.value.normalized_result),
     ) as { exports: Record<string, unknown>[] };
-    for (const row of olderRows.exports) {
+    for (const row of withoutEncoding.exports) {
       delete row.name_bytes_base64;
       delete row.name_utf8_decodable;
-      const version = row.version;
-      if (version !== null && typeof version === "object") {
-        Reflect.deleteProperty(version, "name_bytes_base64");
-        Reflect.deleteProperty(version, "name_utf8_decodable");
-      }
     }
-    expect(nativeExportsSchema.parse(olderRows)).toMatchObject({
-      exports: [
-        {
-          name: "café",
-          name_bytes_base64: null,
-          name_utf8_decodable: null,
-          version: {
-            index: 2,
-            name: "libcafé.so",
-            name_bytes_base64: null,
-            name_utf8_decodable: null,
-            hidden: false,
-          },
-        },
-        { name: "ÿ", name_bytes_base64: null, name_utf8_decodable: null },
-      ],
-    });
+    expect(
+      nativeExportsSchema
+        .safeParse(withoutEncoding)
+        .error?.issues.map(({ path }) => path.join(".")),
+    ).toEqual(
+      expect.arrayContaining([
+        "exports.0.name_bytes_base64",
+        "exports.0.name_utf8_decodable",
+      ]),
+    );
     await service.close();
   });
 

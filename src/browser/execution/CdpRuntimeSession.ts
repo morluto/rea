@@ -1,6 +1,9 @@
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisTimeoutError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisTimeoutError,
+  OwnerCancellation,
+} from "../../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -207,7 +210,7 @@ export class CdpRuntimeSession {
     if (this.#completion !== undefined) return;
     this.#completion = new AbortController();
     this.#completionTimer = setTimeout(
-      () => this.#completion?.abort(),
+      () => this.#completion?.abort(OwnerCancellation.deadlineElapsed),
       this.commandTimeoutMs,
     );
   }
@@ -273,7 +276,7 @@ export class CdpRuntimeSession {
     this.document.close();
     const controller = new AbortController();
     const timer = setTimeout(
-      () => controller.abort(),
+      () => controller.abort(OwnerCancellation.deadlineElapsed),
       WEB_RUNTIME_LIMITS.cleanupTimeoutMs,
     );
     // Switch before the first restoration send. A short command_timeout_ms
@@ -410,7 +413,10 @@ export const runtimeDeadline = async <T>(
   method?: string,
 ): Promise<T> => {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(
+    () => controller.abort(OwnerCancellation.deadlineElapsed),
+    timeoutMs,
+  );
   try {
     return await run(
       signal === undefined

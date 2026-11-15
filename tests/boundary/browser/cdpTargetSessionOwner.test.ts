@@ -367,8 +367,9 @@ it("surfaces cold-start acquireBrowserSocket cleanup failure to live waiters wit
         (cause: unknown) => cause,
       ),
     ]);
+    // The errors already record the failed close; Node reports a rejection
+    // left unhandled from that turn before the next check phase.
     await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(unhandled).toEqual([]);
     if (
       !(firstError instanceof AnalysisError) ||
@@ -481,8 +482,9 @@ it("surfaces cold-start acquireBrowserSocket cleanup failure when the last waite
       () => undefined,
       (cause: unknown) => cause,
     );
+    // The errors already record the failed close; Node reports a rejection
+    // left unhandled from that turn before the next check phase.
     await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(unhandled).toEqual([]);
     if (!(secondError instanceof AnalysisError))
       throw new Error("Expected last waiter cleanup-incomplete failure");

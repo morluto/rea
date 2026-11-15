@@ -9,7 +9,7 @@ import {
 } from "../../domain/desktop/appTaskReaders.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../../domain/analysisErrorCore.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
 import { END_CHECKPOINT } from "../../domain/desktop/buildCapture.js";
@@ -475,7 +475,7 @@ export const exportBuild = async (
       cause instanceof AnalysisError
         ? cause
         : signal.aborted && cause === signal.reason
-          ? new AnalysisCancelledError(EXPORT, { cause })
+          ? cancelledBy(EXPORT, carriedReason(cause))
           : adapterError(
               EXPORT,
               redactSecrets(errorText(cause), capture.secrets),

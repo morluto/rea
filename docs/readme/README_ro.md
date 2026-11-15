@@ -101,7 +101,7 @@ din ghidul contractelor MCP.
 
 Configurarea înregistrează direct mediul de execuție ales și scriptul de intrare REA. Dacă folosești un executor de pachete, păstrează intrarea sa din cache și mediul de execuție; obține pachetul dintr-un director de încredere din afara proiectului țintă. Consultă ghidul de instalare.
 
-Schemele complete de ieșire sunt anunțate implicit. Dacă clientul limitează `tools/list`, setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` sau `off` în înregistrarea MCP. Validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
+Schemele de ieșire sunt omise implicit din `tools/list`: niciun API de model nu le citește, iar REA validează singur fiecare rezultat. Setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` în înregistrarea MCP pentru a anunța fiecare schemă de ieșire în limita a 4096 de octeți, sau `full` pentru scheme de ieșire complete (pentru clienții MCP care validează rezultatele). În toate setările, validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
 
 ### Cere-i agentului
 

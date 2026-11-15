@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { parseConfig } from "../config/parseConfig.js";
+import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ok } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
@@ -11,6 +12,8 @@ import {
   hasHopperReplyContract,
   hopperBridgeMethod,
   parseHopperReply,
+  parseHopperServerInfo,
+  parseHopperShutdownReply,
 } from "./HopperReplyContracts.js";
 
 it("gives every Hopper operation's bridge method a reply contract", () => {
@@ -20,6 +23,67 @@ it("gives every Hopper operation's bridge method a reply contract", () => {
 
   expect(missing, "no Hopper reply reaches Evidence unvalidated").toEqual([]);
 });
+
+it.each([
+  [
+    "closed",
+    { shutdown: true, analysis_stopped: true, document_closed: true },
+    "confirmed",
+  ],
+  [
+    "retained",
+    {
+      shutdown: true,
+      analysis_stopped: false,
+      document_closed: false,
+      document_retained: true,
+    },
+    "confirmed",
+  ],
+  [
+    "cleanup required",
+    {
+      shutdown: true,
+      analysis_stopped: true,
+      document_closed: false,
+      cleanup_required: true,
+    },
+    "cleanup_required",
+  ],
+  [
+    "analysis still running",
+    { shutdown: true, analysis_stopped: false, document_closed: true },
+    "unconfirmed",
+  ],
+  [
+    "document still open",
+    { shutdown: true, analysis_stopped: true, document_closed: false },
+    "unconfirmed",
+  ],
+] as const)("reads a %s shutdown reply", (_case, reply, outcome) => {
+  for (const method of ["shutdown", "shutdown_document"] as const)
+    expect(parseHopperShutdownReply(method, reply)).toEqual(ok(outcome));
+});
+
+it.each([
+  ["missing analysis state", { shutdown: true, document_closed: true }],
+  [
+    "string flag",
+    { shutdown: "true", analysis_stopped: true, document_closed: true },
+  ],
+  ["non-object", true],
+] as const)(
+  "refuses a %s shutdown reply with field diagnostics",
+  (_case, reply) => {
+    expect(parseHopperShutdownReply("shutdown", reply)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        diagnostics: { contract_issue_count: expect.any(Number) },
+      },
+    });
+  },
+);
 
 it("returns the validated source reply without dropping unlisted fields", () => {
   const reply = [
@@ -201,4 +265,57 @@ describe("provider entry paths apply the reply contract", () => {
       }
     },
   );
+});
+
+describe("Hopper health reply", () => {
+  const health = {
+    name: "REA Hopper bridge",
+    version: "1.0.0",
+    process_id: 42,
+    run_id: "run-1",
+  };
+
+  it("treats an omitted request ceiling as the 16 MiB default", () => {
+    expect(parseHopperServerInfo(health, "run-1")).toEqual({
+      ok: true,
+      value: {
+        name: "REA Hopper bridge",
+        version: "1.0.0",
+        processId: 42,
+        maxRequestBytes: DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+      },
+    });
+  });
+
+  it("keeps an advertised ceiling that differs from the client default", () => {
+    const parsed = parseHopperServerInfo(
+      { ...health, max_request_bytes: 8192 },
+      "run-1",
+    );
+    expect(parsed.ok && parsed.value.maxRequestBytes).toBe(8192);
+  });
+
+  it.each<[string, JsonValue]>([
+    ["zero ceiling", { ...health, max_request_bytes: 0 }],
+    ["negative ceiling", { ...health, max_request_bytes: -1 }],
+    ["fractional ceiling", { ...health, max_request_bytes: 1.5 }],
+    ["text ceiling", { ...health, max_request_bytes: "16777216" }],
+    ["boolean ceiling", { ...health, max_request_bytes: true }],
+    ["null ceiling", { ...health, max_request_bytes: null }],
+    ["another peer", { ...health, name: "Other bridge" }],
+    ["another run", { ...health, run_id: "run-2" }],
+    ["no version", { name: health.name, process_id: 42, run_id: "run-1" }],
+    ["zero process", { ...health, process_id: 0 }],
+    ["unsafe process", { ...health, process_id: 2 ** 53 }],
+    ["array", [health]],
+  ])("refuses a health reply with %s", (_case, value) => {
+    const parsed = parseHopperServerInfo(value, "run-1");
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.error._tag).toBe("HopperProtocolError");
+      expect(parsed.error.message).toBe(
+        "Hopper bridge health result is invalid",
+      );
+    }
+  });
 });

@@ -1,10 +1,10 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../analysisResourceLimits.js";
 import { expect, it } from "vitest";
 import {
   androidLocaleDirectorySuffix,
   apktoolInputSchemas,
   classifyAndroidStringsTable,
   DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
-  MAX_APKTOOL_DECODE_TIMEOUT_MS,
 } from "./apktoolResourceAnalysis.js";
 
 it.each([
@@ -101,7 +101,7 @@ it("keeps 600000 ms as the omitted apktool decode deadline", () => {
   );
 });
 
-it.each([1, 600_000, MAX_APKTOOL_DECODE_TIMEOUT_MS])(
+it.each([1, 600_000, MAX_NODE_TIMER_DELAY_MS])(
   "accepts decode_timeout_ms %s",
   (decode_timeout_ms) => {
     expect(
@@ -110,7 +110,7 @@ it.each([1, 600_000, MAX_APKTOOL_DECODE_TIMEOUT_MS])(
   },
 );
 
-it.each([0, -1, 1.5, MAX_APKTOOL_DECODE_TIMEOUT_MS + 1])(
+it.each([0, -1, 1.5, MAX_NODE_TIMER_DELAY_MS + 1])(
   "rejects decode_timeout_ms %s",
   (decode_timeout_ms) => {
     expect(

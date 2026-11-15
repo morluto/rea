@@ -16,8 +16,9 @@ import {
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 
 /** Run a setup command with ownership of its entire process family and partial output. */
@@ -161,8 +162,7 @@ export const runDesktopBuildOwnedCommand = async (input: {
     if (command?.reason === "cancelled" && command.cancellation !== undefined) {
       primary =
         inspectionCancellation ??
-        new AnalysisCancelledError("setup", {
-          cause: command.cancellation.reason,
+        cancelledBy("setup", carriedReason(command.cancellation.reason), {
           diagnostics: {
             setup_failure: reason,
             command_failure: command.reason,
@@ -187,18 +187,14 @@ export const runDesktopBuildOwnedCommand = async (input: {
           ? primary
           : analysisErrorWithCancellation(
               primary,
-              new AnalysisCancelledError("setup", {
-                cause: command.cancellation.reason,
-              }),
+              cancelledBy("setup", carriedReason(command.cancellation.reason)),
             );
     // This finalization checkpoint records a later caller cancellation without
     // reclassifying the established physical command or cleanup outcome.
     if (input.signal?.aborted)
       primary = analysisErrorWithCancellation(
         primary,
-        new AnalysisCancelledError("setup", {
-          cause: input.signal.reason,
-        }),
+        cancelledBy("setup", input.signal),
       );
     throw primary;
   }
