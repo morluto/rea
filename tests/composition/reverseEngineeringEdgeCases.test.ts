@@ -838,6 +838,69 @@ it("releases a retained provider owner after cleanup succeeds", async () => {
   }
 });
 
+it("retains an objdump command's unverified process owner until a later inspection stops it", async () => {
+  const { directory, path } = await createArtifact();
+  let stopped = false;
+  const cleanupOwner = {
+    stop: vi.fn(async () =>
+      stopped
+        ? { status: "verified-cleanup" as const }
+        : { status: "incomplete" as const, reason: "objdump group remains" },
+    ),
+  } as unknown as ProviderProcessSupervisor;
+  const runOwned = vi
+    .fn<typeof runOwnedCommand>()
+    .mockRejectedValueOnce(
+      new OwnedCommandFailure(
+        "process",
+        "objdump cleanup could not be verified",
+        providerSnapshot({ exitCode: null }),
+        "objdump group remains",
+        undefined,
+        ["run-id", "pid:42"],
+        cleanupOwner,
+      ),
+    )
+    .mockResolvedValue(providerSnapshot());
+  const service = new ReverseEngineeringService({ runOwned });
+
+  try {
+    const first = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (first.ok) throw new Error("Expected retained objdump cleanup");
+    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(first.error.cleanup).toMatchObject({
+      reason: "objdump group remains",
+      resources: ["run-id", "pid:42"],
+    });
+
+    const blocked = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    expect(blocked).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(runOwned).toHaveBeenCalledOnce();
+
+    stopped = true;
+    const recovered = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (!recovered.ok) throw recovered.error;
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(cleanupOwner.stop).toHaveBeenCalledTimes(2);
+    expect(runOwned).toHaveBeenCalledTimes(2);
+  } finally {
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("retains a capability failure when its injected owned runner also reports incomplete cleanup", async () => {
   const { directory, path } = await createArtifact();
   const capability = new AnalysisCapabilityUnavailableError(
