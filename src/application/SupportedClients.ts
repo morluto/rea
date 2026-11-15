@@ -597,6 +597,8 @@ const zedLocation = ({
         });
   const native = join(absoluteXdgConfigHome({ home, env }), "zed");
   const sandboxed = join(home, ...ZED_FLATPAK_CONFIG, "zed");
+  // XDG_CONFIG_HOME may itself name the Flatpak folder.
+  if (native === sandboxed) return ok(at(native));
   const flatpak = directoryPresent(sandboxed);
   if (!flatpak.ok) return flatpak;
   if (!flatpak.value) return ok(at(native));
