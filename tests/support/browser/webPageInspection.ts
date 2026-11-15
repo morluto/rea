@@ -55,7 +55,11 @@ export const createWebPageInspection = (
       },
     },
     frames: [],
-    dom: { total_nodes: 0, nodes: [] },
+    dom: {
+      total_nodes: 0,
+      node_value_length_unit: "utf16-code-units",
+      nodes: [],
+    },
     accessibility: {
       total_nodes: 0,
       text_capture: {
