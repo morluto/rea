@@ -111,7 +111,11 @@ const inspectReplacements = async (replacements: readonly Replacement[]) => {
       arguments: {},
     });
     expect(closed.isError).not.toBe(true);
-    expect(stderr).toBe("");
+    // The server announces itself on stderr; nothing else belongs there.
+    for (const line of stderr.split("\n").filter((value) => value !== ""))
+      expect(line).toMatch(
+        /^\[rea\] MCP (?:server ready|analysis runtime ready) — /u,
+      );
   } finally {
     await client.close();
     await transport.close();
