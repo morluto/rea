@@ -30,7 +30,7 @@ export type IntegrationMaintenance =
   | {
       readonly status: "current";
       readonly plannedActions: readonly [];
-      /** Clients left unmaintained because their registration is unknown. */
+      /** Clients left unmaintained because REA cannot identify or update their registration. */
       readonly unresolved?: readonly ClientRegistrationStatus[];
     }
   | {
@@ -69,7 +69,7 @@ const unresolvedRegistrationDetail = ({
 }: ClientRegistrationStatus): string =>
   `${client} (${config_path}): ${remediation ?? "Registration identity is unresolved"}`;
 
-/** Clients a maintenance result left alone because their registration is unknown. */
+/** Clients a maintenance result left alone because REA cannot identify or update their registration. */
 export const unresolvedMaintenanceClients = (
   maintenance: IntegrationMaintenance,
 ): readonly ClientRegistrationStatus[] =>
@@ -81,7 +81,7 @@ export const unresolvedMaintenanceClients = (
 export const unresolvedMaintenanceRemediation = (
   unresolved: readonly ClientRegistrationStatus[],
 ): string =>
-  `REA did not maintain ${unresolved.length === 1 ? "one client" : `${String(unresolved.length)} clients`} whose registration is unknown: ${unresolved.map(unresolvedRegistrationDetail).join(" ")}`;
+  `REA did not maintain ${unresolved.length === 1 ? "one client" : `${String(unresolved.length)} clients`} whose registration it cannot update: ${unresolved.map(unresolvedRegistrationDetail).join(" ")}`;
 
 /** A maintenance failure that still reports the unknown clients it found. */
 const unavailableMaintenance = (
@@ -120,7 +120,11 @@ export const existingMaintenanceScope = async (
   );
   const clients: string[] = [];
   const unresolved: ClientRegistrationStatus[] = [];
-  for (const { status: registration, activation } of registrations) {
+  for (const {
+    status: registration,
+    activation,
+    setupBlocker,
+  } of registrations) {
     if (registration.state === "unknown" || registration.state === "invalid") {
       unresolved.push(registration);
       continue;
@@ -131,6 +135,12 @@ export const existingMaintenanceScope = async (
       registration.command_identity !== "owned"
     )
       continue;
+    // Setup refuses a client its own policy blocks, and one refused client
+    // would fail the whole maintenance plan, so report it instead.
+    if (setupBlocker !== undefined) {
+      unresolved.push(registration);
+      continue;
+    }
     clients.push(registration.client);
   }
   // Each setup action rewrites only that client's own configuration path, so

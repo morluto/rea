@@ -483,4 +483,18 @@ it("reports a Junie registration Junie would not load in doctor and setup", asyn
   await expect(
     inspectClientConfiguration(row, {}, command),
   ).resolves.toMatchObject({ status: "invalid" });
+  // Setup would refuse Junie, so update reports it instead of failing the
+  // other clients' maintenance plan.
+  const scope = await existingMaintenanceScope(
+    home,
+    command[1] ?? "",
+    environment,
+  );
+  expect(scope.clients).not.toContain("junie");
+  expect(scope.unresolved).toEqual([
+    expect.objectContaining({
+      client: "junie",
+      remediation: expect.stringContaining("JUNIE_MCP_DEFAULT_LOCATIONS"),
+    }),
+  ]);
 });

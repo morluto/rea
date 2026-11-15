@@ -247,7 +247,7 @@ describe("update maintenance notices", () => {
     const result = await runUpdate("3.2.1", host);
     expect(result).toMatchObject({ status: "updated" });
     expect(result.status === "updated" && result.remediation).toBe(
-      "REA is updated. Restart agents running this installation to load the new version. REA did not maintain one client whose registration is unknown: mcporter (config/mcporter.json): Set an absolute MCPORTER_CONFIG.",
+      "REA is updated. Restart agents running this installation to load the new version. REA did not maintain one client whose registration it cannot update: mcporter (config/mcporter.json): Set an absolute MCPORTER_CONFIG.",
     );
   });
 });
