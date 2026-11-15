@@ -18,6 +18,43 @@ interface PathInputCase {
   readonly issuePath: readonly string[];
 }
 
+const pathInputCase = (
+  name: string,
+  field: string,
+  valid: Readonly<Record<string, unknown>>,
+  invalid: Readonly<Record<string, unknown>>,
+): PathInputCase => ({
+  name,
+  field,
+  valid,
+  invalid,
+  issuePath: field.split("."),
+});
+
+const captureAndDebuggerPathCases = (
+  absolute: string,
+  relative: string,
+): readonly PathInputCase[] => [
+  pathInputCase(
+    "inspect_pcap_capture",
+    "path",
+    { path: absolute },
+    { path: relative },
+  ),
+  pathInputCase(
+    "start_rizin_debug_session",
+    "path",
+    { path: absolute, inferior_tty: "/dev/null" },
+    { path: relative, inferior_tty: "/dev/null" },
+  ),
+  pathInputCase(
+    "start_rizin_debug_session",
+    "inferior_tty",
+    { path: absolute, inferior_tty: "/dev/null" },
+    { path: absolute, inferior_tty: relative },
+  ),
+];
+
 const createMcp = async (firmwareCalls: string[], profile?: "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("Invalid path input must not acquire a binary provider");
@@ -100,151 +137,136 @@ const standaloneAnalysisCases = (
 const inputCases = (
   absolute: string,
   relative: string,
-): readonly PathInputCase[] => {
-  const pathCase = (
-    name: string,
-    field: string,
-    valid: Readonly<Record<string, unknown>>,
-    invalid: Readonly<Record<string, unknown>>,
-  ): PathInputCase => ({
-    name,
-    field,
-    valid,
-    invalid,
-    issuePath: field.split("."),
-  });
-
-  return [
-    pathCase("open_binary", "path", { path: absolute }, { path: relative }),
-    pathCase(
-      "extract_artifact",
-      "output_root",
-      { output_root: absolute },
-      { output_root: relative },
-    ),
-    pathCase(
-      "analyze_javascript_application",
-      "input_path",
-      { input_path: absolute, detail: "complete" },
-      { input_path: relative, detail: "complete" },
-    ),
-    pathCase(
-      "open_binary",
-      "snapshot_path",
-      { path: absolute, snapshot_path: absolute },
-      { path: absolute, snapshot_path: relative },
-    ),
-    pathCase(
-      "close_binary",
-      "snapshot_path",
-      { snapshot_path: absolute },
-      { snapshot_path: relative },
-    ),
-    pathCase(
-      "export_evidence_bundle",
-      "path",
-      { path: absolute },
-      { path: relative },
-    ),
-    pathCase(
-      "import_evidence_bundle",
-      "path",
-      { path: absolute },
-      { path: relative },
-    ),
-    pathCase(
-      "compare_bundles",
-      "left_bundle_path",
-      { left_bundle_path: absolute, right_bundle_path: absolute },
-      { left_bundle_path: relative, right_bundle_path: absolute },
-    ),
-    pathCase(
-      "compare_bundles",
-      "right_bundle_path",
-      { left_bundle_path: absolute, right_bundle_path: absolute },
-      { left_bundle_path: absolute, right_bundle_path: relative },
-    ),
-    pathCase(
-      "binary_session",
-      "expected_server_path",
-      { expected_server_path: absolute },
-      { expected_server_path: relative },
-    ),
-    ...[
-      "inspect_managed_artifact",
-      "inspect_managed_members",
-      "inspect_managed_native_boundaries",
-    ].map((name) =>
-      pathCase(name, "path", { path: absolute }, { path: relative }),
-    ),
-    pathCase(
-      "inspect_firmware_regions",
-      "path",
-      { path: absolute },
-      { path: relative },
-    ),
-    pathCase(
-      "extract_firmware",
-      "path",
-      { path: absolute, output_directory: absolute },
-      { path: relative, output_directory: absolute },
-    ),
-    pathCase(
-      "extract_firmware",
-      "output_directory",
-      { path: absolute, output_directory: absolute },
-      { path: absolute, output_directory: relative },
-    ),
-    pathCase(
-      "inspect_analysis_view",
-      "source.path",
+): readonly PathInputCase[] => [
+  pathInputCase("open_binary", "path", { path: absolute }, { path: relative }),
+  pathInputCase(
+    "extract_artifact",
+    "output_root",
+    { output_root: absolute },
+    { output_root: relative },
+  ),
+  pathInputCase(
+    "analyze_javascript_application",
+    "input_path",
+    { input_path: absolute, detail: "complete" },
+    { input_path: relative, detail: "complete" },
+  ),
+  pathInputCase(
+    "open_binary",
+    "snapshot_path",
+    { path: absolute, snapshot_path: absolute },
+    { path: absolute, snapshot_path: relative },
+  ),
+  pathInputCase(
+    "close_binary",
+    "snapshot_path",
+    { snapshot_path: absolute },
+    { snapshot_path: relative },
+  ),
+  pathInputCase(
+    "export_evidence_bundle",
+    "path",
+    { path: absolute },
+    { path: relative },
+  ),
+  pathInputCase(
+    "import_evidence_bundle",
+    "path",
+    { path: absolute },
+    { path: relative },
+  ),
+  pathInputCase(
+    "compare_bundles",
+    "left_bundle_path",
+    { left_bundle_path: absolute, right_bundle_path: absolute },
+    { left_bundle_path: relative, right_bundle_path: absolute },
+  ),
+  pathInputCase(
+    "compare_bundles",
+    "right_bundle_path",
+    { left_bundle_path: absolute, right_bundle_path: absolute },
+    { left_bundle_path: absolute, right_bundle_path: relative },
+  ),
+  pathInputCase(
+    "binary_session",
+    "expected_server_path",
+    { expected_server_path: absolute },
+    { expected_server_path: relative },
+  ),
+  ...[
+    "inspect_managed_artifact",
+    "inspect_managed_members",
+    "inspect_managed_native_boundaries",
+  ].map((name) =>
+    pathInputCase(name, "path", { path: absolute }, { path: relative }),
+  ),
+  pathInputCase(
+    "inspect_firmware_regions",
+    "path",
+    { path: absolute },
+    { path: relative },
+  ),
+  pathInputCase(
+    "extract_firmware",
+    "path",
+    { path: absolute, output_directory: absolute },
+    { path: relative, output_directory: absolute },
+  ),
+  pathInputCase(
+    "extract_firmware",
+    "output_directory",
+    { path: absolute, output_directory: absolute },
+    { path: absolute, output_directory: relative },
+  ),
+  pathInputCase(
+    "inspect_analysis_view",
+    "source.path",
+    {
+      source: { kind: "evidence-file", path: absolute },
+      view: { kind: "summary" },
+    },
+    {
+      source: { kind: "evidence-file", path: relative },
+      view: { kind: "summary" },
+    },
+  ),
+  ...captureAndDebuggerPathCases(absolute, relative),
+  pathInputCase(
+    "capture_browser_scenario",
+    "browser.executable_path",
+    {
+      browser: { mode: "launch", executable_path: absolute },
+      start_url: { url: "https://example.test/" },
+      actions: [
+        { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+    },
+    {
+      browser: { mode: "launch", executable_path: relative },
+      start_url: { url: "https://example.test/" },
+      actions: [
+        { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+    },
+  ),
+  ...standaloneAnalysisCases(absolute, relative),
+  ...["executable_path", "application_path", "application_root"].map((field) =>
+    pathInputCase(
+      "capture_electron_scenario",
+      field,
       {
-        source: { kind: "evidence-file", path: absolute },
-        view: { kind: "summary" },
+        executable_path: absolute,
+        application_path: absolute,
+        [field]: absolute,
       },
       {
-        source: { kind: "evidence-file", path: relative },
-        view: { kind: "summary" },
+        executable_path: absolute,
+        application_path: absolute,
+        [field]: relative,
       },
     ),
-    pathCase(
-      "capture_browser_scenario",
-      "browser.executable_path",
-      {
-        browser: { mode: "launch", executable_path: absolute },
-        start_url: { url: "https://example.test/" },
-        actions: [
-          { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
-        ],
-      },
-      {
-        browser: { mode: "launch", executable_path: relative },
-        start_url: { url: "https://example.test/" },
-        actions: [
-          { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
-        ],
-      },
-    ),
-    ...standaloneAnalysisCases(absolute, relative),
-    ...["executable_path", "application_path", "application_root"].map(
-      (field) =>
-        pathCase(
-          "capture_electron_scenario",
-          field,
-          {
-            executable_path: absolute,
-            application_path: absolute,
-            [field]: absolute,
-          },
-          {
-            executable_path: absolute,
-            application_path: absolute,
-            [field]: relative,
-          },
-        ),
-    ),
-  ];
-};
+  ),
+];
 
 it("advertises full host-absolute path constraints after SDK schema conversion", async () => {
   const firmwareCalls: string[] = [];
@@ -303,6 +325,9 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
         "extract_firmware.output_directory",
         "inspect_go_binary.path NUL",
         "compare_bundles.left_bundle_path empty",
+        "inspect_pcap_capture.path",
+        "start_rizin_debug_session.path",
+        "start_rizin_debug_session.inferior_tty",
       ]),
     );
     expect(firmwareCalls).toEqual([]);
@@ -346,6 +371,9 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
         "inspect_analysis_view.source.path",
         "capture_browser_scenario.browser.executable_path",
         "capture_electron_scenario.application_root",
+        "inspect_pcap_capture.path",
+        "start_rizin_debug_session.path",
+        "start_rizin_debug_session.inferior_tty",
       ]),
     );
     expect(firmwareCalls).toEqual([]);
