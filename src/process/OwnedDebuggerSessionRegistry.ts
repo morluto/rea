@@ -14,6 +14,7 @@ import {
   retainedDebuggerCleanupFailure,
   type OwnedDebuggerStopResult,
 } from "./ownedDebuggerSession.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** What the registry needs from a persistent debugger session it owns. */
 export interface RegisteredDebuggerSession {
@@ -187,7 +188,7 @@ export class OwnedDebuggerSessionRegistry<
       .then(() => this.#options.stopProcess(session))
       .catch((cause: unknown): OwnedDebuggerStopResult => ({
         status: "incomplete",
-        reason: `${this.#options.stopFailurePrefix}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `${this.#options.stopFailurePrefix}: ${errorMessage(cause)}`,
       }))
       .then((stopped) => {
         if (stopped.status !== "incomplete") {

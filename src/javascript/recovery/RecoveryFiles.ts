@@ -36,6 +36,7 @@ import {
 } from "../../filesystem/RegularFile.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "recover_javascript_sources";
 
@@ -218,7 +219,7 @@ const snapshotRecoveryInput = async (
       );
     throw recoveryInputFailure(
       "path",
-      `Cannot snapshot UTF-8 JavaScript input ${path}: ${recoveryFailureMessage(cause)}`,
+      `Cannot snapshot UTF-8 JavaScript input ${path}: ${errorMessage(cause)}`,
       cause,
     );
   }
@@ -286,7 +287,7 @@ const recoveryInputLayoutPath = async (
       });
     throw recoveryInputFailure(
       "path",
-      `Cannot resolve selected JavaScript input parent ${path}: ${recoveryFailureMessage(cause)}`,
+      `Cannot resolve selected JavaScript input parent ${path}: ${errorMessage(cause)}`,
       cause,
     );
   }
@@ -352,7 +353,7 @@ export const snapshotRecoveryInputs = async (
     } catch (cause: unknown) {
       throw recoveryInputFailure(
         "path",
-        `Cannot preserve selected input path in published artifacts: ${path}: ${recoveryFailureMessage(cause)}`,
+        `Cannot preserve selected input path in published artifacts: ${path}: ${errorMessage(cause)}`,
         cause,
       );
     }
@@ -478,10 +479,6 @@ export const recoveryInputFailure = (
   new AnalysisInputError(OPERATION, { cause }, [
     { path: [field], reason: "invalid_value", message },
   ]);
-
-/** Convert one caught boundary cause into diagnostic text without masking its type. */
-export const recoveryFailureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Cancellation remains distinct from malformed source or provider output. */
 export const checkRecoveryCancellation = (signal?: AbortSignal): void => {

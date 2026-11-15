@@ -17,6 +17,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { kunaAddressFromJsonNumber } from "./KunaJson.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * stream-json 3's synchronous tokenizer behind `parser`, which its
@@ -85,9 +86,6 @@ const ROW_OVERHEAD_BYTES = 256;
 const ADMISSION_INTERVAL_BYTES = 64 * 1024;
 /** Per-row reserve for the owner's arrays, sorting and projections. */
 const ROW_REFERENCE_BYTES = 16;
-
-const describe = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /**
  * Longest key or kept number assembled. Kuna's field names and u64 decimals
@@ -259,7 +257,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
               diagnostics: { code: cause.code, ...cause.facts },
               userMessage: `${this.label} cannot be used`,
             })
-          : this.unusable(describe(cause));
+          : this.unusable(errorMessage(cause));
     this.#text = "";
     this.#inKey = false;
     this.#header = {};

@@ -34,6 +34,7 @@ import {
 } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import {
   createEvidence,
+  evidenceSubject,
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
@@ -509,11 +510,11 @@ const withAlternateWorkflowProfile = (
   const result = current.normalized_result;
   const subject = {
     path,
-    sha256: snapshot.target.sha256,
-    format: snapshot.target.format,
-    ...(snapshot.target.architecture === null
+    sha256: snapshot.target.identity.sha256,
+    format: snapshot.target.identity.format,
+    ...(snapshot.target.identity.architecture === null
       ? {}
-      : { architecture: snapshot.target.architecture }),
+      : { architecture: snapshot.target.identity.architecture }),
   };
   const alternateEvidence = createEvidence(subject, REA_WORKFLOW_PROVIDER, {
     operation: current.operation,
@@ -537,7 +538,7 @@ const withAlternateWorkflowProfile = (
       analysisProfile: alternateProfile,
       limitations: current.limitations,
       locations: current.locations,
-      subject,
+      subject: alternateEvidence.subject,
     },
   });
   return {
@@ -559,7 +560,7 @@ const withEarlierHistoricalEvidence = (
     createEvidence(
       {
         path,
-        sha256: snapshot.target.sha256,
+        sha256: snapshot.target.identity.sha256,
         format: "analysis-database",
       },
       REA_WORKFLOW_PROVIDER,
@@ -723,7 +724,7 @@ describe("snapshot output cleanup lifecycle", () => {
         if (!saved.ok) throw saved.error;
         const loaded = await readAnalysisSnapshot(path);
         if (!loaded.ok) throw loaded.error;
-        expect(loaded.value.target.sha256).toBe(opened.value.sha256);
+        expect(loaded.value.target.identity.sha256).toBe(opened.value.sha256);
       }
     } finally {
       const closed = await session.close();
@@ -1538,8 +1539,10 @@ describe("snapshot replay provider identity", () => {
       details: {
         binding_mismatch: {
           target: {
-            snapshot: { sha256: firstSnapshot.value.target.sha256 },
-            selected: { sha256: expect.any(String) },
+            snapshot: {
+              identity: { sha256: firstSnapshot.value.target.identity.sha256 },
+            },
+            selected: { identity: { sha256: expect.any(String) } },
           },
           profile_comparison: "not_compared",
         },
@@ -1772,7 +1775,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
             analysisProfile: mixedProfile,
             limitations: [],
             locations: [],
-            subject: null,
+            subject: evidenceSubject(unknownTarget("not-observed")),
           },
         }),
       ],
@@ -1821,20 +1824,7 @@ const expectProfilelessWorkflowSnapshotRejections = async (
                     originalWorkflow.execution.relationship_coverage,
                 }),
             locations: originalWorkflow.execution.locations,
-            subject:
-              originalWorkflow.execution.subject === null
-                ? null
-                : {
-                    path: originalWorkflow.execution.subject.path,
-                    sha256: originalWorkflow.execution.subject.sha256,
-                    format: originalWorkflow.execution.subject.format,
-                    ...(originalWorkflow.execution.subject.architecture === null
-                      ? {}
-                      : {
-                          architecture:
-                            originalWorkflow.execution.subject.architecture,
-                        }),
-                  },
+            subject: originalWorkflow.execution.subject,
           },
         }),
       ],
@@ -2059,8 +2049,8 @@ it.each([true, false])(
     const historical = createEvidence(
       {
         path: fixture.path,
-        sha256: saved.value.target.sha256,
-        format: saved.value.target.format,
+        sha256: saved.value.target.identity.sha256,
+        format: saved.value.target.identity.format,
       },
       evidence.provider,
       {

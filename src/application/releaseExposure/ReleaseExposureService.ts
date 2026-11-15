@@ -53,6 +53,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { goBuildPaths } from "../../domain/releaseExposureGoPaths.js";
 import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
 import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export interface ReleaseExposureOwners {
   readonly reader: ReleaseExposurePort;
@@ -321,7 +322,7 @@ export class ReleaseExposureService {
         return err(cause);
       return ok({
         family: "unknown",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         archivePaths: [],
       });
     }
@@ -345,7 +346,7 @@ export class ReleaseExposureService {
         kind: "failed",
         role: candidate.role,
         path: candidate.path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
     if (!result.ok) {
@@ -429,12 +430,7 @@ export class ReleaseExposureService {
     } catch (cause) {
       if (cause instanceof AnalysisError && stopsAudit(cause))
         return err(cause);
-      return ok(
-        failedMetadata(
-          cause instanceof Error ? cause.message : String(cause),
-          path,
-        ),
-      );
+      return ok(failedMetadata(errorMessage(cause), path));
     }
   }
 }
@@ -580,7 +576,7 @@ const ownerCloseFailure = (
           cause instanceof AnalysisError
             ? projectAnalysisError(cause)
             : {
-                message: cause instanceof Error ? cause.message : String(cause),
+                message: errorMessage(cause),
               },
       })),
     },

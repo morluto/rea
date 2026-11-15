@@ -176,6 +176,7 @@ import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
 import { UnsupportedBinaryPlistUidError } from "../domain/apple/plistScalars.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -1055,7 +1056,7 @@ class NativeMacOSClient implements AnalysisClient {
           diagnostics: {
             phase: "codesign-capture",
             path: this.target.path,
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
           },
         }),
       );

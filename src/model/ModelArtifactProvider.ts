@@ -54,6 +54,7 @@ import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_model_artifact";
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
@@ -182,8 +183,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           cause,
           diagnostics: {
             path: input.path,
-            reason:
-              primary instanceof Error ? primary.message : String(primary),
+            reason: errorMessage(primary),
           },
         });
       if (

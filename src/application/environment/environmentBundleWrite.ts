@@ -33,6 +33,7 @@ import type {
   EnvironmentExportInput,
   WrittenBundleFile,
 } from "./environmentExport.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /**
  * A host failure on one file the bundle writer was reading or writing.
@@ -344,11 +345,10 @@ export const writeEnvironmentBundle = async (
         const primary = isHostSystemFailure(cause)
           ? new BundleFileHostFailure(plan.packageSource.path, "reading", cause)
           : cause;
-        throw new ArtifactReaderFailure(
-          "io",
-          primary instanceof Error ? primary.message : String(primary),
-          { cause: primary, partialObservation: publication },
-        );
+        throw new ArtifactReaderFailure("io", errorMessage(primary), {
+          cause: primary,
+          partialObservation: publication,
+        });
       }
     }
     throw cause;

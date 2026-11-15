@@ -45,6 +45,7 @@ import {
   XmlPlistTextDecodeError,
 } from "../../domain/propertyListXmlText.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /**
  * Input ceiling matches native command output; projection is bounded separately.
@@ -102,7 +103,7 @@ const plistNestingError = (cause: unknown): AnalysisResourceConstraintError =>
   new AnalysisResourceConstraintError(
     "inspect_plist",
     "memory",
-    cause instanceof Error ? cause.message : String(cause),
+    errorMessage(cause),
     { maximum_nesting_depth: MAX_NATIVE_PLIST_NESTING_DEPTH },
     {
       cause,
@@ -139,11 +140,9 @@ const plistOutputError = (cause: unknown, reason?: string): PlistParseError => {
   if (cause instanceof InternalInvariantError) throw cause;
   return cause instanceof PlistNestingLimitError
     ? plistNestingError(cause)
-    : new AnalysisOutputError(
-        "inspect_plist",
-        reason ?? (cause instanceof Error ? cause.message : String(cause)),
-        { cause },
-      );
+    : new AnalysisOutputError("inspect_plist", reason ?? errorMessage(cause), {
+        cause,
+      });
 };
 
 /**

@@ -1,4 +1,4 @@
-import { unknownTarget } from "../domain/targetIdentity.js";
+import { browserUrlTargetIdentity } from "../domain/browserObservation.js";
 import { z } from "zod";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { WebRuntimePort } from "../ports/WebRuntimePort.js";
@@ -156,15 +156,19 @@ export class WebRuntimeService {
         ),
       );
     return completeProviderEvidence(
-      createEvidence(unknownTarget("not-observed"), this.provider.identity(), {
-        predicateType: `rea.${operation.replaceAll("_", "-")}`,
-        operation,
-        parameters: input,
-        result,
-        confidence: "observed",
-        authority: "external-service",
-        limitations: result.limitations,
-      }),
+      createEvidence(
+        browserUrlTargetIdentity(result.target.initial_url),
+        this.provider.identity(),
+        {
+          predicateType: `rea.${operation.replaceAll("_", "-")}`,
+          operation,
+          parameters: input,
+          result,
+          confidence: "observed",
+          authority: "external-service",
+          limitations: result.limitations,
+        },
+      ),
       options?.signal,
     );
   }

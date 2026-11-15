@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { createCatalogIdentity } from "./catalogIdentity.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 // Retained views are loaded like producers: their full cross-domain output
 // contract is unnecessary until a task actually queries retained analysis.
@@ -88,8 +88,7 @@ export const DISCOVER_TOOLS = {
 } as const;
 
 export type CatalogIdentity = ReturnType<typeof createCatalogIdentity>;
-const digest = (value: unknown): string =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const digest = (value: unknown): string => sha256Hex(JSON.stringify(value));
 
 /** Identity covers the discoverable inventory and policy, not mutable visibility. */
 export const progressiveCatalogIdentity = (

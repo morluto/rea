@@ -40,6 +40,7 @@ import {
   copyHopperSource,
   type HopperImageCopyOptions,
 } from "./HopperImageCopy.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const hopperFatMachOImageSchema = z.strictObject({
   method: z.enum(["fat32_thin_slice", "fat64_thin_slice"]),
@@ -110,7 +111,7 @@ export const resolveHopperMachOImage = async (
   } catch (cause: unknown) {
     // Keep the OS error so a read-permission denial reports access_denied.
     return invalid(
-      `Cannot read Mach-O source for Hopper image preparation: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot read Mach-O source for Hopper image preparation: ${errorMessage(cause)}`,
       cause,
     );
   }
@@ -141,7 +142,7 @@ const inspectAndFinalizeHopperMachOImage = async (
         : err(
             new BinaryTargetError(
               target.path,
-              `Cannot validate Mach-O image: ${cause instanceof Error ? cause.message : String(cause)}`,
+              `Cannot validate Mach-O image: ${errorMessage(cause)}`,
               { cause },
             ),
           );
@@ -193,10 +194,7 @@ const retainHopperPreflightCloseFailure = (options: {
     resource,
   );
   const cleanup = {
-    reason:
-      options.closeFailure instanceof Error
-        ? options.closeFailure.message
-        : String(options.closeFailure),
+    reason: errorMessage(options.closeFailure),
     resources: [resource],
   };
   const cancellationIsPrimary =

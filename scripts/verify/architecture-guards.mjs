@@ -12,6 +12,10 @@ import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import {
+  cliTextGuardSelects,
+  cliTextOutsideCliCount,
+} from "./cli-text-guard.mjs";
+import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
@@ -324,7 +328,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     if (owners.includes(file.path)) continue;
     const count =
       typeof pattern === "function"
-        ? pattern(file.content)
+        ? pattern(file.content, file.path)
         : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
@@ -474,14 +478,59 @@ checkCounted(
   [],
 );
 
-// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// `tshark -T json` has one envelope reader, src/domain/pcap/tsharkJsonPackets.ts,
 // which owns malformed JSON, the packet array and each packet's layers.
 checkCounted(
-  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/domain/pcap/tsharkJsonPackets)",
   "tshark-json-envelope",
   files,
   /\b_source\s*\.\s*layers\b/gu,
-  ["src/pcap/TsharkJsonPackets.ts"],
+  ["src/domain/pcap/tsharkJsonPackets.ts"],
+);
+
+// Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
+// The pattern matches the inline copy with the same expression in all three
+// places; a named local helper with this body is the same copy.
+// Copies that run in another realm cannot import the owner and are excluded by
+// name, so no slice rewrites them: the regex worker's source string and a
+// fetch run inside the browser page through page.evaluate.
+const ISOLATED_ERROR_MESSAGE_COPIES = new Map([
+  ["src/browser/PlaywrightScenarioRequest.ts", 1],
+  ["src/process/RegexMatcher.ts", 1],
+]);
+const inlineErrorMessage =
+  /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\(\s*\1\s*\)/gu;
+checkCounted(
+  "inline error-to-message conversion (use errorMessage from src/kernel/errorMessage)",
+  "inline-error-message",
+  files,
+  (content, path) =>
+    Math.max(
+      0,
+      (content.match(inlineErrorMessage)?.length ?? 0) -
+        (ISOLATED_ERROR_MESSAGE_COPIES.get(path) ?? 0),
+    ),
+  ["src/kernel/errorMessage.ts"],
+);
+
+// Two hexadecimal digits for one byte have one owner, src/kernel/byteToHex.ts.
+checkCounted(
+  "inline byte-to-hex formatting (use byteToHex from src/kernel/byteToHex)",
+  "inline-byte-hex",
+  files,
+  /\.toString\(16\)\s*\.padStart\(\s*2\s*,\s*"0"\s*\)/gu,
+  ["src/kernel/byteToHex.ts"],
+);
+
+// A one-shot SHA-256 hex digest of an in-memory value has one owner,
+// src/kernel/sha256Hex.ts. Incremental and streamed hashing (a Hash updated
+// more than once) is not counted.
+checkCounted(
+  "one-shot SHA-256 hex digest (use sha256Hex from src/kernel/sha256Hex)",
+  "inline-sha256-hex",
+  files,
+  /createHash\(\s*"sha256"\s*\)\s*\.update\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)\s*\.digest\(\s*"hex"\s*\)/gu,
+  ["src/kernel/sha256Hex.ts"],
 );
 
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
@@ -531,18 +580,13 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
-// Services name the contract field they refuse or ask the caller to change;
-// the CLI layer owns option spellings (each command's field binding renames
-// issue paths to CLI keys). A `--flag` written outside src/cli copies that
-// mapping and goes stale when the command renames the option.
+// src/cli owns option and command spellings; cli-text-guard.mjs states the
+// rule and its written exemptions (host-only commands, CLI-only files).
 checkCounted(
-  "REA CLI option named outside the CLI layer (name the contract field; src/cli owns option spellings)",
+  "REA CLI option or command named outside the CLI layer (name the contract field or operation; src/cli owns option and command spellings)",
   "cli-option-text-outside-cli",
-  files.filter(
-    ({ path }) =>
-      !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
-  ),
-  /\(CLI:? [^)\n]*--[a-z]|--[a-z][a-z0-9-]* on the CLI|or (?:use|pass) --[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]/gu,
+  files.filter(({ path }) => cliTextGuardSelects(path)),
+  cliTextOutsideCliCount,
   [],
 );
 

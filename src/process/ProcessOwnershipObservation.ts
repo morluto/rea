@@ -64,6 +64,7 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import type { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Native preparation transfers its typed helper owner instead of an unavailable row. */
 const rethrowInspectionFailure = (cause: unknown): void => {
@@ -1986,6 +1987,3 @@ const processIsGone = async (
     return false;
   }
 };
-
-export const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

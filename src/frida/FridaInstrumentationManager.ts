@@ -53,6 +53,7 @@ import {
   type FridaCapturePolicy,
 } from "../domain/fridaCapturePolicy.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -1705,9 +1706,6 @@ const providerError = (
         }),
   });
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const cancelledOperation = (
   operation: string,

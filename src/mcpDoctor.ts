@@ -39,6 +39,7 @@ import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 import { isRecord } from "./domain/isRecord.js";
 import { resolveMcpOutputSchemaProfile } from "./contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "./kernel/errorMessage.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -670,9 +671,6 @@ const captureStderr = () => {
     }),
   };
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Report the transport's typed cleanup reason and the resources it retains. */
 const cleanupFailureDetail = (cause: unknown): string => {

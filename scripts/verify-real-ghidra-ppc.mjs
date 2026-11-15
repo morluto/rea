@@ -234,7 +234,7 @@ try {
       const snapshot = parseAnalysisSnapshot(
         JSON.parse(await readFile(snapshotPath, "utf8")),
       );
-      assert.equal(snapshot.target.architecture, "powerpc");
+      assert.equal(snapshot.target.identity.architecture, "powerpc");
       assert.equal(
         snapshot.binding.analysis_profile.parameters.language_id,
         "PowerPC:BE:32:default",

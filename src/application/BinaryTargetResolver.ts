@@ -132,6 +132,7 @@ import {
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
 
@@ -607,10 +608,7 @@ const targetFileCleanupError = (
       cause: failure,
       cleanupPrimary: primary,
       cleanup: {
-        reason:
-          failure.cleanupCause instanceof Error
-            ? failure.cleanupCause.message
-            : String(failure.cleanupCause),
+        reason: errorMessage(failure.cleanupCause),
         resources: [failure.path],
       },
       ...childFailureDiagnostics(

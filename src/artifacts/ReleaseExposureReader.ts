@@ -121,6 +121,7 @@ import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferen
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "audit_release_exposure";
 type PackageFormat = Extract<
@@ -3722,7 +3723,7 @@ const releaseExposureFailurePrimary = (
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

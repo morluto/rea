@@ -17,6 +17,7 @@ import {
   SqliteInspectionFailure,
   sqlitePrimaryResultCode,
 } from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** SQLite's generic SQL error, raised while compiling or evaluating an expression. */
 const SQLITE_ERROR = 1;
@@ -192,7 +193,7 @@ const decodeSchemaText = (
   } catch (cause: unknown) {
     throw new SqliteInspectionFailure(
       "format",
-      `SQLite schema ${label} contains malformed ${encoding} text: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `SQLite schema ${label} contains malformed ${encoding} text: ${errorMessage(cause)}`,
     );
   }
 };
@@ -749,9 +750,9 @@ const resultColumnLimitFailure = (
   )
     return undefined;
   return new SqliteColumnLimitFailure(
-    `SQLite cannot return ${String(selectedColumns)} selected result columns; this connection permits at most ${String(engineColumnLimit)}: ${
-      cause instanceof Error ? cause.message : String(cause)
-    }`,
+    `SQLite cannot return ${String(selectedColumns)} selected result columns; this connection permits at most ${String(engineColumnLimit)}: ${errorMessage(
+      cause,
+    )}`,
     selectedColumns,
     engineColumnLimit,
   );
@@ -784,7 +785,7 @@ const rowEvaluationFailure = (
   if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
   const unavailable = new SqliteInspectionFailure(
     "row-evaluation",
-    `SQLite cannot prepare or evaluate rows of table ${JSON.stringify(table.name)} on REA's read-only connection: ${cause instanceof Error ? cause.message : String(cause)}`,
+    `SQLite cannot prepare or evaluate rows of table ${JSON.stringify(table.name)} on REA's read-only connection: ${errorMessage(cause)}`,
   );
   const generated = new Set(
     table.columns
@@ -845,7 +846,7 @@ const rowEvaluationFailure = (
     ]
       .map(
         ([name, failure]) =>
-          `${JSON.stringify(name)}: ${failure instanceof Error ? failure.message : String(failure)}`,
+          `${JSON.stringify(name)}: ${errorMessage(failure)}`,
       )
       .join("; ")}`,
     remaining.length > 0 ? remaining : readableStoredColumns(),

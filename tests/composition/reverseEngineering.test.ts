@@ -64,11 +64,23 @@ it.each(["objdump", "rizin"] as const)(
         output_budget_bytes: 8,
         output_budget_source: "request",
         output_truncated: true,
+        output_limit: {
+          control_kind: "parameter",
+          parameter: "max_output_bytes",
+          effective_value: 8,
+          unit: "bytes",
+          minimum: 1,
+          default_value: 16 * 1024 * 1024,
+          applies_at: "next_call",
+        },
         completion_status: "unknown",
       });
       expect(limited.value.parameters).toMatchObject({ max_output_bytes: 8 });
       expect(limited.value.limitations).toContainEqual(
         expect.stringContaining("max_output_bytes=8"),
+      );
+      expect(limited.value.limitations.join(" ")).not.toContain(
+        "--max-output-bytes",
       );
       const recovered = await inspect(32);
       if (!recovered.ok) throw recovered.error;
@@ -79,6 +91,9 @@ it.each(["objdump", "rizin"] as const)(
         output_truncated: false,
         completion_status: "complete",
       });
+      expect(recovered.value.normalized_result).not.toHaveProperty(
+        "output_limit",
+      );
       expect(recovered.value.parameters).toMatchObject({
         max_output_bytes: 32,
       });
