@@ -1,10 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 
 import {
   authenticatedServer,
@@ -19,100 +19,8 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it.skipIf(process.platform === "win32")(
-  "closes cancelled discovery probes, stops queued probes and reuses the MCP connection",
-  async () => {
-    const directory = await createTestTempDirectory("rea-cutter-discovery-");
-    await chmod(directory, 0o700);
-    const sockets = new Set<Socket>();
-    let accepted = 0;
-    const peer = createServer((socket) => {
-      accepted += 1;
-      sockets.add(socket);
-      socket.on("error", () => undefined);
-      socket.once("close", () => sockets.delete(socket));
-      // Drain authentication bytes so a paused readable cannot hide peer EOF.
-      socket.resume();
-    });
-    const descriptors: string[] = [];
-    const service = new CutterBridgeService(
-      new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: directory }),
-    );
-    const server = new McpServer({ name: "cutter-discovery", version: "1" });
-    registerCutterTools(
-      server,
-      service,
-      silentLogger,
-      createToolResultDelivery(undefined),
-    );
-    const client = new Client({ name: "cutter-discovery", version: "1" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    const controller = new AbortController();
-    try {
-      await new Promise<void>((resolve) =>
-        peer.listen(0, "127.0.0.1", resolve),
-      );
-      const address = peer.address();
-      if (address === null || typeof address === "string")
-        throw new Error("Expected private loopback listener");
-      for (let index = 0; index < 9; index += 1) {
-        const sessionId = randomUUID();
-        const path = join(directory, `cutter-${process.pid}-${sessionId}.json`);
-        descriptors.push(path);
-        await writeFile(
-          path,
-          JSON.stringify({
-            session_id: sessionId,
-            pid: process.pid,
-            host: "127.0.0.1",
-            port: address.port,
-            token: "discovery-test-transport-token",
-            document_generation: 0,
-            current_file: null,
-            cutter_version: null,
-            identity_status: "partial",
-          }),
-          { mode: 0o600 },
-        );
-      }
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const request = client.callTool(
-        { name: "list_cutter_sessions", arguments: {} },
-        { signal: controller.signal },
-      );
-      await expect.poll(() => accepted, { timeout: 5_000 }).toBe(8);
-      controller.abort();
-      await expect(request).rejects.toThrow(/abort/iu);
-      // Inspect the native peers; rejecting the SDK promise alone proves no cleanup.
-      await expect.poll(() => sockets.size, { timeout: 1_000 }).toBe(0);
-      expect(accepted).toBe(8);
-      for (const path of descriptors) await rm(path);
-      const reply = await client.callTool({
-        name: "list_cutter_sessions",
-        arguments: {},
-      });
-      expect(reply.isError).not.toBe(true);
-      expect(
-        toolContract("list_cutter_sessions").outputSchema.parse(
-          reply.structuredContent,
-        ),
-      ).toMatchObject({
-        sessions: [],
-        discovery_status: "no_live_bridge_found",
-        bridge_directory_security: "private_verified",
-      });
-      expect(accepted).toBe(8);
-    } finally {
-      for (const socket of sockets) socket.destroy();
-      await client.close();
-      await server.close();
-      await new Promise<void>((resolve) => peer.close(() => resolve()));
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
+// CutterBridgeClient's per-probe request deadline.
+const CUTTER_REQUEST_DEADLINE_MS = 25_000;
 
 it("propagates MCP cancellation into an active Cutter command", async () => {
   let markDispatched: (() => void) | undefined;
@@ -260,7 +168,11 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
     const first = call("first queued command");
     const second = call("second queued command");
     pending = [first, second];
-    await entered;
+    await awaitAcknowledgement(
+      entered,
+      Promise.race([first, second]),
+      "Cutter cleanup verification",
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     releaseProof();
     const results = await Promise.all([first, second]);
@@ -275,15 +187,9 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
 });
 
 it("cancels active discovery sockets, stops queued probes and recovers on the same MCP connection", async () => {
-  const { createServer } = await import("node:net");
-  const { writeFile, rm } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  const { CutterBridgeClient } =
-    await import("../../../src/cutter/CutterBridgeClient.js");
-  const { createTestTempDirectory } =
-    await import("../../fixtures/temporaryDirectory.js");
   const root = await createTestTempDirectory("rea-cutter-discovery-cancel-");
-  const sockets = new Set<import("node:net").Socket>();
+  if (process.platform !== "win32") await chmod(root, 0o700);
+  const sockets = new Set<Socket>();
   let connections = 0;
   let ready!: () => void;
   const connected = new Promise<void>((resolve) => {
@@ -350,15 +256,20 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    const requested = performance.now();
     const request = client.callTool(
       { name: "list_cutter_sessions", arguments: {} },
       { signal: controller.signal },
     );
-    await connected;
+    await awaitAcknowledgement(connected, request, "Cutter discovery");
     controller.abort(new Error("selected discovery cancellation"));
-    await expect(request).rejects.toThrow();
+    await expect(request).rejects.toThrow("selected discovery cancellation");
     await expect.poll(() => settled).toBe(true);
     await expect.poll(() => sockets.size).toBe(0);
+    // Probes the abort missed would still close at their own request deadline.
+    expect(performance.now() - requested).toBeLessThan(
+      CUTTER_REQUEST_DEADLINE_MS,
+    );
     expect(connections).toBe(8);
     await Promise.all(paths.map((path) => rm(path)));
     const recovered = await client.callTool({
@@ -366,13 +277,27 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       arguments: {},
     });
     expect(recovered.isError).not.toBe(true);
+    expect(
+      toolContract("list_cutter_sessions").outputSchema.parse(
+        recovered.structuredContent,
+      ),
+    ).toMatchObject({
+      sessions: [],
+      discovery_status: "no_live_bridge_found",
+      ...(process.platform === "win32"
+        ? {}
+        : { bridge_directory_security: "private_verified" }),
+    });
     expect(connections).toBe(8);
   } finally {
     controller.abort();
     for (const socket of sockets) socket.destroy();
-    await Promise.allSettled([client.close(), server.close()]);
-    await service.close();
-    await new Promise<void>((resolve) => peer.close(() => resolve()));
+    try {
+      await Promise.allSettled([client.close(), server.close()]);
+      await service.close();
+    } finally {
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
   }
 });
 

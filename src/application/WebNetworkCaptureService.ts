@@ -5,9 +5,9 @@ import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type { WebNetworkCapturePort } from "./WebNetworkCapturePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
@@ -46,11 +46,7 @@ export class WebNetworkCaptureService {
     callerPaths?: { readonly capture: string; readonly descriptor?: string },
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const failure = (error: AnalysisError): Result<never, AnalysisError> =>
       err(redactExplicitFailure(error, captureSensitiveValues(rawInput)));
     const parsed = inspectWebNetworkCaptureInputSchema.safeParse(rawInput);
@@ -243,6 +239,15 @@ export class WebNetworkCaptureService {
             },
           }),
       sensitive_value_count: input.sensitive_values.length,
+      ...(input.max_input_bytes === undefined
+        ? {}
+        : { max_input_bytes: input.max_input_bytes }),
+      ...(input.max_reply_bytes === undefined
+        ? {}
+        : { max_reply_bytes: input.max_reply_bytes }),
+      ...(input.max_nesting_depth === undefined
+        ? {}
+        : { max_nesting_depth: input.max_nesting_depth }),
       ...(input.capture_timeout_ms === undefined
         ? {}
         : { capture_timeout_ms: input.capture_timeout_ms }),

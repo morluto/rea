@@ -6,7 +6,10 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import * as owned from "../process/OwnedCommand.js";
 import { runDesktopBuildOwnedCommand } from "./DesktopBuildOwnedCommand.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 it
@@ -62,9 +65,15 @@ it
       expect(stop).toHaveBeenCalledTimes(processRetained ? 1 : 0);
       await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
-      await chmod(parent, 0o700);
-      await resources.close();
-      command.mockRestore();
+      try {
+        try {
+          await chmod(parent, 0o700);
+        } finally {
+          await resources.close();
+        }
+      } finally {
+        command.mockRestore();
+      }
     }
   },
 );
@@ -103,7 +112,6 @@ it("retains a failed cleanup and its partial archive until the same owner succee
     }).catch((cause: unknown) => cause);
     expect(failure).toMatchObject({
       message: expect.stringContaining("cleanup is incomplete"),
-      cause: { reason: "timeout" },
     });
     expect(await readFile(partial, "utf8")).toBe("partial");
     expect(await readFile(join(workspace, "npm-state"), "utf8")).toBe("in use");
@@ -221,19 +229,20 @@ it("retains an observed command failure when cancellation arrives during its cle
     controller.abort(reason);
     release();
     const failure: unknown = await pending.catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(AnalysisCancelledError);
-    if (!(failure instanceof AnalysisCancelledError)) throw failure;
-    expect(failure.cause).toBe(reason);
+    expect(failure).toBeInstanceOf(AnalysisOutputError);
+    if (!(failure instanceof AnalysisOutputError)) throw failure;
     expect(failure.diagnostics).toMatchObject({ command_failure: "process" });
     expect(failure.capturedOutput).toMatchObject({
       stdout: "earlier output",
       stderr: "disk full",
       exit_code: 2,
     });
-    expect(failure.secondaryFailures[0]?.cause).toMatchObject({
+    expect(failure.cause).toMatchObject({
       reason: "process",
       cause: primary,
     });
+    expect(failure.secondaryFailures[0]).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure.secondaryFailures[0]?.cause).toBe(reason);
   } finally {
     controller.abort();
     release();

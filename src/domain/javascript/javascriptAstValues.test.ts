@@ -9,7 +9,6 @@ import {
   staticObjectCopyPropertyReader,
   staticObjectPropertyNames,
 } from "./javascriptAstValues.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 it("keeps string spread indices separate from named descriptor fields", () => {
   for (const text of ["", "x", "😀", "x".repeat(1_000_000)]) {
@@ -145,17 +144,17 @@ it("limits unary-plus keys to transparent numeric literals", () => {
     ).toBeNull();
 });
 
-it("bounds nested inline object spreads without losing a shallow final property", () => {
+it("reads nested inline object spreads beyond the former evaluator depth cap", () => {
   let object = t.objectExpression([
     t.objectProperty(t.identifier("stdio"), t.stringLiteral("inherit")),
   ]);
-  for (let depth = 0; depth < SEMANTIC_EXPRESSION_DEPTH_LIMIT; depth++)
+  for (let depth = 0; depth < 1_024; depth++)
     object = t.objectExpression([t.spreadElement(object)]);
   expect(staticObjectProperty(object, "stdio").status).toBe("explicit");
   expect(
     staticObjectProperty(t.objectExpression([t.spreadElement(object)]), "stdio")
       .status,
-  ).toBe("dynamic");
+  ).toBe("explicit");
 });
 
 it("collects complete own-key sets through bounded literal spreads", () => {
@@ -222,17 +221,17 @@ it("retains known keys alongside unresolved object membership", () => {
   ).toEqual({ status: "partial", names: ["direct"] });
 });
 
-it("does not claim a complete key set after exceeding spread depth", () => {
+it("keeps complete key sets across deeply nested finite inline spreads", () => {
   let object = t.objectExpression([
     t.objectProperty(t.identifier("query"), t.objectExpression([])),
   ]);
-  for (let depth = 0; depth < SEMANTIC_EXPRESSION_DEPTH_LIMIT; depth++)
+  for (let depth = 0; depth < 1_024; depth++)
     object = t.objectExpression([t.spreadElement(object)]);
   expect(staticObjectPropertyNames(object).status).toBe("complete");
   expect(
     staticObjectPropertyNames(t.objectExpression([t.spreadElement(object)]))
       .status,
-  ).toBe("partial");
+  ).toBe("complete");
 });
 
 it("enumerates a wide inline spread without a variadic call overflow", () => {

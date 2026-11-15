@@ -5,6 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { openStateDocument, UNREADABLE_GZIP } from "./gzipDocument.js";
 import { textualView } from "./stateFormats.js";
+import {
+  DESKTOP_VIEW_DEFAULTS,
+  desktopViewPolicy,
+  type DesktopViewPolicy,
+} from "./desktopViewPolicy.js";
 import { zipArchive } from "./zipArchive.fixture.js";
 
 const MIB = 1024 * 1024;
@@ -18,16 +23,53 @@ const GNUMERIC = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 /** What the state view reads from a file's bytes: its format, compression, and view or error. */
-const read = (name: string, bytes: Uint8Array) => {
-  const document = openStateDocument(name, bytes);
+const read = (
+  name: string,
+  bytes: Uint8Array,
+  policy: DesktopViewPolicy = DESKTOP_VIEW_DEFAULTS,
+) => {
+  const document = openStateDocument(name, bytes, policy);
   if ("error" in document) return document;
   const { format, compression } = document;
   return format === "text" || format === "xml"
-    ? { format, compression, view: textualView(format, document.bytes) }
+    ? { format, compression, view: textualView(format, document.bytes, policy) }
     : { format, compression };
 };
 
 describe("openStateDocument", () => {
+  it("recovers the selected gzip document size and inner text view budgets", () => {
+    const bytes = gzipSync("one\ntwo\nthree");
+    expect(
+      read("notes", bytes, desktopViewPolicy({ zip_entry_bytes: 12 })),
+    ).toMatchObject({
+      compression: "gzip",
+      error: "larger than the 12 bytes a compressed document's view reads",
+    });
+    expect(
+      read(
+        "notes",
+        bytes,
+        desktopViewPolicy({ zip_entry_bytes: 13, text_lines: 2 }),
+      ),
+    ).toMatchObject({
+      compression: "gzip",
+      view: { ok: true, value: { lines: ["one", "two"], truncated: true } },
+    });
+    expect(
+      read(
+        "notes",
+        bytes,
+        desktopViewPolicy({ zip_entry_bytes: 13, text_lines: 3 }),
+      ),
+    ).toMatchObject({
+      compression: "gzip",
+      view: {
+        ok: true,
+        value: { lines: ["one", "two", "three"], truncated: false },
+      },
+    });
+  });
+
   it("reads a gzip file's XML document as the same view the document has uncompressed", () => {
     expect(read("Budget.gnumeric", gzipSync(GNUMERIC))).toEqual({
       ...read("Budget.gnumeric", Buffer.from(GNUMERIC)),

@@ -104,6 +104,11 @@ export class ArtifactPathRegistry {
     private readonly budget?: {
       readonly maxParts: number;
       readonly maxNodes: number;
+      readonly limitFailure?: (
+        resource: "path_parts" | "path_nodes",
+        effectiveValue: number,
+        requiredValue: number,
+      ) => ArtifactReaderFailure;
     },
   ) {}
 
@@ -136,10 +141,17 @@ export class ArtifactPathRegistry {
   #visit(path: string, kind?: DestinationEntryKind): void {
     const parts = path.split("/");
     if (this.budget !== undefined && parts.length > this.budget.maxParts)
-      throw artifactFixedLimitFailure(
-        "Artifact path depth",
-        this.budget.maxParts,
-        "path parts",
+      throw (
+        this.budget.limitFailure?.(
+          "path_parts",
+          this.budget.maxParts,
+          parts.length,
+        ) ??
+        artifactFixedLimitFailure(
+          "Artifact path depth",
+          this.budget.maxParts,
+          "path parts",
+        )
       );
     if (this.budget !== undefined) {
       let observed = this.#root;
@@ -147,10 +159,17 @@ export class ArtifactPathRegistry {
         const existing = observed.children.get(part);
         if (existing === undefined) {
           if (parts.length - index > this.budget.maxNodes - this.#nodeCount)
-            throw artifactFixedLimitFailure(
-              "Artifact path tree",
-              this.budget.maxNodes,
-              "path nodes",
+            throw (
+              this.budget.limitFailure?.(
+                "path_nodes",
+                this.budget.maxNodes,
+                this.#nodeCount + parts.length - index,
+              ) ??
+              artifactFixedLimitFailure(
+                "Artifact path tree",
+                this.budget.maxNodes,
+                "path nodes",
+              )
             );
           break;
         }

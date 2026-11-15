@@ -1,3 +1,4 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type {
   ProgressReporter,
   ProgressUpdate,
@@ -15,12 +16,9 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 
-export type HopperRequestResult = Result<JsonValue, HopperError>;
+type HopperRequestResult = Result<JsonValue, HopperError>;
 
-/** Node timer ceiling; larger deadlines would be clamped instead of honored. */
-const MAX_TIMEOUT_MS = 2_147_483_647;
-
-export interface HopperRequestQueueOptions {
+interface HopperRequestQueueOptions {
   readonly signal?: AbortSignal;
   /** Caller deadline from admission, including time waiting in the FIFO. */
   readonly timeoutMs?: number;
@@ -83,12 +81,12 @@ export class HopperRequestQueue {
       timeoutMs !== undefined &&
       (!Number.isInteger(timeoutMs) ||
         timeoutMs < 0 ||
-        timeoutMs > MAX_TIMEOUT_MS)
+        timeoutMs > MAX_NODE_TIMER_DELAY_MS)
     )
       return Promise.resolve(
         err(
           new HopperProtocolError(
-            `Hopper timeoutMs must be an integer between 0 and ${String(MAX_TIMEOUT_MS)}`,
+            `Hopper timeoutMs must be an integer between 0 and ${String(MAX_NODE_TIMER_DELAY_MS)}`,
           ),
         ),
       );
@@ -219,11 +217,6 @@ export class HopperRequestQueue {
   /** Return whether an id belongs to a request that has not crossed the wire. */
   hasQueued(id: number): boolean {
     return this.#queue.some((entry) => entry.id === id);
-  }
-
-  /** Number of caller requests waiting behind the active bridge operation. */
-  queuedCount(): number {
-    return this.#queue.length;
   }
 
   #size(): number {

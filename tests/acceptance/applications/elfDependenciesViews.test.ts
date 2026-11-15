@@ -3,17 +3,25 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../../src/cli/contractCliDescription.js";
+import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../../src/contracts/analysisViewToolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { elfDependencyFixture } from "../../../src/native/elf/ElfDependencies.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const dependenciesContract = toolContract("inspect_elf_dependencies");
-const viewContract = toolContract("inspect_analysis_view");
+const dependenciesContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_elf_dependencies",
+);
+const viewContract = contractNamed(
+  ANALYSIS_VIEW_TOOL_CONTRACTS,
+  "inspect_analysis_view",
+);
 
 cliTest(
   "queries retained ELF dependencies through CLI and actual stdio MCP after the source is deleted",
@@ -27,7 +35,7 @@ cliTest(
         needed: ["libc.so.6", "libc.so.6", "libm.so.6"],
       }),
     );
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const complete = await run({
       arguments: ["inspect-elf-dependencies", path, "--json"],
     });

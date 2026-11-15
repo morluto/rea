@@ -8,6 +8,7 @@ import {
   type BrowserScenarioNormalization,
   type BrowserScenarioNormalizationRule,
 } from "./browserScenarioDiffValues.js";
+import { isRecord } from "./isRecord.js";
 
 /** Canonically order and commit a parsed browser scenario normalization policy. */
 export const commitBrowserScenarioNormalization = (
@@ -31,15 +32,14 @@ export const commitBrowserScenarioNormalization = (
   };
 };
 
-/** Digest one artifact after applying committed exact-literal rules, then any artifact ordering. */
+/** Digest one artifact after applying committed exact-literal rules. */
 export const digestNormalizedScenarioValue = (
   value: unknown,
   artifact: BrowserScenarioArtifactKind,
   rules: readonly BrowserScenarioNormalizationRule[],
-  order: (normalized: unknown) => unknown = (normalized) => normalized,
 ): string =>
   digestCanonicalValue(
-    order(normalizeScenarioValue(value, artifact, rules)),
+    normalizeScenarioValue(value, artifact, rules),
     "Browser scenario",
   );
 
@@ -79,7 +79,7 @@ export const normalizeScenarioValue = (
 
 /** Compare parsed storage records by their fixed fields without serializing them. */
 const compareStorageEntries = (left: unknown, right: unknown): number => {
-  if (!isStorageRecord(left) || !isStorageRecord(right))
+  if (!isRecord(left) || !isRecord(right))
     return compareUnicodeCodePoints(
       digestCanonicalValue(left, "Browser scenario"),
       digestCanonicalValue(right, "Browser scenario"),
@@ -103,9 +103,6 @@ const compareStorageEntries = (left: unknown, right: unknown): number => {
   }
   return 0;
 };
-
-const isStorageRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const compareStorageField = (left: unknown, right: unknown): number => {
   if (left === right) return 0;

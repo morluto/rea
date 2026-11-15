@@ -1,3 +1,9 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import {
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "../../domain/parseFailure.js";
 import {
   machoDependencyCommand,
   readMachoDylibCommandFacts,
@@ -19,16 +25,14 @@ import type {
   MachoImageFacts,
   MachoSlice,
 } from "../../domain/apple/dylibResolution.js";
+import { machoArchitectureName } from "../../domain/apple/machoCpuIdentity.js";
 import {
-  machoArchitectureName,
-  machoCpuSubtypeBase,
-} from "../../domain/apple/machoCpuIdentity.js";
-import {
+  MACHO_VERSION_MIN_PLATFORMS,
   legacyMachoPlatform,
-  type MachoVersionMinPlatform,
 } from "../../domain/apple/machoPlatform.js";
 import {
   classifyFatContainerIdentity,
+  fatSliceOverlapReason,
   findOverlappingFatSlices,
   hasMachoMagic,
   readFatContainerHeader,
@@ -52,33 +56,15 @@ export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
  * byte cap alone would retain about a million dependency results. Stop before
  * those results are kept or traced.
  */
-export const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+const MAX_LAZY_INFO_DEPENDENCIES = 1024;
 /**
  * Symbol names are validated and then discarded. Distinct one-byte strings
  * stay under the 16 MiB byte budgets while retaining one cache entry per
  * offset, so stop before that map and those decodes grow.
  */
-export const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
-
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
-const LC_ID_DYLIB = 0xd;
-const LC_LAZY_LOAD_DYLIB_INFO = 0x3a;
-const LC_RPATH = 0x8000001c;
-const LC_DYLD_ENVIRONMENT = 0x27;
-const LC_CODE_SIGNATURE = 0x1d;
-const LC_BUILD_VERSION = 0x32;
+const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const CPU_TYPE_ARM64 = 0x0100000c;
-
-/** loader.h command codes and their device platform identities. */
-const VERSION_MIN_PLATFORMS: ReadonlyMap<number, MachoVersionMinPlatform> =
-  new Map([
-    [0x24, 1], // LC_VERSION_MIN_MACOSX
-    [0x25, 2], // LC_VERSION_MIN_IPHONEOS
-    [0x2f, 3], // LC_VERSION_MIN_TVOS
-    [0x30, 4], // LC_VERSION_MIN_WATCHOS
-  ]);
 
 const LAZY_INFO_HEADER_BYTES = 24;
 /** ld64 may-be-missing bit: the lazy image is allowed to be absent. */
@@ -93,15 +79,24 @@ const DYLIB_USE_REEXPORT = 0x2;
 const DYLIB_USE_UPWARD = 0x4;
 const DYLIB_USE_DELAYED_INIT = 0x8;
 
+const MACHO_FORMAT = "mach-o";
+
 /** Malformed or unsupported structure found while decoding one image. */
-class MachoFormatIssue extends Error {
-  constructor(
-    readonly status: "malformed" | "unsupported",
-    message: string,
-  ) {
-    super(message);
-  }
-}
+const machoIssue = (
+  status: "malformed" | "unsupported",
+  reason: string,
+): ParseFailureError<"malformed"> | ParseFailureError<"unsupported"> =>
+  status === "malformed"
+    ? malformedInput(MACHO_FORMAT, reason)
+    : unsupportedInput(MACHO_FORMAT, reason);
+
+/** The issue this reader threw, or `undefined` for any other failure. */
+const machoIssueOf = (cause: unknown): MachoReadIssue | undefined =>
+  cause instanceof ParseFailureError &&
+  cause.failure.format === MACHO_FORMAT &&
+  (cause.kind === "malformed" || cause.kind === "unsupported")
+    ? { status: cause.kind, reason: cause.message }
+    : undefined;
 
 /** A structural defect, and whether it is malformed or merely unsupported. */
 export interface MachoReadIssue {
@@ -220,7 +215,7 @@ export const readMachoContainer = async (
       return {
         kind: "issue",
         status: "malformed",
-        reason: overlapReason(overlap),
+        reason: fatSliceOverlapReason(overlap),
       };
     // Identity is only malformed through a slice range issue, which the
     // returned rangeIssues retain.
@@ -288,8 +283,8 @@ export const readMachoImage = async (
       ...(hiddenSlice === null ? {} : { hiddenSlices: [hiddenSlice] }),
     };
   } catch (cause: unknown) {
-    if (cause instanceof MachoFormatIssue)
-      return { status: cause.status, reason: cause.message };
+    const issue = machoIssueOf(cause);
+    if (issue !== undefined) return issue;
     throw cause;
   }
 };
@@ -298,11 +293,6 @@ const rangeValidSlices = (
   header: ParsedFatContainerHeader,
 ): FatSliceDeclaration[] =>
   header.slices.filter((_, index) => header.rangeIssues[index] === null);
-
-const overlapReason = (
-  overlap: NonNullable<ReturnType<typeof findOverlappingFatSlices>>,
-): string =>
-  `Mach-O slices ${overlap[0].index} and ${overlap[1].index} overlap.`;
 
 /**
  * Apple lipo stores one hidden ARM64 row after the declared 32-bit FAT table.
@@ -340,7 +330,7 @@ const readAppleHiddenArm64Row = async (
     rangeIssue:
       overlap === null
         ? validateFatSlice(declaration, fileSize, end)
-        : overlapReason(overlap),
+        : fatSliceOverlapReason(overlap),
   };
 };
 
@@ -349,10 +339,9 @@ const readHiddenSlice = async (
   row: HiddenFatRow | null,
 ): Promise<MachoSlice | null> => {
   if (row === null) return null;
-  if (row.status !== "declared")
-    throw new MachoFormatIssue(row.status, row.reason);
+  if (row.status !== "declared") throw machoIssue(row.status, row.reason);
   const { declaration, rangeIssue } = row;
-  if (rangeIssue !== null) throw new MachoFormatIssue("malformed", rangeIssue);
+  if (rangeIssue !== null) throw machoIssue("malformed", rangeIssue);
   const slice = await readSlice(readAt, declaration.offset, declaration.size, {
     fatCpuType: declaration.cpuType,
     fatCpuSubtype: declaration.cpuSubtype,
@@ -362,8 +351,7 @@ const readHiddenSlice = async (
     cpuType: slice.cpu_type,
     cpuSubtype: slice.cpu_subtype,
   });
-  if (identityIssue !== null)
-    throw new MachoFormatIssue("malformed", identityIssue);
+  if (identityIssue !== null) throw machoIssue("malformed", identityIssue);
   return { ...slice, hidden: true };
 };
 
@@ -374,7 +362,7 @@ const readFatSlices = async (
   const slices: MachoSlice[] = [];
   // Keep validating after an unsupported slice so a later malformed slice is
   // reported as malformed whatever the slice order.
-  let unsupported: MachoFormatIssue | undefined;
+  let unsupported: MachoReadIssue | undefined;
   for (const declaration of declarations) {
     const { offset, size: length, cpuType, cpuSubtype } = declaration;
     let slice: MachoSlice;
@@ -385,23 +373,20 @@ const readFatSlices = async (
         alignmentExponent: declaration.alignmentExponent,
       });
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof MachoFormatIssue) ||
-        cause.status !== "unsupported"
-      )
-        throw cause;
-      unsupported ??= cause;
+      const issue = machoIssueOf(cause);
+      if (issue?.status !== "unsupported") throw cause;
+      unsupported ??= issue;
       continue;
     }
     const identityIssue = validateFatSliceIdentity(declaration, {
       cpuType: slice.cpu_type,
       cpuSubtype: slice.cpu_subtype,
     });
-    if (identityIssue !== null)
-      throw new MachoFormatIssue("malformed", identityIssue);
+    if (identityIssue !== null) throw machoIssue("malformed", identityIssue);
     slices.push(slice);
   }
-  if (unsupported !== undefined) throw unsupported;
+  if (unsupported !== undefined)
+    throw machoIssue(unsupported.status, unsupported.reason);
   return slices;
 };
 
@@ -546,8 +531,7 @@ const readSlice = async (
   } | null = null,
 ): Promise<MachoSlice> => {
   const table = await readSliceCommandTable(readAt, base, length);
-  if (table.status !== "read")
-    throw new MachoFormatIssue(table.status, table.reason);
+  if (table.status !== "read") throw machoIssue(table.status, table.reason);
   const { header } = table;
   const slice: MachoSlice = {
     architecture: machoArchitectureName(header.cpuType, header.cpuSubtype),
@@ -578,15 +562,15 @@ const readSlice = async (
   // Each command decodes as it is framed, so a defect in an earlier command
   // keeps precedence over a later framing defect.
   const framed = frameLoadCommands(table, ({ command, body, index }) => {
-    if (command === LC_SEGMENT || command === LC_SEGMENT_64) {
-      const span = readSegmentSpan(body, command === LC_SEGMENT_64);
+    if (command === LC.SEGMENT || command === LC.SEGMENT_64) {
+      const span = readSegmentSpan(body, command === LC.SEGMENT_64);
       if (span === undefined) unreadableSegment ??= index;
       else segments.push(span);
     }
-    if (command === LC_LAZY_LOAD_DYLIB_INFO) {
+    if (command === LC.LAZY_LOAD_DYLIB_INFO) {
       lazyInfoCount += 1;
       if (lazyInfoCount > MAX_LAZY_INFO_DEPENDENCIES)
-        throw new MachoFormatIssue(
+        throw machoIssue(
           "unsupported",
           `LC_LAZY_LOAD_DYLIB_INFO commands exceed the ${MAX_LAZY_INFO_DEPENDENCIES}-dependency limit`,
         );
@@ -595,9 +579,9 @@ const readSlice = async (
     if (decoded !== undefined) dependencies.push(decoded);
   });
   if (framed.status !== "framed")
-    throw new MachoFormatIssue(framed.status, framed.reason);
+    throw machoIssue(framed.status, framed.reason);
   if (lazyInfoCount > 0 && unreadableSegment !== undefined)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${unreadableSegment} is too short to establish the slice VM range for LC_LAZY_LOAD_DYLIB_INFO`,
     );
@@ -691,7 +675,7 @@ const containedPayload = (
   for (const read of reads) {
     work.rangeChecks += 1;
     if (work.rangeChecks > MAX_LOAD_COMMAND_BYTES)
-      throw new MachoFormatIssue(
+      throw machoIssue(
         "unsupported",
         `LC_LAZY_LOAD_DYLIB_INFO payload range lookup exceeds the ${MAX_LOAD_COMMAND_BYTES}-check limit`,
       );
@@ -759,37 +743,37 @@ const decodeCommand = (
   | { readonly kind: "parsed"; readonly value: MachoDependency }
   | LazyLoadDylibInfoCommand
   | undefined => {
-  if (command === LC_ID_DYLIB) {
+  if (command === LC.ID_DYLIB) {
     slice.install_name = commandString(body, 24, index);
     return;
   }
-  if (command === LC_RPATH) {
+  if (command === LC.RPATH) {
     slice.rpaths.push(commandString(body, 12, index));
     return;
   }
-  if (command === LC_DYLD_ENVIRONMENT) {
+  if (command === LC.DYLD_ENVIRONMENT) {
     slice.dyld_environment.push(commandString(body, 12, index));
     return;
   }
-  if (command === LC_CODE_SIGNATURE) {
-    if (readMachoLinkeditDataCommand(LC_CODE_SIGNATURE, body, true) === null)
-      throw new MachoFormatIssue(
+  if (command === LC.CODE_SIGNATURE) {
+    if (readMachoLinkeditDataCommand(LC.CODE_SIGNATURE, body, true) === null)
+      throw machoIssue(
         "malformed",
         `load command ${index} is too short for LC_CODE_SIGNATURE`,
       );
     slice.code_signature_present = true;
     return;
   }
-  if (command === LC_BUILD_VERSION) {
+  if (command === LC.BUILD_VERSION) {
     if (body.byteLength < 24)
-      throw new MachoFormatIssue(
+      throw machoIssue(
         "malformed",
         `load command ${index} is too short for LC_BUILD_VERSION`,
       );
     const view = viewOf(body);
     const toolCount = view.getUint32(20, true);
     if (toolCount > Math.floor((body.byteLength - 24) / 8))
-      throw new MachoFormatIssue(
+      throw machoIssue(
         "malformed",
         `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
       );
@@ -797,17 +781,17 @@ const decodeCommand = (
     slice.platforms.push(platform);
     return;
   }
-  const legacyPlatform = VERSION_MIN_PLATFORMS.get(command);
+  const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(command);
   if (legacyPlatform !== undefined) {
     if (body.byteLength < 16)
-      throw new MachoFormatIssue(
+      throw machoIssue(
         "malformed",
         `load command ${index} is too short for a version-min command`,
       );
     slice.platforms.push(legacyMachoPlatform(legacyPlatform, slice.cpu_type));
     return;
   }
-  if (command === LC_LAZY_LOAD_DYLIB_INFO)
+  if (command === LC.LAZY_LOAD_DYLIB_INFO)
     return decodeLazyLoadDylibInfoCommand(body, index);
   const name = machoDependencyCommand(command);
   if (name !== null)
@@ -824,7 +808,7 @@ const decodeLazyLoadDylibInfoCommand = (
   index: number,
 ): LazyLoadDylibInfoCommand => {
   if (body.byteLength < 16)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} is too short for LC_LAZY_LOAD_DYLIB_INFO`,
     );
@@ -832,12 +816,12 @@ const decodeLazyLoadDylibInfoCommand = (
   const dataOffset = view.getUint32(8, true);
   const dataSize = view.getUint32(12, true);
   if (dataSize < LAZY_INFO_HEADER_BYTES)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO payload is shorter than its 24-byte header`,
     );
   if (dataSize > MAX_LOAD_COMMAND_BYTES)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "unsupported",
       `LC_LAZY_LOAD_DYLIB_INFO payload occupies ${dataSize} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
     );
@@ -855,7 +839,7 @@ const readLazyPayloadBytes = async (
   if (covered !== undefined) return covered;
   work.payloadBytes += size;
   if (work.payloadBytes > MAX_LOAD_COMMAND_BYTES)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "unsupported",
       `LC_LAZY_LOAD_DYLIB_INFO payloads occupy ${work.payloadBytes} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte aggregate limit`,
     );
@@ -881,13 +865,13 @@ const readLazyLoadDylibInfo = async (
     command.dataOffset > length ||
     command.dataSize > length - command.dataOffset
   )
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload extends beyond the Mach-O slice`,
     );
   const fileOffset = base + command.dataOffset;
   if (!Number.isSafeInteger(fileOffset))
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${command.index} LC_LAZY_LOAD_DYLIB_INFO payload offset is not a safe integer`,
     );
@@ -922,17 +906,17 @@ const decodeLazyLoadDylibInfoPayload = (
   const symbolCount = view.getUint32(16, true);
   const symbolArrayOffset = view.getUint32(20, true);
   if (BigInt(flagImageOffset) > maxVmOffset)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flag image offset 0x${flagImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
     );
   if (BigInt(chainStartImageOffset) > maxVmOffset)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO chain start image offset 0x${chainStartImageOffset.toString(16)} is beyond the slice VM range 0x${maxVmOffset.toString(16)}`,
     );
   if ((flags & ~LAZY_INFO_MAY_BE_MISSING) !== 0)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "unsupported",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO flags 0x${flags.toString(16)} include unrecognized bits`,
     );
@@ -940,7 +924,7 @@ const decodeLazyLoadDylibInfoPayload = (
     symbolArrayOffset > payload.byteLength ||
     symbolCount > (payload.byteLength - symbolArrayOffset) / 4
   )
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO symbol table extends beyond the payload`,
     );
@@ -955,7 +939,7 @@ const decodeLazyLoadDylibInfoPayload = (
   );
   const symbolReferences = work.symbolReferences + symbolCount;
   if (symbolReferences > MAX_LAZY_INFO_SYMBOL_REFERENCES)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "unsupported",
       `LC_LAZY_LOAD_DYLIB_INFO symbol validation exceeds the ${MAX_LAZY_INFO_SYMBOL_REFERENCES}-reference limit`,
     );
@@ -988,7 +972,7 @@ const decodeLazyLoadDylibInfoPayload = (
 const chargeLazyString = (work: LazyPayloadWork, examined: number): void => {
   const occupied = work.stringBytes + examined;
   if (occupied > MAX_LOAD_COMMAND_BYTES)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "unsupported",
       `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${occupied} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
     );
@@ -1010,12 +994,12 @@ const payloadString = (
   excludeFinalByte: boolean,
 ): string => {
   if (offset < LAZY_INFO_HEADER_BYTES)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is inside the payload header`,
     );
   if (offset >= payload.byteLength)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} offset ${offset} is outside the payload`,
     );
@@ -1030,7 +1014,7 @@ const payloadString = (
   if (cached !== undefined && absolute !== undefined) {
     const end = cached.end - fileOffset;
     if (end < offset || end >= terminatorLimit)
-      throw new MachoFormatIssue(
+      throw machoIssue(
         "malformed",
         `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
       );
@@ -1038,7 +1022,7 @@ const payloadString = (
     return cached.text;
   }
   if (offset >= terminatorLimit)
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
     );
@@ -1047,11 +1031,11 @@ const payloadString = (
   const end = payload.subarray(0, windowEnd).indexOf(0, offset);
   if (end < 0) {
     if (windowEnd < terminatorLimit)
-      throw new MachoFormatIssue(
+      throw machoIssue(
         "unsupported",
         `LC_LAZY_LOAD_DYLIB_INFO string validation occupies ${work.stringBytes + (windowEnd - offset) + 1} bytes, above the ${MAX_LOAD_COMMAND_BYTES}-byte limit`,
       );
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is unterminated`,
     );
@@ -1063,7 +1047,7 @@ const payloadString = (
       payload.subarray(offset, end),
     );
   } catch {
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} LC_LAZY_LOAD_DYLIB_INFO ${label} is not UTF-8`,
     );
@@ -1081,7 +1065,7 @@ const decodeDependency = (
   const parsed = readMachoDylibCommandFacts(body, true);
   if (!parsed.ok) {
     if (parsed.error._tag === "InvalidMachoDylibCommand")
-      throw new MachoFormatIssue(
+      throw machoIssue(
         "malformed",
         `load command ${index} is too short for a dylib command`,
       );
@@ -1126,7 +1110,7 @@ const throwCommandStringIssue = (
       : failure.reason === "invalid-offset"
         ? `load command ${index} has string offset ${failure.offset} outside the command`
         : `load command ${index} has an unterminated string`;
-  throw new MachoFormatIssue("malformed", reason);
+  throw machoIssue("malformed", reason);
 };
 
 const decodeCommandString = (bytes: Uint8Array, index: number): string => {
@@ -1136,7 +1120,7 @@ const decodeCommandString = (bytes: Uint8Array, index: number): string => {
       bytes,
     );
   } catch {
-    throw new MachoFormatIssue(
+    throw machoIssue(
       "malformed",
       `load command ${index} has a string that is not UTF-8`,
     );
@@ -1151,7 +1135,7 @@ const readExact = async (
 ): Promise<Uint8Array> => {
   const bytes = await readAt(offset, length);
   if (bytes.byteLength < length)
-    throw new MachoFormatIssue("malformed", `${label} is truncated`);
+    throw machoIssue("malformed", `${label} is truncated`);
   return bytes;
 };
 

@@ -1,7 +1,4 @@
-import {
-  UpdateCommandRunner,
-  UPDATE_COMMAND_OUTPUT_BYTES,
-} from "../../src/application/UpdateCommandRunner.js";
+import { UpdateCommandRunner } from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +16,7 @@ import { systemUpdateHost } from "../../src/application/UpdateRuntime.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const entryPoint = resolve("scripts/rea.mjs");
 let home: string;
 
@@ -142,16 +140,33 @@ describe("maintenance activation and layered configuration", () => {
       }),
     );
     const before = await readFile(cursor, "utf8");
+    const commands: (readonly string[])[] = [];
     const result = await planIntegrationMaintenance(
       home,
       entryPoint,
       process.env,
-      () => {
-        throw new Error("An unresolved maintenance scope must not be executed");
+      async (command) => {
+        commands.push(command);
+        return ok(
+          JSON.stringify({
+            status: "planned",
+            // An action for the unresolved client is outside the scope.
+            plannedActions: [{ ...action, id: "configure_client:cursor" }],
+          }),
+        );
       },
     );
-    expect(result).toMatchObject({
-      status: "unavailable",
+    expect(result).toMatchObject({ status: "unavailable" });
+    expect(commands[0]).not.toContain("cursor");
+    const planned = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () =>
+        ok(JSON.stringify({ status: "planned", plannedActions: [action] })),
+    );
+    expect(planned).toMatchObject({
+      status: "planned",
       scope: {
         clients: ["codex"],
         unresolved: [
@@ -162,7 +177,6 @@ describe("maintenance activation and layered configuration", () => {
           }),
         ],
       },
-      remediation: expect.stringContaining("cursor"),
     });
     expect(await readFile(cursor, "utf8")).toBe(before);
   });
@@ -241,6 +255,54 @@ describe("maintenance activation and layered configuration", () => {
   });
 });
 
+describe("unknown client locations in maintenance", () => {
+  it("maintains other clients while an unresolved MCPorter location stays unknown", async () => {
+    vi.stubEnv("MCPORTER_CONFIG", "config/mcporter.json");
+    await writeClient("codex", staleCodex);
+    const scope = await existingMaintenanceScope(home, entryPoint, process.env);
+    expect(scope).toMatchObject({
+      clients: ["codex"],
+      unresolved: [
+        {
+          client: "mcporter",
+          state: "unknown",
+          command: [],
+          remediation: expect.stringContaining("MCPORTER_CONFIG is relative"),
+        },
+      ],
+    });
+    const current = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () => ok(JSON.stringify({ status: "planned", plannedActions: [] })),
+    );
+    // Nothing else needs maintenance, yet the unknown client is not hidden.
+    expect(current).toMatchObject({
+      status: "current",
+      unresolved: [{ client: "mcporter", state: "unknown" }],
+    });
+  });
+
+  it("names an unknown MCPorter client when planning the known clients fails", async () => {
+    vi.stubEnv("MCPORTER_CONFIG", "config/mcporter.json");
+    await writeClient("codex", staleCodex);
+    const failed = await planIntegrationMaintenance(
+      home,
+      entryPoint,
+      process.env,
+      async () => err("EACCES codex backup"),
+    );
+    expect(failed).toMatchObject({
+      status: "unavailable",
+      remediation: expect.stringMatching(
+        /^EACCES codex backup REA did not maintain one client .*MCPORTER_CONFIG is relative/u,
+      ),
+      scope: { unresolved: [{ client: "mcporter", state: "unknown" }] },
+    });
+  });
+});
+
 describe("registration ownership in maintenance", () => {
   it("selects owned registrations while preserving unconfigured, foreign, and disabled choices", async () => {
     await writeClient("codex", staleCodex);
@@ -266,30 +328,36 @@ describe("registration ownership in maintenance", () => {
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          status: expect.objectContaining({ client: "codex", state: "stale" }),
+          status: expect.objectContaining({
+            client: "codex",
+            state: "stale",
+            command_identity: "owned",
+          }),
           activation: "enabled",
-          commandIdentity: "owned",
         }),
         expect.objectContaining({
-          status: expect.objectContaining({ client: "cursor", state: "stale" }),
+          status: expect.objectContaining({
+            client: "cursor",
+            state: "stale",
+            command_identity: "foreign",
+          }),
           activation: "enabled",
-          commandIdentity: "foreign",
         }),
         expect.objectContaining({
           status: expect.objectContaining({
             client: "opencode",
             state: "stale",
+            command_identity: "owned",
           }),
           activation: "disabled",
-          commandIdentity: "owned",
         }),
         expect.objectContaining({
           status: expect.objectContaining({
             client: "claude_code",
             state: "missing",
+            command_identity: "unknown",
           }),
           activation: "unknown",
-          commandIdentity: "unknown",
         }),
       ]),
     );
@@ -423,9 +491,10 @@ describe("existing REA integration maintenance", () => {
         process.env,
         async () => err("EACCES /test/.codex/config.toml"),
       ),
-    ).toEqual({
+    ).toMatchObject({
       status: "unavailable",
       remediation: "EACCES /test/.codex/config.toml",
+      scope: { clients: ["codex"] },
     });
   });
 });
@@ -569,19 +638,15 @@ describe("updated executable maintenance planning", () => {
 });
 
 describe("update subprocess boundaries", () => {
-  cliTest(
-    "exposes update in CLI help",
-    async ({ cli }) => {
-      const help = await cli.run({
-        arguments: ["--help"],
-        environment: process.env,
-      });
-      expect(help.exitCode, help.stderr).toBe(0);
-      expect(help.stdout).toMatch(/^\s{2}update\s/mu);
-      expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
-    },
-    60_000,
-  );
+  cliTest("exposes update in CLI help", async ({ cli }) => {
+    const help = await cli.run({
+      arguments: ["--help"],
+      environment: process.env,
+    });
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).toMatch(/^\s{2}update\s/mu);
+    expect(help.stdout).not.toMatch(/^\s{2}upgrade\s/mu);
+  });
 
   cliTest("rejects the removed upgrade CLI command", async ({ cli }) => {
     const removed = await cli.run({

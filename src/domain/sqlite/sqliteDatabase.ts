@@ -1,6 +1,10 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import { z } from "zod";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import type { JsonValue } from "../jsonValue.js";
+
+/** Fixed SQLite value/record and complete-worker-reply allowance. */
+export const SQLITE_DATABASE_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** SQLite exposes this table as a row source but omits its own catalog entry. */
 export const SQLITE_SCHEMA_TABLE_NAME = "sqlite_schema";
@@ -11,8 +15,6 @@ export const sqliteSchemaHasObjectDeclaration = (name: string): boolean =>
 export const SQLITE_ROW_LIMIT_DEFAULT = 20;
 /** Execution budget, bounded by the runtime's signed 32-bit timer range. */
 export const DEFAULT_SQLITE_WORKER_TIMEOUT_MS = 30_000;
-export const MAX_SQLITE_WORKER_TIMEOUT_MS = 2_147_483_647;
-const workerTimeout = z.number().int().min(1).max(MAX_SQLITE_WORKER_TIMEOUT_MS);
 
 const nonnegative = z.int().nonnegative();
 const hex = z.string().regex(/^(?:[0-9a-f]{2})*$/);
@@ -23,17 +25,16 @@ const artifactSchema = z.strictObject({
   bytes: nonnegative,
 });
 
-/** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
-export const inspectSqliteDatabaseInputSchema = z
+/** Fields that require the caller to select one ordinary table. */
+export const SQLITE_TABLE_REQUIRED_SELECTION_FIELDS = [
+  "row_limit",
+  "columns",
+  "row_offset",
+] as const;
+
+/** Shared row/schema selection constraints, independent of path transport. */
+export const sqliteTableSelectionSchema = z
   .strictObject({
-    path: absoluteLocalPathStringSchema.describe(
-      "Absolute path to an offline SQLite database snapshot",
-    ),
-    worker_timeout_ms: workerTimeout
-      .optional()
-      .describe(
-        `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
-      ),
     table: z
       .string()
       .optional()
@@ -68,7 +69,6 @@ export const inspectSqliteDatabaseInputSchema = z
         "Rows to skip before the retained window; default 0; requires table",
       ),
   })
-  .describe("When schema_scope is selected_table, also provide table.")
   .superRefine((input, context) => {
     if (input.row_limit !== undefined && input.table === undefined)
       context.addIssue({
@@ -96,17 +96,30 @@ export const inspectSqliteDatabaseInputSchema = z
       });
   })
   .meta({
-    dependentRequired: {
-      row_limit: ["table"],
-      columns: ["table"],
-      row_offset: ["table"],
-    },
+    dependentRequired: Object.fromEntries(
+      SQLITE_TABLE_REQUIRED_SELECTION_FIELDS.map((field) => [field, ["table"]]),
+    ),
     if: {
       properties: { schema_scope: { const: "selected_table" } },
       required: ["schema_scope"],
     },
     then: { required: ["table"] },
   });
+
+/** Inspect one frozen database and its sibling WAL, with optional ordinary-table rows. */
+export const inspectSqliteDatabaseInputSchema = sqliteTableSelectionSchema
+  .safeExtend({
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute path to an offline SQLite database snapshot",
+    ),
+    worker_timeout_ms: timerDurationMsSchema
+      .optional()
+      .describe(
+        `Deadline in milliseconds for worker startup, queries and reply writing (default ${String(DEFAULT_SQLITE_WORKER_TIMEOUT_MS)}), not snapshot acquisition or the whole call. Allow client headroom for acquisition, reply reads, cleanup and delivery. Fixed byte/heap limits do not change.`,
+      ),
+  })
+  .describe("When schema_scope is selected_table, also provide table.")
+  .meta(sqliteTableSelectionSchema.meta() ?? {});
 
 /** JSON-safe SQLite cells retain integers, binary content and special REAL values. */
 export const sqliteValueSchema = z.discriminatedUnion("type", [
@@ -137,11 +150,9 @@ export const sqliteDatabaseSchema = z
       name: z.literal("SQLite"),
       version: z.string().min(1),
     }),
-    worker_timeout_ms: workerTimeout
-      .exactOptional()
-      .describe(
-        "Actual parent-supervised worker deadline in milliseconds; absent in historical Evidence means unknown, not the default.",
-      ),
+    worker_timeout_ms: timerDurationMsSchema.describe(
+      "Actual parent-supervised worker deadline in milliseconds.",
+    ),
     database_encoding: encoding,
     schema: z.strictObject({
       scope: z.enum(["inventory", "selected_table", "database"]),

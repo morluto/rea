@@ -1,11 +1,13 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  ArtifactResourceRetryFailure,
+} from "../../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import {
   buildSecretHandleSchema,
@@ -18,6 +20,7 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type {
   AgentEnvComputer,
   DriverResult,
@@ -166,7 +169,7 @@ export class DesktopBuildSecrets {
 
   /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
   async all(signal?: AbortSignal): Promise<KnownSecret[]> {
-    signal?.throwIfAborted();
+    if (signal?.aborted) throw cancelledBy("export_build_environment", signal);
     let handles: string[];
     try {
       handles = await listBuildSecretHandles(this.directory);
@@ -193,7 +196,7 @@ export class DesktopBuildSecrets {
           }),
         ),
       });
-    signal?.throwIfAborted();
+    if (signal?.aborted) throw cancelledBy("export_build_environment", signal);
     const refused = read.find(({ file }) => !file.ok);
     if (refused !== undefined && !refused.file.ok)
       throw new AnalysisInputError("export_build_environment", {
@@ -203,14 +206,14 @@ export class DesktopBuildSecrets {
       });
     const known = this.#known();
     const held = new Set(
-      known.map(({ handle, value }) => `${handle}\0${value}`),
+      known.map(({ handle, value }) => compositeKey([handle, value])),
     );
     return [
       ...known,
       ...read.flatMap(({ handle, file }) =>
         file.ok &&
         isScannableSecret(file.value) &&
-        !held.has(`${handle}\0${file.value}`)
+        !held.has(compositeKey([handle, file.value]))
           ? [{ handle, value: file.value }]
           : [],
       ),
@@ -221,7 +224,7 @@ export class DesktopBuildSecrets {
 /** Why a secret was not typed, in REA's words and without its cause: the computer's own could quote the secret. */
 const notTyped = (handle: string, signal: AbortSignal): AnalysisError =>
   signal.aborted
-    ? new AnalysisCancelledError(ACT, { cause: signal.reason })
+    ? cancelledBy(ACT, signal)
     : new ProviderAdapterError(AGENTENV_PROVIDER, ACT, {
         userMessage: `The computer did not type the secret ${handle}; REA does not show its answer, which could quote the secret.`,
         remediationAction:

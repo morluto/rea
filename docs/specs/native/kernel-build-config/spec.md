@@ -26,7 +26,10 @@ these files.
    read through the stable artifact read and never executed.
 2. The banner is the first printable `Linux version ` string followed by a
    version token that starts with a digit and ends at a NUL or newline within
-   512 bytes. Version, builder and compiler are split from it. The scan is
+   512 bytes. Version, builder and compiler are split from it. A banner with a
+   space right after `#` or at its end is the kbuild placeholder from
+   `init/version.o`, built without a build number or timestamp; a later banner
+   that repeats its text up to `#` without that gap replaces it. The scan is
    linear in the searched bytes.
 3. A config is `present` only when `IKCFG_ST` is followed by a gzip member that
    ends exactly at the next `IKCFG_ED`, inflates within `max_config_bytes`,

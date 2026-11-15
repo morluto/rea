@@ -1,4 +1,5 @@
 import { setImmediate } from "node:timers/promises";
+import { z } from "zod";
 
 import {
   prepareSnapshotEntry,
@@ -12,8 +13,12 @@ import {
   EvidenceIntegrityError,
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { describeValidationFailure } from "../../domain/validationFailure.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -79,16 +84,30 @@ export const readAnalysisSnapshot = async (
     return ok(snapshot);
   } catch (cause: unknown) {
     if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason }),
-      );
+      return err(cancelledBy(READ_OPERATION, signal));
     return err(
       new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );
   }
 };
 
+/** Locate an entry's schema issues within its snapshot collection. */
+const locateEntryFailure = (
+  cause: unknown,
+  collection: string,
+  index: number,
+): unknown =>
+  cause instanceof z.ZodError
+    ? new z.ZodError(
+        cause.issues.map((issue) => ({
+          ...issue,
+          path: [collection, index, ...issue.path],
+        })),
+      )
+    : cause;
+
 const snapshotEntryReader = (kind: "provider" | "workflow") => {
+  const collection = kind === "provider" ? "entries" : "workflow_entries";
   let seen = false;
   let entries: PreparedSnapshotEntry[] = [];
   let failure: { readonly cause: unknown } | undefined;
@@ -100,8 +119,12 @@ const snapshotEntryReader = (kind: "provider" | "workflow") => {
       failure = undefined;
     },
     accept: (value) => {
-      if (failure === undefined)
+      if (failure !== undefined) return;
+      try {
         entries.push(prepareSnapshotEntry(value, kind));
+      } catch (cause: unknown) {
+        throw locateEntryFailure(cause, collection, entries.length);
+      }
     },
     reject: (cause) => {
       failure ??= { cause };
@@ -111,9 +134,7 @@ const snapshotEntryReader = (kind: "provider" | "workflow") => {
     reader,
     finish: (): PreparedSnapshotEntry[] => {
       if (!seen)
-        throw new TypeError(
-          `Analysis snapshot ${kind === "provider" ? "entries" : "workflow_entries"} is missing`,
-        );
+        throw new TypeError(`Analysis snapshot ${collection} is missing`);
       if (failure !== undefined) throw failure.cause;
       return entries;
     },
@@ -140,7 +161,10 @@ export const writeAnalysisSnapshot = async (
   return writeTextFile(encoded, path, overwrite, resources);
 };
 
-const snapshotValidationMessage = (cause: unknown): string =>
-  cause instanceof TypeError
+const snapshotValidationMessage = (cause: unknown): string => {
+  if (cause instanceof z.ZodError)
+    return `Analysis snapshot validation failed ${describeValidationFailure(cause)}`;
+  return cause instanceof TypeError
     ? cause.message
     : "Analysis snapshot validation failed";
+};

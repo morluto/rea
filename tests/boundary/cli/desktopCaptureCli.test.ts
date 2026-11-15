@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -6,6 +7,7 @@ import { expect, it } from "vitest";
 import {
   EDITED_NOTE,
   HOME,
+  capture,
   change,
   retained,
   seedEndCapture,
@@ -189,3 +191,138 @@ it.each([
     });
   },
 );
+
+it.each([
+  { label: "omitted", policy: undefined },
+  { label: "empty", policy: {} },
+  { label: "selected", policy: { text_lines: 2 } },
+])(
+  "preserves %s desktop view policy separately from the effective policy",
+  async ({ policy }) => {
+    const folder = await writeCaptureFolder(seedEndCapture(), undefined, [
+      EDITED_NOTE,
+    ]);
+    const selected =
+      policy === undefined ? [] : ["--view-policy", JSON.stringify(policy)];
+    for (const command of [
+      "inspect-desktop-application-state",
+      "describe-desktop-application-task",
+    ]) {
+      const observed = await serve([command, folder, ...selected, "--json"]);
+      const evidence = parseEvidence(JSON.parse(observed.stdout));
+      if (policy === undefined)
+        expect(evidence.parameters).not.toHaveProperty("view_policy");
+      else expect(evidence.parameters.view_policy).toEqual(policy);
+      expect(evidence.normalized_result).toMatchObject({
+        effective_view_policy: {
+          text_lines: policy?.text_lines ?? 5000,
+          file_bytes: 67108864,
+        },
+      });
+    }
+  },
+);
+
+it("recovers a selected captured view and exports the same policy into the Python reader", async () => {
+  const path = `${HOME}/Documents/budget.txt`;
+  const text = "one\ntwo\nthree";
+  const local = capture();
+  const first = local.state.checkpoints[0];
+  if (first === undefined) throw new Error("missing fixture checkpoint");
+  const folder = await writeCaptureFolder(
+    {
+      ...local,
+      state: {
+        ...local.state,
+        checkpoints: [
+          { ...first, retained: [...first.retained, retained(path, text)] },
+          ...local.state.checkpoints.slice(1),
+        ],
+      },
+    },
+    undefined,
+    [text],
+  );
+  const inspect = async (lines: number) => {
+    const response = await serve([
+      "inspect-desktop-application-state",
+      folder,
+      "--state-path",
+      path,
+      "--view-policy",
+      JSON.stringify({ text_lines: lines }),
+      "--json",
+    ]);
+    expect(response.exitCode).toBe(0);
+    return parseEvidence(JSON.parse(response.stdout));
+  };
+  const limited = await inspect(2);
+  const recovered = await inspect(3);
+  expect(limited.normalized_result).toMatchObject({
+    paths: [
+      {
+        path,
+        versions: [{ view: { lines: ["one", "two"], truncated: true } }],
+      },
+    ],
+  });
+  expect(recovered.normalized_result).toMatchObject({
+    paths: [
+      {
+        path,
+        versions: [
+          {
+            checkpoint_index: 0,
+            sha256: retained(path, text).sha256,
+            view: { lines: ["one", "two", "three"], truncated: false },
+          },
+        ],
+      },
+    ],
+  });
+  const root = await createTestTempDirectory("desktop-view-policy-");
+  const bundle = join(root, "bundle");
+  const exported = await serve([
+    "export-desktop-application",
+    folder,
+    bundle,
+    "--view-policy",
+    '{"text_lines":3}',
+    "--json",
+  ]);
+  expect(exported.exitCode).toBe(0);
+  const module = await readFile(
+    join(bundle, "envs/notes/notes_app.py"),
+    "utf8",
+  );
+  const helpers = module
+    .split("@computer_app(")[0]
+    ?.split("\n")
+    .filter((line) => !line.includes("from agentenv_protocol"))
+    .join("\n");
+  const script = join(root, "reader.py");
+  await writeFile(
+    script,
+    `${helpers}\nprint(json.dumps(_text_view("notes.txt", "one\\ntwo\\nthree", 13)["view"]))\n`,
+  );
+  const actual = JSON.parse(
+    execFileSync(
+      process.platform === "win32" ? "python" : "python3",
+      ["-I", "-B", script],
+      { encoding: "utf8" },
+    ),
+  );
+  expect(actual).toEqual({
+    lines: ["one", "two", "three"],
+    line_count: 3,
+    truncated: false,
+  });
+  const invalid = await serve([
+    "inspect-desktop-application-state",
+    folder,
+    "--view-policy",
+    '{"text_lines":0}',
+    "--json",
+  ]);
+  expect(invalid.exitCode).toBe(1);
+});

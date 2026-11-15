@@ -28,8 +28,8 @@ const service = \`
 export class FridaInstrumentationService {
   async listProcesses() { return { ok: true, value: { processes: [{ pid: 41, name: 'selected' }] } }; }
   async instrument() {
-    const pid = process.env.REA_PROBE_KIND === 'missing' ? undefined : process.env.REA_PROBE_KIND === 'correct' ? 41 : 42;
-    return { ok: true, value: { cleanupError: null, evidence: { normalized_result: { pid, messages: [{ type: 'send', payload: { rea_frida_verification: 'ok', pid } }] } } } };
+    const pid = process.env.REA_PROBE_KIND === 'missing' ? undefined : ['correct', 'wrong-marker'].includes(process.env.REA_PROBE_KIND) ? 41 : 42;
+    return { ok: true, value: { cleanupError: null, evidence: { normalized_result: { pid, messages: [{ type: 'send', payload: { rea_frida_verification: 'ok', pid: process.env.REA_PROBE_KIND === 'wrong-marker' ? 42 : pid } }] } } } };
   }
 }\`;
 const manager = \`export class FridaInstrumentationManager { async closeAll() {} }\`;
@@ -56,6 +56,7 @@ registerHooks({ resolve(specifier, context, next) {
   for (const [kind, remote, message] of [
     ["missing", false, "Frida returned no valid target PID"],
     ["wrong", true, "Frida observed a different target PID"],
+    ["wrong-marker", true, "Selected target did not return the Frida marker"],
   ] as const) {
     await expect(invoke(kind, remote)).rejects.toMatchObject({
       stderr: expect.stringContaining(message),

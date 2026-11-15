@@ -2,7 +2,10 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
+import {
+  DEFAULT_JADX_OPERATION_TIMEOUT_MS,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
 import {
   jadxOperationTimeoutGuidance,
   JADX_OPERATION_TIMEOUT_REMEDIATION,
@@ -14,14 +17,20 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+  type PathSearchCandidate,
+} from "../process/executableSearch.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
   AnalysisCapabilityUnavailableError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -198,9 +207,9 @@ export const inspectJadxAvailability = async (
     };
   } catch (cause) {
     if (cause instanceof JadxInterruption)
-      throw new AnalysisCancelledError(
+      throw cancelledBy(
         options.operation ?? "inspect_jadx_configuration",
-        { cause: cause.reason },
+        carriedReason(cause.reason),
       );
     if (cause instanceof JadxConfigurationFailure)
       return {
@@ -483,7 +492,7 @@ const archiveCancellation = (
         diagnostics,
         ...jadxOperationTimeoutGuidance(options.operationDeadline.timeoutMs),
       })
-    : new AnalysisCancelledError(operation, { cause: reason, diagnostics });
+    : cancelledBy(operation, carriedReason(reason), { diagnostics });
 };
 
 const requireSupportedHost = (): void => {
@@ -588,27 +597,23 @@ const resolveJava = async (
   const executable = process.platform === "win32" ? "java.exe" : "java";
   if (environment.JAVA_HOME === undefined) {
     const windows = process.platform === "win32";
-    const path = windows
-      ? (Object.entries(environment).find(
-          ([key]) => key.toLowerCase() === "path",
-        )?.[1] ?? "")
-      : (environment.PATH ?? "/usr/bin:/bin");
     // Resolve in the caller's directory once. The module probe and the engine
     // run in different directories, and the selected executable also owns the
-    // retained session's cache identity. Empty POSIX PATH components select cwd.
-    const directories = path.split(delimiter);
-    for (const directory of windows
-      ? directories.filter((entry) => entry !== "")
-      : directories) {
+    // retained session's cache identity. Empty POSIX PATH components select
+    // cwd. `java.exe` names its extension, so PATHEXT never fails the search.
+    const windowsSearch = windows
+      ? windowsPathCandidates(executable, environment)
+      : undefined;
+    const candidates: Iterable<PathSearchCandidate> =
+      windowsSearch === undefined
+        ? posixPathCandidates(executable, environment.PATH ?? "/usr/bin:/bin", {
+            relativeEntries: "resolve",
+          })
+        : windowsSearch.ok
+          ? windowsSearch.value
+          : [];
+    for (const { path: candidate } of candidates) {
       throwIfJadxInterrupted(signal);
-      // Windows PATH commonly quotes individual entries containing spaces.
-      const selected =
-        windows && directory.startsWith('"') && directory.endsWith('"')
-          ? directory.slice(1, -1)
-          : directory;
-      const candidate = windows
-        ? resolve(selected, executable)
-        : absoluteCallerPath(appendCallerPath(selected, executable));
       try {
         await access(
           candidate,
@@ -678,6 +683,9 @@ const requireJavaHomeExecutable = async (
   }
 };
 
+/** `-XX:ActiveProcessorCount` is a Java `int`; this is a count, not a duration. */
+const JAVA_INT_MAX = 2_147_483_647;
+
 const resolveJvmArguments = (
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly string[] => {
@@ -697,7 +705,7 @@ const resolveJvmArguments = (
       );
     if (
       name === "REA_JADX_ACTIVE_PROCESSOR_COUNT" &&
-      Number(value) > 2_147_483_647
+      Number(value) > JAVA_INT_MAX
     )
       throw configurationFailure(
         "open_options_invalid",
@@ -721,7 +729,7 @@ const readOperationTimeout = (
   if (parsed.success) return parsed.data;
   throw configurationFailure(
     "open_options_invalid",
-    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to 2147483647; received ${value}.`,
+    `REA_JADX_OPERATION_TIMEOUT_MS must be a decimal millisecond count from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; received ${value}.`,
     { setting: "REA_JADX_OPERATION_TIMEOUT_MS", value },
     "operation_timeout",
   );
@@ -740,6 +748,7 @@ const inspectJavaRuntime = async (
       failure.message,
       failure.diagnostics,
       failure.kind,
+      failure.inspectionFailure,
     );
   }
 };

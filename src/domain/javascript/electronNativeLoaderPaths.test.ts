@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 describe("native addon type-only TypeScript imports", () => {
   it("ignores declaration-wide import type and export type from .node modules", () => {
@@ -177,3 +177,33 @@ it("does not prove native bindings through a replaced aliased loader member", ()
   );
   expect(analysis.electron.native_addon_bindings).toEqual([]);
 });
+
+it.each(
+  ["node", "NODE", "Node"].flatMap((extension) =>
+    ["require", "import", "commonjs-export", "esm-export"].map((kind) => ({
+      extension,
+      kind,
+    })),
+  ),
+)(
+  "preserves native extension dispatch for $kind with .$extension",
+  ({ extension, kind }) => {
+    const specifier = `./AddOn-É.${extension}`;
+    const source =
+      kind === "require"
+        ? `const addon = require(${JSON.stringify(specifier)});`
+        : kind === "import"
+          ? `import addon from ${JSON.stringify(specifier)};`
+          : kind === "commonjs-export"
+            ? `module.exports = require(${JSON.stringify(specifier)});`
+            : `export { default } from ${JSON.stringify(specifier)};`;
+    const analysis =
+      kind === "require" || kind === "commonjs-export"
+        ? analyzeCommonJsStaticFixture(source)
+        : analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.native_addon_bindings).toEqual(
+      extension === "node" ? [expect.objectContaining({ specifier })] : [],
+    );
+  },
+);

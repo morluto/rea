@@ -38,6 +38,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -61,6 +62,7 @@ import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
 import ghidra.app.util.bin.format.pdb.PdbParserConstants;
+import ghidra.app.util.opinion.ElfLoader;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
@@ -77,6 +79,8 @@ import ghidra.program.model.data.StringDataInstance;
 import ghidra.program.model.data.DataType;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.scalar.Scalar;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkType;
 import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.DataIterator;
@@ -119,11 +123,13 @@ import ghidra.program.util.VarnodeContext;
 public final class ReaGhidraBridge extends HeadlessScript {
     // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
     private static final int PDB_ATTRIBUTE_UTF16_BUDGET = 4096;
-    private static final int MAX_HIGH_PCODE_OPS = 3000;
-    private static final int MAX_HIGH_PCODE_INPUTS_PER_OP = 64;
-    private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
+    private static final int DEFAULT_HIGH_PCODE_OPS = 3000;
+    private static final int DEFAULT_HIGH_PCODE_INPUTS_PER_OP = 64;
+    private static final int DEFAULT_HIGH_PCODE_DEF_USE_EDGES = 12000;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
     private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
+    private final NavigableMap<Address, LoaderInitializedRelocation> loaderInitializedRelocations =
+        new TreeMap<>();
     private String admittedTargetSha256;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
@@ -184,6 +190,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private String identityAdmissionFailure;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
+    private Integer decompileMaxPayloadMiB;
+    // DecompileProcess converts MiB to bytes using a signed-int left shift.
+    private static final int MAX_DECOMPILE_PAYLOAD_MIB = Integer.MAX_VALUE >> 20;
+    private ValueFlowLimits valueFlowLimits = defaultValueFlowLimits();
     // DecompileProcess converts seconds to an int millisecond timer delay.
     private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
@@ -251,6 +261,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!descriptor.transport.equals("unix-socket") && descriptor.analysisExtensions.size() > 0)
                 throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
             analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
+            // Read-only sessions keep the discovered limitation but cannot mark blocks volatile.
+            protectLoaderInitializedRelocations(
+                !descriptor.existingProject && descriptor.transport.equals("unix-socket"));
             initializeDecompiler();
             checkpointModification = currentProgram.getModificationNumber();
             serve(descriptor);
@@ -403,7 +416,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     request = parseRequest(line, descriptor.token);
                 }
                 catch (RuntimeException exception) {
-                    writeFailure(writer, 1, "invalid_request", "Bridge request is invalid");
+                    // The request id may not have parsed, so the connection-level
+                    // failure uses id 0, which no client request uses.
+                    writeFailure(writer, CONNECTION_FAILURE_ID, "invalid_request", "Bridge request is invalid");
                     return;
                 }
             }
@@ -426,6 +441,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
                 decompileTimeoutSeconds = request.decompileTimeoutSeconds() == null
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
+                valueFlowLimits = request.valueFlowLimits();
+                applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
                 writeSuccess(writer, request.id, handleRequest(request, descriptor));
             }
             catch (RequestFailure failure) {
@@ -861,8 +878,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String cursor = params.has("cursor") ? requireString(params, "cursor") : null;
         Address resume = null;
         if (cursor != null) {
+            // The prefix is a one-way digest of target, profile, pattern,
+            // mask, bounds, and document. A mismatch cannot name which one
+            // differs, so this code reports the binding instead of schema repair.
             if (!cursor.startsWith(binding + ":"))
-                throw new RequestFailure("invalid_request", "Byte search cursor does not match the target and query");
+                throw new RequestFailure("byte_search_cursor_mismatch",
+                    "Byte search cursor does not match this search. It is bound to the target, analysis profile (including a selected Ghidra project), pattern, mask, bounds, and document, and does not identify which of those differs.");
             resume = parseReaAddress(cursor.substring(binding.length() + 1));
             MemoryBlock resumedBlock = currentProgram.getMemory().getBlock(resume);
             Address bound = start == null ? end : start;
@@ -1038,11 +1059,109 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private void initializeDecompiler() {
+    /**
+     * Ghidra applies most loader relocations, but one it cannot apply (for
+     * example an ELF copy relocation in RELRO, whose value comes from another
+     * object) keeps its on-disk bytes while the runtime loader supplies a
+     * different value. Mark a non-writable loaded block holding such a
+     * destination volatile before opening the decompiler so those bytes cannot
+     * be constant-propagated as if they were runtime values.
+     *
+     * This changes only the ephemeral analysis database: source FileBytes and
+     * the original target remain untouched. MemoryBlock exposes volatility for
+     * a whole block, so the mitigation is intentionally conservative within a
+     * block while preserving its read/write/execute permissions.
+     *
+     * Without database-mutation authority (Windows P0 or a caller's existing
+     * project) the relocations are still recorded so affected procedures carry
+     * the limitation, but no block is marked volatile.
+     */
+    private void protectLoaderInitializedRelocations(boolean markVolatile) throws Exception {
+        String elfFileType = currentProgram.getOptions(
+            ghidra.program.model.listing.Program.PROGRAM_INFO
+        ).getString(ElfLoader.ELF_FILE_TYPE_PROPERTY, "");
+        // Ghidra also marks ELF ET_DYN and ET_CORE programs relocatable.
+        if (currentProgram.getRelocationTable().isRelocatable() &&
+            !elfFileType.equals("shared object")) return;
+        Map<Address, LoaderInitializedRelocation> discovered = new TreeMap<>();
+        Set<MemoryBlock> blocks = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        Iterator<Relocation> iterator = currentProgram.getRelocationTable().getRelocations();
+        while (iterator.hasNext()) {
+            monitor.checkCancelled();
+            Relocation relocation = iterator.next();
+            // An applied relocation already holds the value the loader writes
+            // (for example GLOB_DAT or RELATIVE), so folding it is correct and
+            // keeping its block foldable preserves GOT-call pseudocode.
+            Relocation.Status status = relocation.getStatus();
+            if (status == Relocation.Status.APPLIED || status == Relocation.Status.APPLIED_OTHER)
+                continue;
+            Address location = relocation.getAddress();
+            MemoryBlock block = currentProgram.getMemory().getBlock(location);
+            if (block == null || !block.isLoaded() || !block.isInitialized() || block.isWrite())
+                continue;
+            long lengthInBytes = relocation.getLength();
+            int addressableUnitSize = location.getAddressSpace().getAddressableUnitSize();
+            long lengthInAddressableUnits = Math.max(
+                1L,
+                (lengthInBytes + addressableUnitSize - 1L) / addressableUnitSize
+            );
+            discovered.put(
+                location,
+                new LoaderInitializedRelocation(
+                    location,
+                    lengthInAddressableUnits,
+                    block.getName(),
+                    relocation.getSymbolName()
+                )
+            );
+            blocks.add(block);
+        }
+        if (discovered.isEmpty()) return;
+        loaderInitializedRelocations.putAll(discovered);
+        if (!markVolatile) return;
+
+        int transaction = currentProgram.startTransaction("REA loader relocation semantics");
+        boolean commit = false;
+        try {
+            for (MemoryBlock block : blocks) {
+                monitor.checkCancelled();
+                if (!block.isVolatile()) block.setVolatile(true);
+            }
+            commit = true;
+        }
+        finally {
+            currentProgram.endTransaction(transaction, commit);
+        }
+    }
+
+    private LoaderInitializedRelocation loaderInitializedRelocationAt(Address address) {
+        Map.Entry<Address, LoaderInitializedRelocation> entry =
+            loaderInitializedRelocations.floorEntry(address);
+        if (entry == null) return null;
+        LoaderInitializedRelocation relocation = entry.getValue();
+        return relocation.contains(address) ? relocation : null;
+    }
+
+    private DecompileOptions decompileOptions(Integer payloadMiB) {
         DecompileOptions options = new DecompileOptions();
         options.setMaxInstructions(Integer.MAX_VALUE);
+        if (payloadMiB != null) options.setMaxPayloadMBytes(payloadMiB);
+        return options;
+    }
+
+    private void applyDecompilePayloadLimit(Integer payloadMiB) {
+        if (java.util.Objects.equals(decompileMaxPayloadMiB, payloadMiB)) return;
+        // DecompInterface supports live setOptions: it updates the existing
+        // DecompileProcess result-size bound before sending native options.
+        if (!decompiler.setOptions(decompileOptions(payloadMiB)))
+            throw new RequestFailure("decompile_options_failed", "Ghidra could not apply the selected native decompiler payload limit");
+        decompiler.flushCache();
+        decompileMaxPayloadMiB = payloadMiB;
+    }
+
+    private void initializeDecompiler() {
         decompiler = new DecompInterface();
-        decompiler.setOptions(options);
+        decompiler.setOptions(decompileOptions(decompileMaxPayloadMiB));
         decompiler.toggleCCode(true);
         decompiler.toggleSyntaxTree(true);
         decompiler.toggleJumpLoads(true);
@@ -1856,7 +1975,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         while (operations.hasNext()) {
             monitor.checkCancelled();
             PcodeOpAST operation = operations.next();
-            if (selected.size() >= MAX_HIGH_PCODE_OPS) {
+            if (selected.size() >= valueFlowLimits.maxOperations()) {
                 omittedOperationsLowerBound = 1;
                 break;
             }
@@ -1884,6 +2003,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray effects = new JsonArray();
         int omittedInputs = 0;
         int omittedEdges = 0;
+        boolean edgeLimitReached = false;
         for (PcodeOpAST operation : selected) {
             monitor.checkCancelled();
             String operationId = operationIds.get(operation);
@@ -1899,14 +2019,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             value.addProperty("block_membership", operation.getParent() == null ? "detached" : "member");
             JsonArray inputs = new JsonArray();
             int inputCount = operation.getNumInputs();
-            int capturedInputs = Math.min(inputCount, MAX_HIGH_PCODE_INPUTS_PER_OP);
+            int capturedInputs = Math.min(inputCount, valueFlowLimits.maxInputsPerOperation());
             for (int inputIndex = 0; inputIndex < capturedInputs; inputIndex += 1) {
                 Varnode input = operation.getInput(inputIndex);
                 inputs.add(varnodeValue(input));
                 if (input instanceof VarnodeAST astInput) {
                     if (astInput.getHigh() instanceof HighParam parameter) {
-                        if (parameterUses.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) omittedEdges++;
-                        else {
+                        if (parameterUses.size() >= valueFlowLimits.maxEdges()) {
+                            edgeLimitReached = true;
+                            omittedEdges++;
+                        } else {
                             JsonObject use = new JsonObject();
                             use.addProperty("ordinal", parameter.getSlot());
                             use.addProperty("use", operationId);
@@ -1917,7 +2039,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     PcodeOp definition = astInput.getDef();
                     if (definition instanceof PcodeOpAST astDefinition) {
                         String definitionId = operationIds.get(astDefinition);
-                        if (definitionId == null || defUse.size() >= MAX_HIGH_PCODE_DEF_USE_EDGES) {
+                        if (definitionId == null || defUse.size() >= valueFlowLimits.maxEdges()) {
+                            if (defUse.size() >= valueFlowLimits.maxEdges()) edgeLimitReached = true;
                             omittedEdges += 1;
                         } else {
                             JsonObject edge = new JsonObject();
@@ -1940,6 +2063,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject result = new JsonObject();
         result.addProperty("available", true);
         result.addProperty("provenance", "ghidra-high-pcode");
+        JsonObject limits = new JsonObject();
+        limits.addProperty("max_operations", valueFlowLimits.maxOperations());
+        limits.addProperty("max_inputs_per_operation", valueFlowLimits.maxInputsPerOperation());
+        limits.addProperty("max_edges", valueFlowLimits.maxEdges());
+        result.add("limits", limits);
+        JsonArray limitsReached = new JsonArray();
+        if (omittedOperationsLowerBound > 0) limitsReached.add("max_operations");
+        if (omittedInputs > 0) limitsReached.add("max_inputs_per_operation");
+        if (edgeLimitReached) limitsReached.add("max_edges");
+        result.add("limits_reached", limitsReached);
         result.add("operations", operationValues);
         result.add("def_use", defUse);
         result.add("parameters", parameterValues);
@@ -1968,13 +2101,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
             "Memory read/write effects include stack and temporary memory operations; they do not identify persistent state or business meaning."
         );
         limitations.add(
-            "Operation, input, and def-use limits can truncate large functions; inspect truncation, omitted lower bounds, and known omitted counts before drawing conclusions."
+            "Operation, input, and def-use limits can truncate large functions; inspect the effective limits, limits_reached and omitted counts before drawing conclusions."
         );
         limitations.add(
             "Known omitted-edge counts cover links omitted from retained operations; omitted operations may contain additional uncounted links."
         );
+        if (omittedOperationsLowerBound > 0)
+            limitations.add(valueFlowLimitRecovery("max_operations", valueFlowLimits.maxOperations()));
+        if (omittedInputs > 0)
+            limitations.add(valueFlowLimitRecovery("max_inputs_per_operation", valueFlowLimits.maxInputsPerOperation()));
+        if (edgeLimitReached)
+            limitations.add(valueFlowLimitRecovery("max_edges", valueFlowLimits.maxEdges()));
         result.add("limitations", limitations);
         return result;
+    }
+
+    private static String valueFlowLimitRecovery(String field, int effective) {
+        String setting = "ghidra.value_flow_" + field;
+        String environment = "REA_GHIDRA_VALUE_FLOW_" + field.toUpperCase(Locale.ROOT);
+        String adjustment = effective < Integer.MAX_VALUE
+            ? "In MCP, use update_analysis_settings with setting " + setting +
+                ", action set and a larger integer value from 1 to " + Integer.MAX_VALUE +
+                ", then repeat the selected function analysis on this Program without restarting REA. " +
+                "For a one-shot CLI retry, set " + environment +
+                " to a larger count in the environment that starts the next rea invocation, then repeat the selected analysis; the previous invocation's Program is no longer active."
+            : "The setting is at its Java integer maximum; select a smaller function for this projection.";
+        return setting + " reached its effective value of " + effective + ". " + adjustment +
+            " These controls do not raise the decompile deadline, bridge transport or MCP client limits.";
     }
 
     private String pcodeOperationId(PcodeOpAST operation) {
@@ -3699,10 +3852,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!results.decompileCompleted()) {
             throw new RequestFailure(
                 "decompile_failed",
-                "Ghidra decompilation failed: " + diagnosticMessage(results.getErrorMessage())
+                "Ghidra decompilation failed: " + diagnosticMessage(results.getErrorMessage()) +
+                ". The effective native decompiler payload allowance is " +
+                decompiler.getOptions().getMaxPayloadMBytes() +
+                " MiB. " + decompilePayloadRecovery()
             );
         }
         return results;
+    }
+
+    private String decompilePayloadRecovery() {
+        int effective = decompiler.getOptions().getMaxPayloadMBytes();
+        if (effective >= MAX_DECOMPILE_PAYLOAD_MIB)
+            return "If the diagnostic reports payload exhaustion, the native payload allowance is already at its supported maximum; no higher value is accepted. Use analyze_function for available listing facts or explicitly select a smaller function for decompilation.";
+        return "If the diagnostic reports payload exhaustion, in MCP raise ghidra.decompile_max_payload_mib with update_analysis_settings " +
+            "(integer MiB from 1 to " + MAX_DECOMPILE_PAYLOAD_MIB +
+            ") and repeat the selected operation on this Program without restarting REA. " +
+            "For a one-shot CLI retry, set REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB to a larger MiB value in the environment that starts the next rea invocation, then repeat the selected operation; the previous invocation's Program is no longer active. " +
+            "Runtime null or an omitted launch seed restores the installed Ghidra default. This does not raise the decompile deadline, high-pcode projection budgets or MCP client limits.";
     }
 
     private static String decompiledText(DecompileResults results) {
@@ -3918,6 +4085,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private final class FunctionBoundaryLimitations {
         private final Function function;
         private final List<String> limitations = new ArrayList<>();
+        private boolean inferredNoReturnCall;
+        private final Set<Address> observedLoaderRelocations = new HashSet<>();
         private Instruction beforePrevious;
         private Instruction previous;
 
@@ -3927,8 +4096,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         private void observe(Instruction instruction) throws Exception {
             monitor.checkCancelled();
-            String limitation = terminalCallLimitation(instruction);
-            if (limitation != null) limitations.add(limitation);
+            TerminalCall terminal = terminalCall(instruction);
+            if (terminal != null) {
+                limitations.add(terminal.limitation());
+                if (terminal.inferredNoReturn()) inferredNoReturnCall = true;
+            }
+            for (Reference reference : instruction.getReferencesFrom()) {
+                if (!reference.getReferenceType().isRead()) continue;
+                LoaderInitializedRelocation relocation = loaderInitializedRelocationAt(
+                    reference.getToAddress()
+                );
+                if (relocation == null || !observedLoaderRelocations.add(relocation.address()))
+                    continue;
+                limitations.add(loaderInitializedRelocationLimitation(relocation));
+            }
             if (beforePrevious != null && previous != null) {
                 String seh = borlandSehHandlerLimitation(
                     function, beforePrevious, previous, instruction);
@@ -3939,8 +4120,54 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
 
         private List<String> values() {
-            return List.copyOf(limitations);
+            if (!inferredNoReturnCall) return List.copyOf(limitations);
+            List<String> result = new ArrayList<>();
+            // One consequence and recovery per function, ahead of the call-specific facts so a
+            // bounded summary that admits limitations in order keeps it. The text names no
+            // address, so those summaries also deduplicate it across functions.
+            result.add("A terminal call in this function targets a callee that " +
+                "Ghidra's Non-Returning Functions - Discovered analyzer inferred cannot return, so Ghidra " +
+                "excluded that call's fall-through from the analyzed body and from the pseudocode and facts " +
+                "derived from it. If the callee returns, code reachable only through that fall-through is " +
+                "missing from this result. To compare, analyze a fresh import with " +
+                "REA_GHIDRA_DISABLED_ANALYZERS='Non-Returning Functions - Discovered'.");
+            result.addAll(limitations);
+            return result;
         }
+    }
+
+    /** A terminal call's limitation and whether its no-return flag was analyzer-inferred. */
+    private record TerminalCall(String limitation, boolean inferredNoReturn) {}
+
+    /**
+     * Ghidra's Non-Returning Functions - Discovered analyzer bookmarks each entry it marks with
+     * this Analysis comment; the name-list Known analyzer uses "Non-Returning Function Identified".
+     * A missing bookmark leaves the flag's origin unknown, never declared.
+     */
+    private boolean discoveredNoReturn(Function target) {
+        Function thunked = target.isThunk() ? target.getThunkedFunction(true) : null;
+        return hasDiscoveredNoReturnBookmark(target) ||
+            (thunked != null && hasDiscoveredNoReturnBookmark(thunked));
+    }
+
+    private boolean hasDiscoveredNoReturnBookmark(Function function) {
+        Bookmark bookmark = currentProgram.getBookmarkManager().getBookmark(
+            function.getEntryPoint(), BookmarkType.ANALYSIS, "Non-Returning Function");
+        return bookmark != null && "Non-Returning Function Found".equals(bookmark.getComment());
+    }
+
+    private static String loaderInitializedRelocationLimitation(
+            LoaderInitializedRelocation relocation) {
+        String symbol = relocation.symbolName();
+        String symbolDetail = symbol == null || symbol.isBlank()
+            ? "an unnamed relocation"
+            : "the relocation for " + symbol;
+        return "This procedure reads bytes affected by the loader relocation at " +
+            canonicalAddress(relocation.address()) + " in non-writable block " +
+            relocation.blockName() +
+            ", which contains " + symbolDetail +
+            "; the file-backed value may differ from the loader-initialized runtime value, " +
+            "so constants derived from this location are not authoritative.";
     }
 
     private String borlandSehHandlerLimitation(
@@ -4035,9 +4262,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    private String terminalCallLimitation(Instruction instruction) {
+    private TerminalCall terminalCall(Instruction instruction) {
         if (!instruction.getFlowType().isCall() || !instruction.getFlowType().isTerminal())
             return null;
+        boolean inferred = false;
         Address[] destinations = instruction.getFlows();
         StringBuilder limitation = new StringBuilder();
         limitation.append("Ghidra Listing reports a terminal call at ")
@@ -4066,14 +4294,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Function target = destinations.length == 1
                 ? currentProgram.getFunctionManager().getFunctionAt(destinations[0])
                 : null;
-            if (target != null && target.hasNoReturn()) {
+            if (target != null && target.hasNoReturn() && discoveredNoReturn(target)) {
+                inferred = true;
+                limitation.append(" Ghidra's Non-Returning Functions - Discovered analyzer bookmarked this callee as a non-returning function it found; the flag is an analysis inference, not an independent verification that the callee cannot return.");
+            }
+            else if (target != null && target.hasNoReturn()) {
                 limitation.append(" This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.");
             }
             else {
                 limitation.append(" The reason for the terminal flow is not established by this observation.");
             }
         }
-        return limitation.toString();
+        return new TerminalCall(limitation.toString(), inferred);
     }
 
     private static String renderAssembly(List<Instruction> instructions) {
@@ -5156,7 +5388,28 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Set<String> keys = new HashSet<>(REQUEST_KEYS);
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_timeout_seconds"))
             keys.add("decompile_timeout_seconds");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("value_flow_limits"))
+            keys.add("value_flow_limits");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_max_payload_mib"))
+            keys.add("decompile_max_payload_mib");
         JsonObject object = requireObject(parsed, keys);
+        Integer payloadMiB = null;
+        if (object.has("decompile_max_payload_mib") && !object.get("decompile_max_payload_mib").isJsonNull()) {
+            payloadMiB = requireInteger(object, "decompile_max_payload_mib");
+            if (payloadMiB < 1 || payloadMiB > MAX_DECOMPILE_PAYLOAD_MIB)
+                throw new IllegalArgumentException("Invalid per-request native decompiler payload limit");
+        }
+        ValueFlowLimits flowLimits = defaultValueFlowLimits();
+        if (object.has("value_flow_limits")) {
+            JsonObject limits = requireObject(object.get("value_flow_limits"),
+                Set.of("max_operations", "max_inputs_per_operation", "max_edges"));
+            int operations = requireInteger(limits, "max_operations");
+            int inputs = requireInteger(limits, "max_inputs_per_operation");
+            int edges = requireInteger(limits, "max_edges");
+            if (operations < 1 || inputs < 1 || edges < 1)
+                throw new IllegalArgumentException("Invalid per-request value-flow limits");
+            flowLimits = new ValueFlowLimits(operations, inputs, edges);
+        }
         Integer timeout = null;
         if (object.has("decompile_timeout_seconds")) {
             JsonElement value = object.get("decompile_timeout_seconds");
@@ -5172,7 +5425,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (params == null || !params.isJsonObject()) {
             throw new IllegalArgumentException("Bridge request parameters are invalid");
         }
-        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout);
+        return new Request(id, requireString(object, "method"), params.getAsJsonObject(), timeout, payloadMiB, flowLimits);
     }
 
     private static JsonObject requireObject(JsonElement element, Set<String> keys) {
@@ -5290,6 +5543,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
         writeResponse(writer, response);
     }
 
+    /** Reserved response id for a failure not tied to one parsed request. */
+    private static final int CONNECTION_FAILURE_ID = 0;
+
     private static void writeFailure(
             BufferedWriter writer,
             int id,
@@ -5351,6 +5607,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
     private record AddressNameConflict(Namespace namespace, String leaf, List<Address> requesters, List<Address> holders) {}
     private record AddressNameFailure(String reason, AddressNameConflict conflict) {}
+    private record LoaderInitializedRelocation(
+        Address address, long lengthInAddressableUnits, String blockName, String symbolName
+    ) {
+        private boolean contains(Address candidate) {
+            if (!candidate.hasSameAddressSpace(address) || candidate.compareTo(address) < 0)
+                return false;
+            long displacement = candidate.subtract(address);
+            return displacement >= 0 && displacement < lengthInAddressableUnits;
+        }
+    }
     private record FunctionEntry(Function function, InventoryItem item) {}
     private record ProcedureNameMatch(boolean primary, List<String> aliases) {
         boolean matched() {
@@ -5380,7 +5646,11 @@ public final class ReaGhidraBridge extends HeadlessScript {
         int decompileTimeoutSeconds,
         boolean existingProject
     ) {}
-    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds) {}
+    private static ValueFlowLimits defaultValueFlowLimits() {
+        return new ValueFlowLimits(DEFAULT_HIGH_PCODE_OPS, DEFAULT_HIGH_PCODE_INPUTS_PER_OP, DEFAULT_HIGH_PCODE_DEF_USE_EDGES);
+    }
+    private record ValueFlowLimits(int maxOperations, int maxInputsPerOperation, int maxEdges) {}
+    private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds, Integer decompileMaxPayloadMiB, ValueFlowLimits valueFlowLimits) {}
 
     private static final class RequestFailure extends RuntimeException {
         private final String code;

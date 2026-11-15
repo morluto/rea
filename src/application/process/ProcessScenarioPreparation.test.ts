@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import * as filesystemSnapshot from "../../process/capture/FilesystemSnapshot.js";
 
 import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -10,29 +11,42 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
 import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
 
-it("rejects observation roots that capture admission rejects", async () => {
-  const root = await createTestTempDirectory("rea-process-plan-");
-  const file = join(root, "selected");
-  await writeFile(file, "not a directory");
-  const scenario = processScenarioSchema.parse({
-    executable: process.execPath,
-    working_directory: root,
-    filesystem_observation_paths: [join(file, "child")],
-  });
+afterEach(() => vi.restoreAllMocks());
 
-  const prepared = await prepareProcessScenarioPlan(
-    scenario,
-    {},
-    process.platform,
-  );
+/**
+ * Windows refuses capture before root admission runs. The cancellation cases
+ * replace admission, so they plan for a platform that reaches it on any host.
+ */
+const capturePlatform = "linux";
 
-  expect(prepared.ok).toBe(false);
-  if (prepared.ok) return;
-  expect(prepared.error).toMatchObject({
-    _tag: "ProcessCaptureError",
-    userMessage: "filesystem observation admission failed",
-  });
-});
+// A path below a regular file is ENOTDIR on POSIX. Windows reports ENOENT,
+// which admission accepts as a root the scenario may create.
+it.skipIf(process.platform === "win32")(
+  "rejects observation roots that capture admission rejects",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-plan-");
+    const file = join(root, "selected");
+    await writeFile(file, "not a directory");
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      working_directory: root,
+      filesystem_observation_paths: [join(file, "child")],
+    });
+
+    const prepared = await prepareProcessScenarioPlan(
+      scenario,
+      {},
+      process.platform,
+    );
+
+    expect(prepared.ok).toBe(false);
+    if (prepared.ok) return;
+    expect(prepared.error).toMatchObject({
+      _tag: "ProcessCaptureError",
+      userMessage: "filesystem observation admission failed",
+    });
+  },
+);
 
 it("reports cancellation normalized inside admission as planning cancellation", async () => {
   const scenario = processScenarioSchema.parse({
@@ -40,23 +54,24 @@ it("reports cancellation normalized inside admission as planning cancellation", 
     working_directory: ".",
   });
   const controller = new AbortController();
+  vi.spyOn(
+    filesystemSnapshot,
+    "admitFilesystemObservationRoots",
+  ).mockImplementationOnce(() => {
+    controller.abort("caller stopped during admission");
+    return Promise.resolve(
+      err(
+        new ProcessCaptureError("filesystem observation admission failed", {
+          cause: controller.signal.reason,
+        }),
+      ),
+    );
+  });
   const prepared = await prepareProcessScenarioPlan(
     scenario,
     {},
-    process.platform,
+    capturePlatform,
     controller.signal,
-    {
-      admitRoots: () => {
-        controller.abort("caller stopped during admission");
-        return Promise.resolve(
-          err(
-            new ProcessCaptureError("filesystem observation admission failed", {
-              cause: controller.signal.reason,
-            }),
-          ),
-        );
-      },
-    },
   );
 
   expect(prepared.ok).toBe(false);
@@ -85,18 +100,19 @@ it("reports cancellation after the last awaited admission step", async () => {
   );
   let admissionCalls = 0;
 
+  vi.spyOn(
+    filesystemSnapshot,
+    "admitFilesystemObservationRoots",
+  ).mockImplementationOnce(() => {
+    admissionCalls += 1;
+    admissionEntered();
+    return pendingAdmission;
+  });
   const planning = prepareProcessScenarioPlan(
     scenario,
     {},
-    process.platform,
+    capturePlatform,
     controller.signal,
-    {
-      admitRoots: () => {
-        admissionCalls += 1;
-        admissionEntered();
-        return pendingAdmission;
-      },
-    },
   );
 
   // Abort only once admission is actually running. Aborting earlier would be

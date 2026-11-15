@@ -4,13 +4,11 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import {
+  DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
   LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
 } from "../process/ProcessOwnershipObservation.js";
 import type { ProviderAvailability } from "./AnalysisProvider.js";
-
-const DARWIN_REMEDIATION =
-  "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.";
 
 // Provider adapters re-attribute capability errors and keep the original as cause.
 const prerequisiteRefusal = (
@@ -63,6 +61,17 @@ const darwinPrerequisiteRefusal = (
     : undefined;
 };
 
+/**
+ * Refusal facts a provider's availability keeps: why admission failed and
+ * which `ps` ran (see `LinuxOwnedProcessPrerequisiteError`).
+ */
+const PREREQUISITE_DIAGNOSTIC_KEYS = [
+  "admission_code",
+  "system_code",
+  "ps_command",
+  "ps_source",
+] as const;
+
 /** A host prerequisite gap is the probed provider's unavailability, not a probe failure. */
 export const ownedProcessPrerequisiteAvailability = (
   cause: unknown,
@@ -80,12 +89,12 @@ export const ownedProcessPrerequisiteAvailability = (
         stage: "ownership_preparation",
         prerequisite_provider_id: refusal.providerId,
         prerequisite_operation: refusal.operation,
-        ...(refusal.diagnostics?.admission_code === undefined
-          ? {}
-          : { admission_code: refusal.diagnostics.admission_code }),
-        ...(refusal.diagnostics?.system_code === undefined
-          ? {}
-          : { system_code: refusal.diagnostics.system_code }),
+        ...Object.fromEntries(
+          PREREQUISITE_DIAGNOSTIC_KEYS.flatMap((key) => {
+            const value = refusal.diagnostics?.[key];
+            return value === undefined ? [] : [[key, value]];
+          }),
+        ),
       },
     };
   }
@@ -94,8 +103,8 @@ export const ownedProcessPrerequisiteAvailability = (
   return {
     status: "unavailable",
     code: "runtime_unavailable",
-    reason: `${darwin.message}. ${DARWIN_REMEDIATION}`,
-    remediation: DARWIN_REMEDIATION,
+    reason: `${darwin.message}. ${DARWIN_PROCESS_OWNERSHIP_REMEDIATION}`,
+    remediation: DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
     diagnostics: {
       stage: "ownership_preparation",
       ...(darwin.compilerOutcome === undefined

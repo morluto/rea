@@ -1,7 +1,6 @@
 import canonicalize from "canonicalize";
 import { z } from "zod";
 import { processSourceTruncated } from "./processCaptureCoverage.js";
-import { symlinkTargetIdentity } from "./symlinkTarget.js";
 import type {
   ProcessObservationLocation,
   ProcessObservationSource,
@@ -47,15 +46,14 @@ export const PROCESS_COMPARISON_DIMENSIONS = [
 export type ProcessComparisonDimension =
   (typeof PROCESS_COMPARISON_DIMENSIONS)[number];
 
-/** Caller-selected comparison policy; the clock is not persisted as policy. */
+/** Caller-selected comparison policy. */
 export interface ProcessCaptureComparisonOptions {
   readonly maxCaptureAgeMs?: number;
-  readonly now?: () => number;
   readonly traceSpecification?: ProcessTraceSpecification;
 }
 
 /** Derive the overall comparison status from every process dimension. */
-export const deriveProcessComparisonStatus = (
+const deriveProcessComparisonStatus = (
   dimensions: readonly ComparisonStatus[],
 ): ComparisonStatus => {
   if (dimensions.includes("truncated")) return "truncated";
@@ -292,17 +290,8 @@ const hasKnownFilesystemDifference = (
           other.sha256 !== null &&
           file.sha256 !== other.sha256
         );
-      if (file.type === "symlink" && other.type === "symlink") {
-        const leftTarget = symlinkTargetIdentity(file);
-        const rightTarget = symlinkTargetIdentity(other);
-        if (leftTarget !== null && rightTarget !== null)
-          return leftTarget !== rightTarget;
-        return (
-          file.symlink_target !== null &&
-          other.symlink_target !== null &&
-          file.symlink_target !== other.symlink_target
-        );
-      }
+      if (file.type === "symlink" && other.type === "symlink")
+        return file.symlink_target_hex !== other.symlink_target_hex;
       return false;
     });
   }) ||
@@ -489,7 +478,7 @@ const explicitlyTimedSources = (
 const assertComparable = (
   left: ProcessCapture,
   right: ProcessCapture,
-  options: { readonly maxCaptureAgeMs?: number; readonly now?: () => number },
+  options: { readonly maxCaptureAgeMs?: number },
 ): void => {
   if (
     left.manifest.comparison_contract_sha256 !==
@@ -510,7 +499,7 @@ const assertComparable = (
   }
   if (options.maxCaptureAgeMs === undefined) return;
   const maxCaptureAgeMs = options.maxCaptureAgeMs;
-  const now = (options.now ?? Date.now)();
+  const now = Date.now();
   const stale = (
     [
       ["left", left],

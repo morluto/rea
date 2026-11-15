@@ -86,7 +86,7 @@ MCP varsayılan olarak kompakt girdi şemaları kullanır. Tam alan açıklamala
 
 Kurulum, seçilen çalışma zamanını ve REA giriş betiğini doğrudan kaydeder. Paket çalıştırıcısı kullanıyorsanız önbellek girdisini ve çalışma zamanını koruyun; paketi hedef projenin dışında güvenilir bir dizinden edinin. Kurulum rehberine bakın.
 
-Tam çıktı şemaları varsayılan olarak duyurulur. İstemciniz `tools/list` boyutunu sınırlıyorsa MCP kaydında `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` veya `off` ayarlayın. Sunucu doğrulaması ve yapılandırılmış sonuçlar tam kalır. MCP sözleşmeleri rehberindeki “Output schemas” bölümüne bakın.
+Çıktı şemaları varsayılan olarak `tools/list` içinde yer almaz: hiçbir model API'si bunları okumaz ve REA her sonucu kendisi doğrular. Her çıktı şemasını 4096 baytlık sınır içinde duyurmak için MCP kaydında `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`, tam çıktı şemaları için `full` (sonuçları doğrulayan MCP istemcileri için) ayarlayın. Tüm ayarlarda sunucu doğrulaması ve yapılandırılmış sonuçlar tam kalır. MCP sözleşmeleri rehberindeki “Output schemas” bölümüne bakın.
 
 ### Ajanınıza sorun
 

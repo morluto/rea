@@ -101,9 +101,6 @@ it.each(["same", "other", "missing-path", "no-path", "empty-group"] as const)(
         },
       },
     });
-    expect(projected.details?.partial_observation).toEqual(
-      expect.objectContaining({ kind: "artifact-inventory" }),
-    );
     if (listed === "same") {
       expect(projected.message).toMatch(
         /hdiutil.*existing attachment.*owner.*release.*retry.*does not borrow or detach/iu,

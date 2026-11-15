@@ -6,6 +6,10 @@ import {
 import { rejectGpu } from "./GpuSource.js";
 
 export const AMD_METADATA_BYTES = 8 * 1024 * 1024;
+const AMD_METADATA_DEPTH = 32;
+const AMD_METADATA_VALUES = 262144;
+const AMD_METADATA_CONTAINER_ENTRIES = 65536;
+const AMD_METADATA_VALUE_BYTES = 65536;
 
 /** Validate allocation and nesting costs before the standard decoder allocates containers. */
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -21,11 +25,11 @@ const preflight = (bytes: Buffer): Set<string> => {
     return start;
   };
   const value = (depth: number): string | undefined => {
-    if (depth > 32 || ++values > 262144)
+    if (depth > AMD_METADATA_DEPTH || ++values > AMD_METADATA_VALUES)
       throw new BinaryResourceFailure(
         "structure",
-        262144,
-        "AMDGPU metadata exceeds depth 32 or 262144 decoded values",
+        AMD_METADATA_VALUES,
+        `AMDGPU metadata exceeds depth ${String(AMD_METADATA_DEPTH)} or ${String(AMD_METADATA_VALUES)} decoded values`,
       );
     const code = bytes[take(1)]!;
     const string =
@@ -77,13 +81,29 @@ const preflight = (bytes: Buffer): Set<string> => {
       }
       payload = width!;
     }
-    if (count > 262144 - values || payload > 65536)
+    const start = take(payload);
+    // Every declared child requires at least one encoded byte, regardless of
+    // its type. Impossible extents are malformed independently of limits.
+    if (count > bytes.length - at)
+      rejectGpu("Truncated AMDGPU MessagePack metadata container");
+    if ((map ? count / 2 : count) > AMD_METADATA_CONTAINER_ENTRIES)
       throw new BinaryResourceFailure(
         "structure",
-        262144,
-        "AMDGPU metadata container/string exceeds its allocation budget",
+        AMD_METADATA_CONTAINER_ENTRIES,
+        `AMDGPU metadata container exceeds its ${String(AMD_METADATA_CONTAINER_ENTRIES)}-entry allocation budget`,
       );
-    const start = take(payload);
+    if (payload > AMD_METADATA_VALUE_BYTES)
+      throw new BinaryResourceFailure(
+        "structure",
+        AMD_METADATA_VALUE_BYTES,
+        `AMDGPU metadata value exceeds its ${String(AMD_METADATA_VALUE_BYTES)}-byte allocation budget`,
+      );
+    if (count > AMD_METADATA_VALUES - values)
+      throw new BinaryResourceFailure(
+        "structure",
+        AMD_METADATA_VALUES,
+        "AMDGPU metadata container exceeds its aggregate value budget",
+      );
     if (string) {
       strings.add(`${bytes.byteOffset + start}:${payload}`);
       try {
@@ -159,10 +179,10 @@ export const readAmdMetadata = (bytes: Buffer): unknown => {
           return key;
         },
         useBigInt64: true,
-        maxStrLength: 65536,
-        maxBinLength: 65536,
-        maxArrayLength: 65536,
-        maxMapLength: 65536,
+        maxStrLength: AMD_METADATA_VALUE_BYTES,
+        maxBinLength: AMD_METADATA_VALUE_BYTES,
+        maxArrayLength: AMD_METADATA_CONTAINER_ENTRIES,
+        maxMapLength: AMD_METADATA_CONTAINER_ENTRIES,
         maxExtLength: 0,
       }),
     );

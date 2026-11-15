@@ -34,8 +34,8 @@ import {
   BinaryMappingFailure,
   BinaryReader,
   mappedFileOffset,
-  type FileMapping,
 } from "../metadata/BinaryContainer.js";
+import type { FileMapping } from "../../domain/virtualFileMapping.js";
 import { architectureForElfMachine } from "../metadata/ElfImage.js";
 
 const PT_LOAD = 1;
@@ -642,7 +642,7 @@ export const parseElfDependencies = (
       "ELF extended numbering is unsupported.",
     );
   const bits = header.elfClass;
-  const reader = new BinaryReader(bytes, header.byteOrder === "little");
+  const reader = new BinaryReader(bytes, header.byteOrder === "little", "elf");
   const identity = {
     format: (bits === 64 ? "elf64" : "elf32") as "elf32" | "elf64",
     byte_order: header.byteOrder,

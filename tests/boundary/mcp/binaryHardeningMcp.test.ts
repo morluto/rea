@@ -64,7 +64,6 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );
 
 mcpTest(
@@ -108,5 +107,4 @@ mcpTest(
       await session.close();
     }
   },
-  60_000,
 );

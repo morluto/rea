@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
+import { evaluateTaskChecks } from "./appTaskChecks.js";
 import {
   draftOf,
   passing,
@@ -660,9 +661,6 @@ describe("draftTaskFiles for a drawing resized beside a rename", () => {
 
   it("checks the width the user changed when the only other edit is a name outside the drawing", () => {
     const file = xmlDraft(model("Shop", "10"), model("Store", "20"));
-    const width = file.suggested.find(
-      (check) => "pointer" in check && check.pointer.endsWith("width"),
-    );
 
     expect(file.suggested.map(pointerOf)).toContain(
       "/root/children/[name=diagram]/children/[name=widget][@width=20]/name",
@@ -713,7 +711,7 @@ describe("draftTaskFiles when a sibling lock changed", () => {
       (file) => file.file === ".config/app/settings.json",
     );
 
-    expect(settings?.suggested).not.toEqual([]);
+    expect(settings?.suggested.length ?? 0).toBeGreaterThan(0);
   });
 
   it("keeps the settings draft when the selected folder also contains the lock", () => {
@@ -753,7 +751,7 @@ describe("draftTaskFiles when a sibling lock changed", () => {
       (file) => file.file === ".config/app/settings.json",
     );
 
-    expect(settings?.suggested).not.toEqual([]);
+    expect(settings?.suggested.length ?? 0).toBeGreaterThan(0);
   });
 
   it("drafts a lock that was selected itself, beside the file it names", () => {
@@ -776,6 +774,112 @@ describe("draftTaskFiles when a sibling lock changed", () => {
     );
     const lock = files.find((file) => file.file === "Documents/plan.vym.lock");
 
-    expect(lock?.suggested).not.toEqual([]);
+    expect(lock?.suggested.length ?? 0).toBeGreaterThan(0);
   });
+});
+
+it("keeps an added ID-only member when another XML archive entry independently adds the same ID", () => {
+  const archive = (added: boolean) => ({
+    entries: [
+      {
+        name: "records.xml",
+        size: 1,
+        sha256: added ? "end" : "seed",
+        format: "xml",
+        view: xml(
+          added
+            ? '<doc><record id="6"><title>New record</title></record></doc>'
+            : "<doc/>",
+        ),
+        view_error: null,
+      },
+      {
+        name: "other.xml",
+        size: 1,
+        sha256: added ? "end" : "seed",
+        format: "xml",
+        view: xml(added ? '<doc><entry id="6"/></doc>' : "<doc/>"),
+        view_error: null,
+      },
+    ],
+    entry_count: 2,
+    truncated: false,
+  });
+  const file = "Documents/project.zip";
+  const [drafted] = draftOf({
+    [file]: statePath("document", "zip", archive(false), archive(true)),
+  });
+  expect(
+    drafted?.values.find(({ pointer }) => pointer.includes("[name=other.xml]"))
+      ?.note,
+  ).toBeUndefined();
+  const checks = (drafted?.suggested ?? []).filter(
+    (check) => "pointer" in check && check.pointer.includes("[name=other.xml]"),
+  );
+  expect(
+    evaluateTaskChecks(
+      checks.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([[file, { format: "zip", view: archive(false) }]]),
+    ).map(({ passed }) => passed),
+  ).toContain(false);
+  expect(
+    evaluateTaskChecks(
+      checks.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([[file, { format: "zip", view: archive(true) }]]),
+    ).every(({ passed }) => passed),
+  ).toBe(true);
+});
+
+it("keeps changed display text when its matching label belongs to another XML archive entry", () => {
+  const archive = (text: string) => ({
+    entries: [
+      {
+        name: "source.xml",
+        size: 1,
+        sha256: text,
+        format: "xml",
+        view: xml(
+          `<doc><record><field name="function">Independent function</field><field name="label">${text}</field></record></doc>`,
+        ),
+        view_error: null,
+      },
+      {
+        name: "display.xml",
+        size: 1,
+        sha256: text,
+        format: "xml",
+        view: xml(
+          `<doc><record><display><text>${text}</text><info_name>label</info_name></display></record></doc>`,
+        ),
+        view_error: null,
+      },
+    ],
+    entry_count: 2,
+    truncated: false,
+  });
+  const file = "Documents/project.zip";
+  const [drafted] = draftOf({
+    [file]: statePath("document", "zip", archive("Old"), archive("New")),
+  });
+  expect(
+    drafted?.values.find(({ pointer }) =>
+      pointer.includes("[name=display.xml]"),
+    )?.note,
+  ).toBeUndefined();
+  const checks = (drafted?.suggested ?? []).filter(
+    (check) =>
+      "pointer" in check && check.pointer.includes("[name=display.xml]"),
+  );
+  expect(
+    evaluateTaskChecks(
+      checks.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([[file, { format: "zip", view: archive("Old") }]]),
+    ).map(({ passed }) => passed),
+  ).toContain(false);
+  expect(
+    evaluateTaskChecks(
+      checks.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([[file, { format: "zip", view: archive("New") }]]),
+    ).every(({ passed }) => passed),
+  ).toBe(true);
 });

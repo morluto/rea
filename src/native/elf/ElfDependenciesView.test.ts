@@ -3,11 +3,9 @@ import { parseElfDependencies } from "./ElfDependencyParser.js";
 import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "../../domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewParent } from "../../domain/analysisView/analysisViewParent.js";
+import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
 
 const artifact = {
   path: "/artifacts/program",

@@ -18,7 +18,6 @@ from mitmproxy import ctx, version
 from mitmproxy.io import tnetstring
 
 PROFILE = "12.2.3"
-OUTPUT_BYTES = 96 * 1024 * 1024
 CREDENTIALS = {b"authorization", b"proxy-authorization", b"cookie", b"set-cookie"}
 
 
@@ -204,7 +203,7 @@ def without_userinfo(value, base_scheme=None):
     raise CaptureFailure("decoder", "Normalized URL authority could not be bound to its source.")
 
 
-def project_record(state, secrets):
+def project_record(state, secrets, max_depth):
     binaries, numbers, redactions = [], [], []
     byte_secrets = []
     for secret in secrets:
@@ -251,8 +250,8 @@ def project_record(state, secrets):
         del redactions[before[2]:]
 
     def visit(value, path, depth=0, credential=False, transport_url=False, base_scheme=None):
-        if depth > 64:
-            raise CaptureFailure("input-limit", "Native capture exceeds the 64-level evidence nesting budget.", path)
+        if depth > max_depth:
+            raise CaptureFailure("input-limit", f"Native capture exceeds max_nesting_depth ({max_depth} levels).", path)
         if credential:
             validate_omitted(value, path, depth)
             redactions.append({"pointer": path, "reason": "transport-credential"})
@@ -337,12 +336,12 @@ def decode(request):
             except CaptureFailure:
                 raise
             except RecursionError:
-                raise CaptureFailure("input-limit", "Native parser exceeded its recursion budget at byte offset " + str(start) + ".") from None
+                raise CaptureFailure("unsupported", "Native parser reached Python's recursion limit at byte offset " + str(start) + ". max_nesting_depth does not raise that upstream limit.") from None
             except (ValueError, IndexError, UnicodeError, EOFError):
                 raise CaptureFailure("format", "Malformed native record at byte offset " + str(start) + ".") from None
             if not isinstance(state, dict):
                 raise CaptureFailure("format", "Native flow record must be a dictionary at byte offset " + str(start) + ".")
-            records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
+            records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"], request["budgets"]["depth"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
     return {"decoder": {"id": "mitmproxy-native-tnetstring", "name": "REA offline native mitmproxy adapter", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
 
 
@@ -350,6 +349,8 @@ def failure_reply(error):
     """Keep producer constraints, resource exhaustion and adapter defects distinct."""
     if isinstance(error, CaptureFailure):
         return {"ok": False, "reason": error.reason, "message": str(error), "pointer": error.pointer}
+    if isinstance(error, RecursionError):
+        return {"ok": False, "reason": "unsupported", "message": "Native projection reached Python's recursion limit; max_nesting_depth does not raise that upstream limit.", "pointer": ""}
     if isinstance(error, MemoryError):
         return {"ok": False, "reason": "resource-limit", "message": "Native decoder exhausted its 768 MiB address-space budget.", "pointer": ""}
     return {"ok": False, "reason": "decoder", "message": "Offline native decoder failed unexpectedly: " + type(error).__name__ + ".", "pointer": ""}
@@ -362,9 +363,13 @@ class OfflineCapture:
     def running(self):
         resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024, 768 * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (OUTPUT_BYTES, OUTPUT_BYTES))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
+        budgets = request["budgets"]
+        if any(type(budgets[key]) is not int or budgets[key] < 1 for key in ("inputBytes", "outputBytes", "depth")):
+            raise ValueError("Invalid admitted capture budgets")
+        output_bytes = budgets["outputBytes"]
+        resource.setrlimit(resource.RLIMIT_FSIZE, (output_bytes, output_bytes))
         try:
             response = {"ok": True, "value": decode(request)}
         except Exception as error:
@@ -374,7 +379,7 @@ class OfflineCapture:
                 output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
             except Exception as error:
                 output = json.dumps(failure_reply(error), separators=(",", ":")).encode("ascii")
-            if len(output) > OUTPUT_BYTES:
+            if len(output) > output_bytes:
                 output = b'{"ok":false,"reason":"limit","message":"Native reply exceeds the complete-evidence output budget.","pointer":""}'
             Path(request["reply_path"]).write_bytes(output)
         finally:

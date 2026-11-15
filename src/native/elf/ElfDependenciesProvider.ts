@@ -14,8 +14,6 @@ import {
   artifactFileCancellationCause,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { ElfDependenciesPort } from "../../application/binaryDiagnostics/ElfDependenciesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisAccessDeniedError,
@@ -45,7 +43,11 @@ import {
 const OPERATION = "inspect_elf_dependencies";
 
 /** Portable parser over one bounded, identity-checked regular file. */
-export class ElfDependenciesProvider implements ElfDependenciesPort {
+/**
+ * Satisfies the application's ElfDependenciesPort structurally; composition
+ * checks the fit, so this provider does not import the application layer.
+ */
+export class ElfDependenciesProvider {
   readonly identity = ELF_DEPENDENCIES_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
@@ -63,7 +65,7 @@ export class ElfDependenciesProvider implements ElfDependenciesPort {
 
   async inspect(
     input: InspectElfDependenciesInput,
-    options?: ExecutionOptions,
+    options?: { readonly signal?: AbortSignal },
   ) {
     let completed: StableArtifactSnapshot | undefined;
     try {

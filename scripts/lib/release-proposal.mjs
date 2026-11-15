@@ -5,6 +5,7 @@ import { dirname, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { requireCompleteReleaseHistory } from "./release-notes.mjs";
+import { readMergedReleasePullRequest } from "./release-pull-request.mjs";
 
 const execute = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -73,4 +74,23 @@ export async function releaseProposalSearchDepth(run, sourceSha) {
     throw new Error("Git returned an invalid release history size");
   }
   return count;
+}
+
+/** The merged-release workflow owns tag creation; its push needs no proposal. */
+export async function createReleaseProposal(run, context, loadManifest) {
+  if (context.eventName === "push" && context.targetBranch === "main") {
+    const release = await readMergedReleasePullRequest(run, {
+      repository: context.repository,
+      source: context.sourceSha,
+      targetBranch: context.targetBranch,
+    });
+    if (release !== undefined)
+      return { kind: "release-merge", pullRequest: release.number };
+  }
+  const depth = await releaseProposalSearchDepth(run, context.sourceSha);
+  const manifest = await loadManifest(depth);
+  return {
+    kind: "proposal",
+    pullRequests: (await manifest.createPullRequests()).filter(Boolean),
+  };
 }

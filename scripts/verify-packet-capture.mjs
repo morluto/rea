@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -45,7 +46,7 @@ const client = new Client({ name: "packet-capture-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: environment,
+  env: schemaVerifierEnvironment(environment),
   stderr: "pipe",
 });
 

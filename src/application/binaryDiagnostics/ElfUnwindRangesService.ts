@@ -1,3 +1,4 @@
+import { insideArtifact } from "./artifactRange.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ElfUnwindRangesPort } from "./ElfUnwindRangesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -12,7 +13,6 @@ import {
   MAX_INSPECT_ELF_UNWIND_RANGES,
   type ElfUnwindRanges,
 } from "../../domain/native/elfUnwindRanges.js";
-import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -75,9 +75,7 @@ export class ElfUnwindRangesService {
         ),
       );
     const value = report.data;
-    const architecture = BINARY_ARCHITECTURES.find(
-      (supported) => supported === elfArchitecture(value.machine),
-    );
+    const architecture = elfArchitecture(value.machine);
     const locations = [
       { kind: "artifact-path" as const, path: value.artifact.path },
       ...rangesOf(value).map((range) => ({
@@ -108,11 +106,6 @@ export class ElfUnwindRangesService {
     );
   }
 }
-
-const inside =
-  (fileBytes: number) =>
-  (range: Range): boolean =>
-    range.bytes <= fileBytes && range.offset <= fileBytes - range.bytes;
 
 const rangesOf = (report: ElfUnwindRanges): Range[] => {
   const found: Range[] = [];
@@ -381,7 +374,7 @@ const validReport = (
     report.type_name !== elfObjectTypeName(report.type) ||
     report.page.offset !== offset ||
     report.page.limit !== limit ||
-    !rangesOf(report).every(inside(report.artifact.bytes)) ||
+    !rangesOf(report).every(insideArtifact(report.artifact.bytes)) ||
     !has(report, CFA_LIMITATION) ||
     !has(report, UNTRUSTED_LIMITATION) ||
     (indirectVisible(report) && !has(report, INDIRECT_LIMITATION))

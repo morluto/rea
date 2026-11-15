@@ -4,10 +4,6 @@ import {
   BinaryStringReadLimitFailure,
 } from "./BinaryContainer.js";
 
-export const readElfString = (bytes: Buffer, offset: number): string => {
-  return readElfStringBytes(bytes, offset).toString("latin1");
-};
-
 /** Read exact string-table bytes; ELF does not prescribe a character encoding. */
 export const readElfStringBytes = (bytes: Buffer, offset: number): Buffer => {
   const observed = observeElfStringTableEntry(bytes, offset, 65536);

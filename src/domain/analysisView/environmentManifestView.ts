@@ -8,6 +8,8 @@ import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { ownedView, type AdmittedView } from "./analysisViewShape.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
 import {
+  SEGMENT_LIMITED_RULES,
+  SIBLING_VARIANCE_SEGMENT_LIMIT,
   TEMPLATE_RULES,
   type TemplateRule,
 } from "./environmentManifestRules.js";
@@ -16,10 +18,6 @@ import {
   admitScenarioCaptureParent,
   type ScenarioResponseBodyRetention,
 } from "./scenarioCaptureRecords.js";
-import { environmentManifestFields } from "./environmentManifestSchema.js";
-
-export { environmentManifestFields };
-
 /** Opt-in template rules, each listed at most once; shared by every view that groups tools. */
 export const templateRulesSchema = z
   .array(z.enum(TEMPLATE_RULES))
@@ -32,7 +30,7 @@ export const templateRulesSchema = z
 export const environmentManifestViewRequestSchema = z.strictObject({
   kind: z.literal("environment-manifest"),
   template_rules: templateRulesSchema.describe(
-    "Opt-in template rules applied after the four format rules, each listed at most once: after-uid-literal templates the segment following a literal uid, opaque-token templates long mixed alphanumeric segments, sibling-variance merges groups that differ in one identifier-like segment, sibling-pair-variance merges groups that differ in two adjacent literals between a plural literal and another literal when at least three distinct pairs vary in both, prefix-variance templates a literal at a position another tool templates by one of the other opt-in rules after the same preceding segments, at any method or length, when the literal is one of that parameter's observed values, carries a digit and has the length and character classes of one, or has the single length (eight or more characters) every observed value has and only their character classes. Literal sibling folding into existing opt-in parameters also requires sibling-variance. Merged parameters are inferences.",
+    `Opt-in template rules applied after the four format rules, each listed at most once: after-uid-literal templates the segment following a literal uid, opaque-token templates long mixed alphanumeric segments, sibling-variance merges groups that differ in one identifier-like segment, sibling-pair-variance merges groups that differ in two adjacent literals between a plural literal and another literal when at least three distinct pairs vary in both, prefix-variance templates a literal at a position another tool templates by one of the other opt-in rules after the same preceding segments, at any method, when the literal is one of that parameter's observed values, carries a digit and has the length and character classes of one, or has the single length (eight or more characters) every observed value has and only their character classes. Literal sibling folding into existing opt-in parameters also requires sibling-variance. ${SEGMENT_LIMITED_RULES.join(", ")} compare only routes of at most ${String(SIBLING_VARIANCE_SEGMENT_LIMIT)} segments; longer routes keep their grouped templates. Merged parameters are inferences.`,
   ),
   include_query_parameter_names: z
     .boolean()

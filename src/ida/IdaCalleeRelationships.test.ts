@@ -227,6 +227,7 @@ describe("headless IDA callee edges on x86 targets", () => {
         args: [],
         env: {},
         mode: "attached",
+        protocol: "legacy",
         timeoutMs: 1000,
         workspaceRoot: root,
       },

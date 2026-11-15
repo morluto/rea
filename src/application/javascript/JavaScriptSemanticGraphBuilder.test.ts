@@ -1,3 +1,4 @@
+import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptSemanticQueryInputSchema } from "../../domain/javascript/javascriptSemanticQuerySchemas.js";
 import {
   primitiveByteExpansionSource,
@@ -9,8 +10,6 @@ import { expect, it } from "vitest";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
 import {
-  SEMANTIC_GRAPH_FILE_NODE_CEILING,
-  SEMANTIC_GRAPH_NODE_CEILING,
   createJavaScriptSemanticGraphProjection,
   projectJavaScriptSemanticFileSteps,
 } from "./JavaScriptSemanticGraphBuilder.js";
@@ -972,7 +971,9 @@ it("bounds semantic node projection and reports the ceiling in coverage", () => 
   ).join("\n");
   const graph = graphFor(statements);
 
-  expect(graph.nodes.length).toBeLessThanOrEqual(SEMANTIC_GRAPH_NODE_CEILING);
+  expect(graph.nodes.length).toBeLessThanOrEqual(
+    JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes,
+  );
   expect(graph.coverage.truncated).toBe(true);
   expect(graph.coverage.status).toBe("partial");
   expect(graph.coverage.omitted_nodes).toBeNull();
@@ -1136,9 +1137,13 @@ it("leaves a small application complete and untruncated", () => {
 it("does not mark a file truncated when it exactly fills its budget", () => {
   // Each unbound reference projects one expression, plus the module root.
   const graph = graphFor(
-    "external;\n".repeat(SEMANTIC_GRAPH_FILE_NODE_CEILING - 1),
+    "external;\n".repeat(
+      JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile - 1,
+    ),
   );
-  expect(graph.nodes).toHaveLength(SEMANTIC_GRAPH_FILE_NODE_CEILING);
+  expect(graph.nodes).toHaveLength(
+    JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
+  );
   expect(graph.coverage).toMatchObject({
     truncated: false,
     omitted_nodes: 0,
@@ -1160,7 +1165,9 @@ it("only records node loss when the budget rejects a new identity", () => {
   expect(state.fileNodeBudget).toBe(0);
   expect(state.fileNodesDropped).toBe(false);
 
-  expect(addSemanticGraphNode(state, semanticNodeFor("first"))).toBe(first);
+  expect(addSemanticGraphNode(state, semanticNodeFor("first"))).toEqual(first);
+  expect(state.nodes.size).toBe(2);
+  expect(state.fileNodeBudget).toBe(0);
   expect(state.fileNodesDropped).toBe(false);
 
   const blocked = addSemanticGraphNode(state, semanticNodeFor("third"));

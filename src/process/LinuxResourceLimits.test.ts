@@ -1,3 +1,4 @@
+import { BOUNDED_PRODUCER_LIMITS } from "../domain/producerResourceLimits.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,7 +9,6 @@ import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import { ok } from "../domain/result.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
-  BOUNDED_PRODUCER_LIMITS,
   clampLinuxResourceLimits,
   prlimitArgumentVector,
   prlimitCeilingArguments,

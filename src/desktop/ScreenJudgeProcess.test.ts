@@ -7,10 +7,14 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import type {
+  ProviderProcessStopResult,
+  ProviderProcessSupervisor,
+} from "../process/ProviderProcess.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ScreenJudgeProcess } from "./ScreenJudgeProcess.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 vi.mock("./AgentEnvComputerHelper.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./AgentEnvComputerHelper.js")>()),
@@ -23,9 +27,11 @@ vi.mock("../process/OwnedCommand.js", async (importOriginal) => ({
 
 it("retains the screenshot and process owner after cancelled cleanup until retry succeeds", async () => {
   const stop = vi
-    .fn()
+    .fn<ProviderProcessSupervisor["stop"]>()
     .mockResolvedValueOnce({ status: "incomplete", reason: "still running" })
-    .mockResolvedValueOnce({ status: "stopped" });
+    .mockResolvedValueOnce({
+      status: "terminated",
+    } satisfies ProviderProcessStopResult);
   const dispose = vi.fn();
   const owner = { stop, dispose } as unknown as ProviderProcessSupervisor;
   const cancelled = new OwnedCommandFailure(
@@ -85,9 +91,11 @@ it("retains the screenshot and process owner after cancelled cleanup until retry
 
 it("retries retained cleanup before launching another judge", async () => {
   const stop = vi
-    .fn()
+    .fn<ProviderProcessSupervisor["stop"]>()
     .mockResolvedValueOnce({ status: "incomplete", reason: "still running" })
-    .mockResolvedValueOnce({ status: "stopped" });
+    .mockResolvedValueOnce({
+      status: "terminated",
+    } satisfies ProviderProcessStopResult);
   const owner = {
     stop,
     dispose: vi.fn(),
@@ -125,7 +133,9 @@ it("retries retained cleanup before launching another judge", async () => {
 
 it("starts a later judge once retained cleanup succeeds", async () => {
   const owner = {
-    stop: vi.fn().mockResolvedValue({ status: "stopped" }),
+    stop: vi.fn().mockResolvedValue({
+      status: "terminated",
+    } satisfies ProviderProcessStopResult),
     dispose: vi.fn(),
   } as unknown as ProviderProcessSupervisor;
   const text = JSON.stringify({ id: "x", result: true, description: "ready" });
@@ -182,7 +192,9 @@ it("reports a completed answer when process cleanup subsequently fails", async (
     signal: null,
   };
   const owner = {
-    stop: vi.fn().mockResolvedValue({ status: "stopped" }),
+    stop: vi.fn().mockResolvedValue({
+      status: "terminated",
+    } satisfies ProviderProcessStopResult),
     dispose: vi.fn(),
   } as unknown as ProviderProcessSupervisor;
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(
@@ -224,7 +236,9 @@ it("waits for final process cleanup after cancellation and keeps its owner", asy
   const controller = new AbortController();
   const reason = new Error("cancel during cleanup");
   const owner = {
-    stop: vi.fn().mockResolvedValue({ status: "stopped" }),
+    stop: vi.fn().mockResolvedValue({
+      status: "terminated",
+    } satisfies ProviderProcessStopResult),
     dispose: vi.fn(),
   } as unknown as ProviderProcessSupervisor;
   let rejectCommand: (cause: unknown) => void = () => {};
@@ -248,7 +262,7 @@ it("waits for final process cleanup after cancellation and keeps its owner", asy
       settled = true;
     });
   // Wait for the mocked command to receive control, not just for the judge to start.
-  await vi.waitFor(() =>
+  await waitFor(() =>
     expect(vi.mocked(runOwnedCommand).mock.calls.at(-1)?.[2]?.signal).toBe(
       controller.signal,
     ),

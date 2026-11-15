@@ -207,7 +207,6 @@ describe("execFileOutput", () => {
         await execution;
       }
     },
-    10_000,
   );
 
   it.skipIf(process.platform === "win32")(
@@ -503,8 +502,10 @@ describe.skipIf(process.platform === "win32")(
       const release = join(directory, "release");
       const finished = join(directory, "finished.json");
       await mkdir(scratch);
+      // The stop signal reaches the whole group; this descendant outlives it.
       const childSource = [
         'const fs = require("node:fs");',
+        'process.on("SIGTERM", () => {});',
         `fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
         "setInterval(() => {",
         `  if (!fs.existsSync(${JSON.stringify(release)})) return;`,
@@ -562,7 +563,7 @@ describe.skipIf(process.platform === "win32")(
         killFailure = await stopOwnedDescendant(pid, finished);
       }
       if (killFailure !== undefined) throw killFailure;
-    }, 15_000);
+    });
 
     it("keeps scratch files until an inherited-pipe descendant closes them", async () => {
       const directory = await createTestTempDirectory("rea-exec-inherited-");
@@ -630,6 +631,110 @@ describe.skipIf(process.platform === "win32")(
           killFailure = await stopOwnedDescendant(pid, finished);
         }
         await settled;
+      }
+      if (killFailure !== undefined) throw killFailure;
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "execFileOutput process group",
+  () => {
+    it("stops a running launcher's descendants with it", async () => {
+      const directory = await createTestTempDirectory("rea-exec-group-stop-");
+      const ready = join(directory, "descendant.pid");
+      const marker = join(directory, "descendant-marker");
+      const childSource = [
+        'const fs = require("node:fs");',
+        `fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
+        `setInterval(() => fs.existsSync(${JSON.stringify(marker)}), 10);`,
+      ].join("\n");
+      const script = [
+        'const { spawn } = require("node:child_process");',
+        `spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}], { stdio: "inherit" });`,
+        "setInterval(() => {}, 1000);",
+      ].join("\n");
+      const controller = new AbortController();
+      const execution = execFileOutput(process.execPath, ["-e", script], {
+        stopSignal: "SIGTERM",
+        signal: controller.signal,
+      }).catch((cause: unknown) => cause);
+      let killFailure: unknown;
+      try {
+        expect(await waitForFile(ready)).toBe(true);
+        controller.abort("caller stopped");
+        let timer: NodeJS.Timeout | undefined;
+        const outcome = await Promise.race([
+          execution,
+          new Promise((resolve) => {
+            timer = setTimeout(
+              () => resolve("descendant kept the pipes"),
+              4_000,
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
+        expect(outcome).toMatchObject({
+          _tag: "ExecFileOutputCancelledError",
+          cause: "caller stopped",
+        });
+      } finally {
+        controller.abort("test cleanup");
+        const pid = Number(await readFile(ready, "utf8").catch(() => ""));
+        killFailure = await stopOwnedDescendant(pid, marker);
+        await execution;
+      }
+      if (killFailure !== undefined) throw killFailure;
+    });
+
+    it("escalates to the group when the launcher and its worker ignore the stop signal", async () => {
+      const directory = await createTestTempDirectory(
+        "rea-exec-group-escalate-",
+      );
+      const ready = join(directory, "descendant.pid");
+      const marker = join(directory, "descendant-marker");
+      const ignoreStop =
+        'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);';
+      const childSource = [
+        'const fs = require("node:fs");',
+        ignoreStop,
+        `fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));`,
+        `setInterval(() => fs.existsSync(${JSON.stringify(marker)}), 10);`,
+      ].join("\n");
+      const script = [
+        'const { spawn } = require("node:child_process");',
+        ignoreStop,
+        `spawn(process.execPath, ["-e", ${JSON.stringify(childSource)}], { stdio: "inherit" });`,
+      ].join("\n");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const controller = new AbortController();
+      const execution = execFileOutput(process.execPath, ["-e", script], {
+        stopSignal: "SIGTERM",
+        signal: controller.signal,
+      }).catch((cause: unknown) => cause);
+      let killFailure: unknown;
+      try {
+        expect(await waitForFile(ready)).toBe(true);
+        controller.abort("caller stopped");
+        // Both processes ignore SIGTERM; only the grace SIGKILL ends them.
+        await vi.advanceTimersByTimeAsync(5_000);
+        vi.useRealTimers();
+        let timer: NodeJS.Timeout | undefined;
+        const outcome = await Promise.race([
+          execution,
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve("worker kept the pipes"), 4_000);
+          }),
+        ]).finally(() => clearTimeout(timer));
+        expect(outcome).toMatchObject({
+          _tag: "ExecFileOutputCancelledError",
+          cause: "caller stopped",
+        });
+      } finally {
+        vi.useRealTimers();
+        controller.abort("test cleanup");
+        const pid = Number(await readFile(ready, "utf8").catch(() => ""));
+        killFailure = await stopOwnedDescendant(pid, marker);
+        await execution;
       }
       if (killFailure !== undefined) throw killFailure;
     });

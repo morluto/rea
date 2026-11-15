@@ -1,3 +1,9 @@
+import {
+  malformedInput,
+  ParseFailureError,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+
 /** Producing constraint for a model capacity refusal. Recovery uses this, not message text. */
 export const MODEL_CAPACITY_LIMITS = [
   "header-bytes",
@@ -11,34 +17,40 @@ export const MODEL_CAPACITY_LIMITS = [
 /** Which fixed model allowance refused the request. */
 export type ModelCapacityLimit = (typeof MODEL_CAPACITY_LIMITS)[number];
 
-/** Format failures stay separate from filesystem, capacity and cancellation failures. */
-export class ModelFormatFailure extends Error {
-  /** Set only for `kind: "capacity"`. */
-  readonly limit: ModelCapacityLimit | undefined;
-  constructor(kind: "format" | "unsupported", message: string);
-  constructor(kind: "capacity", message: string, limit: ModelCapacityLimit);
-  constructor(
-    readonly kind: "format" | "unsupported" | "capacity",
-    message: string,
-    limit?: ModelCapacityLimit,
-  ) {
-    super(message);
-    this.name = "ModelFormatFailure";
-    if (kind === "capacity" && limit === undefined)
-      throw new TypeError("Model capacity failures require a limit kind");
-    if (kind !== "capacity" && limit !== undefined)
-      throw new TypeError("Only model capacity failures carry a limit kind");
-    this.limit = limit;
-  }
-}
+/** The ParseFailure format of GGUF and Safetensors model headers. */
+export const MODEL_FORMAT = "model";
+
+/** A fixed model allowance refused the input; the limit name is its {@link ModelCapacityLimit}. */
+export const modelCapacityFailure = (
+  limit: ModelCapacityLimit,
+  detail: string,
+): ParseFailureError<"limit"> =>
+  new ParseFailureError({
+    kind: "limit",
+    format: MODEL_FORMAT,
+    detail,
+    limit: {
+      name: limit,
+      maximum: Object.values(modelCapacityReportedLimits(limit))[0] ?? 0,
+    },
+  });
+
+/** The model allowance a failure names, or undefined for any other failure. */
+export const modelCapacityLimitOf = (
+  cause: ParseFailureError,
+): ModelCapacityLimit | undefined => {
+  const { failure } = cause;
+  if (failure.kind !== "limit") return undefined;
+  return MODEL_CAPACITY_LIMITS.find((limit) => limit === failure.limit.name);
+};
 
 export function rejectModel(message: string): never {
-  throw new ModelFormatFailure("format", message);
+  throw malformedInput(MODEL_FORMAT, message);
 }
 
 export function rejectPickle(): never {
-  throw new ModelFormatFailure(
-    "unsupported",
+  throw unsupportedInput(
+    MODEL_FORMAT,
     "PyTorch pickle/ZIP model deserialization is unsupported; supply GGUF or safetensors instead",
   );
 }
@@ -108,10 +120,9 @@ export class ModelReportBudget {
   #remaining = MODEL_REPORT_BYTES;
   charge(bytes: number): void {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.#remaining)
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model facts exceed the 32 MiB retained representation budget. This release has no runtime override.",
+      throw modelCapacityFailure(
         "representation-bytes",
+        "Model facts exceed the 32 MiB retained representation budget. This release has no runtime override.",
       );
     this.#remaining -= bytes;
   }

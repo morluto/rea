@@ -59,10 +59,6 @@ export async function buildMipsFixture(
   let attested = compiled;
   if (legacy) {
     const raw = await readFile(path);
-    const write16 = (offset, value) =>
-      byteOrder === "little"
-        ? raw.writeUInt16LE(value, offset)
-        : raw.writeUInt16BE(value, offset);
     const write32 = (offset, value) =>
       byteOrder === "little"
         ? raw.writeUInt32LE(value, offset)

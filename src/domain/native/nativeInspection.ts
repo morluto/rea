@@ -52,13 +52,13 @@ const sectionSchema = z.object({
   segment_bytes_hex: bytesHex
     .optional()
     .describe(
-      "Original segment-name bytes before the first NUL; omitted in older Evidence.",
+      "Original segment-name bytes before the first NUL, present when the name is not valid UTF-8 and `segment` is null.",
     ),
   name: z.string().nullable(),
   name_bytes_hex: bytesHex
     .optional()
     .describe(
-      "Original section-name bytes before the first NUL; omitted in older Evidence.",
+      "Original section-name bytes before the first NUL, present when the name is not valid UTF-8 and `name` is null.",
     ),
   address: hexAddress.nullable(),
   size: z.int().min(0).nullable(),
@@ -87,7 +87,7 @@ const segmentSchema = z.object({
   name_bytes_hex: bytesHex
     .optional()
     .describe(
-      "Original segment-name bytes before the first NUL; omitted in older Evidence.",
+      "Original segment-name bytes before the first NUL, present when the name is not valid UTF-8 and `name` is null.",
     ),
   vm_address: hexAddress.nullable(),
   vm_size: z.int().min(0).nullable(),
@@ -120,9 +120,8 @@ const segmentSchema = z.object({
 const runtimeNameSchema = z
   .string()
   .nullable()
-  .default(null)
   .describe(
-    "Symbol-table `name` without the one leading underscore Darwin adds to language-level symbols (`_main` is `main`, `__ZN3rea3addEii` is `_ZN3rea3addEii`), as LLDB and dlsym name it and observe_native_calls function breakpoints accept; a name without that underscore, such as `-[Class selector]`, is unchanged. Null when `name` is null, nothing remains, or the Evidence predates this field.",
+    "Symbol-table `name` without the one leading underscore Darwin adds to language-level symbols (`_main` is `main`, `__ZN3rea3addEii` is `_ZN3rea3addEii`), as LLDB and dlsym name it and observe_native_calls function breakpoints accept; a name without that underscore, such as `-[Class selector]`, is unchanged. Null when `name` is null or nothing remains.",
   );
 const symbolSchema = z.object({
   /** Exact Mach-O symbol-table name, the source fact. */
@@ -138,10 +137,10 @@ const importSymbolSchema = z.object({
   name: z.string().nullable(),
   runtime_name: runtimeNameSchema,
   /** Exact import text retained when a chained suffix makes identity ambiguous. */
-  raw_name: z.string().nullable().default(null),
-  name_status: z.enum(["exact", "ambiguous"]).nullable().default(null),
+  raw_name: z.string().nullable(),
+  name_status: z.enum(["exact", "ambiguous"]),
   /** Addend is unknown when only the ambiguous text expression is available. */
-  addend: hexAddress.nullable().default(null),
+  addend: hexAddress.nullable(),
   address: hexAddress.nullable(),
   weak: z.boolean().nullable(),
   reexport: z.boolean().nullable(),
@@ -152,7 +151,7 @@ const dependencySchema = z.object({
   path_bytes_hex: bytesHex
     .optional()
     .describe(
-      "Original load-command path bytes before the first NUL; omitted in older Evidence.",
+      "Original load-command path bytes before the first NUL, present when the path is not valid UTF-8 and `path` is null.",
     ),
   kind: z.string(),
   current_version: z.string().nullable(),
@@ -216,25 +215,6 @@ export const inspectMachoSchema = z.object({
   provenance: z.array(nativeCommandInvocationSchema),
   limitations: z.array(z.string()),
 });
-
-/**
- * Retained inspect_macho Evidence, including results recorded before
- * `encryption` was reported. Not recorded is unknown, never evidence that no
- * slice is encrypted.
- */
-export const retainedInspectMachoSchema = inspectMachoSchema
-  .extend({ encryption: inspectMachoSchema.shape.encryption.optional() })
-  .transform(({ encryption, ...report }) => ({
-    ...report,
-    encryption: encryption ?? {
-      items: [],
-      total: null,
-      exhaustive: false,
-      limitations: [
-        "This inspect_macho Evidence predates encryption reporting; slice encryption status is unknown.",
-      ],
-    },
-  }));
 
 export const inspectSignatureSchema = z.object({
   signed: z.boolean(),

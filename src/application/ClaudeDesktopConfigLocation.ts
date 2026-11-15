@@ -29,7 +29,7 @@ const PROBES_PER_DIRECTORY = 2;
  * publisher ID Windows derives from `CN="Anthropic, PBC", O="Anthropic, PBC",
  * L=San Francisco, S=California, C=US, …`.
  */
-export const CLAUDE_DESKTOP_PACKAGE_FAMILY = "Claude_pzs8sxrjxfjjc";
+const CLAUDE_DESKTOP_PACKAGE_FAMILY = "Claude_pzs8sxrjxfjjc";
 
 /** Observed Claude package names plus Windows' 13-character publisher ID. */
 const CLAUDE_PACKAGE_FAMILY =

@@ -1,4 +1,9 @@
 import type { FileHandle } from "node:fs/promises";
+import {
+  DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
+  type DotnetBundleReaderLimits,
+} from "../../domain/artifactReaderLimits.js";
+import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 
 import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
 import {
@@ -16,16 +21,6 @@ export const DOTNET_BUNDLE_SIGNATURE = Buffer.from(
   "8b1202b96a612038727b930214d7a03213f5b9e6efae3318ee3b2dce24b36aae",
   "hex",
 );
-
-// These are resource budgets, not format limits. Metadata stays bounded even
-// when malicious manifests alias the same bytes or declare many empty files.
-const MAX_METADATA_BYTES = 16 * 1024 * 1024;
-const MAX_ENTRIES = 100_000;
-const MAX_PATH_BYTES = 64 * 1024;
-const MAX_PATH_PARTS = 256;
-const MAX_PATH_NODES = 250_000;
-const MAX_BUNDLE_ENTRY_BYTES = 512 * 1024 * 1024;
-const MAX_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024;
 
 export interface DotnetBundleFile {
   readonly path: string;
@@ -85,8 +80,9 @@ export const readDotnetBundle = async (
   size: number,
   headerOffset: number,
   signal?: AbortSignal,
+  limits: DotnetBundleReaderLimits = DEFAULT_DOTNET_BUNDLE_READER_LIMITS,
 ): Promise<DotnetBundle> => {
-  const cursor = new BundleCursor(handle, size, headerOffset, signal);
+  const cursor = new BundleCursor(handle, size, headerOffset, limits, signal);
   const majorVersion = await cursor.u32();
   const minorVersion = await cursor.u32();
   if (![1, 2, 6].includes(majorVersion) || minorVersion !== 0)
@@ -96,11 +92,12 @@ export const readDotnetBundle = async (
     );
   const count = await cursor.i32();
   if (count < 0) fail(".NET bundle entry count is negative");
-  if (count > MAX_ENTRIES)
-    throw artifactFixedLimitFailure(
-      ".NET bundle entry count",
-      MAX_ENTRIES,
-      "entries",
+  if (count > limits.entry_count)
+    throw artifactReaderLimitFailure(
+      "artifact_limits.dotnet_bundle.entry_count",
+      limits.entry_count,
+      "count",
+      count,
     );
   await cursor.string(); // Bundle ID is not an authentication or content digest.
   const configuration: { offset: number; size: number; type: number }[] = [];
@@ -124,10 +121,17 @@ export const readDotnetBundle = async (
   }
   const files: DotnetBundleFile[] = [];
   const paths = new ArtifactPathRegistry({
-    maxParts: MAX_PATH_PARTS,
-    maxNodes: MAX_PATH_NODES,
+    maxParts: limits.path_parts,
+    maxNodes: limits.path_nodes,
+    limitFailure: (field, maximum, required) =>
+      artifactReaderLimitFailure(
+        `artifact_limits.dotnet_bundle.${field}`,
+        maximum,
+        "count",
+        required,
+      ),
   });
-  let expandedBytes = 0;
+  let expandedBytes = 0n;
   for (let index = 0; index < count; index++) {
     abortIfNeeded(signal);
     const offset = await cursor.nonnegativeI64();
@@ -138,21 +142,20 @@ export const readDotnetBundle = async (
     const path = await cursor.string();
     const normalized = normalizeArtifactPath(path);
     paths.add(normalized, "file");
-    if (
-      fileSize > MAX_BUNDLE_ENTRY_BYTES ||
-      compressedSize > MAX_BUNDLE_ENTRY_BYTES
-    )
-      throw artifactFixedLimitFailure(
-        ".NET bundle member stored or expanded size",
-        MAX_BUNDLE_ENTRY_BYTES,
+    if (fileSize > limits.member_bytes || compressedSize > limits.member_bytes)
+      throw artifactReaderLimitFailure(
+        "artifact_limits.dotnet_bundle.member_bytes",
+        limits.member_bytes,
         "bytes",
+        Math.max(fileSize, compressedSize),
       );
-    expandedBytes += fileSize;
-    if (expandedBytes > MAX_EXPANDED_BYTES)
-      throw artifactFixedLimitFailure(
-        ".NET bundle aggregate expanded size",
-        MAX_EXPANDED_BYTES,
+    expandedBytes += BigInt(fileSize);
+    if (expandedBytes > BigInt(limits.expanded_bytes))
+      throw artifactReaderLimitFailure(
+        "artifact_limits.dotnet_bundle.expanded_bytes",
+        limits.expanded_bytes,
         "bytes",
+        expandedBytes,
       );
     const storedSize = compressedSize || fileSize;
     if (offset > headerOffset || storedSize > headerOffset - offset)
@@ -194,6 +197,7 @@ class BundleCursor {
     private readonly handle: FileHandle,
     private readonly size: number,
     private readonly start: number,
+    private readonly limits: DotnetBundleReaderLimits,
     private readonly signal?: AbortSignal,
   ) {
     this.#position = start;
@@ -201,11 +205,13 @@ class BundleCursor {
 
   async take(length: number): Promise<Buffer> {
     abortIfNeeded(this.signal);
-    if (this.#position - this.start + length > MAX_METADATA_BYTES)
-      throw artifactFixedLimitFailure(
-        ".NET bundle metadata",
-        MAX_METADATA_BYTES,
+    const consumed = this.#position - this.start;
+    if (consumed + length > this.limits.metadata_bytes)
+      throw artifactReaderLimitFailure(
+        "artifact_limits.dotnet_bundle.metadata_bytes",
+        this.limits.metadata_bytes,
         "bytes",
+        consumed + length,
       );
     if (length > this.size - this.#position)
       fail("Truncated .NET bundle manifest");
@@ -213,7 +219,11 @@ class BundleCursor {
     if (cached < 0 || cached + length > this.#cache.length) {
       this.#cacheOffset = this.#position;
       this.#cache = Buffer.alloc(
-        Math.min(Math.max(length, 64 * 1024), this.size - this.#position),
+        Math.min(
+          Math.max(length, 64 * 1024),
+          this.size - this.#position,
+          this.limits.metadata_bytes - consumed,
+        ),
       );
       let read = 0;
       while (read < this.#cache.length) {
@@ -264,11 +274,12 @@ class BundleCursor {
       if (shift === 28 && byte > 15) fail("Invalid .NET bundle string length");
       length += (byte & 127) * 2 ** shift;
       if ((byte & 128) !== 0) continue;
-      if (length > MAX_PATH_BYTES)
-        throw artifactFixedLimitFailure(
-          ".NET bundle decoded string",
-          MAX_PATH_BYTES,
-          "UTF-8 bytes",
+      if (length > this.limits.string_bytes)
+        throw artifactReaderLimitFailure(
+          "artifact_limits.dotnet_bundle.string_bytes",
+          this.limits.string_bytes,
+          "bytes",
+          length,
         );
       // Source failures are not encoding failures. Acquire bytes outside the
       // decoder boundary so I/O and cancellation retain their original cause.

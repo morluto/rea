@@ -6,7 +6,7 @@ import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mj
 import { z } from "zod";
 import { access } from "node:fs/promises";
 import { ANDROID_TOOL_CONTRACTS } from "../../../src/contracts/android/androidToolContracts.js";
-import { JADX_BRIDGE_IDENTITY } from "../../../src/android/JadxRelease.js";
+import { packagedJadxBridgeIdentity } from "../../support/packagedJadxBridge.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -186,7 +186,7 @@ test.each([
     mode: "tool-error",
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
-    serverVersion: JADX_BRIDGE_IDENTITY.version,
+    serverVersion: packagedJadxBridgeIdentity().version,
     engineVersion: "0.7.1",
     calls: [
       { operation: "rea_jvm_status" },
@@ -204,7 +204,7 @@ test.each([
     mode: "rpc-disconnect",
     errorCode: "execution_failure",
     serverName: "rea-jadx-bridge",
-    serverVersion: JADX_BRIDGE_IDENTITY.version,
+    serverVersion: packagedJadxBridgeIdentity().version,
     engineVersion: "0.7.1",
     calls: [{ operation: "rea_jvm_status" }, { operation: "load_apk" }],
     containsAmbientEnvironment: true,
@@ -259,7 +259,7 @@ test.each([
       target: { selected_path: apk, path: apk, format: "apk" },
       provider_facts: {
         bridge_name: "rea-jadx-bridge",
-        bridge_version: JADX_BRIDGE_IDENTITY.version,
+        bridge_version: packagedJadxBridgeIdentity().version,
         server_name: serverName,
         server_version: serverVersion,
         engine_version: engineVersion,
@@ -302,7 +302,14 @@ it("retains partial JADX replies when owned cleanup also fails", async () => {
 });
 
 it("cleans an active engine when the MCP client disconnects", async () => {
-  const { provider, apk, launches } = await createJadxProtocolFixture("stall");
+  // Without a disconnect-driven stop, the operation deadline would also clean
+  // the stalled engine; keep it beyond any test deadline.
+  const { provider, apk, launches } = await createJadxProtocolFixture(
+    "stall",
+    undefined,
+    undefined,
+    { REA_JADX_OPERATION_TIMEOUT_MS: "2147483647" },
+  );
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected native provider acquisition");
   });
@@ -314,7 +321,7 @@ it("cleans an active engine when the MCP client disconnects", async () => {
   const pending = client
     .callTool({ name: "inspect_android_package", arguments: { path: apk } })
     .catch(() => undefined);
-  await expect.poll(() => launches.length, { timeout: 10_000 }).toBe(1);
+  await expect.poll(() => launches.length).toBe(1);
   await client.close();
   await pending;
   await expect

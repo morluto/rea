@@ -18,7 +18,7 @@ import {
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -33,10 +33,10 @@ const assertMetadataQueries = async (
   const definition = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  expect(definition?.outputSchema).toBeDefined();
+  if (definition?.outputSchema === undefined)
+    throw new Error("Analysis view output schema is missing");
   const ajv = schemaValidation.assertions;
-  const inputSchema: Record<string, unknown> = definition!.inputSchema;
-  const outputSchema: Record<string, unknown> = definition!.outputSchema!;
+  const inputSchema: Record<string, unknown> = definition.inputSchema;
   const ids: string[] = [];
   const selected: unknown[] = [];
   for (const offset of [0, 1, 2, 3]) {
@@ -54,15 +54,11 @@ const assertMetadataQueries = async (
     expect(ajv.validate(inputSchema, args), JSON.stringify(ajv.errors)).toBe(
       true,
     );
-    const reply = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: args,
-    });
+    const reply = await client.callTool(
+      { name: "inspect_analysis_view", arguments: args },
+      { toolDefinition: definition },
+    );
     expect(reply.isError).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, reply.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     const view = analysisViewResultSchema.parse(evidence.normalized_result);
     if (view.kind !== "inventory") throw new Error("Expected inventory page");

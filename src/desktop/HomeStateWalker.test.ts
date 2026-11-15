@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { walkHomeState } from "./HomeStateWalker.js";
 
 describe("walkHomeState", () => {
@@ -127,4 +128,21 @@ describe("walkHomeState", () => {
       }
     },
   );
+});
+
+it("reports the actual walk checkpoint cancellation with the exact caller reason", async () => {
+  const root = await createTestTempDirectory("desktop-walk-cancel-");
+  await writeFile(join(root, "state.ini"), "state");
+  const reason = new Error("caller cancelled directory walk");
+  const failure = await walkHomeState(
+    [root],
+    [],
+    100,
+    AbortSignal.abort(reason),
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+  if (!(failure instanceof ArtifactReaderFailure))
+    throw new Error("expected actual checkpoint cancellation");
+  expect(failure.cause).toBe(reason);
 });

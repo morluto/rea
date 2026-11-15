@@ -5,7 +5,11 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+} from "../../domain/analysisErrorCore.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
 import type { TaskCheckOutcome } from "../../domain/desktop/appTaskChecks.js";
 import {
@@ -69,7 +73,13 @@ export const bundleTaskDifference = async (
   const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
   const [steps, verifier] = await Promise.all(
     [stepsPath, verifierPath].map((path) =>
-      readHostFile(join(bundle, path), bundleFileBytes(), signal),
+      readHostFile(
+        join(bundle, path),
+        bundleFileBytes(),
+        signal,
+        false,
+        (reason) => cancelledBy(CHECK, carriedReason(reason)),
+      ),
     ),
   );
   if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
