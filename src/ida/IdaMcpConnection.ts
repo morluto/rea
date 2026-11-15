@@ -2,6 +2,7 @@ import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
 } from "../artifacts/ArtifactResourceScope.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -672,10 +673,13 @@ export const createIdaMcpConnection = (
             command: config.command,
             arguments: config.args,
             // Only the selected snapshot reaches the child, never REA's ambient environment.
-            hostEnvironment: snapshotEnvironment(environment),
+            hostEnvironment: snapshotEnvironment(
+              environment,
+              HOST_PLATFORM.platform,
+            ),
             env: {
               IDA_MCP_MAX_WORKERS: "1",
-              ...snapshotEnvironment(config.env),
+              ...snapshotEnvironment(config.env, HOST_PLATFORM.platform),
             },
             // Registrations commonly launch interpreter-driven scripts.
             expectedCommand: null,

@@ -1,4 +1,5 @@
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../../process/snapshotEnvironment.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import {
@@ -249,7 +250,10 @@ export class PwntoolsDecoder<
     input: Input,
     options?: ExecutionOptions,
   ): Promise<Result<Report, AnalysisError>> {
-    const environment = snapshotEnvironment(this.environment);
+    const environment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     const selectedLimits = pwntoolsProducerLimitsSchema.safeParse(
       input.producer_limits === undefined ? {} : input.producer_limits,
     );

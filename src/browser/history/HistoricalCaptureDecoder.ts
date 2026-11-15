@@ -1,4 +1,5 @@
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
 import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import {
@@ -146,7 +147,10 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
-    const selectedEnvironment = snapshotEnvironment(this.environment);
+    const selectedEnvironment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     const runtimeResources = new ArtifactResourceScope();
     let processLease: AnalysisCleanupLease | undefined;

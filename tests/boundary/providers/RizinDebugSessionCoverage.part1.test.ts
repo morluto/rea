@@ -287,9 +287,16 @@ it
         return launched;
       });
     try {
+      // The real stop's detach command gets no reply from this fixture and
+      // returns incomplete after its 1 s detach deadline without signalling
+      // the child. Report the same uncertainty at once; the child stays alive
+      // for the harness to reap either way.
       const stopProcess: typeof incompleteStop =
         stopMode === "is uncertain"
-          ? incompleteStop
+          ? async () => ({
+              status: "incomplete",
+              reason: "injected stop uncertainty",
+            })
           : async () => ({ status: "stopped" });
       const manager = createManager(
         { REA_RIZIN_COMMAND: provider },
@@ -475,7 +482,17 @@ it.skipIf(process.platform === "win32")(
     const sessionId = started.value.session_id;
     injected.control.exitLeader();
 
-    const firstClose = await manager.close(sessionId);
+    // The output-settlement grace is a fixed timer; advance it instead of
+    // waiting it out. The open output keeps the close incomplete regardless.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let firstClose: Awaited<ReturnType<typeof manager.close>>;
+    try {
+      const closing = manager.close(sessionId);
+      await vi.advanceTimersByTimeAsync(10_000);
+      firstClose = await closing;
+    } finally {
+      vi.useRealTimers();
+    }
     expect(firstClose.ok).toBe(false);
     if (!firstClose.ok) {
       expect(firstClose.error.cleanupIncomplete).toBe(true);
