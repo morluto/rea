@@ -549,10 +549,6 @@
   },
   "strict-utf8-decoder": {
     "src/browser/PlaywrightScenarioRequest.ts": 1,
-    "src/electron/ElectronFusePath.ts": 1,
-    "src/evm/EvmBytecodeCarrier.ts": 1,
-    "src/ghidra/GhidraJavaOptions.ts": 1,
-    "src/ida/IdaDiagnosticRedactor.ts": 1,
-    "src/reference/ReferenceSourceReaderEntries.ts": 1
+    "src/evm/EvmBytecodeCarrier.ts": 1
   }
 }
