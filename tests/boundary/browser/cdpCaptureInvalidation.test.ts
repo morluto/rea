@@ -5,13 +5,20 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { frameNavigated, trackBrowser } from "./cdpBrowserProvider.support.js";
 
-it.each([
-  { method: "Network.enable", sourceFails: false },
-  { method: "DOMSnapshot.captureSnapshot", sourceFails: false },
-  { method: "DOMSnapshot.captureSnapshot", sourceFails: true },
-])(
-  "explains observed origin refusal during $method with source failure $sourceFails",
-  async ({ method: stage, sourceFails }) => {
+// A proven document change is reported before scope, carrying the failure it
+// caused; an unproven navigation (no loader) is judged by its current scope.
+it.each(
+  [
+    { method: "Network.enable", sourceFails: false },
+    { method: "DOMSnapshot.captureSnapshot", sourceFails: false },
+    { method: "DOMSnapshot.captureSnapshot", sourceFails: true },
+  ].flatMap((stage) => [
+    { ...stage, loader: true },
+    { ...stage, loader: false },
+  ]),
+)(
+  "reports navigation to another origin during $method (loader $loader, source failure $sourceFails)",
+  async ({ method: stage, sourceFails, loader }) => {
     const browser = await startFakeCdpBrowser({
       eventsBeforeReply: [stage],
       commandEvents: (command) =>
@@ -19,7 +26,7 @@ it.each([
           ? [
               frameNavigated(command, {
                 id: "frame-main",
-                loaderId: "outside-document",
+                ...(loader ? { loaderId: "outside-document" } : {}),
                 url: "https://outside.example/page",
               }),
             ]
@@ -38,16 +45,27 @@ it.each([
         include_script_sources: true,
       }),
     );
-    if (result.ok) throw new Error("Expected observed origin refusal");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "target_unavailable",
-      message: expect.stringContaining("permitted HTTP(S) origin scope"),
-      remediation: { action: expect.stringContaining("allowed_origins") },
-      details: {
-        operation: "inspect_web_page",
-        reason: "target_not_allowed",
-      },
-    });
+    if (result.ok) throw new Error("Expected observed navigation refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject(
+      loader
+        ? {
+            code: "target_unavailable",
+            message: expect.stringContaining("target changed"),
+            details: {
+              operation: "inspect_web_page",
+              reason: "target_changed",
+            },
+          }
+        : {
+            code: "target_unavailable",
+            message: expect.stringContaining("permitted HTTP(S) origin scope"),
+            remediation: { action: expect.stringContaining("allowed_origins") },
+            details: {
+              operation: "inspect_web_page",
+              reason: "target_not_allowed",
+            },
+          },
+    );
     if (sourceFails)
       expect(result.error.cause).toMatchObject({ reason: "protocol_error" });
     expect(browser.commands.map(({ method }) => method)).toContain(

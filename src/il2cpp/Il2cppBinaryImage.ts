@@ -1,3 +1,4 @@
+import { parseFailureFromCause } from "../domain/parseFailure.js";
 import { binaryMetadataArchitecture } from "../domain/binaryMetadataArchitecture.js";
 import {
   IL2CPP_SLICE_SELECTORS,
@@ -92,6 +93,8 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
       throw new Il2cppBinaryFormatFailure(
         "native-index-capacity",
         cause.message,
+        cause.failure.limit.maximum,
+        "bytes",
       );
     if (cause instanceof BinaryFormatFailure)
       throw new Il2cppBinaryFormatFailure(
@@ -123,8 +126,17 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
         IL2CPP_BINARY_BYTES,
       );
   } catch (cause) {
-    if (cause instanceof ElfPointerRelocationFailure)
-      throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
+    if (cause instanceof ElfPointerRelocationFailure) {
+      if (cause.failure.kind === "limit" && cause.unit !== undefined)
+        throw new Il2cppBinaryFormatFailure(
+          "native-index-capacity",
+          cause.message,
+          cause.failure.limit.maximum,
+          cause.unit,
+        );
+      if (cause.reason !== "native-index-capacity")
+        throw new Il2cppBinaryFormatFailure(cause.reason, cause.message);
+    }
     if (cause instanceof BinaryFormatFailure)
       throw new Il2cppBinaryFormatFailure("malformed-container", cause.message);
     throw cause;
@@ -154,7 +166,17 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
           "unsupported-container",
           cause.message,
         );
-      if (cause instanceof RangeError || cause instanceof TypeError)
+      const failure = parseFailureFromCause(cause);
+      if (failure !== undefined)
+        throw new Il2cppBinaryFormatFailure(
+          failure.kind === "unsupported"
+            ? "unsupported-container"
+            : "malformed-container",
+          failure.message,
+        );
+      // Mach-O slice selection reports an inconsistent FAT or CPU identity as
+      // a TypeError.
+      if (cause instanceof TypeError)
         throw new Il2cppBinaryFormatFailure(
           "malformed-container",
           cause.message,

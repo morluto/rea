@@ -1,4 +1,8 @@
-import { decodeBinaryPlistValue } from "../../artifacts/apple/BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../artifacts/apple/BinaryPlistMaterializer.js";
+import {
+  plistDuplicateKeyLimitations,
+  type PlistDuplicateKeys,
+} from "../../domain/apple/plistDuplicateKeys.js";
 
 import {
   AnalysisOutputError,
@@ -27,10 +31,7 @@ import {
   resolvePlistNumberSource,
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
-import {
-  scanBinaryPlistScalars,
-  UnsupportedBinaryPlistUidError,
-} from "../../artifacts/apple/PlistScalars.js";
+import { UnsupportedBinaryPlistUidError } from "../../artifacts/apple/PlistScalars.js";
 import {
   estimateBinaryPlistExpansion,
   preflightPropertyListDecode,
@@ -312,12 +313,14 @@ const projectPlistXml = (
 ): Result<ParsedPlist, PlistParseError> => {
   let projected: ProjectedPlistValue;
   let literals: PlistNumberLiterals;
+  let duplicateKeys: PlistDuplicateKeys;
   try {
     const decoded = parseXmlPropertyList(
       output,
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
     literals = decoded.numberLiterals;
+    duplicateKeys = decoded.duplicateKeys;
     projected = projectPlistValue(
       decoded.value,
       undefined,
@@ -347,6 +350,7 @@ const projectPlistXml = (
       ...projectedScalarLimitations(projected),
       ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
+      ...plistDuplicateKeyLimitations(duplicateKeys),
     ],
   });
 };
@@ -379,14 +383,13 @@ export const parsePlistBinary = (
             : new PropertyListDecodeBudgetFailure(kind, message),
       },
     );
-    const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
-    const decoded = decodeBinaryPlistValue(bytes, expansion, scalarMetadata);
+    const decoded = decodeBinaryPropertyList(bytes, expansion);
     const projected = projectPlistValue(
-      decoded,
+      decoded.value,
       undefined,
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
-    const numbers = createPlistNumberProjection(scalarMetadata.literals);
+    const numbers = createPlistNumberProjection(decoded.numberLiterals);
     const value = numbers.project(projected.value);
     return ok({
       value,
@@ -401,6 +404,7 @@ export const parsePlistBinary = (
               ),
             ]),
         ...numbers.limitations(),
+        ...plistDuplicateKeyLimitations(decoded.duplicateKeys),
       ],
     });
   } catch (cause: unknown) {

@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { Deadline } from "../domain/deadline.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
@@ -640,7 +641,7 @@ export class AgentEnvComputer {
   }
 
   async #waitReady(signal: AbortSignal): Promise<void> {
-    const deadline = Date.now() + READY_TIMEOUT_MS;
+    const deadline = Deadline.after(READY_TIMEOUT_MS);
     for (;;) {
       const status = readinessSchema.parse(
         await this.#request(
@@ -652,7 +653,7 @@ export class AgentEnvComputer {
       if (status.ready) return;
       const waiting = status.checks.filter((check) => !check.ok);
       const failed = waiting.find((check) => check.final === true);
-      if (failed !== undefined || Date.now() > deadline)
+      if (failed !== undefined || deadline.expired())
         throw new ComputerStartFailure(
           this.redacted(
             failed === undefined

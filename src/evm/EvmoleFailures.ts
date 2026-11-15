@@ -17,13 +17,16 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import {
+  providerOutcomeOf,
+  type ProviderOutcome,
+} from "../process/ProviderOutcome.js";
+import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
   MAX_EVM_TIMEOUT_MS,
@@ -31,8 +34,13 @@ import {
   evmProducerLimitRecovery,
   type EvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
-import { EVM_FILE_SIZE_FAILURE_EXIT } from "./EvmoleRelease.js";
+import {
+  EVM_FILE_SIZE_FAILURE_EXIT,
+  EVM_WORKER_HEAP_MIB,
+} from "./EvmoleRelease.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "./EvmoleProviderIdentity.js";
+
+const OPERATION = "inspect_evm_interface";
 
 /** Both a structured worker refusal and reply-file admission name this allowance. */
 export const evmReplyBudgetFailure = (
@@ -41,7 +49,7 @@ export const evmReplyBudgetFailure = (
   limits: EvmProducerLimits = selectedEvmProducerLimits(undefined),
 ) =>
   new AnalysisResourceConstraintError(
-    "inspect_evm_interface",
+    OPERATION,
     "file-size",
     reason,
     {
@@ -79,141 +87,69 @@ interface EvmFailureContext {
   readonly producerLimits?: EvmProducerLimits | undefined;
 }
 
+type ResolvedEvmFailureContext = Omit<
+  EvmFailureContext,
+  "limiter" | "timeoutMs" | "producerLimits"
+> & {
+  readonly limiter: string;
+  readonly timeoutMs: number;
+  readonly producerLimits: EvmProducerLimits;
+};
+
 export const evmInterfaceFailure = (
   cause: unknown,
-  {
-    phase,
-    path,
-    workerLimits,
-    limiter = "/usr/bin/prlimit",
-    fileFailure,
-    timeoutMs = DEFAULT_EVM_TIMEOUT_MS,
-    producerLimits = selectedEvmProducerLimits(undefined),
-  }: EvmFailureContext,
+  context: EvmFailureContext,
 ): AnalysisError => {
+  const resolved: ResolvedEvmFailureContext = {
+    ...context,
+    limiter: context.limiter ?? "/usr/bin/prlimit",
+    timeoutMs: context.timeoutMs ?? DEFAULT_EVM_TIMEOUT_MS,
+    producerLimits:
+      context.producerLimits ?? selectedEvmProducerLimits(undefined),
+  };
+  const { phase, path, producerLimits } = resolved;
   const cleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
   const cleanupOptions = cleanup === undefined ? {} : { cleanup };
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof OwnedCommandFailure) {
-    const outputOptions =
-      cause.snapshot === null
-        ? undefined
-        : { capturedOutput: capturedEvmOutput(cause.snapshot) };
-    if (cause.cleanupFailure !== null)
-      return new ProviderCleanupError(
-        EVMOLE_PROVIDER_IDENTITY.id,
-        cause.resources,
-        {
-          reason: cause.cleanupFailure,
-          ...(cause.snapshot === null
-            ? {}
-            : { captured_output: { ...capturedEvmOutput(cause.snapshot) } }),
-          previous_error: {
-            failure_kind: cause.reason,
-            message: cause.message,
-            exit_code: cause.snapshot?.exitCode ?? null,
-            signal: cause.snapshot?.signal ?? null,
-          },
-        },
-        { operation: "inspect_evm_interface", cause },
-      );
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_evm_interface", {
-        cause: cause.cancellation?.reason,
-        ...outputOptions,
-        ...cleanupOptions,
-      });
-    if (cause.reason === "timeout")
-      return new AnalysisTimeoutError("inspect_evm_interface", timeoutMs, {
-        ...outputOptions,
-        ...cleanupOptions,
-        userMessage: `The EVMole worker reached its ${String(timeoutMs)} ms server/provider deadline (timeout_ms). This is not a carrier-read or MCP client deadline. Omitted timeout_ms uses ${String(DEFAULT_EVM_TIMEOUT_MS)} ms.`,
-        remediationAction: evmTimeoutRecovery(timeoutMs),
-      });
-    if (cause.reason === "output-limit")
-      return new AnalysisOutputError("inspect_evm_interface", cause.message, {
-        ...outputOptions,
-        userMessage: `EVMole worker diagnostics exceeded producer_limits.diagnostic_bytes (${String(producerLimits.diagnostic_bytes)} bytes).`,
-        diagnostics: {
-          parameter: "producer_limits.diagnostic_bytes",
-          effective_value: producerLimits.diagnostic_bytes,
-        },
-        remediationAction: evmProducerLimitRecovery(
-          producerLimits,
-          "diagnostic_bytes",
-        ),
-      });
-    if (
-      cause.reason === "process" &&
-      (cause.snapshot?.signal === "SIGXCPU" ||
-        cause.snapshot?.signal === "SIGXFSZ" ||
-        (fileFailure?.verified === true &&
-          cause.snapshot?.exitCode === EVM_FILE_SIZE_FAILURE_EXIT &&
-          cause.snapshot.signal === null))
-    )
-      return new AnalysisResourceConstraintError(
-        "inspect_evm_interface",
-        cause.snapshot.signal === "SIGXCPU" ? "cpu" : "file-size",
-        (cause.snapshot.signal === null
-          ? "Owned EVM worker reported EFBIG while writing its reply; the exact write failure cause is unknown."
-          : `Owned EVM command terminated with ${cause.snapshot.signal}; the exact signal cause is unknown.`) +
-          " Effective worker limits are unknown. Configured soft limits are retained separately.",
-        workerLimits === undefined
-          ? null
-          : {
-              configured_soft_limits: {
-                address_space_bytes: workerLimits.addressSpaceBytes,
-                cpu_seconds: workerLimits.cpuSeconds,
-                file_size_bytes: workerLimits.fileSizeBytes,
-              },
-              effective_soft_limits: null,
-            },
-        {
-          ...outputOptions,
-          retryable: false,
-          remediationAction:
-            cause.snapshot.signal === "SIGXCPU"
-              ? evmProducerLimitRecovery(producerLimits, "cpu_seconds")
-              : evmProducerLimitRecovery(producerLimits, "file_bytes"),
-        },
-      );
-  }
-  if (
-    cause instanceof Error &&
-    "code" in cause &&
-    "syscall" in cause &&
-    typeof cause.syscall === "string" &&
-    cause.syscall.startsWith("spawn ")
-  ) {
-    const reason = `Configured util-linux prlimit could not launch (${String(cause.code)}): ${limiter}. Check its executable/interpreter and host execute access.`;
-    return new AnalysisCapabilityUnavailableError(
+  if (cause instanceof OwnedCommandFailure && cause.cleanupFailure !== null)
+    return new ProviderCleanupError(
       EVMOLE_PROVIDER_IDENTITY.id,
-      "inspect_evm_interface",
-      reason,
-      { cause, userMessage: reason },
+      cause.resources,
+      {
+        reason: cause.cleanupFailure,
+        ...(cause.snapshot === null
+          ? {}
+          : { captured_output: { ...capturedEvmOutput(cause.snapshot) } }),
+        previous_error: {
+          failure_kind: cause.reason,
+          message: cause.message,
+          exit_code: cause.snapshot?.exitCode ?? null,
+          signal: cause.snapshot?.signal ?? null,
+        },
+      },
+      { operation: OPERATION, cause },
     );
-  }
+  const outcome = providerOutcomeOf(cause);
+  if (outcome !== undefined) return evmCommandFailure(outcome, resolved);
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_evm_interface", {
+      return new AnalysisCancelledError(OPERATION, {
         cause: artifactFileCancellationCause(cause),
         ...cleanupOptions,
       });
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        "inspect_evm_interface",
-        path,
-        cause.message,
-        { cause, ...cleanupOptions },
-      );
+      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
+        cause,
+        ...cleanupOptions,
+      });
     if (
       phase === "artifact-read" &&
       cause.reason === "limit" &&
       cause.boundary === "file-size"
     )
       return new AnalysisResourceConstraintError(
-        "inspect_evm_interface",
+        OPERATION,
         "file-size",
         `${cause.message} producer_limits.input_bytes is ${String(producerLimits.input_bytes)} bytes; timeout_ms does not raise it.`,
         {
@@ -232,7 +168,7 @@ export const evmInterfaceFailure = (
       );
     if (phase === "artifact-read" && ["path", "format"].includes(cause.reason))
       return new AnalysisInputError(
-        "inspect_evm_interface",
+        OPERATION,
         {
           cause,
           ...cleanupOptions,
@@ -249,56 +185,154 @@ export const evmInterfaceFailure = (
   }
   if (phase === "artifact-read" && cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(
-        "inspect_evm_interface",
-        path,
-        cause.code,
-        { cause, ...cleanupOptions },
-      );
+      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
+        cause,
+        ...cleanupOptions,
+      });
     const pathErrno = artifactSelectedPathErrno(cause);
     if (pathErrno !== undefined)
-      return new AnalysisInputError(
-        "inspect_evm_interface",
-        { cause, ...cleanupOptions },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_value",
-            message: `Selected bytecode carrier could not be read (${pathErrno}): ${path}.`,
-          },
-        ],
-      );
+      return new AnalysisInputError(OPERATION, { cause, ...cleanupOptions }, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: `Selected bytecode carrier could not be read (${pathErrno}): ${path}.`,
+        },
+      ]);
   }
-  return new ProviderAdapterError(
-    EVMOLE_PROVIDER_IDENTITY.id,
-    "inspect_evm_interface",
-    {
-      cause,
-      ...cleanupOptions,
-      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
-        ? { capturedOutput: capturedEvmOutput(cause.snapshot) }
-        : {}),
-      diagnostics: {
-        phase,
-        path,
-        ...(workerLimits === undefined
-          ? {}
-          : { configured_resource_limits: { ...workerLimits } }),
-        reason: cause instanceof Error ? cause.message : String(cause),
-        ...(fileFailure === undefined
-          ? {}
-          : { file_size_failure_marker: { ...fileFailure } }),
-        ...(cause instanceof OwnedCommandFailure
-          ? {
-              failure_kind: cause.reason,
-              exit_code: cause.snapshot?.exitCode ?? null,
-              signal: cause.snapshot?.signal ?? null,
-            }
-          : {}),
+  return new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
+    cause,
+    ...cleanupOptions,
+    diagnostics: {
+      ...evmWorkerDiagnostics(context),
+      reason: cause instanceof Error ? cause.message : String(cause),
+    },
+  });
+};
+
+/** The EVMole worker's dialect: its prlimit launcher and its reserved EFBIG exit. */
+const evmCommandFailure = (
+  outcome: ProviderOutcome,
+  context: ResolvedEvmFailureContext,
+): AnalysisError => {
+  const { workerLimits, limiter, fileFailure, timeoutMs, producerLimits } =
+    context;
+  return classifyProviderOutcome(outcome, {
+    operation: OPERATION,
+    capturedOutput: capturedEvmOutput,
+    timeout: {
+      ms: timeoutMs,
+      userMessage: `The EVMole worker reached its ${String(timeoutMs)} ms server/provider deadline (timeout_ms). This is not a carrier-read or MCP client deadline. Omitted timeout_ms uses ${String(DEFAULT_EVM_TIMEOUT_MS)} ms.`,
+      remediationAction: evmTimeoutRecovery(timeoutMs),
+    },
+    outputLimit: {
+      limits: {
+        maximum_diagnostic_bytes: producerLimits.diagnostic_bytes,
+        parameter: "producer_limits.diagnostic_bytes",
+      },
+      recovery: {
+        retryable: false,
+        remediationAction: evmProducerLimitRecovery(
+          producerLimits,
+          "diagnostic_bytes",
+        ),
       },
     },
-  );
+    resourceSignal: (signal) => ({
+      limits: configuredWorkerLimits(workerLimits),
+      recovery: {
+        retryable: false,
+        remediationAction: evmProducerLimitRecovery(
+          producerLimits,
+          signal === "SIGXCPU" ? "cpu_seconds" : "file_bytes",
+        ),
+      },
+    }),
+    runtimeExhaustion: () => ({
+      limits: { worker_heap_mib: EVM_WORKER_HEAP_MIB },
+      recovery: {
+        retryable: false,
+        remediationAction: `The EVMole worker's ${String(EVM_WORKER_HEAP_MIB)} MiB heap is fixed in this release; producer_limits and timeout_ms do not raise it. Select a smaller bytecode carrier; repeating the unchanged request is expected to fail the same way.`,
+      },
+    }),
+    dialect: (outcome, details) => {
+      if (outcome.kind === "launch-refused") {
+        const reason = `Configured util-linux prlimit could not launch (${outcome.refusal.code}): ${limiter}. Check its executable/interpreter and host execute access.`;
+        return new AnalysisCapabilityUnavailableError(
+          EVMOLE_PROVIDER_IDENTITY.id,
+          OPERATION,
+          reason,
+          { ...details, userMessage: reason },
+        );
+      }
+      // The reserved exit means EFBIG only when the worker's marker says so.
+      if (
+        outcome.kind === "exited" &&
+        fileFailure?.verified === true &&
+        outcome.exitCode === EVM_FILE_SIZE_FAILURE_EXIT &&
+        outcome.signal === null
+      )
+        return new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          "Owned EVM worker reported EFBIG while writing its reply; the exact write failure cause is unknown. Effective worker limits are unknown. Configured soft limits are retained separately.",
+          configuredWorkerLimits(workerLimits),
+          {
+            ...details,
+            retryable: false,
+            remediationAction: evmProducerLimitRecovery(
+              producerLimits,
+              "file_bytes",
+            ),
+          },
+        );
+      return new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
+        ...details,
+        diagnostics: {
+          ...evmWorkerDiagnostics(context),
+          reason: outcome.message,
+          failure_kind: outcome.kind,
+          // A stream failure is not an ordinary exit, but its recorded
+          // status remains evidence.
+          ...(outcome.output === undefined
+            ? {}
+            : {
+                exit_code: outcome.output.snapshot.exitCode ?? null,
+                signal: outcome.output.snapshot.signal ?? null,
+              }),
+        },
+      });
+    },
+  });
 };
+
+const evmWorkerDiagnostics = ({
+  phase,
+  path,
+  workerLimits,
+  fileFailure,
+}: EvmFailureContext) => ({
+  phase,
+  path,
+  ...(workerLimits === undefined
+    ? {}
+    : { configured_resource_limits: { ...workerLimits } }),
+  ...(fileFailure === undefined
+    ? {}
+    : { file_size_failure_marker: { ...fileFailure } }),
+});
+
+/** Configured soft limits; the effective limits the worker ran under are unknown. */
+const configuredWorkerLimits = (workerLimits: EvmWorkerLimits | undefined) =>
+  workerLimits === undefined
+    ? null
+    : {
+        configured_soft_limits: {
+          address_space_bytes: workerLimits.addressSpaceBytes,
+          cpu_seconds: workerLimits.cpuSeconds,
+          file_size_bytes: workerLimits.fileSizeBytes,
+        },
+        effective_soft_limits: null,
+      };
 
 /** Preserve retained worker diagnostics with their observed truncation status. */
 export const capturedEvmOutput = (
