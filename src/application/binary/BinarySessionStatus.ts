@@ -3,7 +3,7 @@ import type { InvestigationStatistics } from "../../domain/investigationLifecycl
 import { artifactTargetRefusal } from "../../domain/apple/artifactTargetApplicability.js";
 import { targetApplicabilityRefusal } from "../../domain/targetApplicability.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
