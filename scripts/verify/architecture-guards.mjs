@@ -509,19 +509,25 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
-// Services name the contract field they refuse or ask the caller to change;
-// the CLI layer owns option spellings (each command's field binding renames
-// issue paths to CLI keys). A `--flag` written outside src/cli copies that
-// mapping and goes stale when the command renames the option.
+// Services name the contract field they refuse or ask the caller to change,
+// and a failure binds its per-call control as `limit`; the CLI layer owns
+// option and command spellings (projectCliInputFields adds `cli_flag`). A
+// `--flag`, "on the CLI" or `rea <command>` written outside src/cli copies
+// that mapping into output MCP clients also receive, including text built
+// from a template such as `--${name}` or `rea inspect-... <path>`.
 checkCounted(
-  "REA CLI option named outside the CLI layer (name the contract field; src/cli owns option spellings)",
+  "REA CLI option or command named outside the CLI layer (name the contract field or operation; src/cli owns option and command spellings)",
   "cli-option-text-outside-cli",
   files.filter(
     ({ path }) =>
       !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
   ),
-  /\(CLI:? [^)\n]*--[a-z]|--[a-z][a-z0-9-]* on the CLI|or (?:use|pass) --[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]/gu,
-  [],
+  /\(CLI\b[^)\n]*|\bon the CLI\b|\bor (?:use|pass) (?:--|rea )[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]|`rea [a-z][a-z-]*/gu,
+  [
+    // Setup and doctor run only through the CLI, so their recovery may name
+    // CLI options such as --skill=false.
+    "src/application/Doctor.ts",
+  ],
 );
 
 // A runtime setting view throws the ConfigurationError of a malformed launch
