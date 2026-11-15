@@ -99,9 +99,15 @@ const enhancedFixtureResult = (method) => {
           name: "__TEXT",
           start: "0x1000",
           end: "0x2000",
-          readable: true,
-          writable: false,
-          executable: true,
+          readable: null,
+          writable: null,
+          executable: null,
+          permissions: {
+            available: false,
+            reason: "The fixture does not observe native memory permissions.",
+          },
+          provenance: "hopper-public-python-api",
+          sections: [],
         },
       ];
     case "list_documents":
