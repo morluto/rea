@@ -122,7 +122,7 @@
     "src/domain/apple/dylibResolution.ts": 1,
     "src/domain/explicitSensitiveFailure.ts": 1,
     "src/electron/ElectronFuseFailures.ts": 3,
-    "src/evm/EvmoleInterfaceProvider.ts": 6,
+    "src/evm/EvmoleInterfaceProvider.ts": 5,
     "src/gdb/GdbSessionManager.ts": 14,
     "src/gpu/GpuCodeObjectsProvider.ts": 1,
     "src/inspector/JavaScriptRuntimeScope.ts": 1,
@@ -388,7 +388,6 @@
     "src/browser/PlaywrightScenarioRequest.ts": 1
   },
   "abort-error-name": {
-    "src/evm/EvmoleInterfaceProvider.ts": 1,
     "src/ida/IdaBusyHealth.ts": 1,
     "src/process/ExecFileOutput.ts": 1,
     "src/server/http/listenHttpServer.ts": 1,
