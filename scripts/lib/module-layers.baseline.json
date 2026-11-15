@@ -10,7 +10,7 @@
   "crossProvider": {
     "apktool -> artifacts": 2,
     "desktop -> electron": 1,
-    "gpu -> artifacts": 2,
+    "gpu -> artifacts": 1,
     "model -> artifacts": 1
   },
   "entry": {
