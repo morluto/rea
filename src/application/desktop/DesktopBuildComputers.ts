@@ -283,7 +283,10 @@ const liveComputer = (
         attempt(() => witness.readers.release()),
         attempt(() => judge.close()),
       ]);
-      if (!commands.verified || !readers.verified) {
+      // Reader cleanup can be retried against the live computer. An unsettled
+      // long run cannot: its stop already ended, and the computer teardown is
+      // what removes a descendant the supervisor does not own.
+      if (!readers.verified) {
         const failed = [commands, readers, judgeResult].filter(
           (result) => !result.verified,
         );
@@ -297,10 +300,16 @@ const liveComputer = (
         closedComputer === undefined
           ? await attempt(() => computer.close())
           : closedComputer;
-      if (computerResult.verified) closedComputer = computerResult;
-      const failed = [judgeResult, computerResult].filter(
-        (result) => !result.verified,
-      );
+      if (computerResult.verified) {
+        closedComputer = computerResult;
+        if (!commands.verified)
+          capture.longRuns.resolveAfterVerifiedComputerTeardown();
+      }
+      const failed = [
+        judgeResult,
+        computerResult,
+        ...(!computerResult.verified && !commands.verified ? [commands] : []),
+      ].filter((result) => !result.verified);
       if (failed.length === 0 && computerResult.verified) return computerResult;
       return {
         verified: false,

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -135,7 +136,7 @@ export class SafeOutputTree {
    */
   static async create(
     outputRoot: string,
-    platform: NodeJS.Platform = process.platform,
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
     options: {
       readonly acceptExistingEmpty?: boolean;
       /** Create missing parents, after the root's own syntax is admitted. */

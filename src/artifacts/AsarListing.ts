@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
 
@@ -154,7 +155,7 @@ export const readAsarListing = async (
       name === ".." ||
       name.includes("/") ||
       name.includes("\0") ||
-      (process.platform === "win32" && name.includes("\\"))
+      (HOST_PLATFORM.platform === "win32" && name.includes("\\"))
     )
       throw new ArtifactReaderFailure(
         "path",

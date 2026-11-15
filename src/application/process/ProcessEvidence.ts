@@ -50,6 +50,20 @@ export type ProcessCaptureEvidenceFailure =
     }
   | { readonly kind: "invalid-capture"; readonly cause: z.ZodError };
 
+/** The workflow a capture input must come from and the one it came from, as input-issue facts. */
+export const wrongWorkflowIssueFacts = (
+  failure: Extract<ProcessCaptureEvidenceFailure, { kind: "wrong-workflow" }>,
+) => ({
+  expected: {
+    operation: failure.expected.operation,
+    predicate_type: failure.expected.predicate,
+  },
+  observed: {
+    operation: failure.actual.operation,
+    predicate_type: failure.actual.predicate,
+  },
+});
+
 /** Authenticate capture Evidence before admitting its workflow, provider and payload. */
 export const parseProcessCaptureEvidence = (
   input: unknown,

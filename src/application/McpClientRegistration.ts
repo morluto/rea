@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { dirname } from "node:path";
 
 import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
@@ -174,7 +175,10 @@ export const registerMcpClient = async (
           : {}),
       });
       checkCancellation();
-      if (client.privateProfile !== undefined && process.platform !== "win32")
+      if (
+        client.privateProfile !== undefined &&
+        HOST_PLATFORM.platform !== "win32"
+      )
         await securePrivateDirectory(
           dirname(path),
           client.privateProfile.home,
@@ -202,7 +206,7 @@ export const registerMcpClient = async (
         status: "configured",
         ...(backupPath === undefined ? {} : { backupPath }),
         ...(client.privateProfile !== undefined
-          ? { permissions: privateProfilePermissions() }
+          ? { permissions: privateProfilePermissions(HOST_PLATFORM.platform) }
           : {}),
       });
     });
@@ -268,7 +272,7 @@ const unchangedRegistration = async (
     parsed.requiresRewrite === true ||
     !clientConfigurationValuesEqual(parsed.document, updated) ||
     (client.privateProfile !== undefined &&
-      process.platform !== "win32" &&
+      HOST_PLATFORM.platform !== "win32" &&
       ((snapshot?.state.mode ?? 0) & 0o777) !== PRIVATE_PROFILE_MODES.file)
   )
     return undefined;
@@ -284,7 +288,7 @@ const unchangedRegistration = async (
   checkCancellation();
   await verifyEffectiveRegistration(prepared, current.text);
   const permissionsChanged =
-    client.privateProfile !== undefined && process.platform !== "win32"
+    client.privateProfile !== undefined && HOST_PLATFORM.platform !== "win32"
       ? await securePrivateDirectory(
           dirname(path),
           client.privateProfile.home,
@@ -295,7 +299,7 @@ const unchangedRegistration = async (
   return {
     status: permissionsChanged ? "configured" : "unchanged",
     ...(client.privateProfile !== undefined
-      ? { permissions: privateProfilePermissions() }
+      ? { permissions: privateProfilePermissions(HOST_PLATFORM.platform) }
       : {}),
   };
 };

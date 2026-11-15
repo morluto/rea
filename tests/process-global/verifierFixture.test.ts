@@ -219,3 +219,31 @@ it("keeps a retained root across every release and names why", async () => {
   expect(closes).toBe(0);
   expect(fixture.released).toBe(false);
 });
+
+it("keeps an artifact directory, owned by the verifier and named on stderr", async () => {
+  const parent = await VerifierFixture.open({ prefix: "rea-fixture-test-" });
+  const written: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = ((chunk: string) => {
+    written.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const artifacts = await VerifierFixture.keepArtifacts({
+      prefix: "rea-client-",
+      parent: parent.path,
+    });
+    expect(artifacts.kept).toBe(true);
+    expect(artifacts.path.startsWith(join(parent.path, "rea-client-"))).toBe(
+      true,
+    );
+    expect((await stat(artifacts.path)).mode & 0o077).toBe(0);
+    expect(Object.isFrozen(artifacts)).toBe(true);
+    expect(written).toEqual([
+      `Keeping verifier artifacts at ${artifacts.path}\n`,
+    ]);
+  } finally {
+    process.stderr.write = write;
+    await parent.release();
+  }
+});

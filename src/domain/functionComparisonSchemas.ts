@@ -174,6 +174,7 @@ export const functionComparisonResultSchema = z
         path: ["status"],
         message:
           "Function comparison status contradicts its dimensions or function match.",
+        params: { constraint: "status-matches-dimensions" },
       });
   });
 

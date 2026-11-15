@@ -223,9 +223,13 @@ await withVerifierFixture(workspaceFixture, async () => {
       true,
       JSON.stringify(ajv.errors),
     );
-    assert.ok(
+    // Evidence format 1 has no legacy `undecodable` status: an unlisted
+    // address is `not-in-listing`, and the relabelled record is refused.
+    assert.equal(nativeInstructionSchema.safeParse(unlisted).success, true);
+    assert.equal(
       nativeInstructionSchema.safeParse({ ...unlisted, status: "undecodable" })
         .success,
+      false,
     );
     const contextDefinition = tools.find(
       (tool) => tool.name === "inspect_address_context",
