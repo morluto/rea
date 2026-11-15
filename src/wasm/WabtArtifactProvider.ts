@@ -37,7 +37,7 @@ import {
   isAborted,
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -796,11 +796,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         result = result.ok
           ? err(failure)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 result.error,
                 failure,
                 OPERATION,
-              ).bindCleanupDependencies([result.error, failure]),
+              ),
             );
       }
     }

@@ -449,8 +449,8 @@ describe("managed nested type names", () => {
     const warned = comparison.methods.map(({ left, right, limitations }) => [
       left?.token ?? null,
       right?.token ?? null,
-      limitations.some((limitation) =>
-        limitation.startsWith("counterpart-signature-not-decoded"),
+      limitations.some(
+        ({ code }) => code === "counterpart-signature-not-decoded",
       ),
     ]);
 
@@ -600,7 +600,9 @@ describe("managed call-target comparison", () => {
     expect(report.methods[0]).toMatchObject({
       status: "changed",
       dimensions: expect.arrayContaining(["call-target", "availability"]),
-      limitations: [expect.stringContaining("call targets are unavailable")],
+      limitations: [
+        expect.objectContaining({ code: "call-target-unavailable" }),
+      ],
     });
 
     const unavailableEdges = observe(

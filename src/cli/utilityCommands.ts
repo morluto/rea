@@ -2,6 +2,7 @@ import { contractNamed } from "./contractCliDescription.js";
 import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
+import { requirePresence } from "../domain/schemaConstraints.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { createHistoricalSourceSummary } from "../domain/referenceSourceSummary.js";
@@ -258,8 +259,8 @@ const registerReferenceSourceCommand = (
         "Local source directory to import as historical reference",
       ),
     }),
-    options: z
-      .object({
+    options: requirePresence(
+      z.object({
         excludePaths: z
           .string()
           .optional()
@@ -281,22 +282,16 @@ const registerReferenceSourceCommand = (
               "Summary outline path depth (default: 2; 0 omits entries); requires --detail summary",
             ),
         ),
-      })
-      .superRefine((options, context) => {
-        if (options.outlineDepth !== undefined && options.detail !== "summary")
-          context.addIssue({
-            code: "custom",
-            path: ["outlineDepth"],
-            message: "--outline-depth requires --detail summary",
-          });
-      })
-      .meta({
-        if: { required: ["outlineDepth"] },
-        then: {
-          required: ["detail"],
-          properties: { detail: { const: "summary" } },
-        },
       }),
+      [
+        {
+          when: "outlineDepth",
+          requires: "detail",
+          requiresValue: "summary",
+          message: "--outline-depth requires --detail summary",
+        },
+      ],
+    ),
     run: ({ args, options }) =>
       logCliCommand(
         logger,

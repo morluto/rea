@@ -64,7 +64,7 @@ import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.j
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import type { ProcessSensitiveOutput } from "./ProcessSensitiveOutput.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   hasCaptureTruncation,
@@ -1871,11 +1871,11 @@ export const resolveProcessResult = (
     if (executionFailure instanceof AnalysisError) {
       if (partialObservation !== undefined)
         executionFailure.retainPartialObservation(partialObservation);
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         executionFailure,
         cleanupError,
         "capture_process",
-      ).bindCleanupDependencies([executionFailure, cleanupError]);
+      );
     }
     throw cleanupError;
   }
