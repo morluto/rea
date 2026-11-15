@@ -113,6 +113,7 @@ import {
   type NativeCommandInvocation,
 } from "../domain/native/nativeInspection.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { InternalInvariantError } from "../domain/internalInvariant.js";
 import {
   NativeCommandFailure,
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
@@ -1705,11 +1706,19 @@ const closeNativeFileScope = async (
   }
 };
 
+/**
+ * Project a producer failure. A broken internal assumption is a REA defect, not
+ * native output, so it is rethrown rather than reported as output parsing.
+ */
 const nativeOutputFailure = (
   operation: AnalysisOperation,
   cause: unknown,
-): AnalysisError =>
-  new AnalysisOutputError(operation, "Native output parsing failed", { cause });
+): AnalysisError => {
+  if (cause instanceof InternalInvariantError) throw cause;
+  return new AnalysisOutputError(operation, "Native output parsing failed", {
+    cause,
+  });
+};
 
 const nativeMachoCompletedFailure = (
   value: unknown,
