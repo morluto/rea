@@ -116,6 +116,16 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly partialObservation?: AnalysisPartialObservation | undefined;
 }
 
+/**
+ * A completed observation for one argument of a composite request, kept
+ * beside the failing operation's own partial observation.
+ */
+export interface AnalysisArgumentObservation {
+  /** The composite contract's input field this observation completes. */
+  readonly argument: string;
+  readonly observation: AnalysisPartialObservation;
+}
+
 /** Exact cleanup owner that can attribute its currently unresolved resources. */
 export interface AnalysisCleanupResourceOwner {
   readonly cleanupResources: readonly string[] | undefined;
@@ -233,6 +243,11 @@ export abstract class AnalysisError extends Error {
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
+  #argumentObservations: AnalysisArgumentObservation[] = [];
+  /** Completed argument observations of a composite request, in retention order. */
+  get argumentObservations(): readonly AnalysisArgumentObservation[] {
+    return this.#argumentObservations;
+  }
   sourcePublicationRecovery: SourcePublicationRecovery | undefined;
   workflowUnknownPublication: WorkflowUnknownPublication | undefined;
 
@@ -440,6 +455,19 @@ export abstract class AnalysisError extends Error {
   /** Retain a completed observation when a later step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
+    return this;
+  }
+
+  /**
+   * Retain a composite argument's completed observation without replacing
+   * this failure's own partial observation; the first per argument wins.
+   */
+  retainArgumentObservation(
+    argument: string,
+    observation: AnalysisPartialObservation,
+  ): this {
+    if (!this.#argumentObservations.some((kept) => kept.argument === argument))
+      this.#argumentObservations.push(Object.freeze({ argument, observation }));
     return this;
   }
 
