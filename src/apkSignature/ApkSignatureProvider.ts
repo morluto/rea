@@ -8,7 +8,7 @@ import type {
   ApkSignaturePort,
 } from "../ports/apkSignature/ApkSignaturePort.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,

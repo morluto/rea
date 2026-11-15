@@ -30,7 +30,7 @@ import {
   completedStableArtifact,
   readStableArtifact,
 } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,

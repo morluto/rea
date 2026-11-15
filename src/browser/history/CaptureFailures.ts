@@ -6,7 +6,7 @@ import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
 } from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   stableArtifactInputRecovery,
   readerIntegrityFailure,

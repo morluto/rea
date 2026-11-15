@@ -3,7 +3,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";

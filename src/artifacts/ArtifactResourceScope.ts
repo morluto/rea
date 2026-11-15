@@ -5,11 +5,11 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import type { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 
-import type { ArtifactReader } from "./ArtifactReader.js";
+import type { ArtifactReader } from "../resources/ArtifactReader.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import type { SafeOutputTree } from "./SafeOutputTree.js";
 import type { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";

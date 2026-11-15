@@ -4,7 +4,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import {

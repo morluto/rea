@@ -4,7 +4,7 @@ import { realpath } from "node:fs/promises";
 import { parseArgs } from "node:util";
 
 import { readStableArtifact } from "../../../dist/artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../../dist/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../dist/resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFileCompletion,

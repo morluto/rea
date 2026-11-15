@@ -6,7 +6,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../../src/resources/ArtifactReader.js";
 import { AsarArtifactReader } from "../../../../src/artifacts/AsarArtifactReader.js";
 import { SafeOutputTree } from "../../../../src/artifacts/SafeOutputTree.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";

@@ -69,7 +69,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { AsarArtifactReader } from "../../src/artifacts/AsarArtifactReader.js";
 import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const trees: SafeOutputTree[] = [];

@@ -14,7 +14,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import { streamChunkToBuffer } from "../StreamBytes.js";
 import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";

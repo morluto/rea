@@ -13,7 +13,7 @@ import {
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import type {
   ArtifactResourceOwner,
   ArtifactResourceScope,

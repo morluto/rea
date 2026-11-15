@@ -8,7 +8,7 @@ import {
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,

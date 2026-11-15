@@ -1,6 +1,6 @@
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   type StableArtifactSnapshot,
   readStableArtifact,

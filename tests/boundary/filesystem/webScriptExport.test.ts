@@ -30,7 +30,7 @@ import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts.js";
 import { DestinationCaseCollisionFailure } from "../../../src/artifacts/ArtifactPaths.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
 import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";

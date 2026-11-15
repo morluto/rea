@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   captureDecoderHeapContinuingRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,

@@ -45,8 +45,8 @@ import {
   DirectoryArtifactReader,
   DirectoryArtifactEntryAccessDenied,
 } from "../DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import {
   artifactSelectedPathErrno,
   artifactFilePrimaryFacts,

@@ -6,7 +6,7 @@ import {
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
 import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {

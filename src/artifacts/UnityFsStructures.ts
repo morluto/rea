@@ -1,5 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import { decodeLz4Block } from "../gpu/Lz4Block.js";
 import {

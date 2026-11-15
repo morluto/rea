@@ -6,7 +6,7 @@ import { SigrokRecordingProvider } from "../../../src/signals/SigrokRecordingPro
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { SignalRecordingService } from "../../../src/application/signals/SignalRecordingService.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { withArtifactRegularFile } from "../../../src/artifacts/ArtifactFileOperation.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";

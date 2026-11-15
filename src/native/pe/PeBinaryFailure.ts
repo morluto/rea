@@ -5,7 +5,7 @@ import {
   projectStableArtifactFailure,
   readerIntegrityFailure,
 } from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,

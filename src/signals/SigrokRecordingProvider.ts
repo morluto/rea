@@ -36,7 +36,7 @@ import {
   type ExecutionOptions,
 } from "../ports/AnalysisProvider.js";
 import type { SignalRecordingPort } from "../ports/signals/SignalRecordingPort.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ARTIFACT_PRODUCER_LIMITATION,
   ArtifactAnalysisResources,

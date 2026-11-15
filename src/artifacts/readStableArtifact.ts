@@ -5,7 +5,7 @@ import {
   resolvedRegularFile,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
   artifactFileCompletion,

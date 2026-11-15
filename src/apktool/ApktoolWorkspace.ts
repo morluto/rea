@@ -2,7 +2,7 @@ import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
 import {
   ArtifactReaderFailure,
   type ArtifactTraversalOptions,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { createHash } from "node:crypto";
 import { chmod, open } from "node:fs/promises";
 import { join } from "node:path";

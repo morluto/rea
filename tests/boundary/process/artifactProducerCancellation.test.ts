@@ -11,7 +11,7 @@ import { inspectPacketCaptureInputSchema } from "../../../src/domain/captures/pa
 import { inspectPacketFieldsInputSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { ExecutionOptions } from "../../../src/ports/AnalysisProvider.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

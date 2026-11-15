@@ -18,7 +18,7 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 
 const deferred = <T>() => {

@@ -5,7 +5,7 @@ import {
   MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS,
   inspectErlangBeamInputSchema,
 } from "../domain/erlang/beam.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   erlangBeamChunksFixture,
   erlangBeamRowsFixture,
