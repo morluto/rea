@@ -49,6 +49,7 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import { err, ok } from "../domain/result.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import {
   contractServiceBindings,
   registerContractTools,
@@ -392,6 +393,16 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<WebNetworkCaptureService>,
+  webRuntime: ((service) => ({
+    observe_web_execution: {
+      admission: "sdk",
+      run: (input, options) => service.observe(input, options),
+    },
+    inspect_web_event_listeners: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<WebRuntimeService>,
   javascriptRecovery: ((service) => ({
     recover_javascript_sources: {
       admission: "sdk",
