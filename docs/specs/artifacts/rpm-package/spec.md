@@ -8,9 +8,9 @@ statement. For current behavior and limitations, see the
 
 RPM packages were opaque to REA: `inspect_artifact` inventories the file and
 `inspect_binary_layout` can describe surrounding ELF/PE, but neither decodes
-the lead, signature header, or main header. An analyst had to install the
-package or run `rpm -qp` on the host under study, which executes scriptlets and
-changes local state.
+the lead, signature header, or main header. An analyst needed an external
+query tool such as `rpm -qp` to read this metadata. REA now provides built-in
+inspection without requiring RPM to be installed.
 
 `rea inspect-rpm-package <path>` reads one explicitly selected RPM as static
 bytes and reports lead identity, signature-header digests and blob presence,
