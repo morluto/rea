@@ -1,6 +1,6 @@
 import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 import { ghidraFailureOutput } from "./GhidraDiagnostics.js";
-import { ghidraProducerIdentity } from "./GhidraBridgeSources.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,

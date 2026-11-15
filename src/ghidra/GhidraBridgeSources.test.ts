@@ -3,10 +3,8 @@ import { expect, it } from "vitest";
 
 import { packagedSourcesDigest } from "../filesystem/ProducerIdentity.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import {
-  GHIDRA_BRIDGE_SOURCES,
-  ghidraProducerIdentity,
-} from "./GhidraBridgeSources.js";
+import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 
 const directory = new URL("../../bridge/ghidra/", import.meta.url);
 

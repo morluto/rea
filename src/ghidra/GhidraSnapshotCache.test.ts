@@ -12,7 +12,7 @@ import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { silentLogger } from "../logger.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
-import { ghidraProducerIdentity } from "./GhidraBridgeSources.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 import type { ProducerIdentity } from "../filesystem/ProducerIdentity.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";

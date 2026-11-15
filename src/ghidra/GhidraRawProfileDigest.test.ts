@@ -5,7 +5,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ghidraProducerIdentity } from "./GhidraBridgeSources.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 
 // A profile digest is the digest of its committed parameters; these tests pin

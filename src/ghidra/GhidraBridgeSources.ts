@@ -1,6 +1,10 @@
-import { packagedProducerIdentity } from "../filesystem/ProducerIdentity.js";
-
-/** Required packaged sources, selected by their runtime role rather than order. */
+/**
+ * Required packaged sources, selected by their runtime role rather than order.
+ * scripts/verify-ghidra-bridge-sources.mjs loads this module directly with
+ * Node type stripping, which does not resolve `.js` specifiers to `.ts`
+ * sources, so it keeps no runtime imports. The producer identity built from
+ * these sources lives in GhidraProducerIdentity.ts.
+ */
 export const GHIDRA_BRIDGE_SOURCES = Object.freeze({
   bridge: "ReaGhidraBridge.java",
   bundleActivator: "ReaGhidraBundleActivator.java",
@@ -14,13 +18,3 @@ export const GHIDRA_BRIDGE_SOURCES = Object.freeze({
   mipsSoftFloat: "ReaGhidraMipsSoftFloat.java",
   riscvCallingConvention: "ReaGhidraRiscvCallingConvention.java",
 } as const);
-
-/**
- * The REA release and packaged bridge sources behind every Ghidra result.
- * Analysis profiles commit to it, so an edited bridge script or a new REA
- * release yields a new profile digest and earlier snapshots are not reused.
- */
-export const ghidraProducerIdentity = packagedProducerIdentity(
-  new URL("../../bridge/ghidra/", import.meta.url),
-  Object.values(GHIDRA_BRIDGE_SOURCES),
-);
