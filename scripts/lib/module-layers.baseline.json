@@ -5,7 +5,6 @@
   },
   "cycles": [
     "application <-> artifacts",
-    "artifacts <-> native",
     "cli <-> cli.ts",
     "cli <-> cliBrowserScenarioCommands.ts",
     "cli <-> cliEvidenceCommands.ts",
@@ -17,7 +16,6 @@
     "android -> native": 1,
     "apktool -> artifacts": 2,
     "artifacts -> dotnet": 3,
-    "artifacts -> native": 1,
     "browser -> artifacts": 4,
     "captures -> pcap": 2,
     "desktop -> browser": 1,

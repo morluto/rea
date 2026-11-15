@@ -17,7 +17,7 @@ import { nativeCallObservationInputSchema } from "../../../../src/domain/native/
 import {
   resolveXcrunTool,
   XcrunCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { observeProcessStartIdentity } from "../../../../src/process/ProcessOwnershipObservation.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
