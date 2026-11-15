@@ -287,6 +287,8 @@ const argvValues = (
   };
 };
 
+const processComparisonExample = toolContract("compare_process_captures")
+  .examples[0]!.input as { readonly left: unknown; readonly right: unknown };
 const screenshotExample = toolContract("compare_web_screenshots").examples[0]!
   .input as { readonly before: unknown; readonly after: unknown };
 
@@ -358,6 +360,11 @@ const ARGV_SATISFYING_RULES: Readonly<
     beforeJson: JSON.stringify(screenshotExample.before),
     afterJson: JSON.stringify(screenshotExample.after),
   },
+  // Each side must be process capture Evidence.
+  "compare-process-captures": {
+    left: JSON.stringify(processComparisonExample.left),
+    right: JSON.stringify(processComparisonExample.right),
+  },
 };
 
 const each = descriptions.map(
@@ -376,7 +383,6 @@ const contractBuilt: ReadonlySet<string> = new Set(
  * Migrating one removes it here; this list may only shrink.
  */
 const HAND_REGISTERED_CONTRACT_COMMANDS = [
-  "compare-process-captures",
   "inspect-android-jni-bindings",
   "inspect-api-contract",
   "inspect-web-network-capture",
@@ -522,8 +528,12 @@ describe("CLI commands projected from tool contracts", () => {
           expect(admits(cliField, undefined), parameter.key).toBe(
             admits(contractField, undefined),
           );
-          for (const value of ["", "{", "{}"])
+          for (const value of ["{", "{}"])
             expect(admits(cliField, value), parameter.key).toBe(true);
+          // Empty text is neither JSON nor a JSON input's file path.
+          expect(admits(cliField, ""), parameter.key).toBe(
+            !parameter.jsonInput,
+          );
           continue;
         }
         for (const value of probes(contractField)) {

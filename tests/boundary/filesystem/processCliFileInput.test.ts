@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   captureProcessScenarioFile,
-  compareProcessEvidenceFiles,
   projectProcessCliInputCleanupError,
 } from "../../../src/application/process/ProcessCli.js";
+import { compareProcessCaptureFiles } from "../../support/cli/processComparisonCli.js";
 import * as scenarioPreparation from "../../../src/application/process/ProcessScenarioPreparation.js";
 import * as captureCapability from "../../../src/process/capture/ProcessCaptureCapability.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -53,10 +53,6 @@ describe("process CLI error projection", () => {
     {
       operation: "capture_process_scenario",
       execute: (path: string) => captureProcessScenarioFile(path),
-    },
-    {
-      operation: "compare_process_captures",
-      execute: (path: string) => compareProcessEvidenceFiles(path, path),
     },
   ] as const)(
     "projects an unexpected $operation failure canonically",
@@ -120,94 +116,40 @@ describe("process CLI file cancellation", () => {
       category: "cancelled",
       details: { operation: "capture_process_scenario" },
     });
-    expect(
-      await compareProcessEvidenceFiles(
-        join(root, "missing-left.json"),
-        join(root, "missing-right.json"),
-        join(root, "missing-trace.json"),
-        controller.signal,
-      ),
-    ).toMatchObject({
-      code: "cancelled",
-      category: "cancelled",
-      details: { operation: "compare_process_captures" },
-    });
   });
 
-  it.each([
-    { workflow: "capture", input: "scenario" },
-    { workflow: "compare", input: "left" },
-    { workflow: "compare", input: "right" },
-    { workflow: "compare", input: "trace specification" },
-  ] as const)(
-    "stops streamed $workflow $input reads after cancellation",
-    async ({ workflow, input }) => {
-      const root = await createTestTempDirectory("rea-process-cli-stream-");
-      const paths = {
-        scenario: join(root, "scenario.json"),
-        left: join(root, "left.json"),
-        right: join(root, "right.json"),
-        trace: join(root, "trace.json"),
-      };
-      const evidence = JSON.stringify(processCaptureEvidence());
-      const scenario = JSON.stringify({
-        executable: process.execPath,
-        arguments: [],
+  it("stops a streamed scenario read after cancellation", async () => {
+    const root = await createTestTempDirectory("rea-process-cli-stream-");
+    const targetPath = join(root, "scenario.json");
+    const contents = stream(
+      JSON.stringify({ executable: process.execPath, arguments: [] }),
+    );
+    await writeFile(targetPath, contents);
+    const reader = await holdFirstFileRead(targetPath);
+    onTestFinished(reader.release);
+    const controller = new AbortController();
+    try {
+      const pending = captureProcessScenarioFile(
+        targetPath,
+        process.env,
+        controller.signal,
+      );
+      await reader.firstRead;
+      controller.abort();
+      reader.release();
+      expect(await pending).toMatchObject({
+        error: "Process command failed",
+        code: "cancelled",
+        category: "cancelled",
       });
-      const traceSpecification = JSON.stringify(validTraceSpecification());
-      const contentsByInput = {
-        scenario: input === "scenario" ? stream(scenario) : scenario,
-        left: input === "left" ? stream(evidence) : evidence,
-        right: input === "right" ? stream(evidence) : evidence,
-        trace:
-          input === "trace specification"
-            ? stream(traceSpecification)
-            : traceSpecification,
-      };
-      await Promise.all([
-        writeFile(paths.scenario, contentsByInput.scenario),
-        writeFile(paths.left, contentsByInput.left),
-        writeFile(paths.right, contentsByInput.right),
-        writeFile(paths.trace, contentsByInput.trace),
-      ]);
-      const targetPath =
-        paths[input === "trace specification" ? "trace" : input];
-      const contents =
-        contentsByInput[input === "trace specification" ? "trace" : input];
-      const reader = await holdFirstFileRead(targetPath);
-      onTestFinished(reader.release);
-      const controller = new AbortController();
-      try {
-        const pending =
-          workflow === "capture"
-            ? captureProcessScenarioFile(
-                paths.scenario,
-                process.env,
-                controller.signal,
-              )
-            : compareProcessEvidenceFiles(
-                paths.left,
-                paths.right,
-                paths.trace,
-                controller.signal,
-              );
-        await reader.firstRead;
-        controller.abort();
-        reader.release();
-        expect(await pending).toMatchObject({
-          error: "Process command failed",
-          code: "cancelled",
-          category: "cancelled",
-        });
-        expect(reader.readCount).toBe(1);
-        expect(reader.totalReadBytes).toBeLessThan(contents.length);
-      } finally {
-        controller.abort();
-        reader.release();
-        vi.restoreAllMocks();
-      }
-    },
-  );
+      expect(reader.readCount).toBe(1);
+      expect(reader.totalReadBytes).toBeLessThan(contents.length);
+    } finally {
+      controller.abort();
+      reader.release();
+      vi.restoreAllMocks();
+    }
+  });
 });
 
 it.each(
@@ -396,24 +338,6 @@ describe("process CLI input diagnostics", () => {
       analysisCliErrorEnvelopeSchema.safeParse(invalidUtf8Json).success,
     ).toBe(true);
 
-    const compareMissing = await compareProcessEvidenceFiles(
-      join(root, "missing-left.json"),
-      join(root, "missing-right.json"),
-    );
-    expect(compareMissing).toMatchObject({
-      error: "Process command failed",
-      code: "invalid_request",
-      category: "invalid_input",
-      retryable: false,
-      details: {
-        operation: "compare_process_captures",
-        issues: [inputFileIssue("missing")],
-      },
-    });
-    expect(
-      analysisCliErrorEnvelopeSchema.safeParse(compareMissing).success,
-    ).toBe(true);
-
     expect(await captureProcessScenarioFile(invalid)).toMatchObject({
       error: "Process command failed",
       code: "invalid_request",
@@ -437,9 +361,7 @@ describe("process CLI input diagnostics", () => {
 describe("process CLI final cleanup cancellation", () => {
   it.each([
     { kind: "plan", cancel: false },
-    { kind: "comparison", cancel: false },
     { kind: "plan", cancel: true },
-    { kind: "comparison", cancel: true },
     { kind: "invalid-scenario", cancel: true },
   ] as const)(
     "preserves the $kind outcome through final input cleanup (cancelled: $cancel)",
@@ -452,15 +374,13 @@ describe("process CLI final cleanup cancellation", () => {
       await writeFile(
         path,
         JSON.stringify(
-          kind === "comparison"
-            ? processCaptureEvidence()
-            : kind === "plan"
-              ? {
-                  executable: process.execPath,
-                  working_directory: root,
-                  dry_run: true,
-                }
-              : {},
+          kind === "plan"
+            ? {
+                executable: process.execPath,
+                working_directory: root,
+                dry_run: true,
+              }
+            : {},
         ),
       );
       const controller = new AbortController();
@@ -473,26 +393,15 @@ describe("process CLI final cleanup cancellation", () => {
           if (cancel) controller.abort(reason);
         });
       try {
-        const result =
-          kind === "comparison"
-            ? await compareProcessEvidenceFiles(
-                path,
-                path,
-                undefined,
-                controller.signal,
-              )
-            : await captureProcessScenarioFile(
-                path,
-                process.env,
-                controller.signal,
-              );
+        const result = await captureProcessScenarioFile(
+          path,
+          process.env,
+          controller.signal,
+        );
         expect(controller.signal.aborted).toBe(cancel);
         if (!cancel) {
           expect(result).toMatchObject({
-            operation:
-              kind === "plan"
-                ? "capture_process_scenario"
-                : "compare_process_captures",
+            operation: "capture_process_scenario",
           });
           return;
         }
@@ -505,14 +414,8 @@ describe("process CLI final cleanup cancellation", () => {
           expect(result).toMatchObject({
             details: {
               partial_observation: {
-                operation:
-                  kind === "plan"
-                    ? "capture_process_scenario"
-                    : "compare_process_captures",
-                predicate_type:
-                  kind === "plan"
-                    ? "rea.process-scenario-plan"
-                    : "rea.process-comparison",
+                operation: "capture_process_scenario",
+                predicate_type: "rea.process-scenario-plan",
               },
             },
           });
@@ -549,14 +452,9 @@ describe("process CLI file cleanup", () => {
     }
   });
 
-  it.each([
-    { operation: "capture", cancelDuringClose: false },
-    { operation: "capture", cancelDuringClose: true },
-    { operation: "compare", cancelDuringClose: false },
-    { operation: "compare", cancelDuringClose: true },
-  ] as const)(
-    "preserves the open-file owner when $operation close fails (cancelled: $cancelDuringClose)",
-    async ({ operation, cancelDuringClose }) => {
+  it.each([false, true])(
+    "preserves the open-file owner when capture close fails (cancelled: %s)",
+    async (cancelDuringClose) => {
       const root = await createTestTempDirectory("rea-process-cli-cleanup-");
       const path = join(root, "scenario.json");
       await writeFile(path, JSON.stringify({ executable: process.execPath }));
@@ -574,9 +472,7 @@ describe("process CLI file cleanup", () => {
       try {
         try {
           const signal = cancelDuringClose ? controller.signal : undefined;
-          if (operation === "capture")
-            await captureProcessScenarioFile(path, process.env, signal);
-          else await compareProcessEvidenceFiles(path, path, undefined, signal);
+          await captureProcessScenarioFile(path, process.env, signal);
         } catch (cause: unknown) {
           failure = inputCleanupFailure(cause);
         }
@@ -600,6 +496,37 @@ describe("process CLI file cleanup", () => {
       }
     },
   );
+});
+
+it("reports a comparison capture whose file close fails as incomplete cleanup", async () => {
+  const root = await createTestTempDirectory("rea-process-cli-compare-close-");
+  const path = join(root, "capture.json");
+  await writeFile(path, JSON.stringify(processCaptureEvidence()));
+  let owner: OwnedFileHandle | undefined;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      owner = this;
+      throw new Error("injected file close failure");
+    });
+  try {
+    expect(await compareProcessCaptureFiles(path, path)).toMatchObject({
+      code: "cleanup_incomplete",
+      input_path: path,
+      details: {
+        operation: "compare_process_captures",
+        cleanup: "incomplete",
+        resources: [path],
+        diagnostics: { reason: "injected file close failure" },
+      },
+    });
+    // The handle stays with its owner rather than being reported closed.
+    expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
+  } finally {
+    close.mockRestore();
+    await owner?.close();
+  }
+  expect(owner?.handle.fd).toBe(-1);
 });
 
 describe("process CLI UTF-8 input diagnostics", () => {
@@ -640,25 +567,6 @@ const processCaptureEvidence = () =>
   });
 
 const stream = (json: string) => " ".repeat(8 * 1024 * 1024) + json;
-
-const validTraceSpecification = () => ({
-  events: [
-    {
-      id: "started",
-      source: "lifecycle",
-      exact: { state: "started" },
-    },
-    {
-      id: "finished",
-      source: "lifecycle",
-      exact: { state: "finished" },
-    },
-  ],
-  language: {
-    kind: "partial_order",
-    happens_before: [{ before: "started", after: "finished" }],
-  },
-});
 
 it.each([
   { cleanupFails: false, cancel: false },
