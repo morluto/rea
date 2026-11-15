@@ -744,7 +744,7 @@ const flattening = each.filter(([, description]) =>
 
 describe("Flattened object fields of contract commands", () => {
   it.each(flattening)(
-    "%s supplies the whole object when any member is given",
+    "%s supplies the object with only the given members",
     (_command, description) => {
       const fields = new Set(
         description.parameters.flatMap(({ field, member }) =>
@@ -764,9 +764,8 @@ describe("Flattened object fields of contract commands", () => {
           const input = description.toContractInput(
             argvValues(description, { [given.key]: value }),
           );
-          expect(Object.keys(input[field] as object).toSorted()).toEqual(
-            members.map(({ member }) => member).toSorted(),
-          );
+          // An omitted member stays omitted, never an explicit undefined.
+          expect(Object.keys(input[field] as object)).toEqual([given.member]);
           expect((input[field] as Record<string, unknown>)[given.member!]).toBe(
             value,
           );
