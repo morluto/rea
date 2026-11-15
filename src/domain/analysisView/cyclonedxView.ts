@@ -487,7 +487,7 @@ const projectSizedDocument = (
     parent_operation: parentOperation,
     parent_digest: parent.evidenceId.slice(3),
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
-    coverage: completeWithinViewCoverage(components.length, components.length),
+    coverage: completeWithinViewCoverage(components.length),
     limitations,
     unknowns,
     source_coverage: sourceCoverage,
