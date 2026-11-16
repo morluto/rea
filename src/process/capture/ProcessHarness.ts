@@ -109,10 +109,22 @@ interface StartedCaptureRuntime {
   /** The root's start identity, read once at launch. */
   readonly rootIdentity: Promise<RetainedRootIdentity>;
   /** Signals the captured root only while its launch-time start identity still matches. */
-  readonly signalRoot: (signal: "SIGTERM" | "SIGKILL") => Promise<{
+  readonly rootSignaller: RootSignaller;
+}
+
+/** Identity-checked finalization signalling for one captured root. */
+export interface RootSignaller {
+  /** Deliver one signal; never rejects, so a failed delivery is recorded as unverified. */
+  readonly signal: (signal: "SIGTERM" | "SIGKILL") => Promise<{
     readonly delivery: "signaled" | "gone" | "identity-changed" | "unverified";
     readonly reason?: string | undefined;
   }>;
+  /**
+   * Join every delivery, including one that outlasted the finalization
+   * grace, and hand over the inspection failures their identity checks left
+   * owned. Never rejects.
+   */
+  readonly settled: () => Promise<readonly ProcessCaptureInspectionFailure[]>;
 }
 
 /** Root identity observation and finalization signalling; injectable for tests. */
@@ -174,25 +186,57 @@ export const retainRootIdentity = (
     },
   );
 
-/** Signal the captured root only while its retained launch identity still matches. */
+/**
+ * Signal the captured root only while its retained launch identity still
+ * matches. A delivery whose identity check fails through the inspection owner
+ * is recorded as unverified, and the signaller keeps that failure until
+ * `settled` hands it to the run, so its descriptors stay owned for cleanup.
+ */
 export const retainRootSignaller = (
   pid: number,
   retained: Promise<RetainedRootIdentity>,
   signalProcess: FinalizationHost["signal"] = signalProcessWithStartIdentity,
-): StartedCaptureRuntime["signalRoot"] => {
-  return async (signal) => {
+): RootSignaller => {
+  const deliveries = new Set<Promise<unknown>>();
+  const inspectionFailures: ProcessCaptureInspectionFailure[] = [];
+  const deliver: RootSignaller["signal"] = async (signal) => {
     const identity = await retained;
     if (identity.state === "unverified")
       return { delivery: "unverified", reason: identity.reason };
     if (identity.state === "gone") return { delivery: "gone" };
-    const delivery = await signalProcess(pid, identity.identity, signal);
-    return delivery === "unverified"
-      ? {
-          delivery,
-          reason:
-            "start identity could not be verified or the signal call failed",
-        }
-      : { delivery };
+    try {
+      const delivery = await signalProcess(pid, identity.identity, signal);
+      return delivery === "unverified"
+        ? {
+            delivery,
+            reason:
+              "start identity could not be verified or the signal call failed",
+          }
+        : { delivery };
+    } catch (cause: unknown) {
+      inspectionFailures.push(
+        ...captureInspectionFailures(normalizeCaptureFailure(cause)),
+      );
+      return {
+        delivery: "unverified",
+        reason: describeUnverifiedCause(
+          cause,
+          "signal delivery failed without a message",
+        ),
+      };
+    }
+  };
+  return {
+    signal: (signal) => {
+      const delivery = deliver(signal);
+      deliveries.add(delivery);
+      void delivery.finally(() => deliveries.delete(delivery));
+      return delivery;
+    },
+    settled: async () => {
+      while (deliveries.size > 0) await Promise.allSettled(deliveries);
+      return inspectionFailures.splice(0);
+    },
   };
 };
 
@@ -451,7 +495,7 @@ const startCaptureRuntime = async (
       terminalObservation,
       stopSampler,
       rootIdentity,
-      signalRoot: retainRootSignaller(
+      rootSignaller: retainRootSignaller(
         terminal.pid,
         rootIdentity,
         options.finalizationHost?.signal,
@@ -535,8 +579,8 @@ const retainRootIdentityFailure = (
     : primary;
 
 /**
- * A sampler's or identity read's final rejection cannot skip cleanup or
- * replace an earlier physical failure.
+ * A sampler's, identity read's or signal delivery's final rejection cannot
+ * skip cleanup or replace an earlier physical failure.
  */
 const retainSecondaryInspectionFailure = (
   primary: unknown,
@@ -611,6 +655,16 @@ const finishProcessRun = async (options: {
     options.resourceScope,
     options.inspectionFailures,
   );
+  // Join finalization deliveries the same way: an identity check that failed
+  // through the inspection owner fails the capture and keeps its descriptors.
+  for (const inspection of (await options.runtime?.rootSignaller.settled()) ??
+    [])
+    executionFailure = retainSecondaryInspectionFailure(
+      executionFailure,
+      inspection,
+      options.resourceScope,
+      options.inspectionFailures,
+    );
   const sampledProcessGroupIds =
     options.runtime === undefined
       ? undefined
@@ -998,7 +1052,7 @@ const runProcessScenario = async (
       started: runtime.started,
       lastOutput: runtime.lastOutput,
       signal,
-      signalTarget: runtime.signalRoot,
+      signalTarget: runtime.rootSignaller.signal,
       recordFinalization: (finalization) => {
         observations.finalization = { state: "available", value: finalization };
       },
