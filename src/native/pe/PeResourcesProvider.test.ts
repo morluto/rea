@@ -180,8 +180,12 @@ it("names the fixed PE metadata allowance instead of host memory", async () => {
   });
   const projected = projectAnalysisError(error);
   expect(projected.retryable).toBe(false);
-  expect(projected.remediation.action).toContain(
-    "PE resource metadata allowance",
-  );
-  expect(projected.remediation.action).not.toMatch(/available host memory/u);
+  expect(projected.details).toMatchObject({
+    refusal: {
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit: 8 * 1024 * 1024,
+      unit: "bytes",
+    },
+  });
 });

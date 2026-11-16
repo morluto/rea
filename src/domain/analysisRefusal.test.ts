@@ -50,6 +50,10 @@ describe("typed refusals", () => {
     expect(projected.remediation.action).toMatch(
       /^The GraphQL nesting allowance is a fixed allowance\..*Select a shallower document\.$/u,
     );
+    // The value comes from the ceiling's facts, so a producer need not write it into the name.
+    expect(projected.remediation.action).toContain(
+      "The allowance is 128 levels; this release has no runtime override.",
+    );
     expect(projected.remediation.action).not.toMatch(/worker memory|doctor/u);
     expect(projected.details?.refusal).toEqual({
       kind: "fixed_ceiling",
