@@ -31,6 +31,14 @@ import {
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 
+/** Apply the same inline-option admission stage as registered commands. */
+const admitOptions = (
+  description: ContractCliDescription,
+  values: Readonly<Record<string, unknown>>,
+): ReturnType<ContractCliDescription["admit"]> => {
+  const options = description.admitDeliveryOptions(values);
+  return options.ok ? description.admit(options.value) : options;
+};
 const DECIMAL_TOKEN = /^[0-9]+$/u;
 
 const cli = createCli({});
@@ -798,7 +806,8 @@ describe("JSON decoded when contract commands run", () => {
         // there; the CLI tests cover that refusal.
         if (parameter.runtimeJson === undefined || parameter.jsonInput)
           continue;
-        const malformed = description.admit(
+        const malformed = admitOptions(
+          description,
           argvValues(description, {
             detail: "summary",
             evidence_output: "out.json",
@@ -861,7 +870,7 @@ describe("JSON decoded when contract commands run", () => {
                 ...(detail === undefined ? {} : { detail }),
                 ...supplied,
               }).success;
-            const admitted = description.admit(values).ok;
+            const admitted = admitOptions(description, values).ok;
             // A checked JSON input is admitted by its check, which the
             // command runs as soon as the input is read, and may be
             // stricter than the contract; the contract admits the rest.
@@ -1337,7 +1346,8 @@ describe("Evidence delivery of contract commands", () => {
         ...ARGV_SATISFYING_RULES[command],
         ...SUMMARY_SELECTIONS[command],
       };
-      const refused = description.admit(
+      const refused = admitOptions(
+        description,
         argvValues(description, { ...satisfying, detail: "summary" }),
       );
       expect(refused.ok).toBe(false);
@@ -1346,7 +1356,8 @@ describe("Evidence delivery of contract commands", () => {
           ["evidence_output"],
         ]);
       expect(
-        description.admit(
+        admitOptions(
+          description,
           argvValues(description, {
             ...satisfying,
             detail: "summary",
@@ -1706,7 +1717,7 @@ describe("Positional selectors with a named option", () => {
       );
       const { required } = option;
       const admit = (values: Record<string, unknown>) =>
-        description.admit({
+        admitOptions(description, {
           [description.sessionTarget?.key ?? "path"]: "rel/app",
           ...values,
         });
@@ -1755,7 +1766,7 @@ describe("Positional selectors with a named option", () => {
     (_command, description, parameter, alternative) => {
       const option = parameter.selectorOption!;
       const admit = (values: Record<string, unknown>) =>
-        description.admit({
+        admitOptions(description, {
           [description.sessionTarget?.key ?? "path"]: "rel/app",
           ...values,
         });
@@ -1913,7 +1924,7 @@ describe("Contract command field groups", () => {
       "path",
       "query",
     ]);
-    const admitted = description.admit({
+    const admitted = admitOptions(description, {
       path: "/x",
       query: '{"name":"a","tags":["b"]}',
     });
@@ -1922,7 +1933,7 @@ describe("Contract command field groups", () => {
       name: "a",
       tags: ["b"],
     });
-    expect(description.admit({ path: "/x" }).ok).toBe(true);
+    expect(admitOptions(description, { path: "/x" }).ok).toBe(true);
   });
 
   it.each([
@@ -1930,7 +1941,7 @@ describe("Contract command field groups", () => {
     ['{"path":"/y"}', ["query", "path"], undefined],
     ['{"name":1}', ["name"], undefined],
   ])("refuses the group %s", (text, path, reason) => {
-    const admitted = grouped(["name", "tags"]).admit({
+    const admitted = admitOptions(grouped(["name", "tags"]), {
       path: "/x",
       query: text,
     });
