@@ -12,6 +12,7 @@ import {
   toolRegistrationOptions,
 } from "../../../src/server/toolRegistrationOptions.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** Only the named families these focused tests exercise. */
 const TESTED_CONTRACTS = [
@@ -69,7 +70,10 @@ const connect = async (
     createToolResultDelivery(undefined),
   );
   register(server, (input) => calls.push(input));
-  const client = new Client({ name: "stringified-arguments", version: "1" });
+  const client = new Client(
+    { name: "stringified-arguments", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
