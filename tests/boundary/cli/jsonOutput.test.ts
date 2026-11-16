@@ -553,10 +553,7 @@ describe("full-output token counts", () => {
             destination,
           );
           if (output === undefined) throw new Error("Missing output surface");
-          await output.write(
-            { rows: ["hello", "雪😀"] },
-            metadata,
-          );
+          await output.write({ rows: ["hello", "雪😀"] }, metadata);
           return Buffer.concat(chunks).toString("utf8");
         };
         const document = await render(false);
