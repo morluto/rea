@@ -1,4 +1,6 @@
 import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
+import type { BinarySession } from "../application/binary/BinarySession.js";
+import { runManagedProviderExecution } from "../application/DirectAnalysis.js";
 import { isManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import { artifactExtractionInputSchema } from "../contracts/artifactToolContracts.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
@@ -6,7 +8,6 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err } from "../domain/result.js";
-import { runManagedProviderExecution } from "../composition/directAnalysis.js";
 import type { ProviderOperation } from "./providerOperationToolHandler.js";
 
 /**
@@ -17,6 +18,7 @@ import type { ProviderOperation } from "./providerOperationToolHandler.js";
  */
 export const managedAnalysisForAdmission = (
   activeTarget: (() => BinaryTarget | undefined) | undefined,
+  createManagedBinarySession?: () => BinarySession | undefined,
 ): ((analysis: AnalysisOperationPort) => AnalysisOperationPort) => {
   let selectedManagedPath: string | undefined;
   return (analysis) => ({
@@ -43,12 +45,17 @@ export const managedAnalysisForAdmission = (
             },
           ]),
         );
-      const execution = await runManagedProviderExecution(
-        path,
-        operation,
-        executionOptions?.signal,
-        parameters,
-      );
+      const managedSession = createManagedBinarySession?.();
+      const execution =
+        managedSession === undefined
+          ? await analysis.execute(operation, parameters, executionOptions)
+          : await runManagedProviderExecution(
+              { createManagedBinarySession: async () => managedSession },
+              path,
+              operation,
+              executionOptions?.signal,
+              parameters,
+            );
       if (execution.ok && typeof requestedPath === "string")
         selectedManagedPath = requestedPath;
       return execution;

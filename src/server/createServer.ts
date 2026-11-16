@@ -444,7 +444,12 @@ export const createServer = (
           providerOperations: {
             contracts: MANAGED_TOOL_CONTRACTS,
             activeTarget,
-            analysisForAdmission: managedAnalysisForAdmission(activeTarget),
+            analysisForAdmission: managedAnalysisForAdmission(
+              activeTarget,
+              session === undefined
+                ? undefined
+                : () => session.createManagedBinarySession?.(),
+            ),
           },
         },
         contractTools,

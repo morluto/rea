@@ -17,6 +17,7 @@ import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js
 import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
+import type { BinarySession } from "./BinarySession.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
 import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import type { binaryTargetSummary } from "./BinaryTargetSummary.js";
@@ -144,6 +145,8 @@ export interface BinarySessionPort
     readonly refreshCandidates?: boolean;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession?(): BinarySession;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
   readAnalysisSnapshot(
     path: string,
