@@ -4,9 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   chainedImportNames,
   decodeChainedPointer,
-} from "./AppleMachoFixups.js";
+} from "../domain/apple/appleMachoFixups.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
-import type { Segment } from "./AppleMachoSelection.js";
+import type { Segment } from "../domain/apple/appleMachoSelection.js";
 
 const BASE = 0x100000000n;
 const IMPORTS = [

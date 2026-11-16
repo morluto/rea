@@ -1,9 +1,10 @@
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
+import { Cli } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import {
   createCliResultOutput,
@@ -55,7 +56,7 @@ describe("successful CLI token windows", () => {
       const page = await renderWindow(value, 0, 1000, true);
       expect(page.handled).toBe(true);
       expect(page.text).toBe(
-        `${Formatter.format(
+        `${formatCliOutput(
           {
             ok: true,
             data: value,
@@ -80,7 +81,7 @@ describe("successful CLI token windows", () => {
       const page = await renderWindow(value, 0, 1000, fullOutput);
       expect(page.handled).toBe(true);
       expect(page.text).toBe(
-        `${Formatter.format(
+        `${formatCliOutput(
           fullOutput
             ? {
                 ok: true,
@@ -126,7 +127,7 @@ describe("successful CLI token windows", () => {
           "6764c190e641f1c59c638f9bf32fee05f66992811c5605ebd25056156f21e221",
         text: "😀é".repeat(300),
       };
-      const full = Formatter.format(value, "toon");
+      const full = formatCliOutput(value, "toon");
       const total = estimateTokenCount(full);
       const pages: string[] = [];
       for (let offset = 0; offset < total; offset += 10) {

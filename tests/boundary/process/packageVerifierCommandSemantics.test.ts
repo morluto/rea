@@ -11,7 +11,7 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 const observed = <Value>(promise: Promise<Value>) =>
   promise.then(
@@ -392,19 +392,11 @@ it("retains the same adopted capability and workspace after failed close, then r
 });
 
 it("rejects a new cleanup owner once workspace release has started", async () => {
-  let markReleaseStarted!: () => void;
-  const releaseStarted = new Promise<void>((resolve) => {
-    markReleaseStarted = resolve;
-  });
-  let unblockWorkspaceClose!: () => void;
-  const allowRelease = new Promise<void>((resolve) => {
-    unblockWorkspaceClose = resolve;
-  });
+  const workspaceRelease = phaseGate();
   const events: string[] = [];
   const fixture = await commandFixture(async () => {
     events.push("workspace-release-started");
-    markReleaseStarted();
-    await allowRelease;
+    await workspaceRelease.hold();
     events.push("workspace-close-unblocked");
   });
   // This resource belongs to the caller until adoption succeeds. Keep it
@@ -423,7 +415,7 @@ it("rejects a new cleanup owner once workspace release has started", async () =>
   let rejection: unknown;
   let retained;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(releaseStarted, closing, "workspace release");
+    await workspaceRelease.reached(closing, "workspace release");
     try {
       fixture.commands.adopt(capability, path);
     } catch (cause: unknown) {
@@ -436,7 +428,7 @@ it("rejects a new cleanup owner once workspace release has started", async () =>
     };
   }, [
     () => capability.close(),
-    () => unblockWorkspaceClose(),
+    () => workspaceRelease.release(),
     async () => {
       const result = await closing;
       if (!result.ok) throw result.cause;

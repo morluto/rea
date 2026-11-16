@@ -4,7 +4,7 @@ import type {
   ServerCapabilities,
   Tool,
 } from "@modelcontextprotocol/server";
-import type { createCatalogIdentity } from "./catalogIdentity.js";
+import type { createCatalogIdentity } from "./contracts/catalog/catalogIdentity.js";
 import type { PromptArgumentContract } from "./contracts/promptContracts.js";
 
 /** Build-owned discovery data; canonical validators remain the runtime authority. */

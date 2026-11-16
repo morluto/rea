@@ -358,6 +358,21 @@ whether Ghidra recovered the original source layout.
 
 ### Hopper analysis behavior
 
+Hopper Evidence commits `analysis_profile.parameters.producer` as
+`{ rea_version, sources_sha256 }`. It replaces the former
+`function_dossier_coverage` marker. The source digest covers the packaged
+`bridge/hopper_bridge.py` that REA launches; changing that script or the REA
+release changes the profile digest and Evidence identity. A snapshot with the
+earlier profile is refused with `evidence_integrity_mismatch` before starting
+Hopper. Open the target without the old snapshot and save a fresh one; REA does
+not rewrite the old file. A matching profile does not enable Hopper snapshot
+replay: document observations remain live because Hopper has no revision token.
+
+Producer identity is computed once per REA process, so restart REA after editing
+packaged bridge files. Between releases, TypeScript-only edits within the same
+REA version do not change this identity. Regenerate observations after such
+development changes; the bridge digest does not fingerprint REA's TypeScript.
+
 Cursor navigation returns the observed object start when Hopper snaps an interior
 address; adjacent-object navigation rejects unmapped inputs and document ends.
 Native API text rejects NUL characters and unpaired Unicode surrogates before

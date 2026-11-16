@@ -2,18 +2,19 @@ import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
   imageFileSizeRemediation,
-} from "../../artifacts/StableArtifactFailure.js";
-import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeLoadConfigPort } from "../../application/binaryDiagnostics/PeLoadConfigPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeLoadConfigPort } from "../../ports/binaryDiagnostics/PeLoadConfigPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  type FixedCeilingFacts,
+} from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
   MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS,
@@ -80,6 +81,7 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
 const limitRecovery = (
   limit: PeLoadConfigLimit | null,
   input: InspectPeLoadConfigInput,
+  ceiling: FixedCeilingFacts,
 ): ResourceConstraintRecovery =>
   limit === "callbacks"
     ? {
@@ -89,7 +91,11 @@ const limitRecovery = (
             ? `The image exceeds the ${String(MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS)}-callback ceiling; select a smaller artifact.`
             : `Raise max_callbacks above ${String(input.max_callbacks)} or select a smaller artifact.`,
       }
-    : fixedAllowanceOptions("The PE structural decoding allowance", "parser");
+    : fixedAllowanceOptions(
+        "The PE structural decoding allowance",
+        "parser",
+        ceiling,
+      );
 
 const peLoadConfigFailure = (
   cause: unknown,
@@ -108,7 +114,7 @@ const peLoadConfigFailure = (
           MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
         ),
       limits: PE_LOAD_CONFIG_LIMITS,
-      limitRecovery: (limit) => limitRecovery(limit, input),
+      limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
     },
     snapshot,
   );

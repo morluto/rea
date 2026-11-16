@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { inspectLinuxApplication } from "./LinuxApplicationInventory.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { desktopOperationFailure } from "../application/desktop/DesktopCaptureRefusals.js";
 
 const fixture = async () => {

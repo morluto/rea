@@ -11,7 +11,7 @@ export const createProductCatalog = async (root) => {
   assertSameNames(
     "Primary CLI inventory",
     cli.primary,
-    sources.cliCommandNames.CLI_COMMAND_NAMES,
+    sources.catalogIdentity.CLI_COMMAND_NAMES,
   );
   const tools = toolFamilyCatalog(sources);
   const providers = providerCatalog(sources);

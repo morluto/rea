@@ -1,7 +1,0 @@
-{
-  "src/browser/PlaywrightElectronActiveFuses.ts": 2,
-  "src/evm/EvmoleInterfaceProvider.ts": 2,
-  "src/javascript/recovery/WakaruCommand.ts": 1,
-  "src/native/pwntools/PwntoolsDecoder.ts": 2,
-  "src/server/createServer.ts": 1
-}

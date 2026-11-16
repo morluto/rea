@@ -17,7 +17,7 @@ import {
   textSyntaxFormat,
 } from "./stateFormats.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {

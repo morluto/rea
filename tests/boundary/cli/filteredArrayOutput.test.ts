@@ -1,9 +1,10 @@
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
+import { Cli } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { expect, it } from "vitest";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import {
   parseCliOutputArguments,
   renderCliDocument,
@@ -352,7 +353,7 @@ it.each(["json", "jsonl"] as const)(
       },
     });
     expect(Buffer.concat(chunks).toString()).toBe(
-      `${estimateTokenCount(Formatter.format([1, null, null], format))}\n`,
+      `${estimateTokenCount(formatCliOutput([1, null, null], format))}\n`,
     );
     expect(fallback).toBe("");
   },
@@ -530,7 +531,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
       ).toEqual(expected);
     else if (format === "md")
       expect(outputs[0]).toBe(renderCliDocument(expected, format, false));
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else expect(outputs[0]).toBe(`${formatCliOutput(expected, format)}\n`);
     expect(projectionSource[0]?.rows[0]?.retained).toEqual([0, 10]);
   },
 );
@@ -555,7 +556,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .map((line) => JSON.parse(line)),
       ).toEqual([1, null, null]);
     else if (format === "md") expect(output).toBe("\\[1,null,null\\]\n");
-    else expect(output).toBe(`${Formatter.format(selected, format)}\n`);
+    else expect(output).toBe(`${formatCliOutput(selected, format)}\n`);
     expect(value).toEqual([{ selected: 1 }, {}, { selected: null }]);
   },
 );
@@ -589,7 +590,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
       ).toEqual(expected);
     else if (format === "md")
       expect(outputs[0]).toBe(renderCliDocument(expected, format, false));
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else expect(outputs[0]).toBe(`${formatCliOutput(expected, format)}\n`);
     expect(projectionSource).toEqual(before);
   },
 );

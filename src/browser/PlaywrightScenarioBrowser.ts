@@ -1,14 +1,15 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import {
   chromiumLaunchRemediation,
   chromiumSandboxEnabled,
 } from "./ChromiumSandbox.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -41,6 +42,7 @@ import {
   type PlaywrightCdpSession,
 } from "./PlaywrightCdpSession.js";
 import { CdpMalformedReply } from "./protocol/CdpCommands.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -141,7 +143,7 @@ export class PlaywrightScenarioBrowserCleanupOwner {
       const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
         cause,
         cleanup: {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           resources: this.cleanupResources,
         },
       });
@@ -348,6 +350,7 @@ const acquireAttachedScenario = (
 
 const allowedBrowserEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
 ): Record<string, string | undefined> => {
   const allowed = [
     "DBUS_SESSION_BUS_ADDRESS",
@@ -371,7 +374,7 @@ const allowedBrowserEnvironment = (
         (entry): entry is readonly [string, string] => entry[1] !== undefined,
       ),
   );
-  if (process.platform !== "android") return selected;
+  if (platform !== "android") return selected;
 
   // Android rejects execve() for binaries below Termux's application data
   // directory. Termux supplies an exec interceptor that rewrites those calls
@@ -700,16 +703,12 @@ export const failBrowserScenarioOperation = async (
     const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
       cause,
       cleanup: {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         resources: cleanup.cleanupResources ?? [],
       },
     });
     new AnalysisCleanupLeaseGroup(failure, [cleanup]);
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      failure,
-      OPERATION,
-    ).bindCleanupDependencies([primary, failure]);
+    throw analysisErrorWithCleanupDependencies(primary, failure, OPERATION);
   }
   throw primaryFailure;
 };
@@ -875,9 +874,12 @@ export const openPlaywrightScenarioBrowser = async (
     readonly launcher?: ScenarioBrowserLauncher;
     readonly signal?: AbortSignal | undefined;
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
+    /** The host Chromium launches on; defaults to the running host. */
+    readonly platform?: NodeJS.Platform;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
   throwIfScenarioCancelled(options.signal);
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   // Load Playwright only when a scenario opens; MCP startup stays off its module graph.
   const launcher =
     options.launcher ?? (await import("playwright-core")).chromium;
@@ -897,7 +899,7 @@ export const openPlaywrightScenarioBrowser = async (
   let context: BrowserContext;
   const executablePath = scenario.browser.executable_path;
   const headless = scenario.browser.headless;
-  const chromiumSandbox = chromiumSandboxEnabled(environment);
+  const chromiumSandbox = chromiumSandboxEnabled(environment, platform);
   let launchStarted = false;
   try {
     await chmod(profilePath, 0o700);
@@ -919,7 +921,7 @@ export const openPlaywrightScenarioBrowser = async (
           colorScheme: scenario.environment.color_scheme,
           reducedMotion: scenario.environment.reduced_motion,
           serviceWorkers: scenario.environment.service_workers,
-          env: allowedBrowserEnvironment(environment),
+          env: allowedBrowserEnvironment(environment, platform),
           handleSIGHUP: false,
           handleSIGINT: false,
           handleSIGTERM: false,
@@ -928,7 +930,7 @@ export const openPlaywrightScenarioBrowser = async (
           // Termux's Chromium cannot create its renderer process through Android's
           // executable boundary. Single-process mode keeps the browser and page in
           // the Termux-launched process so scenario navigation remains available.
-          args: process.platform === "android" ? ["--single-process"] : [],
+          args: platform === "android" ? ["--single-process"] : [],
         }),
       commandTimeoutMs,
       "launch",
@@ -954,8 +956,7 @@ export const openPlaywrightScenarioBrowser = async (
               remediationAction: chromiumLaunchRemediation(chromiumSandbox),
               diagnostics: {
                 executable_path: executablePath,
-                startup_error:
-                  cause instanceof Error ? cause.message : String(cause),
+                startup_error: errorMessage(cause),
               },
             },
           )

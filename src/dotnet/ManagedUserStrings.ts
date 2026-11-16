@@ -1,7 +1,7 @@
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type {
   ManagedMemberInspection,
   ManagedParseIssue,
@@ -9,13 +9,13 @@ import type {
 import type {
   DecodedMethod,
   ManagedUserString,
-} from "./ManagedMemberInspectorCore.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
   readMetadataUserString,
   type MetadataTokenFact,
-} from "./ManagedMetadataHeaps.js";
-import { readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedMetadataHeaps.js";
+import { readManagedValue } from "../domain/managed/managedReaderFailure.js";
 
 type UserStringInventory = NonNullable<ManagedMemberInspection["user_strings"]>;
 
