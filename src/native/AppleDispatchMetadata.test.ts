@@ -2836,4 +2836,48 @@ describe("Objective-C category class properties", () => {
     expect(decode).toEqual([{ status: "decoded", reason: null }]);
     expect(coverage).toMatchObject({ status: "complete", decoded: 1 });
   });
+
+  it.each([
+    [
+      "class property field is unmapped",
+      (bytes: Buffer) => {
+        // End the record at the segment boundary, so its last field lies past it.
+        bytes.copy(bytes, 0xfd0, 0xb40, 0xb70);
+        bytes.writeBigUInt64LE(base + 0xfd0n, 0xb00);
+      },
+      "0x100001000",
+    ],
+    [
+      "image info is unmapped",
+      (bytes: Buffer) => bytes.writeBigUInt64LE(base + 0x2000n, 296),
+      "0x100002004",
+    ],
+  ])("retains a category whose %s", (_, damage, field) => {
+    const bytes = categoryImage(0x40, 0);
+    damage(bytes);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_categories).toMatchObject([
+      {
+        name: "FixtureCategory",
+        class_name: "Fixture",
+        instance_methods: [expect.any(String)],
+        decode: {
+          status: "partial",
+          reason: "category_class_properties_unreadable",
+        },
+      },
+    ]);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_properties_categories",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining(
+        `category_class_properties_unreadable at ${field}: Category FixtureCategory class property list: `,
+      ),
+      examined: 1,
+      decoded: 0,
+    });
+  });
 });

@@ -43,20 +43,47 @@ const unnamedClassReference = (
 const HAS_CATEGORY_CLASS_PROPERTIES = 1 << 6;
 
 /**
- * Whether `category_t` records extend to `_classProperties`. Images built
- * before the field existed end at `instanceProperties`, so the bytes after it
- * are a field only when the image info declares them.
+ * Why a category's `_classProperties` list is unaccounted for, or null when
+ * the record has none. Images built before the field existed end at
+ * `instanceProperties`, so the bytes after it are a field only when an image
+ * info declares them; same-named image infos are read together. A field that
+ * cannot be read is reported at its address so the category keeps the facts
+ * already decoded.
  */
-const declaresCategoryClassProperties = (
-  sections: readonly Section[],
-  read: Pick<ObjcDispatchReaders, "u32">,
-): boolean =>
-  sections.some(
-    ({ name, address, size }) =>
-      name === "__objc_imageinfo" &&
-      size >= 8 &&
-      (read.u32(address + 4n) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0,
-  );
+const categoryClassPropertyIssue = (
+  read: Pick<ObjcDispatchReaders, "u32" | "pointer">,
+  imageInfoFlags: readonly bigint[],
+  category: bigint,
+  name: string,
+): DecodeIssue | null => {
+  let field = category + 48n;
+  try {
+    let declared = false;
+    for (const flags of imageInfoFlags) {
+      field = flags;
+      if ((read.u32(flags) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0)
+        declared = true;
+    }
+    if (!declared) return null;
+    field = category + 48n;
+    return read.pointer(field) === 0n
+      ? null
+      : issue(
+          "objc_properties_categories",
+          "category_class_properties_not_decoded",
+          `Category ${name} class property list is not decoded`,
+          `0x${field.toString(16)}`,
+        );
+  } catch (cause: unknown) {
+    if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
+    return issue(
+      "objc_properties_categories",
+      "category_class_properties_unreadable",
+      `Category ${name} class property list: ${errorMessage(cause)}`,
+      `0x${field.toString(16)}`,
+    );
+  }
+};
 
 /**
  * Decode `__objc_catlist` `category_t` records:
@@ -88,7 +115,9 @@ export const decodeObjcCategories = (input: {
 }): number => {
   const { read, result } = input;
   let examined = 0;
-  let classPropertiesDeclared: boolean | undefined;
+  const imageInfoFlags = input.sections
+    .filter(({ name, size }) => name === "__objc_imageinfo" && size >= 8)
+    .map(({ address }) => address + 4n);
   for (const section of input.sections.filter(
     ({ name }) => name === "__objc_catlist",
   )) {
@@ -172,25 +201,17 @@ export const decodeObjcCategories = (input: {
           issues: input.issues,
           onTruncated,
         });
-        classPropertiesDeclared ??= declaresCategoryClassProperties(
-          input.sections,
+        const classProperties = categoryClassPropertyIssue(
           read,
+          imageInfoFlags,
+          category,
+          name,
         );
-        const classProperties =
-          classPropertiesDeclared && read.pointer(category + 48n) !== 0n;
-        if (classProperties)
-          input.issues.push(
-            issue(
-              "objc_properties_categories",
-              "category_class_properties_not_decoded",
-              `Category ${name} class property list is not decoded`,
-              `0x${(category + 48n).toString(16)}`,
-            ),
-          );
+        if (classProperties !== null) input.issues.push(classProperties);
         const decodeReasons = [
           ...(className === null ? ["category_class_unresolved"] : []),
           ...(protocols.ok ? [] : ["protocol_list_unreadable"]),
-          ...(classProperties ? ["category_class_properties_not_decoded"] : []),
+          ...(classProperties === null ? [] : [classProperties.code]),
           ...(budgetTruncated ? ["max_records_reached"] : []),
         ];
         result.objc_categories.push({

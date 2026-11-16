@@ -1140,6 +1140,8 @@ complete observation.
   class property list (`@property (class)`), present when the image info
   declares it, is not decoded: the category is partial with
   `category_class_properties_not_decoded` and coverage names the list field.
+  When that field or the image info cannot be read, the category keeps its
+  decoded facts and is partial with `category_class_properties_unreadable`.
   Swift
   field-offset globals that are only
   initialized at runtime stay unresolved. Generic, resilient, async and
