@@ -439,6 +439,7 @@
 * **cli:** bind command argv with REA's own parser ([#11681](https://github.com/morluto/rea/issues/11681)) ([dbdbda3](https://github.com/morluto/rea/commit/dbdbda3d07ef736cda1a2ea63c286dddf31d107d))
 * **cli:** bind web capture caller paths through the CLI delivery owner ([#11322](https://github.com/morluto/rea/issues/11322)) ([5c5c87d](https://github.com/morluto/rea/commit/5c5c87d0fecd83ea181d6992fa4c33829f55fa0f))
 * **cli:** declare CLI schema facts through the typed constraint helpers ([#11205](https://github.com/morluto/rea/issues/11205)) ([6cbfb9f](https://github.com/morluto/rea/commit/6cbfb9f6dcaf03381686cee6d9fe3fc8e8ba3935))
+* **cli:** derive build catalogs from the REA command registry ([4ea24b6](https://github.com/morluto/rea/commit/4ea24b6f8e63081ec5077c8e88370a8632aeeb0c))
 * **cli:** derive contract-backed command options from the tool contract ([#10571](https://github.com/morluto/rea/issues/10571)) ([f3b697d](https://github.com/morluto/rea/commit/f3b697da5a698a5548afd3b19d044ec623bdda0b))
 * **cli:** import zod directly instead of through incur ([#11655](https://github.com/morluto/rea/issues/11655)) ([07c5a54](https://github.com/morluto/rea/commit/07c5a54feee8de5ed5079fdebbdd122fa70d108a))
 * **cli:** name a failure's per-call control flag at the CLI boundary ([#11413](https://github.com/morluto/rea/issues/11413)) ([49d4991](https://github.com/morluto/rea/commit/49d4991a18b6c6385aa4e993b3bf40249cee7dce))
