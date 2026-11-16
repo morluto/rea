@@ -1507,7 +1507,11 @@ it("lets codesign select the only slice of a thin arm64e target", async () => {
   );
   const result = await client.execute("inspect_signature", {});
   if (!result.ok) throw result.error;
-  expect(result.value.result).toMatchObject({ signed: true });
+  // The admitted architecture is the arm64 family; codesign names the slice.
+  expect(result.value.result).toMatchObject({
+    signed: true,
+    slices: { described: "arm64e", architectures: [], checked: [] },
+  });
   expect(calls).toHaveLength(3);
   expect(calls.every((args) => !args.includes("-a"))).toBe(true);
   await client.close();

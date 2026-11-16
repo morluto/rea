@@ -959,13 +959,20 @@ class NativeMacOSClient implements AnalysisClient {
         "The entitlements for the requested architecture are unavailable because codesign reported it unsigned.",
       );
     const states = { checked: [] as string[], unsigned: [] as string[] };
+    // A thin file's admitted architecture is a CPU family (arm64 for arm64e);
+    // codesign's display names the slice it described.
+    const described =
+      this.target.format === "mach-o-universal"
+        ? selectedArchitecture
+        : (/^Mach-O thin \(([^)\r\n]+)\)$/u.exec(parsed.format ?? "")?.[1] ??
+          null);
     const observation = () =>
       inspectSignatureSchema.parse({
         ...parsed,
         designated_requirement: requirementText,
         entitlements: entitlementValue.value,
         slices: {
-          described: selectedArchitecture,
+          described,
           architectures,
           unmapped: unknownSlices,
           checked: [...states.checked],
