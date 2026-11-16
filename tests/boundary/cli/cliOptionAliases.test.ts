@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import {
   cliCommandOptionNames,
   createCliInventory,
@@ -43,10 +44,8 @@ const registeredAliases = (
 
 describe("CLI option aliases", () => {
   it("rejects an empty primary command inventory", () => {
-    const cli = createCli({});
-    registeredCommands.set(cli, new Map());
-    expect(() => createCliInventory(cli)).toThrow(
-      "Incur exposed no primary REA CLI commands",
+    expect(() => createCliInventory([])).toThrow(
+      "REA exposed no primary CLI commands",
     );
   });
 
@@ -54,7 +53,7 @@ describe("CLI option aliases", () => {
     const cli = createCli({});
     const invalid: string[] = [];
     const undescribed: string[] = [];
-    for (const command of createCliInventory(cli).primary) {
+    for (const command of createCliInventory(cliCommands(cli)).primary) {
       for (const [option, short] of Object.entries(
         registeredAliases(cli, command),
       ))
@@ -73,7 +72,7 @@ describe("CLI option aliases", () => {
       const schema: unknown = entry && Reflect.get(entry, "options");
       if (schema !== undefined)
         expect(schema, `${command} options schema`).toBeInstanceOf(z.ZodObject);
-      if (cliCommandOptionNames(cli, command).length > 0) {
+      if (cliCommandOptionNames(cliCommands(cli), command).length > 0) {
         expect(options, `${command} --help options`).toBeDefined();
         expect(options, `${command} --help option entries`).toMatch(/^  --/mu);
       }

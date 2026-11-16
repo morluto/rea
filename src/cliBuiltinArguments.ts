@@ -311,7 +311,11 @@ export const productionMcpDoctorArguments = (
   | { readonly arguments: readonly string[]; readonly timings: boolean }
   | undefined => {
   const global = parseCliGlobalArguments(arguments_);
-  if (global.command[0] !== "mcp" || global.command[1] !== "doctor")
+  if (
+    global.command[0] !== "mcp" ||
+    global.command[1] !== "doctor" ||
+    global.flags.has("--mcp")
+  )
     return undefined;
   const removed = new Set([
     global.commandIndices[0]!,
