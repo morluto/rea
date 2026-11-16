@@ -1,7 +1,9 @@
 import { isatty } from "node:tty";
 import { open } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 
 vi.mock("node:tty", async (importOriginal) => {
@@ -77,6 +79,48 @@ it.skipIf(process.platform === "win32")(
     expect(result.error.cleanupIncomplete).toBe(false);
     expect(cleanupChild.cleanupIncomplete).toBe(false);
     expect(retryFailure.error.cleanupIncomplete).toBe(false);
+    await manager.closeAll();
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "does not spawn Rizin when cancellation arrives during TTY validation",
+  async () => {
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(isatty).mockReturnValue(true);
+    const controller = new AbortController();
+    const reason = { cancelled: "during TTY validation" };
+    vi.mocked(open).mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      controller.abort(reason);
+      return handle;
+    });
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    let spawned = false;
+    const manager = new RizinDebugSessionManager(
+      {},
+      {
+        platform: "linux",
+        spawnProcess: () => {
+          spawned = true;
+          throw new Error("must not spawn after cancellation");
+        },
+      },
+    );
+    const result = await manager.start(
+      { path: "/fixture", inferior_tty: "/dev/null" },
+      controller.signal,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(spawned).toBe(false);
     await manager.closeAll();
   },
 );
@@ -193,5 +237,74 @@ it.skipIf(process.platform === "win32")(
     expect(stops).toBe(1);
     expect(closeCalls).toBe(3);
     expect(second.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps the launch file read failure when its descriptor close also fails",
+  async () => {
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(isatty).mockReturnValue(true);
+    // Registered first, so its removal runs after the descriptor release.
+    const directory = await createTestTempDirectory("rea-rizin-launch-close-");
+    const launchFile = join(directory, "target.bin");
+    await actual.writeFile(launchFile, "launch bytes");
+    let allowClose = false;
+    let closeCalls = 0;
+    let releaseFixture: (() => Promise<void>) | undefined;
+    vi.mocked(open).mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      if (args[0] !== launchFile) return handle;
+      const close = handle.close.bind(handle);
+      releaseFixture = close;
+      vi.spyOn(handle, "read").mockRejectedValue(
+        new Error("launch file read refused"),
+      );
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        closeCalls++;
+        if (!allowClose) throw new Error("launch file close refused");
+        await close();
+      });
+      return handle;
+    });
+    onTestFinished(async () => {
+      await releaseFixture?.().catch(() => undefined);
+      vi.restoreAllMocks();
+    });
+    let spawned = false;
+    const manager = new RizinDebugSessionManager(
+      {},
+      {
+        platform: "linux",
+        spawnProcess: () => {
+          spawned = true;
+          throw new Error("must not spawn after a failed close");
+        },
+      },
+    );
+    const result = await manager.start({
+      path: launchFile,
+      inferior_tty: "/dev/null",
+    });
+    if (result.ok) throw new Error("expected the failed close to fail start");
+    expect(spawned, "a retained descriptor fails the start").toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toContain(launchFile);
+    expect(
+      result.error.diagnostics,
+      "the read failure is kept beside the close failure",
+    ).toMatchObject({
+      launch_file_hash_failure: expect.stringContaining(
+        "launch file read refused",
+      ),
+    });
+    allowClose = true;
+    expect((await manager.retryCleanupFailures()).ok).toBe(true);
+    expect(closeCalls).toBe(2);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    await manager.closeAll();
   },
 );

@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -59,10 +60,6 @@ export async function buildMipsFixture(
   let attested = compiled;
   if (legacy) {
     const raw = await readFile(path);
-    const write16 = (offset, value) =>
-      byteOrder === "little"
-        ? raw.writeUInt16LE(value, offset)
-        : raw.writeUInt16BE(value, offset);
     const write32 = (offset, value) =>
       byteOrder === "little"
         ? raw.writeUInt32LE(value, offset)
@@ -200,7 +197,7 @@ async function compileMipsFixture(
   args,
   options = {},
 ) {
-  const compiler = process.env.REA_MIPS_CLANG ?? "clang";
+  const compiler = fixtureCommand(FIXTURE_TOOLS.mipsClang);
   const version = await execute(compiler, ["--version"], { timeout: 10000 });
   await execute(compiler, args, { timeout: 60000 });
   const bytes = await readFile(path);

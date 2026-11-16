@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { createUnityAddressablesFixture } from "../unity/unityAddressables.fixture.js";
 import { unityAddressablesSchema } from "../unity/unityAddressables.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
+import { createEvidence } from "../evidence.js";
 import {
   projectUnityAddressablesView,
   unityAddressablesViewRequestSchema,
@@ -154,6 +155,13 @@ it("pages providers and reuses a sealed snapshot", () => {
   expect(second.value).toEqual(first.value);
 });
 
+const fileSubject = (path: string, sha256: string) =>
+  createEvidence(
+    { path, format: "file", sha256 },
+    { id: "fixture", name: "fixture", version: "1" },
+    { operation: "inspect_unity_addressables", parameters: {}, result: {} },
+  ).subject;
+
 it("accepts a relocated subject and refuses foreign view kinds, mismatched digests and invalid parents", () => {
   expect(
     projectUnityAddressablesView(parent(), {
@@ -167,11 +175,7 @@ it("accepts a relocated subject and refuses foreign view kinds, mismatched diges
     projectUnityAddressablesView(
       {
         ...parent(),
-        subject: {
-          format: "file",
-          local_path: "/artifacts/other.bin",
-          digest: { sha256: report.artifact.sha256 },
-        },
+        subject: fileSubject("/artifacts/other.bin", report.artifact.sha256),
       } as never,
       { kind: "summary" },
     ).ok,
@@ -180,11 +184,7 @@ it("accepts a relocated subject and refuses foreign view kinds, mismatched diges
     projectUnityAddressablesView(
       {
         ...parent(),
-        subject: {
-          format: "file",
-          local_path: report.artifact.path,
-          digest: { sha256: "0".repeat(64) },
-        },
+        subject: fileSubject(report.artifact.path, "0".repeat(64)),
       } as never,
       { kind: "summary" },
     ).ok,

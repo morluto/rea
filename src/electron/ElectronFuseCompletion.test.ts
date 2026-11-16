@@ -101,7 +101,7 @@ it("retains completed Evidence and resolved bundle identity after successful-clo
         cause: reason,
         cleanupIncomplete: false,
         partialObservation: {
-          subject: { local_path: path, architecture: "arm64" },
+          subject: { local_path: path, identity: { architecture: "arm64" } },
           parameters: { path: bundle },
           normalized_result: {
             artifact: { selected_path: bundle, resolved_path: path },

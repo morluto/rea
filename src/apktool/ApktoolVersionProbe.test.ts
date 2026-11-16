@@ -5,7 +5,9 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -201,10 +203,11 @@ it.each(["linux", "win32"] as const)(
 
 it.each([
   ["EACCES", "command_not_executable"],
+  ["EPERM", "command_not_executable"],
   ["ENOENT", "command_missing"],
 ])("distinguishes launcher spawn %s", async (code, expected) => {
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(
-    Object.assign(new Error(code), { code }),
+    spawnFailure(code, selection.command),
   );
   await expect(
     inspectApktoolClient(selection, commands, {
@@ -219,6 +222,47 @@ it.each([
     },
   });
 });
+
+it("does not read an errno from outside the launcher as a launch refusal", async () => {
+  vi.mocked(runOwnedCommand).mockRejectedValueOnce(
+    Object.assign(new Error("read failed"), { code: "ENOENT" }),
+  );
+  await expect(
+    inspectApktoolClient(selection, commands, {
+      environment: {},
+      platform: "linux",
+    }),
+  ).rejects.toMatchObject({ code: "version_unresolved" });
+});
+
+it.each([
+  ["EAGAIN", true],
+  ["E2BIG", false],
+])(
+  "reports a host launch constraint %s as a resource constraint, not a launcher fault",
+  async (code, retryable) => {
+    vi.mocked(runOwnedCommand).mockRejectedValueOnce(
+      spawnFailure(code, selection.command),
+    );
+    const failure = await inspectApktoolClient(selection, commands, {
+      environment: {},
+      platform: "linux",
+    }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisError);
+    expect(projectAnalysisError(failure as AnalysisError)).toMatchObject({
+      code: "resource_constraint",
+      retryable,
+      details: {
+        operation: "inspect_apktool_client",
+        diagnostics: {
+          system_code: code,
+          command: selection.command,
+          selected_command: selection.command,
+        },
+      },
+    });
+  },
+);
 
 it("reports version capture overflow as a resource constraint with the selected launcher", async () => {
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(

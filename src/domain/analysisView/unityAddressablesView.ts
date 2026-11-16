@@ -11,6 +11,7 @@ import {
   unityAddressablesSchema,
 } from "../unity/unityAddressables.js";
 import { err, ok, type Result } from "../result.js";
+import { evidenceFileTarget } from "../evidence.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import { pageIndexedRows } from "./indexedRowPage.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -234,10 +235,10 @@ export const projectUnityAddressablesView = (
         },
       ]),
     );
+  const subject = evidenceFileTarget(parent);
   if (
-    parent.subject != null &&
-    (parent.subject.format !== "file" ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    subject != null &&
+    (subject.format !== "file" || subject.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
@@ -258,7 +259,7 @@ export const projectUnityAddressablesView = (
     limitations: [...parent.limitations],
     unknowns: [
       "Runtime values of internal id placeholders, bundle bytes and whether the catalog is the one a build loads remain unknown.",
-      ...(parent.subject == null
+      ...(subject === undefined
         ? [
             "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
           ]
@@ -271,7 +272,7 @@ export const projectUnityAddressablesView = (
       view,
       ...shared,
       summary: { ...identity, counts },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const rows: readonly Row[] = { keys, locations, providers }[view.collection];
   const { items, total } = pageIndexedRows(rows, view, selection(view, report));

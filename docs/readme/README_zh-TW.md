@@ -82,11 +82,11 @@ npx rea-agents setup
 
 設定流程支援 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他 AI 代理](../getting-started/installation.md#supported-agents)。提供者組態和手動註冊 MCP 的方法見[安裝與設定](../getting-started/installation.md)。
 
-MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄位說明和巢狀驗證細節時，請在 MCP 註冊中設定 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。兩種設定都保留完整工具集和標準的伺服器驗證；見 MCP 合約指南。
+MCP 預設使用精簡輸入 Schema，以減少上下文開銷。精簡 Schema 省略的說明會接在工具描述之後。完整工具集和標準的伺服器驗證維持不變；見 MCP 合約指南。
 
 設定會直接登記所選執行環境和 REA 入口指令碼。使用套件執行器時，請保留其快取項目及執行環境，並從目標專案以外的可信任目錄取得套件。 請參閱安裝指南。
 
-預設會公布完整輸出 Schema。若用戶端限制 `tools/list` 的大小，請在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 或 `off`。伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
+預設會從 `tools/list` 省略輸出 Schema：沒有任何模型 API 會讀取它們，且 REA 會自行驗證每個結果。在 MCP 登記中設定 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 可在 4096 位元組內公布每個輸出 Schema。所有設定下，伺服器驗證和結構化結果仍保持完整。 請參閱 MCP 合約指南中的「Output schemas」。
 
 ### 詢問 AI 代理
 
@@ -174,7 +174,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係                         | Node.js 和 npm；[應用分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                          |
 | 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面                       | Chrome 系瀏覽器；[瀏覽器分析](../guides/web/browser-observation.md)                                                                               |
 | 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](../guides/web/web-network-captures.md)                      |
-| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](../guides/data/pcap-analysis.md)                                                                     |
+| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                                 | 呼叫端提供的 tshark 和 capinfos （已在 Linux 驗證）；[pcap 指南](../guides/data/pcap-analysis.md)                                                 |
 | .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                                 | 靜態檢查；[托管程式碼指南](../guides/managed/managed-code-analysis.md)                                                                            |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
 | Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length            | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                              |

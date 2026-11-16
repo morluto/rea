@@ -1,10 +1,10 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import type { UnityAddressablesPort } from "./UnityAddressablesPort.js";
+import type { UnityAddressablesPort } from "../../ports/unity/UnityAddressablesPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,

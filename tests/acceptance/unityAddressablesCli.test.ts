@@ -5,7 +5,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   analysisViewResultSchema,
   unityAddressablesSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { unityAddressablesSchema } from "../../src/domain/unity/unityAddressables.js";
 import {
@@ -15,7 +15,7 @@ import {
 } from "../fixtures/unity/addressables.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 const parseCliCatalog = (value: unknown) =>
   unityAddressablesSchema.parse(
@@ -36,7 +36,7 @@ cliTest(
       const hashPath = join(root, `${name}.hash`);
       await writeFile(path, bytes);
       await writeFile(hashPath, "0123456789abcdef0123456789abcdef");
-      const output = await runFileCli(cli, {
+      const output = await cli.run({
         arguments: [
           "inspect-unity-addressables",
           path,

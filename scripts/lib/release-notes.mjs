@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
 
@@ -347,13 +348,20 @@ export function verifyReleaseNotes(raw, text, body) {
     if (!prose.includes(`### ${heading}\n`))
       errors.push(`Missing ${heading} section`);
   if (body !== undefined) {
-    const bodyNotes = selectedReleaseNotes(body, inventory.version)
-      .replace(
-        /\n---\nThis PR was generated with \[Release Please\][\s\S]*$/u,
-        "",
-      )
-      .trim();
-    if (bodyNotes !== notes)
+    // Use the publisher's parser: finding a heading alone does not establish
+    // that Release Please will extract notes from its PR envelope.
+    const { PullRequestBody } = createRequire(import.meta.url)(
+      "release-please/build/src/util/pull-request-body.js",
+    );
+    const releases = PullRequestBody.parse(body)?.releaseData ?? [];
+    if (
+      releases.length !== 1 ||
+      releases[0].version?.toString() !== inventory.version
+    )
+      errors.push(
+        `Release Please cannot extract ${inventory.version} notes from the PR body; keep Author readiness and other metadata outside the notes delimiters`,
+      );
+    else if (releases[0].notes.trim() !== notes)
       errors.push("Release PR body differs from CHANGELOG.md");
   }
   if (errors.length) throw new Error(errors.join("\n"));

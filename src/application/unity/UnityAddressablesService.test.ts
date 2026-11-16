@@ -94,7 +94,7 @@ it.each([
     expect(result.value.parameters).toEqual({ path: report.artifact.path });
     expect(result.value.subject).toMatchObject({
       local_path: report.artifact.path,
-      digest: { sha256: report.artifact.sha256 },
+      identity: { format: "file", sha256: report.artifact.sha256 },
     });
   },
 );

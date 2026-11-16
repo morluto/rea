@@ -1,5 +1,6 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { PeResourcesPort } from "./PeResourcesPort.js";
+import { insideArtifact } from "./artifactRange.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -10,7 +11,7 @@ import {
   type PeResourceIdentity,
 } from "../../domain/native/peResources.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
@@ -83,8 +84,7 @@ const validReport = (
   maxEntries: number,
   maxBytes: number,
 ): boolean => {
-  const inside = ({ offset, bytes }: { offset: number; bytes: number }) =>
-    offset <= report.artifact.bytes - bytes;
+  const inside = insideArtifact(report.artifact.bytes);
   const identityInside = (identity: PeResourceIdentity): boolean =>
     identity.kind === "id" || inside(identity.location);
   if (

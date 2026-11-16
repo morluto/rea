@@ -49,6 +49,12 @@ it("requires transaction IDs and explicit unknown redirect predecessors", () => 
       redirected_from_transaction_state: "unknown",
     }).success,
   ).toBe(false);
+  expect(
+    browserScenarioEventSchema.safeParse({
+      ...request,
+      redirected_from_transaction_state: undefined,
+    }).success,
+  ).toBe(false);
 });
 
 it("parses each network outcome without contradictory status or failure data", () => {
@@ -148,7 +154,7 @@ it("does not attach a content digest to redacted storage secrets", () => {
   ).toBe(false);
 });
 
-it("accepts complete storage, history, and text artifacts beyond former caps", () => {
+it("accepts complete storage, history, and text artifacts above 1 MiB", () => {
   const text = "x".repeat(1_048_577);
   const fingerprint = {
     name: "entry",
@@ -200,7 +206,7 @@ it("accepts complete storage, history, and text artifacts beyond former caps", (
   expect(parsed.success).toBe(true);
 });
 
-it("accepts complete scenario output beyond former string caps", () => {
+it("accepts complete scenario output with long step strings", () => {
   const longText = "detail".repeat(1_000);
   const step = (index: number) => ({
     step_index: index,

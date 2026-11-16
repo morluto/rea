@@ -10,7 +10,7 @@ import {
   type UnityFsMember,
 } from "../../tests/fixtures/unityfs.js";
 
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 
 const writeBundle = async (bytes: Buffer): Promise<string> => {
@@ -198,6 +198,23 @@ describe("UnityFS payloads and malformed declarations", () => {
 });
 
 describe("UnityFS unavailable and malformed directories", () => {
+  it("reports cancellation during unavailable-directory coverage", async () => {
+    await withReader(
+      buildUnityFs(members, { flags: 0x1400 | 0x43 }),
+      async (reader) => {
+        const controller = new AbortController();
+        const entries = reader
+          .entries(controller.signal, {
+            onCoverage: () => controller.abort(),
+          })
+          [Symbol.asyncIterator]();
+        await expect(entries.next()).rejects.toMatchObject({
+          reason: "cancelled",
+        });
+      },
+    );
+  });
+
   it("reports an encrypted directory as unknown coverage without entries", async () => {
     await withReader(
       buildUnityFs(members, { flags: 0x1400 | 0x43 }),

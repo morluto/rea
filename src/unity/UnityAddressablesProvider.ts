@@ -1,20 +1,18 @@
 import { UNITY_ADDRESSABLES_PROVIDER_IDENTITY } from "./UnityAddressablesProviderIdentity.js";
 import { setImmediate } from "node:timers/promises";
 import {
-  completedStableArtifact,
-  readStableArtifact,
-  type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
   ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
   artifactFileCancellationCause,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { UnityAddressablesPort } from "../application/unity/UnityAddressablesPort.js";
+  completedStableArtifact,
+  readStableArtifact,
+  type StableArtifactSnapshot,
+} from "../resources/index.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { UnityAddressablesPort } from "../ports/unity/UnityAddressablesPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {

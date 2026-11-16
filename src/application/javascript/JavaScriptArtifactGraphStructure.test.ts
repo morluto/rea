@@ -8,7 +8,7 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import {
   analyzeJavaScriptStaticSource,
   analyzeParsedJavaScriptStaticSource,
-} from "../../domain/javascript/javascriptStaticAnalysis.js";
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import type {
   AnalyzedJavaScriptArtifactFile,
@@ -178,18 +178,6 @@ describe("skipped JavaScript parse reporting", () => {
     expect(fileObservation(context).analysis_coverage).toEqual(
       javascript.analysis_coverage,
     );
-  });
-
-  it("does not reconstruct coverage from a historical overall summary", () => {
-    const file = skippedFile();
-    const { analysis_coverage: _coverage, ...javascript } =
-      analyzeJavaScriptStaticSource(file.text.included ? file.text.value : "");
-    const context = contextFor(
-      file,
-      analysisFor([{ file, javascript, semantic: null }]),
-    );
-    addJavaScriptArtifactFiles(context);
-    expect(fileObservation(context)).not.toHaveProperty("analysis_coverage");
   });
 });
 
@@ -476,7 +464,7 @@ it("attaches sender validation to the innermost handler after a long minified li
   addJavaScriptArtifactFiles(context);
   addElectronIpcBoundaries(
     context,
-    createElectronIpcContext(analysis, () => "app"),
+    createElectronIpcContext(analysis, () => "app", true),
   );
   const handlers = context.accumulator
     .nodes()

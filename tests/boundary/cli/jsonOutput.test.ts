@@ -15,8 +15,13 @@ import {
 } from "../../../src/cli/cliResultOutput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { silentLogger } from "../../../src/logger.js";
+
+/** These managed commands inspect one target; none composes Evidence. */
+const unusedManagedEvidence = (): never => {
+  throw new Error("No managed comparison runs in this test");
+};
 
 const collect = async (
   value: unknown,
@@ -382,10 +387,10 @@ describe("CLI result output surface", () => {
       if (output === undefined)
         throw new Error("Missing structured output surface");
       const cli = Cli.create("rea-output-test", { sync: false });
-      registerManagedCommands(cli, silentLogger, async () => ({
-        ok: false,
-        error: failure,
-      }));
+      registerManagedCommands(cli, silentLogger, {
+        runProviderAnalysis: async () => ({ ok: false, error: failure }),
+        runManagedProviderEvidence: unusedManagedEvidence,
+      });
       streamCliCommandResults(cli, output);
       let fallback = "";
       const previousExitCode = process.exitCode;
@@ -512,17 +517,20 @@ describe("full-output token windows", () => {
     );
     if (output === undefined) throw new Error("Missing TOON output surface");
     const cli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(cli, silentLogger, async () => ({
-      ok: false,
-      error: {
-        code: "target_unavailable",
-        category: "unavailable",
-        message: "The selected artifact is missing.",
-        retryable: false,
-        remediation: { action: "Check that the path exists." },
-        details: { source: "artifact-open" },
-      },
-    }));
+    registerManagedCommands(cli, silentLogger, {
+      runProviderAnalysis: async () => ({
+        ok: false,
+        error: {
+          code: "target_unavailable",
+          category: "unavailable",
+          message: "The selected artifact is missing.",
+          retryable: false,
+          remediation: { action: "Check that the path exists." },
+          details: { source: "artifact-open" },
+        },
+      }),
+      runManagedProviderEvidence: unusedManagedEvidence,
+    });
     streamCliCommandResults(cli, output);
     const previousExitCode = process.exitCode;
     try {
@@ -772,10 +780,13 @@ describe("CLI result output surface", () => {
       },
     });
     const cli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(cli, silentLogger, async (...[path, operation]) => {
-      expect(path).toBe("fixture.dll");
-      expect(operation).toBe("inspect_managed_members");
-      return { ok: false, error: value };
+    registerManagedCommands(cli, silentLogger, {
+      runProviderAnalysis: async (...[path, operation]) => {
+        expect(path).toBe("fixture.dll");
+        expect(operation).toBe("inspect_managed_members");
+        return { ok: false, error: value };
+      },
+      runManagedProviderEvidence: unusedManagedEvidence,
     });
     // A terminal destination exercises the indented encoding past the limit.
     Object.defineProperty(destination, "isTTY", { value: true });
@@ -815,10 +826,10 @@ describe("CLI result output surface", () => {
     if (tokenOutput === undefined)
       throw new Error("Missing token-count output surface");
     const tokenCli = Cli.create("rea-output-test", { sync: false });
-    registerManagedCommands(tokenCli, silentLogger, async () => ({
-      ok: false,
-      error: value,
-    }));
+    registerManagedCommands(tokenCli, silentLogger, {
+      runProviderAnalysis: async () => ({ ok: false, error: value }),
+      runManagedProviderEvidence: unusedManagedEvidence,
+    });
     streamCliCommandResults(tokenCli, tokenOutput);
     await tokenCli.serve(tokenArgv, {
       stdout: (text) => {
@@ -856,7 +867,7 @@ describe("CLI result output surface", () => {
       },
       meta: { command: "inspect-managed-members" },
     });
-  }, 60_000);
+  });
 });
 
 describe("streamed CLI filtered selections", () => {

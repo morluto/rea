@@ -1,3 +1,5 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
@@ -13,10 +15,11 @@ import { managedMemberInspectionSchema } from "../../src/domain/managed/managedA
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { buildManagedMemberCapacityFixture } from "../fixtures/managedMemberCapacity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const createTransport = () =>
   new StdioClientTransport({
@@ -47,16 +50,21 @@ cliTest(
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const transport = createTransport();
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({ name: "managed-type-recovery", version: "1" });
+    const client = new Client(
+      { name: "managed-type-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_managed_members",
       );
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      if (definition?.outputSchema === undefined)
+      if (definition === undefined)
         throw new Error("Managed member schema is absent");
-      const outputSchema: Record<string, unknown> = definition.outputSchema;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        definition.name,
+      );
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
       expect(ajv.validateSchema(outputSchema)).toBe(true);
       const output = await cli.run({
@@ -77,8 +85,8 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
+      expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
+      expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
       const report = managedMemberInspectionSchema.parse(
         mcpEvidence.normalized_result,
       );

@@ -1,28 +1,30 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import {
   parsePortableBundleName,
   PORTABLE_BUNDLE_NAME_CONSTRAINT,
 } from "../../domain/portableBundleName.js";
 import { createHash } from "node:crypto";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
+  writeTextFile,
+} from "../../resources/index.js";
 import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
 import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
 } from "../../desktop/AgentEnvComputer.js";
-import { writeTextFile } from "../JsonFiles.js";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import {
   difficultyRecord,
@@ -36,7 +38,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   runSolveHelper,
   SolveCleanupError,
@@ -53,8 +55,8 @@ import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
-import { errorText } from "./DesktopBuildCommands.js";
+} from "../../ports/ProgressReporter.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const MEASURE = "measure_build_task";
 /** The file at the bundle's root that records each measured task. */
@@ -120,7 +122,7 @@ const recordsSchema = z.looseObject({
       passes: z.int(),
       k: z.int(),
       band: z.enum(["in_band", "too_easy", "too_hard", "undecided"]),
-      usd: z.number(),
+      usd: z.number().nullable(),
     }),
   ),
 });
@@ -391,13 +393,15 @@ export const measureBuildTask = async (
         (signal.aborted &&
           cause.fileCleanupFailure.outcome.kind === "completed");
       const failure = cancelled
-        ? new AnalysisCancelledError(MEASURE, {
-            cause:
+        ? cancelledBy(
+            MEASURE,
+            carriedReason(
               cause.cancellation === undefined
                 ? signal.reason
                 : cause.cancellation.reason,
-            cleanup,
-          })
+            ),
+            { cleanup },
+          )
         : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
             userMessage: `Measuring ${task} could not close an input file.`,
             cause,
@@ -410,9 +414,9 @@ export const measureBuildTask = async (
       cause instanceof AnalysisError
         ? cause
         : signal.aborted
-          ? new AnalysisCancelledError(MEASURE, { cause: signal.reason })
+          ? cancelledBy(MEASURE, signal)
           : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
-              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
+              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorMessage(cause)}`,
               remediationAction:
                 "Check the bundle files and host I/O error, then retry or retain the completed solve results.",
               cause,
@@ -437,7 +441,7 @@ export const measureInFreshComputers = async (
   if (!taskName.ok) return taskName;
   const environment = await resolveBuildComputerEnvironment(
     host.environment,
-    process.platform,
+    HOST_PLATFORM.platform,
     host.defaults,
   );
   return measureBuildTask(
