@@ -462,3 +462,47 @@ it("reports a reconstructed hash mismatch without inventing a matching digest", 
     },
   });
 });
+
+it("charges repeated operations on one blob against the reconstruction budget", () => {
+  const blockSize = 4096;
+  const bytes = buildAndroidOtaPayload({
+    blockSize,
+    partitions: [
+      {
+        name: "boot",
+        newSize: blockSize,
+        operations: [
+          {
+            type: 0,
+            data: Buffer.from("BOOT"),
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
+          },
+        ],
+      },
+    ],
+  });
+  const parsed = parse(bytes);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  const [partition] = parsed.value.partitions;
+  const [operation] = partition!.operations;
+  const repeats = ANDROID_OTA_MAX_EXTRACT_BYTES / blockSize + 1;
+  expect(
+    reconstructAndroidOtaPartition(
+      {
+        ...partition!,
+        operations: Array.from({ length: repeats }, () => operation!),
+      },
+      blockSize,
+      () => {
+        throw new Error("an over-budget partition reads no operation data");
+      },
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AndroidOtaPayloadCapacityFailure",
+      limit: { maximum: ANDROID_OTA_MAX_EXTRACT_BYTES, unit: "byte" },
+    },
+  });
+});

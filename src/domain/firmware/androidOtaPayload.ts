@@ -1280,6 +1280,35 @@ export const androidOtaExtractRefusalError = (
 };
 
 /**
+ * Validate the block size and charge the whole reconstruction against one
+ * budget before any work starts. Each operation decodes or writes up to its
+ * destination extent bytes, and repeated blob references are decoded again
+ * per operation, so a per-decode bound alone does not bound the loop.
+ */
+const chargeReconstructionWork = (
+  operations: readonly AndroidOtaInstallOperation[],
+  blockSize: number,
+): Result<number, AndroidOtaPayloadParseError> => {
+  if (blockSize <= 0 || !Number.isSafeInteger(blockSize))
+    return err(malformed("block_size is not a positive extent"));
+  let work = 0;
+  for (const operation of operations) {
+    const dstBytes = destinationExtentBytes(operation.dstExtents, blockSize);
+    if (!dstBytes.ok) return dstBytes;
+    work += dstBytes.value;
+    if (work > ANDROID_OTA_MAX_EXTRACT_BYTES)
+      return err(
+        capacity(
+          "partition reconstruction work",
+          ANDROID_OTA_MAX_EXTRACT_BYTES,
+          "byte",
+        ),
+      );
+  }
+  return ok(work);
+};
+
+/**
  * Rebuild a full-payload partition image. A declared-hash mismatch fails
  * unless `verifyDeclaredHash` is false, which leaves that decision to a caller
  * that applies its own integrity policy to the returned bytes.
@@ -1293,8 +1322,8 @@ export const reconstructAndroidOtaPartition = (
   const refused = androidOtaExtractRefusalError(partition);
   if (refused !== null) return err(refused);
   const size = partition.newPartitionInfo.size!;
-  if (blockSize <= 0 || !Number.isSafeInteger(blockSize))
-    return err(malformed("block_size is not a positive extent"));
+  const budget = chargeReconstructionWork(partition.operations, blockSize);
+  if (!budget.ok) return budget;
   const image = Buffer.alloc(size);
   try {
     for (const operation of partition.operations) {
