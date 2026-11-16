@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
@@ -91,7 +92,7 @@ it("managed reconstruction rejects static Evidence with a token MVID but no modu
   if (members.module === null || members.module.mvid === null)
     throw new Error("Expected fixture module identity and MVID");
   const inconsistentEvidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     input.static_members.provider,
     {
       operation: "inspect_managed_members",
@@ -139,7 +140,7 @@ it("managed reconstruction rejects locks for partial CIL without normalized iden
     coverage: { state: "partial" as const, issues: [] },
   };
   const partialEvidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     input.static_members.provider,
     {
       operation: "inspect_managed_members",
@@ -220,17 +221,21 @@ describe("managed reconstruction input diagnostics", () => {
 
   it("reports nested Evidence schema issues without a misleading request path", () => {
     const input = exampleInput();
-    const malformed = createEvidence(undefined, input.static_members.provider, {
-      operation: "inspect_managed_members",
-      parameters: {},
-      result: {
-        ...managedMemberInspectionSchema.parse(
-          input.static_members.normalized_result,
-        ),
-        artifact: { sha256: 7 },
+    const malformed = createEvidence(
+      unknownTarget("not-observed"),
+      input.static_members.provider,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: {
+          ...managedMemberInspectionSchema.parse(
+            input.static_members.normalized_result,
+          ),
+          artifact: { sha256: 7 },
+        },
+        rawResult: null,
       },
-      rawResult: null,
-    });
+    );
     const result = importManagedReconstructionEvidence({
       ...MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
       static_members: malformed,

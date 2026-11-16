@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { GPU_TOOL_CONTRACTS } from "../contracts/gpu/gpuToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -21,7 +20,6 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
     logger,
     contractNamed(GPU_TOOL_CONTRACTS, "inspect_gpu_code_objects"),
     {
-      command: CLI_COMMANDS.inspectGpuCodeObjects,
       description:
         "Inspect embedded CUDA/HIP targets and selected static kernel metadata",
       positionals: ["path"],

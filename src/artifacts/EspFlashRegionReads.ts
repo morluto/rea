@@ -9,7 +9,7 @@ import {
 } from "../domain/firmware/espImage.js";
 import { firstUnerased } from "../domain/firmware/espImageStructures.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 
 const LABEL = "ESP flash image";
 const HEADER_BYTES = 24;

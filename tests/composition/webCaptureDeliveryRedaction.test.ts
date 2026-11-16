@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,7 +12,7 @@ import {
 import { createEvidence } from "../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { AnalysisTimeoutError } from "../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../src/domain/result.js";
 import { historicalHar } from "../fixtures/historicalHar.js";
@@ -189,12 +190,12 @@ it.each([true, false])(
     const outputPath = join(root, "partial.json");
     if (refused) await writeFile(outputPath, "existing caller file");
     const provider = { id: "fixture", name: "Fixture", version: "1" };
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "source_fixture",
       parameters: {},
       result: { observed: 7 },
     });
-    const partial = createEvidence(undefined, provider, {
+    const partial = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "derived_fixture",
       parameters: {},
       result: { completed_sources: 1 },
@@ -209,7 +210,6 @@ it.each([true, false])(
       await publishCliAnalysisEvidence(
         { ok: false, error: failure, sourceEvidence: [source] },
         {
-          providerId: "fixture",
           operation: "derived_fixture",
           signal: new AbortController().signal,
           detail: "complete",

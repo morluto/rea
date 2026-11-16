@@ -28,18 +28,16 @@ import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAd
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
-import type { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -48,6 +46,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -76,6 +75,7 @@ import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js"
 
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { readHistoricalCaptureReply } from "./HistoricalCaptureReply.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_web_network_capture";
 
@@ -257,6 +257,14 @@ export class HistoricalCaptureDecoder {
               message: reply.message,
             },
           ]);
+        // No capture budget raises a ceiling the decoder's reader named.
+        if (reply.reason === "fixed-limit")
+          throw fixedCeilingConstraint(
+            OPERATION,
+            reply.boundary,
+            reply.message,
+            reply.ceiling,
+          );
         const limit = captureLimitForReply(reply.reason);
         if (limit !== undefined) {
           const { parameter, expected } = CAPTURE_LIMITS[limit];
@@ -523,10 +531,7 @@ export class HistoricalCaptureDecoder {
         [cleanupFailure.owner.resource],
         {
           capture_path: input.capture_path,
-          reason:
-            cleanupFailure.cause instanceof Error
-              ? cleanupFailure.cause.message
-              : String(cleanupFailure.cause),
+          reason: errorMessage(cleanupFailure.cause),
         },
         {
           operation: OPERATION,

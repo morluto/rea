@@ -1,6 +1,7 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
@@ -14,11 +15,11 @@ import {
   sep,
 } from "node:path";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,
@@ -44,7 +45,10 @@ const projectFileOperation = async <Value>(
     return await work();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) throw cause;
-    throw ghidraFileFailure(cause, operation, { path });
+    throw classifyProviderFailure(
+      cause,
+      ghidraFileDialect(operation, { path }),
+    );
   }
 };
 

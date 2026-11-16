@@ -273,7 +273,10 @@ cliTest(
     );
     expect(evidence).toMatchObject({
       confidence: "observed",
-      subject: { local_path: path, format: "pe", architecture: "x86" },
+      subject: {
+        local_path: path,
+        identity: { format: "pe", architecture: "x86" },
+      },
       normalized_result: {
         artifact: {
           path,

@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import type {
   InspectWindowsShortcutInput,
   WindowsShortcut,
@@ -13,6 +12,8 @@ import type {
 } from "../../domain/native/windowsShortcut.js";
 import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
 import { malformedInput } from "../../domain/parseFailure.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
@@ -129,9 +130,6 @@ const LIMITATIONS = [
   "Volume serial, NetBIOS machine id, and Tracker droid values are recorded as stored. Host identity is not verified.",
 ];
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const namedBits = (
   raw: number,
   names: ReadonlyArray<readonly [number, string]>,
@@ -230,7 +228,7 @@ const uuidV1 = (
     evidence_kind: "derived",
     version: 1,
     mac: [...bytes.subarray(offset + 10, offset + 16)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .map((byte) => byteToHex(byte))
       .join(":"),
     timestamp_iso8601: isoFromUnsigned100ns(timestamp, UUID_UNIX_EPOCH),
     timestamp_100ns: timestamp.toString(10),
@@ -513,7 +511,7 @@ const decodeIdListItem = (
     offset,
     size,
     type_byte: typeByte,
-    sha256: sha256(data),
+    sha256: sha256Hex(data),
   });
   if (typeByte === 0x1f && data.length >= 18) {
     return {
@@ -933,7 +931,7 @@ const decodeExtra = (
         offset,
         "Environment ExtraData payload is shorter than 780 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     charge(
       walk,
@@ -953,7 +951,7 @@ const decodeExtra = (
         offset,
         "TrackerDataBlock payload is shorter than 0x58 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const length = payload.readUInt32LE(0);
     const version = payload.readUInt32LE(4);
@@ -964,7 +962,7 @@ const decodeExtra = (
         offset,
         `TrackerDataBlock header is unsupported (Length 0x${length.toString(16)}, Version ${String(version)})`,
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const machine = latin1Z(payload.subarray(8, 24));
     charge(walk, machine.length);
@@ -984,14 +982,14 @@ const decodeExtra = (
   if (signature === 0xa0000004) {
     if (payload.length < 4) {
       note(walk, "truncated", offset, "ConsoleFEDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
   }
   if (signature === 0xa0000005) {
     if (payload.length < 8) {
       note(walk, "truncated", offset, "SpecialFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "special_folder",
@@ -1002,7 +1000,7 @@ const decodeExtra = (
   if (signature === 0xa000000b) {
     if (payload.length < 20) {
       note(walk, "truncated", offset, "KnownFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "known_folder",
@@ -1014,9 +1012,9 @@ const decodeExtra = (
     return {
       kind: "property_store",
       bytes: payload.length,
-      sha256: sha256(payload),
+      sha256: sha256Hex(payload),
     };
-  return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+  return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
 };
 
 const parseIdList = async (

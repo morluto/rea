@@ -35,6 +35,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const countsSchema = z.strictObject({
   sections: z.number().int().nonnegative(),
@@ -539,11 +540,10 @@ export const projectIl2cppMetadataView = (
   const parsed = parseMetadataReport(parent);
   if (!parsed.ok) return parsed;
   const { report, counts } = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject != null &&
-    (subject.format !== "file" ||
-      subject.digest.sha256 !== report.artifact.sha256)
+    (subject.format !== "file" || subject.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
@@ -633,7 +633,7 @@ export const projectIl2cppMetadataView = (
         : report.binary.generic_methods == null
           ? "Addresses come from static binary tables; runtime behavior and generic instance code remain unknown."
           : "Addresses come from static binary tables; runtime behavior and generic instances outside genericMethodTable remain unknown.",
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
           ]

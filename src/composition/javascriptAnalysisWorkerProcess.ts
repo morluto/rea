@@ -20,6 +20,7 @@ import {
   serveJavaScriptAnalysisWorker,
   type JavaScriptSourceWorkerAnalyzer,
 } from "../javascript/analysis/JavaScriptAnalysisWorkerServer.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
@@ -132,8 +133,6 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
 try {
   await serveJavaScriptAnalysisWorker(analyze);
 } catch (cause: unknown) {
-  process.stderr.write(
-    `${cause instanceof Error ? cause.message : String(cause)}\n`,
-  );
+  process.stderr.write(`${errorMessage(cause)}\n`);
   process.exitCode = 1;
 }

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { buildCapabilityInventory } from "./CapabilityInventory.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 

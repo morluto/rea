@@ -1,13 +1,12 @@
+import { capturedProviderOutput } from "./capturedProviderOutput.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import {
   ArtifactReaderFailure,
   type CleanupFailedRead,
-} from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+  ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -90,16 +89,6 @@ export type ArtifactResourceClassifier = (
   cause: unknown,
   context: ArtifactResourceFailureContext,
 ) => AnalysisError;
-
-export const artifactCommandOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  truncated: snapshot.diagnosticTruncated ?? false,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-});
 
 /** Own admission, artifact descriptors, producer cleanup and private workspaces together. */
 export class ArtifactAnalysisResources {
@@ -478,8 +467,9 @@ export class ArtifactAnalysisResources {
     budgetParameter?: "producer_limits",
   ): ProviderOutcomeContext {
     return {
+      providerId: this.providerId,
       operation,
-      capturedOutput: artifactCommandOutput,
+      capturedOutput: capturedProviderOutput,
       timeout: {
         ms: limits.command_timeout_ms,
         userMessage: `The owned producer command reached its ${String(limits.command_timeout_ms)} ms deadline. This is not a client-side timeout; extending only the MCP client's deadline does not change this budget.`,
@@ -495,6 +485,7 @@ export class ArtifactAnalysisResources {
             ? fixedAllowanceOptions(
                 `The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`,
                 "capture",
+                { limit: limits.output_bytes, unit: "bytes" },
               )
             : {
                 retryable: false,
@@ -516,8 +507,7 @@ export class ArtifactAnalysisResources {
           },
         };
       },
-      dialect: (outcome, details) =>
-        new AnalysisOutputError(operation, outcome.message, details),
+      dialect: (_outcome, _details, unclassified) => unclassified(),
     };
   }
 
