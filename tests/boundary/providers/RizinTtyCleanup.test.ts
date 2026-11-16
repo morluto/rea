@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 
 vi.mock("node:tty", async (importOriginal) => {
@@ -240,9 +241,9 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "keeps the launch file read failure when its descriptor close also fails",
-  async () => {
+it.skipIf(process.platform === "win32").each(["rizin", "gdb"] as const)(
+  "keeps the %s launch file read failure when its descriptor close also fails",
+  async (provider) => {
     const actual =
       await vi.importActual<typeof import("node:fs/promises")>(
         "node:fs/promises",
@@ -275,20 +276,21 @@ it.skipIf(process.platform === "win32")(
       vi.restoreAllMocks();
     });
     let spawned = false;
-    const manager = new RizinDebugSessionManager(
-      {},
-      {
-        platform: "linux",
-        spawnProcess: () => {
-          spawned = true;
-          throw new Error("must not spawn after a failed close");
-        },
+    const options = {
+      platform: "linux" as const,
+      spawnProcess: () => {
+        spawned = true;
+        throw new Error("must not spawn after a failed close");
       },
-    );
-    const result = await manager.start({
-      path: launchFile,
-      inferior_tty: "/dev/null",
-    });
+    };
+    const manager =
+      provider === "rizin"
+        ? new RizinDebugSessionManager({}, options)
+        : new GdbSessionManager(options);
+    const result =
+      manager instanceof GdbSessionManager
+        ? await manager.start(undefined, { executable: launchFile })
+        : await manager.start({ path: launchFile, inferior_tty: "/dev/null" });
     if (result.ok) throw new Error("expected the failed close to fail start");
     expect(spawned, "a retained descriptor fails the start").toBe(false);
     expect(result.error.cleanupIncomplete).toBe(true);

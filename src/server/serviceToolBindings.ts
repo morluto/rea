@@ -1446,19 +1446,21 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<RizinDebugToolOptions>,
-  // Starting GDB loads no target, so it runs outside admission; a console
+  // Starting GDB may load a selected file without running it, outside mutation admission; a console
   // command may change the bound artifact and runs under external-mutation
   // admission, keeping a failed cleanup owned for the next retry.
   gdb: (({ manager, session }) => ({
     start_gdb_session: {
       admission: "sdk",
       value: (input, { signal }) =>
-        manager.start(
-          signal,
-          input.inferior_tty === undefined
+        manager.start(signal, {
+          ...(input.inferior_tty === undefined
             ? {}
-            : { inferiorTty: input.inferior_tty },
-        ),
+            : { inferiorTty: input.inferior_tty }),
+          ...(input.executable === undefined
+            ? {}
+            : { executable: input.executable }),
+        }),
     },
     gdb_console: {
       admission: "sdk",
