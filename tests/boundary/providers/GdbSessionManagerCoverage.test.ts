@@ -34,6 +34,7 @@ import {
   stopOwnedDebuggerProcess,
   type OwnedDebuggerStopResult,
 } from "../../../src/process/ownedDebuggerSession.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import {
   answerFakeGdbStartup,
@@ -1955,6 +1956,51 @@ it("uses a fallback message when the process launcher rejects without an Error",
   }
   expect(attempts).toBe(2);
 });
+
+it.each([
+  {
+    code: "EAGAIN",
+    tag: "AnalysisResourceConstraintError",
+    projected: { code: "resource_constraint", retryable: true },
+    message: "process capacity (EAGAIN)",
+  },
+  {
+    code: "E2BIG",
+    tag: "AnalysisResourceConstraintError",
+    projected: { code: "resource_constraint", retryable: false },
+    message: "process launch limit (E2BIG)",
+  },
+  {
+    code: "EIO",
+    tag: "AnalysisCapabilityUnavailableError",
+    projected: { code: "capability_unavailable" },
+    message: "EIO from spawn fake-gdb",
+  },
+])(
+  "classifies a $code launch failure once without retrying another MI dialect",
+  async ({ code, tag, projected, message }) => {
+    let attempts = 0;
+    const manager = managerWithFakeSpawner(async () => {
+      attempts += 1;
+      throw spawnFailure(code, "fake-gdb");
+    });
+
+    const started = await manager.start();
+
+    expect(attempts).toBe(1);
+    expect(started.ok).toBe(false);
+    if (!started.ok) {
+      expect(started.error._tag).toBe(tag);
+      expect(started.error.message).toContain(message);
+      expect(projectAnalysisError(started.error)).toMatchObject({
+        ...projected,
+        details: {
+          diagnostics: { system_code: code, command: "fake-gdb" },
+        },
+      });
+    }
+  },
+);
 
 it("returns startup timeout when the MI prompt never arrives", async () => {
   const provider = await createProvider(
