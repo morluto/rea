@@ -26,7 +26,7 @@ import {
 } from "../filesystem/readStableFileBytes.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import type {
-  CaptureContentStore,
+  DesktopCaptureStore,
   RetainOutcome,
 } from "../ports/CaptureContentStore.js";
 
@@ -38,7 +38,7 @@ class ChangedSinceWalk extends Error {}
 const DENIED_CODES = new Set(["EACCES", "EPERM", "ENXIO"]);
 
 /** Content-addressed copies of observed files under `<capture>/content`. */
-export class DesktopContentStore implements CaptureContentStore {
+export class DesktopContentStore implements DesktopCaptureStore {
   readonly #directory: string;
   readonly #maxFileBytes: number;
   readonly #stored = new Map<string, number>();

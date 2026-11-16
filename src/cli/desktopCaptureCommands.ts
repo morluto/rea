@@ -29,6 +29,7 @@ import {
   DESKTOP_CAPTURE_DEFAULTS,
   type DesktopCaptureProgress,
 } from "../domain/desktop/desktopCapture.js";
+import { createDesktopCaptureProvider } from "../desktop/DesktopCaptureProvider.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
@@ -557,6 +558,7 @@ export const registerDesktopCaptureCommands = (
                   platform: HOST_PLATFORM.platform,
                   environment,
                   callerDirectory: process.cwd(),
+                  desktop: createDesktopCaptureProvider(),
                   nextRequest: () => requests.next(),
                   report: async (message, event) => {
                     const progress: DesktopCaptureProgress = {
