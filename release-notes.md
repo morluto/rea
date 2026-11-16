@@ -151,6 +151,7 @@
 * **captures:** retain preparation cleanup owners ([#10288](https://github.com/morluto/rea/issues/10288)) ([9c86465](https://github.com/morluto/rea/commit/9c86465d47e98306e1ee1f77e7fb25d1d737b1db))
 * **captures:** retain wide native numeric exclusions ([#10343](https://github.com/morluto/rea/issues/10343)) ([fd3e613](https://github.com/morluto/rea/commit/fd3e613d23795f693e9231102249390228cab35f))
 * **ci:** defer proposals for merged release commits ([5eef239](https://github.com/morluto/rea/commit/5eef239dfd774331d622aaa4762f42fa632121ab))
+* **ci:** select debugger command handlers through the command registry ([#11686](https://github.com/morluto/rea/issues/11686)) ([4c8e616](https://github.com/morluto/rea/commit/4c8e616029ed7b45adb5fdfcaf0148dd011a40e0)), closes [#11654](https://github.com/morluto/rea/issues/11654)
 * **ci:** settle cancelled test-group descendants ([#10229](https://github.com/morluto/rea/issues/10229)) ([070cfce](https://github.com/morluto/rea/commit/070cfce443f803c22f9b958c2f6e85a23b288241))
 * **cli:** advertise parsed JSON documents in --schema ([d734e64](https://github.com/morluto/rea/commit/d734e6424df5fed42399dc22b759a1c9962c01f2))
 * **cli:** advertise the decimal token grammar on integer arguments ([884b683](https://github.com/morluto/rea/commit/884b683a94be222538aad84eb7993f62fda9aca7)), closes [#9344](https://github.com/morluto/rea/issues/9344)
