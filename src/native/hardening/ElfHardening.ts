@@ -1,10 +1,12 @@
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   firstKeyed,
   keyedBy,
   uniqueKeyed,
 } from "../../domain/keyedCollection.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
@@ -40,7 +42,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   ELF_PT_GNU_PROPERTY,
   ELF_PT_GNU_RELRO,
@@ -51,7 +53,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
@@ -122,6 +124,8 @@ const budgetFailure = (count: number, label: string): BinaryResourceFailure =>
     "structure",
     MAX_BINARY_HARDENING_TABLE_ENTRIES,
     `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry structural budget. This release has no runtime override.`,
+    "structure",
+    "entries",
   );
 
 const budget = (count: number, label: string): void => {

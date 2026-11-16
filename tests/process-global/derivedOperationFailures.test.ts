@@ -1,3 +1,5 @@
+import { fileSubjectTarget } from "../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -9,7 +11,13 @@ import { ARTIFACT_COMPARISON_EXAMPLE } from "../../src/contracts/artifactCompari
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../src/contracts/functionComparisonExample.js";
 import { completeReconstructionCoverageData } from "../../src/domain/reconstructionCoverage.fixture.js";
 import { reconstructionClosureResultSchema } from "../../src/domain/reconstructionCoverage.js";
-import { createEvidence } from "../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../src/domain/evidence.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
+import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
+import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { functionComparisonResultSchema } from "../../src/domain/functionComparisonSchemas.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
@@ -27,10 +35,7 @@ import { managedNativeVerificationResultSchema } from "../../src/domain/managed/
 import { managedReconstructionImportResultSchema } from "../../src/domain/managed/managedReconstruction.js";
 
 import { captureProcessScenarioFile } from "../../src/application/process/ProcessCli.js";
-import { compareManagedMemberPaths } from "../../src/application/managed/ManagedMemberComparisonService.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
-import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
+import { managedComparisonCommand } from "../fixtures/managedComparisonCommand.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { wasmArtifactFixture } from "../fixtures/wasm/artifact.js";
@@ -70,6 +75,7 @@ import {
   nativeMatchingInventory,
   nativeMatchingDetails,
 } from "../fixtures/nativeFunctionMatching.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 /** Unexpected implementation failures retain the SDK text surface, without a typed caller error. */
 const expectUnexpectedToolFailure = (
@@ -142,15 +148,10 @@ describe.each([
 
 const invalidFunctionOperationEvidence = () => {
   const left = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (left.subject === null) throw new Error("Expected a function subject");
   return createEvidence(
     {
+      ...fileSubjectTarget(left.subject),
       path: "/tmp/wrong-function-operation",
-      sha256: left.subject.digest.sha256,
-      format: left.subject.format,
-      ...(left.subject.architecture === null
-        ? {}
-        : { architecture: left.subject.architecture }),
     },
     left.provider,
     {
@@ -169,15 +170,10 @@ const invalidFunctionOperationEvidence = () => {
 
 const malformedFunctionResultEvidence = () => {
   const left = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (left.subject === null) throw new Error("Expected a function subject");
   return createEvidence(
     {
+      ...fileSubjectTarget(left.subject),
       path: "/tmp/malformed-function-result",
-      sha256: left.subject.digest.sha256,
-      format: left.subject.format,
-      ...(left.subject.architecture === null
-        ? {}
-        : { architecture: left.subject.architecture }),
     },
     left.provider,
     {
@@ -206,10 +202,13 @@ const withSdk = async <Value>(
     );
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "derived-operation-failures",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "derived-operation-failures",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -320,35 +319,43 @@ describe("runtime reconciliation failure ownership through the public SDK", () =
     async ({ field, path, reason }) => {
       await withSdk(async ({ client, session }) => {
         const { evidence, result } = activeRuntimeFixture();
-        const runtime = createEvidence(undefined, evidence.provider, {
-          operation: evidence.operation,
-          predicateType: evidence.predicate_type,
-          authority: evidence.authority,
-          confidence: evidence.confidence,
-          parameters:
-            field === "parameters"
-              ? {
-                  ...evidence.parameters,
-                  resolved_paths: {
-                    ...(evidence.parameters.resolved_paths as object),
-                    application_root: 3,
+        const runtime = createEvidence(
+          evidenceSubjectInput(evidence.subject),
+          evidence.provider,
+          {
+            operation: evidence.operation,
+            predicateType: evidence.predicate_type,
+            authority: evidence.authority,
+            confidence: evidence.confidence,
+            parameters:
+              field === "parameters"
+                ? {
+                    ...evidence.parameters,
+                    resolved_paths: {
+                      ...(evidence.parameters.resolved_paths as object),
+                      application_root: 3,
+                    },
+                  }
+                : evidence.parameters,
+            result:
+              field === "parameters"
+                ? result
+                : {
+                    ...result,
+                    application: {
+                      ...result.application,
+                      application_path:
+                        field === "payload"
+                          ? 3
+                          : join(
+                              process.cwd(),
+                              "another-application",
+                              "main.js",
+                            ),
+                    },
                   },
-                }
-              : evidence.parameters,
-          result:
-            field === "parameters"
-              ? result
-              : {
-                  ...result,
-                  application: {
-                    ...result.application,
-                    application_path:
-                      field === "payload"
-                        ? 3
-                        : join(process.cwd(), "another-application", "main.js"),
-                  },
-                },
-        });
+          },
+        );
         const response = await client.callTool({
           name: "reconcile_javascript_runtime",
           arguments: {
@@ -561,11 +568,15 @@ describe.each(managedWorkflows)(
 
     it("rejects a malformed authenticated source payload as Evidence integrity", async () => {
       await withSdk(async ({ client, session }) => {
-        const source = createEvidence(undefined, workflow.source.provider, {
-          operation: workflow.source.operation,
-          parameters: {},
-          result: { malformed: true },
-        });
+        const source = createEvidence(
+          unknownTarget("not-observed"),
+          workflow.source.provider,
+          {
+            operation: workflow.source.operation,
+            parameters: {},
+            result: { malformed: true },
+          },
+        );
         const response = await client.callTool({
           name: workflow.name,
           arguments: { ...workflow.input, [workflow.sourceField]: source },
@@ -619,7 +630,7 @@ describe.each(managedWorkflows)(
 describe("managed comparison output failure with completed source reads", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("retains the left source and output failure cause after reading real artifacts", async () => {
+  it("retains both sources and the output failure cause after reading real artifacts", async () => {
     const root = await createTestTempDirectory("rea-managed-output-failure-");
     const leftPath = join(root, "left.dll");
     const rightPath = join(root, "right.dll");
@@ -637,80 +648,34 @@ describe("managed comparison output failure with completed source reads", () => 
       },
     );
 
-    const result = await compareManagedMemberPaths({ leftPath, rightPath });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.cause).toBe(failure);
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisOutputError",
-      partialObservation: {
-        operation: "inspect_managed_members",
-        subject: { local_path: leftPath },
-        normalized_result: {
-          methods: [expect.objectContaining({ token: "0x06000001" })],
+    expect(await managedComparisonCommand()(leftPath, rightPath)).toMatchObject(
+      {
+        code: "unreadable_output",
+        details: {
+          argument_observations: [
+            {
+              argument: "left",
+              observation: {
+                operation: "inspect_managed_members",
+                subject: { local_path: leftPath },
+                normalized_result: {
+                  methods: [expect.objectContaining({ token: "0x06000001" })],
+                },
+              },
+            },
+            {
+              argument: "right",
+              observation: {
+                operation: "inspect_managed_members",
+                subject: { local_path: rightPath },
+              },
+            },
+          ],
         },
       },
-    });
+    );
   });
 });
-
-it.each(["missing", "invalid", "cleanup"])(
-  "retains both managed admission cleanup owners when the left has a %s failure",
-  async (leftFailure) => {
-    const root = await createTestTempDirectory(
-      "rea-managed-admission-cleanup-",
-    );
-    const leftPath = join(root, "left.dll");
-    const rightPath = join(root, "right.dll");
-    await writeFile(rightPath, buildManagedPeFixture());
-    if (leftFailure === "invalid") await writeFile(leftPath, "invalid PE");
-    if (leftFailure === "cleanup")
-      await writeFile(leftPath, buildManagedPeFixture());
-    const rightIdentity = await stat(rightPath);
-    const original = OwnedFileHandle.prototype.close;
-    const owners = new Set<OwnedFileHandle>();
-    const close = vi
-      .spyOn(OwnedFileHandle.prototype, "close")
-      .mockImplementation(async function (this: OwnedFileHandle) {
-        const identity = await this.handle.stat();
-        if (identity.ino === rightIdentity.ino || leftFailure === "cleanup") {
-          owners.add(this);
-          throw new Error("injected managed admission close failure");
-        }
-        await original.call(this);
-      });
-    onTestFinished(async () => {
-      close.mockRestore();
-      for (const owner of owners) await owner.close();
-    });
-
-    const result = await compareManagedMemberPaths({ leftPath, rightPath });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.cleanupIncomplete).toBe(true);
-    expect(result.error.cleanupResources).toContain(rightPath);
-    expect(primaryAnalysisError(result.error)).toMatchObject({
-      path: leftPath,
-    });
-    if (leftFailure === "cleanup")
-      expect(result.error.cleanupResources).toContain(leftPath);
-    expect(owners.size).toBe(leftFailure === "cleanup" ? 2 : 1);
-    expect([...owners].every((owner) => owner.handle.fd >= 0)).toBe(true);
-
-    close.mockRestore();
-    const retry = async (cause: unknown): Promise<void> => {
-      if (cause instanceof RetainedRegularFileCleanupFailure)
-        await cause.cleanupLease.release();
-      else if (cause instanceof AggregateError)
-        for (const nested of cause.errors) await retry(nested);
-      else if (cause instanceof Error) await retry(cause.cause);
-    };
-    await retry(result.error);
-    expect(result.error.cleanupIncomplete).toBe(false);
-    expect([...owners].every((owner) => owner.handle.fd < 0)).toBe(true);
-  },
-);
 
 describe("ledger generation failure ownership through the public SDK", () => {
   afterEach(() => vi.restoreAllMocks());

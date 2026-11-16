@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 
 /** Read and validate the complete typed diagnostic in an MCP tool failure. */
 export function parseMcpToolError(result: CallToolResult) {

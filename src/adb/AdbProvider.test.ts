@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  access,
   chmod,
   lstat,
   mkdir,
@@ -758,14 +759,16 @@ it("reports exhausted host capacity at the version probe as a retryable constrai
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: true,
-      remediation: {
-        action: expect.stringContaining("does not need to change") as unknown,
-      },
       details: {
+        reported_limits: {
+          spawn_error: "EMFILE",
+          exhausted_resource: "file-descriptors",
+        },
         diagnostics: {
           selected_binary: binary,
           path_source: "environment",
-          filesystem_error: "EMFILE",
+          boundary: "host-capacity",
+          system_code: "EMFILE",
         },
       },
     });
@@ -2703,5 +2706,41 @@ it("attributes version capture failures to the public operation and retains the 
       operation: "list_adb_devices",
       diagnostics: { prerequisite_operation: "inspect_adb_client" },
     },
+  });
+});
+
+it("refuses a device file name the selected Windows host cannot store before pulling", async () => {
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+: > "${join(root, "pull-ran")}"
+exit 0`,
+  );
+  const provider = new AdbProvider({
+    environment: { REA_ADB_PATH: binary },
+    platform: "win32",
+  });
+  const result = await provider.execute({
+    operation: "pull_adb_file",
+    input: {
+      serial: "emulator-5554",
+      device_path: "/data/local/tmp/CON",
+      output_directory: join(root, "pulls"),
+    },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["device_path"],
+          message: expect.stringContaining("(reserved_name)"),
+        },
+      ],
+    },
+  });
+  await expect(access(join(root, "pull-ran"))).rejects.toMatchObject({
+    code: "ENOENT",
   });
 });

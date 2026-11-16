@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished, vi } from "vitest";
 
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -14,6 +14,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const scope = {
   pid: 123,
@@ -51,7 +52,10 @@ const connectNativeUi = async () => {
     new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin"),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-ui-facts", version: "1" });
+  const client = new Client(
+    { name: "native-ui-facts", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
     factory.mockRestore();

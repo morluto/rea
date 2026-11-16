@@ -51,6 +51,12 @@ cliTest(
       truncated: true,
       omitted_nodes: 0,
     });
+    // The graph records the unknown ceilings that stopped retention by
+    // contract field; the CLI names their options outside the record.
+    const controls = result.semantic_graph.coverage.controls ?? [];
+    expect(controls.length).toBeGreaterThan(0);
+    for (const control of controls)
+      expect(control.parameter).toMatch(/^max_semantic_unknowns/u);
     expect(
       result.semantic_graph.coverage.omitted_unknown_occurrences!.reduce(
         (sum, row) => sum + row.occurrences,

@@ -65,6 +65,6 @@ export const ghidraPowerPcProfileParameters = (
       type: target.powerpc.type,
       flags: target.powerpc.flags,
     },
-    powerpc_support_lane: "elf32-be-exec-generic-v1",
+    powerpc_support_lane: "elf32-be-exec-generic",
   };
 };

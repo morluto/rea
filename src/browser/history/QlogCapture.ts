@@ -12,8 +12,8 @@ import {
   CaptureRedaction,
   captureObject,
   capturePointer,
-  isCaptureCredentialHeader,
 } from "./CaptureRedaction.js";
+import { isTransportCredentialHeader } from "../../domain/explicitSensitiveValues.js";
 import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 
 const MAX_VARINT = (1n << 62n) - 1n;
@@ -430,7 +430,7 @@ const project = (
       /^\/data\/frame\/headers\/\d+\/value$/u.test(pointer) &&
       typeof parent?.name === "string";
     if (
-      (header && isCaptureCredentialHeader(String(parent?.name))) ||
+      (header && isTransportCredentialHeader(String(parent?.name))) ||
       qlogToken(eventName, pointer, parent)
     )
       return redactor.credential(pointer);

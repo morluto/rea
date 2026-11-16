@@ -1,7 +1,6 @@
 import { contractNamed } from "./contractCliDescription.js";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import {
   registerContractCommand,
@@ -21,7 +20,6 @@ export const registerDecompileDirectoryCommand = (
     logger,
     contractNamed(ENHANCED_TOOL_CONTRACTS, "decompile_all"),
     {
-      command: CLI_COMMANDS.decompileAll,
       description:
         "Write every function's pseudocode into a directory and return a manifest",
       sessionTarget: nativeTarget(
