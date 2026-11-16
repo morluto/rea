@@ -663,13 +663,47 @@ describe("interactive setup journey", () => {
       ],
       false,
       agentActions,
-      ["codex"],
+      { initialClientIds: ["codex"] },
     );
     expect(result.decision.selectedActionIds).toEqual([
       "configure_client:codex",
       "install_skill",
     ]);
   });
+});
+
+describe("interactive setup client hints", () => {
+  it.for(["unknown", "invalid"] as const)(
+    "names an unresolved %s client location instead of a repair (#11697)",
+    async (status) => {
+      const unresolved = {
+        client: {
+          name: "claude_desktop",
+          format: "json",
+          configPath: [],
+          marker: [],
+          configPathError:
+            "Found migrated Claude Desktop storage. Register REA manually in the active file.",
+        },
+        detected: true,
+        configured: false,
+        status,
+      };
+      const result = await runJourney(
+        [step("Which agents should use REA?", "\r")],
+        false,
+        [actions[0]],
+        { states: [unresolved, ...clientStates] },
+      );
+      expect(result.output).toContain(
+        "Configuration location unresolved · register REA manually",
+      );
+      expect(result.output).not.toContain(
+        "Existing configuration needs repair before setup",
+      );
+      expect(result.decision.selectedActionIds).toEqual([]);
+    },
+  );
 });
 
 describe("interactive setup completion", () => {
@@ -831,13 +865,19 @@ const runJourney = async (
   steps: readonly JourneyStep[],
   accessible = false,
   journeyActions: readonly object[] = agentActions,
-  initialClientIds: readonly string[] = [],
+  {
+    initialClientIds = [],
+    states = clientStates,
+  }: {
+    readonly initialClientIds?: readonly string[];
+    readonly states?: readonly object[];
+  } = {},
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
     'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
     `const actions = ${JSON.stringify(journeyActions)};`,
-    `const context = ${JSON.stringify({ stage: "select", clientStates, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
+    `const context = ${JSON.stringify({ stage: "select", clientStates: states, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
     `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context);`,
     "if (!decision.cancelled && decision.selectedActionIds.length > 0) {",
     "  const selected = new Set(decision.selectedActionIds);",
