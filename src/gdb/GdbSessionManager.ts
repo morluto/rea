@@ -611,6 +611,7 @@ export class GdbSessionManager {
           providerId: "gdb",
           operation: "start_gdb_session",
           command,
+          fixedArguments: true,
           selection: "REA_GDB_COMMAND",
           details: { cause },
           unavailable: (unavailable, details) =>

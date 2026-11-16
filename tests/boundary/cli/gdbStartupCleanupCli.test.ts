@@ -166,7 +166,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
         message: expect.stringContaining(JSON.stringify(selected)),
         remediation: { action: expect.stringContaining("REA_GDB_COMMAND") },
         details: {
-          reason: `Could not launch the selected GDB executable ${JSON.stringify(selected)} (${code}).`,
+          reason: expect.stringContaining(JSON.stringify(selected)),
           diagnostics: {
             boundary: "provider-launch",
             command: selected,

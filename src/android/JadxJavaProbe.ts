@@ -251,6 +251,7 @@ export const inspectJadxJava = async (
           primary = classifyLaunchFailure(hostConstraint, {
             providerId: "jadx",
             operation,
+            fixedArguments: true,
             command: java,
             details: {
               cause,

@@ -301,6 +301,7 @@ const observeGhidraJava = async (
       primary = classifyLaunchFailure(launch, {
         providerId: "ghidra",
         operation: "ghidra:java",
+        fixedArguments: true,
         command,
         details: { cause, diagnostics: { java_executable: command } },
       });

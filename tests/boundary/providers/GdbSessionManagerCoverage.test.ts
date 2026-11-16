@@ -1962,23 +1962,33 @@ it.each([
     code: "EAGAIN",
     tag: "AnalysisResourceConstraintError",
     projected: { code: "resource_constraint", retryable: true },
-    message: "process capacity (EAGAIN)",
+    boundary: "host-capacity",
   },
   {
     code: "E2BIG",
     tag: "AnalysisResourceConstraintError",
-    projected: { code: "resource_constraint", retryable: false },
-    message: "process launch limit (E2BIG)",
+    // GDB's arguments are fixed, so the repair names the environment.
+    projected: {
+      code: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.not.stringContaining("through a file"),
+      },
+    },
+    boundary: "provider-launch",
   },
   {
     code: "EIO",
     tag: "AnalysisCapabilityUnavailableError",
-    projected: { code: "capability_unavailable" },
-    message: "EIO from spawn fake-gdb",
+    projected: {
+      code: "capability_unavailable",
+      remediation: { action: expect.stringContaining("REA_GDB_COMMAND") },
+    },
+    boundary: "provider-launch",
   },
 ])(
   "classifies a $code launch failure once without retrying another MI dialect",
-  async ({ code, tag, projected, message }) => {
+  async ({ code, tag, projected, boundary }) => {
     let attempts = 0;
     const manager = managerWithFakeSpawner(async () => {
       attempts += 1;
@@ -1991,11 +2001,15 @@ it.each([
     expect(started.ok).toBe(false);
     if (!started.ok) {
       expect(started.error._tag).toBe(tag);
-      expect(started.error.message).toContain(message);
       expect(projectAnalysisError(started.error)).toMatchObject({
         ...projected,
         details: {
-          diagnostics: { system_code: code, command: "fake-gdb" },
+          diagnostics: {
+            boundary,
+            system_code: code,
+            syscall: "spawn fake-gdb",
+            command: "fake-gdb",
+          },
         },
       });
     }

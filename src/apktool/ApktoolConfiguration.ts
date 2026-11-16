@@ -527,6 +527,7 @@ const versionProbeFailure = (
       providerId: "apktool",
       operation: "inspect_apktool_client",
       command: selection.command,
+      fixedArguments: true,
       selection: APKTOOL_COMMAND_ENV,
       details: {
         cause,
