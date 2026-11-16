@@ -104,10 +104,10 @@ export default {
         name: "captureProviderEnvironment",
       },
     ]),
-    ...mutationRanges("src/server/registerReverseEngineeringTools.ts", [
+    ...mutationRanges("src/server/externalMutationToolHandler.ts", [
       {
         kind: "declaration",
-        name: "registerReverseEngineeringTools",
+        name: "createExternalMutationToolHandler",
       },
     ]),
     ...mutationRanges("src/gdb/GdbSessionManager.ts", [

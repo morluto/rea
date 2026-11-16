@@ -1,5 +1,4 @@
 {
   "src/server/registerDesktopBuildTools.ts": 2,
-  "src/server/registerElectronTools.ts": 6,
-  "src/server/registerReverseEngineeringTools.ts": 2
+  "src/server/registerElectronTools.ts": 6
 }

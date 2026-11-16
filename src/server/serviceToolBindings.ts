@@ -128,6 +128,10 @@ import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js"
 import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
+  resolveRizinCommandRequest,
+  type ReverseEngineeringService,
+} from "../application/reverse/ReverseEngineeringService.js";
+import {
   GDB_SESSION_TOOLS,
   RIZIN_DEBUG_SESSION_TOOLS,
   unknownDebuggerSessionError,
@@ -266,6 +270,15 @@ export interface RizinDebugToolOptions {
   readonly manager: Pick<
     RizinDebugSessionManager,
     "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** objdump and Rizin commands, and the session a Rizin command may change. */
+export interface ReverseEngineeringToolOptions {
+  readonly service: Pick<
+    ReverseEngineeringService,
+    "inspectWithObjdump" | "executeRizinCommandValidated" | "retryCleanup"
   >;
   readonly session: ExternalMutationAdmission | undefined;
 }
@@ -1299,6 +1312,34 @@ const SERVICE_TOOL_BINDINGS = {
       value: async (input) => session.verifyUnknownResolution(input.unknown_id),
     },
   })) satisfies Bind<SessionDerivedToolOptions>,
+  // objdump inspects under analysis admission. A Rizin command may change
+  // the bound artifact, so it runs under external-mutation admission once
+  // its request is valid and earlier inspection cleanup has settled; a
+  // refusal before then leaves the bound target open.
+  reverseEngineering: (({ service, session }, retention) => ({
+    inspect_with_objdump: {
+      admission: "sdk",
+      run: (input, options) =>
+        service.inspectWithObjdump(input, options, retention),
+    },
+    execute_rizin_command: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        retryCleanup: () => service.retryCleanup("execute_rizin_command"),
+        prepare: async (input) => {
+          const request = resolveRizinCommandRequest(input);
+          if (!request.ok) return request;
+          const cleanup = await service.retryCleanup("execute_rizin_command");
+          if (!cleanup.ok) return cleanup;
+          return ok((signal: AbortSignal) =>
+            service.executeRizinCommandValidated(request.value, { signal }),
+          );
+        },
+      },
+    },
+  })) satisfies Bind<ReverseEngineeringToolOptions>,
   // Rizin debugger sessions may change the bound artifact; each command
   // runs under external-mutation admission and keeps a failed cleanup owned.
   rizinDebug: (({ manager, session }) => {
