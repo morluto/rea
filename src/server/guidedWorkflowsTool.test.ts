@@ -10,7 +10,9 @@ import { PROMPT_CONTRACTS } from "../contracts/promptContracts.js";
 import { createCatalogDigests } from "../contracts/catalog/catalogIdentity.js";
 import { TOOL_CONTRACTS, toolContract } from "../contracts/toolContracts.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
-import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
+import { registerServiceTools } from "./serviceToolBindings.js";
+import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
+import { silentLogger } from "../logger.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 
@@ -39,7 +41,11 @@ const fixture = async (mcp: TestMcp, families?: ReadonlySet<string>) => {
   registerGuidedPrompts(server, {
     execute,
   } as unknown as AnalysisOperationPort);
-  registerGuidedWorkflowTool(server);
+  registerServiceTools(
+    server,
+    { guidedWorkflows: promptsForToolFamilies(server.advertisedToolFamilies) },
+    { logger: silentLogger },
+  );
   const client = await mcp.connect(server, {
     name: "guided-workflow-client",
     version: "1",

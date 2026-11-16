@@ -9,12 +9,12 @@ import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
+import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
@@ -30,13 +30,10 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
-import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
-import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
@@ -393,17 +390,10 @@ export const createServer = (
         },
         { logger: toolLogger, recordEvidence, evidenceById },
       );
-      registerBinaryDiagnosticsTools(
-        server,
-        binaryLayout,
-        toolLogger,
-        recordEvidence,
-        evidenceById,
-        analysisAdmission,
-      );
       registerServiceTools(
         server,
         {
+          binaryLayout,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
@@ -520,16 +510,17 @@ export const createServer = (
         },
         contractTools,
       );
-      registerBrowserScenarioTool(server, {
-        ...common,
-        evidenceById,
-        provider: options.browserScenarioCapture,
-        loadFailure:
-          options.optionalProviderLoadFailures?.browserScenarioCapture,
-      });
       registerServiceTools(
         server,
-        { webRuntime, webNetworkCapture },
+        {
+          browserScenario: {
+            provider: options.browserScenarioCapture,
+            loadFailure:
+              options.optionalProviderLoadFailures?.browserScenarioCapture,
+          },
+          webRuntime,
+          webNetworkCapture,
+        },
         contractTools,
       );
     },
@@ -548,12 +539,18 @@ export const createServer = (
           options.optionalProviderLoadFailures?.electronActiveObservation,
       }),
     "javascript-runtime": () =>
-      registerJavaScriptRuntimeObservationTools(server, {
-        ...common,
-        runtime: options.javascriptRuntimeObservation,
-        loadFailure:
-          options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
-      }),
+      registerServiceTools(
+        server,
+        {
+          javascriptRuntime: {
+            runtime: options.javascriptRuntimeObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures
+                ?.javascriptRuntimeObservation,
+          },
+        },
+        contractTools,
+      ),
     application: () => {
       registerServiceTools(
         server,
@@ -569,10 +566,12 @@ export const createServer = (
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
           applicationWorkflows: { resources: artifactResources },
+          guidedWorkflows: promptsForToolFamilies(
+            server.advertisedToolFamilies,
+          ),
         },
         contractTools,
       );
-      registerGuidedWorkflowTool(server);
       registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {

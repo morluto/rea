@@ -1,5 +1,5 @@
 import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
-import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
+import { runtimeNativeMatchingAllowance } from "../config/runtimeAnalysisSettings.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -144,11 +144,24 @@ export const registerSessionTools = (
       withAdmittedAnalysis: withAdmittedAnalysis({ kind: "session", session }),
     },
   );
-  registerNativeFunctionMatchingTool(
+  // Native matching records in the session itself and reads each accepted
+  // call's settings snapshot over the launch value.
+  registerServiceTools(
     server,
-    session,
-    logger,
-    options.environment,
+    {
+      nativeFunctionMatching: {
+        session,
+        allowance: runtimeNativeMatchingAllowance(
+          options.environment,
+          server.analysisSettings?.read,
+        ),
+      },
+    },
+    {
+      logger,
+      recordEvidence: (evidence) => session.recordEvidence(evidence),
+      withAdmittedAnalysis: withAdmittedAnalysis({ kind: "session", session }),
+    },
   );
 };
 
