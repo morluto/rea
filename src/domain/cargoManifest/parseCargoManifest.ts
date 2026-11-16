@@ -1,9 +1,13 @@
 import type { AnalysisError } from "../analysisErrorBase.js";
 import {
   AnalysisInputError,
-  AnalysisResourceConstraintError,
+  type AnalysisResourceConstraintError,
+  fixedCeilingConstraint,
 } from "../analysisErrorCore.js";
+import { Budget } from "../budget.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
+import { isRecord } from "../../kernel/isRecord.js";
 import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -17,9 +21,7 @@ type CargoManifestArtifact = CargoManifest["artifact"];
 type DiagnosticCode = CargoManifest["diagnostics"][number]["code"];
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? value : undefined;
 const pointerPart = (value: string): string =>
   value.replaceAll("~", "~0").replaceAll("/", "~1");
 const identity = (prefix: string, facts: unknown) =>
@@ -60,6 +62,26 @@ const tableFailure = (
 
 /** One retained string, charged at its expanded UTF-16 length before it is kept. */
 const expandedBytes = (value: string): number => value.length * 2;
+
+/** The retained-facts allowance is a fixed ceiling; only a smaller manifest fits. */
+const retainedFactsRefusal = (
+  attemptedBytes: number,
+): AnalysisResourceConstraintError =>
+  fixedCeilingConstraint(
+    CARGO_MANIFEST_OPERATION,
+    "memory",
+    `Cargo manifest declarations retain facts above the ${String(CARGO_MANIFEST_FACT_BYTES)}-byte retained-facts representation allowance; the last inventory step would add ${String(attemptedBytes)} bytes.`,
+    fixedAllowanceOptions(
+      "The Cargo manifest retained-facts allowance",
+      "bytes",
+      {
+        limit: CARGO_MANIFEST_FACT_BYTES,
+        unit: "bytes",
+        narrowing:
+          "Select a smaller complete manifest; reply paging does not increase the parser's retained-facts allowance.",
+      },
+    ).fixedAllowance,
+  );
 
 /**
  * Expanded size of a retained value. Strings are charged directly; arrays and
@@ -246,7 +268,7 @@ class CargoInventory {
    * unknown instead of falling back to the pre-2024 default.
    */
   packageEditionUnreadable = false;
-  #retainedBytes = 0;
+  readonly #retainedFacts = new Budget(CARGO_MANIFEST_FACT_BYTES);
 
   constructor(readonly artifact: CargoManifestArtifact) {}
 
@@ -267,22 +289,9 @@ class CargoInventory {
   }
 
   reserve(bytes: number): Result<void, AnalysisError> {
-    this.#retainedBytes += bytes;
-    return this.#retainedBytes <= CARGO_MANIFEST_FACT_BYTES
+    return this.#retainedFacts.tryCharge(bytes)
       ? ok(undefined)
-      : err(
-          new AnalysisResourceConstraintError(
-            CARGO_MANIFEST_OPERATION,
-            "memory",
-            "Cargo manifest declarations exceed the retained-facts representation allowance.",
-            { representation_bytes: CARGO_MANIFEST_FACT_BYTES },
-            {
-              retryable: false,
-              remediationAction:
-                "Select a smaller complete manifest; reply paging does not increase the parser's retained-facts allowance.",
-            },
-          ),
-        );
+      : err(retainedFactsRefusal(bytes));
   }
 
   diagnostic(

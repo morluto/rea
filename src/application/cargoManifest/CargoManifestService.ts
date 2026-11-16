@@ -1,27 +1,29 @@
 import { isAbsolute } from "node:path";
 import { constants } from "node:buffer";
 import { parse as parseToml } from "smol-toml";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import { readStableArtifact } from "../../resources/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
   projectStableArtifactFailure,
+  readStableArtifact,
   stableArtifactInputRecovery,
-} from "../../resources/StableArtifactFailure.js";
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+} from "../../resources/index.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
+  type AnalysisResourceConstraintError,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import {
+  CARGO_MANIFEST_MAX_FILE_BYTES,
   CARGO_MANIFEST_OPERATION as operation,
   CARGO_MANIFEST_PROVIDER,
   type CargoManifest,
@@ -49,7 +51,7 @@ const inputFailure = (message: string, cause?: unknown) =>
     [{ path: ["path"], reason: "invalid_format", message }],
   );
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = strictUtf8Decoder("preserve");
 
 /** smol-toml is a dependency of the client-configuration owner, not of a Cargo workflow. */
 const decodeManifest = (
@@ -85,57 +87,36 @@ const decodeManifest = (
   }
 };
 
-/** Keep the reader's typed reasons instead of flattening every failure into "io". */
-const readFailure = (
-  failure: unknown,
-  input: InspectCargoManifestInput,
-): AnalysisError => {
-  const { cause, origin } = artifactFilePrimaryFacts(failure);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
+/** The manifest input budget is a fixed ceiling; only a smaller file fits. */
+const manifestFileSizeRefusal = (
+  cause: ArtifactReaderFailure,
+  details: AnalysisErrorOptions,
+): AnalysisResourceConstraintError =>
+  fixedCeilingConstraint(
+    operation,
+    cause.boundary ?? "file-size",
+    cause.message,
+    fixedAllowanceOptions(
+      "The Cargo manifest input allowance",
+      "input",
+      { limit: CARGO_MANIFEST_MAX_FILE_BYTES, unit: "bytes" },
+    ).fixedAllowance,
+    details,
+  );
+
+/** What a failure none of the shared classifications recognised reports. */
+const manifestReadRefusal = (cause: unknown, path: string) =>
+  cause instanceof Error &&
+  "code" in cause &&
+  (cause.code === "EACCES" || cause.code === "EPERM")
+    ? new AnalysisAccessDeniedError(operation, path, cause.code, { cause })
+    : new ArtifactOperationError(
         operation,
-        input.path,
-        cause.message,
+        "io",
+        undefined,
+        "Manifest read failed.",
         { cause },
       );
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        cause.boundary ?? "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            "Select a manifest within max_file_bytes; reply paging does not change this file admission.",
-        },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return inputFailure(cause.message, cause);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-  }
-  return new ArtifactOperationError(
-    operation,
-    "io",
-    undefined,
-    "Manifest read failed.",
-    { cause: failure },
-  );
-};
 
 const readManifest = async (
   input: InspectCargoManifestInput,
@@ -154,7 +135,21 @@ const readManifest = async (
     );
     return ok(source);
   } catch (failure: unknown) {
-    const primary = readFailure(failure, input);
+    const primary = classifyProviderFailure(failure, {
+      providerId: CARGO_MANIFEST_PROVIDER.id,
+      operation,
+      recognise: (cause) =>
+        cause instanceof ArtifactReaderFailure &&
+        (cause.reason === "path" || cause.reason === "format")
+          ? inputFailure(cause.message, cause)
+          : undefined,
+      file: {
+        path: input.path,
+        description: "Cargo manifest",
+        fileSize: manifestFileSizeRefusal,
+      },
+      unclassified: (cause) => manifestReadRefusal(cause, input.path),
+    });
     return err(
       projectStableArtifactFailure(
         failure,
