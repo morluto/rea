@@ -7,7 +7,7 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "retains admitted redirect response facts and historical omission through %s",
+  "retains admitted redirect response facts exactly on redirect events through %s",
   async (surface, { cli }) => {
     const browser = await startFakeCdpBrowser({
       eventsBeforeReply: ["Page.setLifecycleEventsEnabled"],
@@ -86,15 +86,31 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       }),
     );
     expect(JSON.stringify(source)).not.toContain("discard-redirect-");
-    const historical = {
+    const omitted = {
       ...result,
       timeline: result.timeline.map(({ redirect_response, ...row }) => {
         void redirect_response;
         return row;
       }),
     };
-    expect(webObservationSessionSchema.parse(historical)).toStrictEqual(
-      historical,
-    );
+    const misplaced = {
+      ...result,
+      timeline: result.timeline.map((row) => ({
+        ...row,
+        type: "lifecycle" as const,
+      })),
+    };
+    for (const malformed of [omitted, misplaced])
+      expect(webObservationSessionSchema.safeParse(malformed)).toMatchObject({
+        success: false,
+        error: {
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              message:
+                "redirect_response is present exactly on redirect events.",
+            }),
+          ]),
+        },
+      });
   },
 );

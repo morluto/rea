@@ -4,10 +4,10 @@ import { pathToFileURL } from "node:url";
 import {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
-} from "../../src/artifacts/ArtifactFileSource.ts";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.ts";
+  ArtifactResourceScope,
+  resolveArtifactSourcePath,
+} from "../../src/resources/index.ts";
 import { readArtifactRange } from "../../src/artifacts/ArtifactCarrierRange.ts";
-import { resolveArtifactSourcePath } from "../../src/artifacts/ArtifactSelectedSource.ts";
 import {
   admitPreview,
   previewRawRasterExperiment,

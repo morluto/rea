@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { readAndroidNativeInventory } from "./AndroidNativeInventory.js";
 import type { JadxToolPort } from "./JadxAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { AndroidNativeDeclarations } from "../domain/android/androidNativeDeclarations.js";
 
 const SNAPSHOT = "/admitted/immutable target.apk";
 
@@ -26,6 +27,11 @@ const inventory = () => ({
     examined_methods: 9,
   },
   unknowns: [] as string[],
+  manifest_splits: {
+    status: "observed",
+    required_split_types: [] as string[],
+    split_required: false,
+  },
 });
 const tools = (value: unknown): JadxToolPort => ({
   json: async (name, input) => {
@@ -54,6 +60,23 @@ it("preserves duplicate native identities from distinct original DEX members", a
   const actual = await readAndroidNativeInventory(tools(source), SNAPSHOT);
   expect(actual.methods).toEqual(source.methods);
   expect(actual.coverage.status).toBe("complete");
+});
+
+it("keeps the manifest's split requirements and unread split facts", async () => {
+  for (const manifest_splits of [
+    {
+      status: "observed",
+      required_split_types: ["base__abi", "base__density"],
+      split_required: true,
+    },
+    { status: "unknown", reason: "Root AndroidManifest.xml is absent" },
+  ] satisfies AndroidNativeDeclarations["manifest_splits"][]) {
+    const source = { ...inventory(), manifest_splits };
+    expect(
+      (await readAndroidNativeInventory(tools(source), SNAPSHOT))
+        .manifest_splits,
+    ).toEqual(manifest_splits);
+  }
 });
 
 it("keeps usable facts and explicit incomplete DEX coverage", async () => {
@@ -87,6 +110,10 @@ it.each([
   },
   (source: ReturnType<typeof inventory>) => {
     source.methods.push({ ...row, source_index: 1, dex_entry: "other.dex" });
+  },
+  // A bridge that predates split facts cannot say whether splits hold code.
+  (source: ReturnType<typeof inventory>) => {
+    delete (source as Partial<typeof source>).manifest_splits;
   },
 ])("rejects malformed or inconsistent producer facts (%#)", async (mutate) => {
   const source = inventory();

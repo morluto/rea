@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   A_ARMORED,
   B_ARMORED,
@@ -613,6 +613,29 @@ describe.skipIf(process.platform === "win32")(
         ok: false,
         error: { field: "capture", reason: expect.stringContaining(reason) },
       });
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an apt release the check cannot reach",
+  () => {
+    it("says the release files could not be checked rather than that apt holds none", async () => {
+      const { root, inspect } = await vendorFixture();
+      const lists = join(root, "lists");
+      await chmod(lists, 0o000);
+      try {
+        const result = await inspect();
+        if (!result.ok) throw new Error(result.error.reason);
+        const repository = result.value.inventory.package.apt_repositories?.[0];
+
+        expect(repository).toMatchObject({
+          signing_key: null,
+          signing_key_reason: `apt's release files for it in ${lists} could not be checked`,
+        });
+      } finally {
+        await chmod(lists, 0o755);
+      }
     });
   },
 );

@@ -1,18 +1,18 @@
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
 import { parseEvidence, createEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import {
-  createDeferred,
   createBinarySessionTargets,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
@@ -27,6 +27,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("aggregates comparison Evidence and records an approved runtime gap", async () => {
   const { session, server, client } = await connected();
@@ -134,12 +135,14 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-close-race", version: "1" });
+  const client = new Client(
+    { name: "investigation-close-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const preparationReached = createDeferred<void>();
-  const closeReached = createDeferred<void>();
-  const releasePreparation = createDeferred<void>();
+  const callPathPreparation = phaseGate();
+  const analysisClose = phaseArrival();
   const send = serverTransport.send.bind(serverTransport);
   let preparationToken: string | number | undefined;
   serverTransport.send = async (message, options) => {
@@ -157,10 +160,9 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
       if (preparationToken === undefined) {
         // The first request cannot advance until this notification is released.
         preparationToken = message.params.progressToken;
-        preparationReached.resolve();
-        await releasePreparation.promise;
+        await callPathPreparation.hold();
       } else if (message.params.progressToken !== preparationToken) {
-        closeReached.resolve();
+        analysisClose.arrive();
       }
     }
   };
@@ -183,11 +185,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
         return response;
       });
     pending.push(request);
-    await awaitAcknowledgement(
-      preparationReached.promise,
-      request,
-      "call-path preparation",
-    );
+    await callPathPreparation.reached(request, "call-path preparation");
 
     let closeSettled = false;
     const closing = client
@@ -201,14 +199,10 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
         return response;
       });
     pending.push(closing);
-    await awaitAcknowledgement(
-      closeReached.promise,
-      closing,
-      "call-path queued close",
-    );
+    await analysisClose.reached(closing, "call-path queued close");
     expect(closeSettled).toBe(false);
 
-    releasePreparation.resolve();
+    callPathPreparation.release();
     const [response, closed] = await Promise.all([request, closing]);
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     expect(closed.isError, JSON.stringify(closed)).not.toBe(true);
@@ -222,7 +216,7 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
     for (const source of input.functions)
       expect(session.hasEvidence(source.evidence_id)).toBe(true);
   } finally {
-    releasePreparation.resolve();
+    callPathPreparation.release();
     await Promise.allSettled(pending);
     await close(session, server, client);
   }
@@ -230,41 +224,29 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
 
 const dossierWithCallees = (addresses: readonly string[]) => {
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("missing dossier subject");
-  return createEvidence(
-    {
-      path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
-      ...(base.subject.architecture === null
-        ? {}
-        : { architecture: base.subject.architecture }),
+  return createEvidence(fileSubjectTarget(base.subject), base.provider, {
+    predicateType: base.predicate_type,
+    operation: base.operation,
+    parameters: base.parameters,
+    result: {
+      ...jsonObjectSchema.parse(base.normalized_result),
+      callees: addresses.map((address) => ({
+        address,
+        name: "next",
+        classification: null,
+        body: {
+          available: false,
+          reason: "The fixture has no callee body-extent observation.",
+        },
+      })),
     },
-    base.provider,
-    {
-      predicateType: base.predicate_type,
-      operation: base.operation,
-      parameters: base.parameters,
-      result: {
-        ...jsonObjectSchema.parse(base.normalized_result),
-        callees: addresses.map((address) => ({
-          address,
-          name: "next",
-          classification: null,
-          body: {
-            available: false,
-            reason: "The fixture has no callee body-extent observation.",
-          },
-        })),
-      },
-      rawResult: base.raw_result,
-      confidence: base.confidence,
-      authority: base.authority,
-      limitations: base.limitations,
-      locations: base.locations,
-      evidenceLinks: base.evidence_links,
-    },
-  );
+    rawResult: base.raw_result,
+    confidence: base.confidence,
+    authority: base.authority,
+    limitations: base.limitations,
+    locations: base.locations,
+    evidenceLinks: base.evidence_links,
+  });
 };
 
 it.each([
@@ -347,7 +329,8 @@ it.each([
   "preserves $label coverage through public analyze_function then build_call_path",
   async (scenario) => {
     const base = FUNCTION_COMPARISON_EXAMPLE.left;
-    if (base.subject === null) throw new Error("missing fixture subject");
+    if (base.subject.identity.kind !== "file")
+      throw new Error("missing fixture subject");
     const provider = {
       id: "fixture",
       name: "Fixture analysis provider",
@@ -398,8 +381,10 @@ it.each([
         provider,
         subject: {
           local_path: path,
-          digest: { sha256: session.activeTarget()?.sha256 },
-          format: session.activeTarget()?.format,
+          identity: {
+            sha256: session.activeTarget()?.sha256,
+            format: session.activeTarget()?.format,
+          },
         },
         raw_result: rawResult,
         limitations: scenario.providerLimitations,
@@ -635,7 +620,10 @@ const connected = async (analysis?: AnalysisOperationPort) => {
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-test", version: "1" });
+  const client = new Client(
+    { name: "investigation-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -662,11 +650,7 @@ it("keeps an aggregate function reconstruction unknown while a constituent dimen
       callees: { status: "complete" },
     } as const;
     const left = createEvidence(
-      {
-        path: fixture.subject!.local_path,
-        sha256: fixture.subject!.digest.sha256,
-        format: fixture.subject!.format,
-      },
+      fileSubjectTarget(fixture.subject),
       fixture.provider,
       {
         operation: fixture.operation,

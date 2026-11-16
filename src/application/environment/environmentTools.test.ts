@@ -6,6 +6,7 @@ import type {
   RecordedExchange,
 } from "./environmentSource.js";
 import {
+  advertisedEnvironmentTool,
   environmentCard,
   environmentToolArguments,
   environmentToolDefinitions as prepareDefinitions,
@@ -594,11 +595,9 @@ describe("environmentCard", () => {
         "description",
         "inputSchema",
       ]);
-      expect(entry).toEqual({
-        name: definitions[index]?.name,
-        description: definitions[index]?.description,
-        inputSchema: definitions[index]?.inputSchema,
-      });
+      const definition = definitions[index];
+      if (definition === undefined) throw new Error(`Missing tool ${index}`);
+      expect(entry).toEqual(advertisedEnvironmentTool(definition));
     }
     expect(environmentCard("renamed", definitions).name).toBe("renamed");
   });

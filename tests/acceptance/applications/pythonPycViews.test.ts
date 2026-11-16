@@ -7,7 +7,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { pythonPycSchema } from "../../../src/domain/python/pythonPyc.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   marshalCode,
   pythonPycHeader,

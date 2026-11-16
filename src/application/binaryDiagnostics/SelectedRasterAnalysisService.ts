@@ -4,14 +4,19 @@ import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { REA_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../../providers/classifyProviderFailure.js";
 import {
   AnalysisOutputError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
@@ -21,8 +26,9 @@ import {
   type Evidence,
 } from "../../domain/evidence.js";
 import { err, type Result } from "../../domain/result.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   withArtifactFileHandle,
   bindArtifactFileCleanup,
   ArtifactFileCleanupFailure,
@@ -30,9 +36,8 @@ import {
   assertArtifactReadActive,
   artifactFileCancellationCause,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+} from "../../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
@@ -158,26 +163,33 @@ export class SelectedRasterAnalysisService<
         : undefined;
     };
     let admitted = false;
-    const readFailure = (cause: unknown): AnalysisError => {
-      if (cause instanceof AnalysisError) return cause;
-      if (cause instanceof Error && "code" in cause) {
+    const failureDialect: ProviderFailureDialect = {
+      providerId: REA_WORKFLOW_PROVIDER.id,
+      operation: this.definition.operation,
+      // Admission owns the distinction between an unavailable selected path
+      // and a path that disappeared after its identity was admitted.
+      recognise: (cause, details) => {
+        if (!(cause instanceof Error) || !("code" in cause)) return undefined;
         if (cause.code === "EACCES" || cause.code === "EPERM")
           return new AnalysisAccessDeniedError(
             this.definition.operation,
             input.path,
             cause.code,
-            { cause },
+            { ...details, cause },
           );
         const pathErrno = artifactSelectedPathErrno(cause);
-        if (pathErrno !== undefined)
-          return admitted
-            ? new AnalysisArtifactChangedError(
-                this.definition.operation,
-                input.path,
-                "Selected file path changed during raster candidate inspection.",
-                { cause },
-              )
-            : new AnalysisInputError(this.definition.operation, { cause }, [
+        if (pathErrno === undefined) return undefined;
+        return admitted
+          ? new AnalysisArtifactChangedError(
+              this.definition.operation,
+              input.path,
+              "Selected file path changed during raster candidate inspection.",
+              { ...details, cause },
+            )
+          : new AnalysisInputError(
+              this.definition.operation,
+              { ...details, cause },
+              [
                 {
                   path: ["path"],
                   reason: "invalid_value",
@@ -188,15 +200,17 @@ export class SelectedRasterAnalysisService<
                         ? `Selected file path could not be resolved because symbolic-link traversal looped or exceeded the host limit (ELOOP): ${input.path}`
                         : `Selected file path exceeds the host path or component length limit (ENAMETOOLONG): ${input.path}`,
                 },
-              ]);
-      }
-      return new AnalysisOutputError(
-        this.definition.operation,
-        cause instanceof ArtifactReaderFailure
-          ? cause.message
-          : "Could not read complete raster analysis evidence.",
-        { cause },
-      );
+              ],
+            );
+      },
+      unclassified: (cause, details) =>
+        new AnalysisOutputError(
+          this.definition.operation,
+          cause instanceof ArtifactReaderFailure
+            ? cause.message
+            : "Could not read complete raster analysis evidence.",
+          { ...details, cause },
+        ),
     };
     try {
       const before = await this.files.stat(input.path, { bigint: true });
@@ -359,22 +373,20 @@ export class SelectedRasterAnalysisService<
           outcome.cause instanceof ArtifactReaderFailure &&
           outcome.cause.reason === "cancelled"
         ) {
-          const cancelled = new AnalysisCancelledError(
+          const cancelled = cancelledBy(
             this.definition.operation,
-            {
-              cause: artifactFileCancellationCause(outcome.cause),
-              cleanup: cause.cleanup,
-            },
+            carriedReason(artifactFileCancellationCause(outcome.cause)),
+            { cleanup: cause.cleanup },
           ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
         }
         const cancellation = completion?.cancellation;
         if (cancellation !== undefined) {
-          const cancelled = new AnalysisCancelledError(
+          const cancelled = cancelledBy(
             this.definition.operation,
+            carriedReason(cancellation.reason),
             {
-              cause: cancellation.reason,
               partialObservation: cleanup.partialObservation,
               cleanup: cause.cleanup,
             },
@@ -383,29 +395,28 @@ export class SelectedRasterAnalysisService<
           return err(cancelled);
         }
         if (outcome.kind === "failed") {
-          const primary = readFailure(outcome.cause);
+          const primary = classifyProviderFailure(
+            outcome.cause,
+            failureDialect,
+          );
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               primary,
               cleanup,
               this.definition.operation,
-            ).bindCleanupDependencies([primary, cleanup]),
+            ),
           );
         }
         return err(cleanup);
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
-          const cancelled = new AnalysisCancelledError(
+          const cancelled = cancelledBy(
             this.definition.operation,
-            {
-              cause: artifactFileCancellationCause(cause),
-              ...(completion === undefined
-                ? {}
-                : {
-                    partialObservation: completedObservation(completion.value),
-                  }),
-            },
+            carriedReason(artifactFileCancellationCause(cause)),
+            completion === undefined
+              ? {}
+              : { partialObservation: completedObservation(completion.value) },
           );
           bindArtifactFileCleanup(cause, cancelled);
           return err(cancelled);
@@ -421,7 +432,7 @@ export class SelectedRasterAnalysisService<
         bindArtifactFileCleanup(cause, retry);
         return err(retry);
       }
-      return err(readFailure(cause));
+      return err(classifyProviderFailure(cause, failureDialect));
     }
   }
 }

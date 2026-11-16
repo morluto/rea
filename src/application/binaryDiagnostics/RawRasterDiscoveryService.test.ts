@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { open, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import * as discovery from "../../domain/rawRasterDiscovery.js";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { rawRasterDiscoverySchema } from "../../domain/native/rawRasterCandidates.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { RawRasterDiscoveryService } from "./RawRasterDiscoveryService.js";
 const grid = {
   widths: [32],
@@ -38,7 +40,9 @@ it("preserves whole-file digest, inferred confidence and absolute candidate offs
       createHash("sha256").update(bytes).digest("hex"),
     );
     expect(result.value.confidence).toBe("inferred");
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(fileIdentity(result.value.subject).sha256).toBe(
+      report.artifact.sha256,
+    );
   } finally {
     await service.close();
   }
@@ -134,6 +138,71 @@ it("observes cancellation queued during synchronous scoring before publishing Ev
     if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
   } finally {
     spy.mockRestore();
+    await service.close();
+  }
+});
+
+it.each(
+  (["before", "after"] as const).flatMap((admission) =>
+    (
+      ["EACCES", "EPERM", "ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"] as const
+    ).map((code) => ({ admission, code })),
+  ),
+)(
+  "classifies $code $admission selected-file admission",
+  async ({ admission, code }) => {
+    const root = await createTestTempDirectory("rea-raster-errno-");
+    const path = join(root, "bytes");
+    await writeFile(path, Buffer.alloc(512));
+    const cause = Object.assign(new Error(`injected ${code}`), { code });
+    const fail = async (): Promise<never> => {
+      throw cause;
+    };
+    const service = new RawRasterDiscoveryService({
+      stat: admission === "before" ? fail : stat,
+      open: fail,
+    });
+    try {
+      const result = await service.inspect({ path, ...grid });
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected selected-file failure");
+      expect(result.error._tag).toBe(
+        code === "EACCES" || code === "EPERM"
+          ? "AnalysisAccessDeniedError"
+          : admission === "before"
+            ? "AnalysisInputError"
+            : "AnalysisArtifactChangedError",
+      );
+    } finally {
+      await service.close();
+    }
+  },
+);
+
+it("preserves an already typed provider failure by identity", async () => {
+  const cause = new AnalysisInputError(
+    "inspect_raw_raster_candidates",
+    undefined,
+    [
+      {
+        path: ["path"],
+        reason: "invalid_value",
+        message: "Injected typed failure.",
+      },
+    ],
+  );
+  const service = new RawRasterDiscoveryService({
+    stat: async () => {
+      throw cause;
+    },
+    open,
+  });
+  try {
+    const result = await service.inspect({ path: "/typed-failure", ...grid });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected typed failure");
+    expect(result.error).toBe(cause);
+  } finally {
     await service.close();
   }
 });

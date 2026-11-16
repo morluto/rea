@@ -194,6 +194,27 @@ describe("Hopper provider target support", () => {
   });
 });
 
+describe("Hopper Xtensa support", () => {
+  it("declines Xtensa with the Ghidra-directed reason", () => {
+    const config = parseConfig({});
+    if (!config.ok) throw new Error("expected valid configuration");
+    const provider = new HopperProvider(config.value, silentLogger, {});
+    const target = {
+      path: "/tmp/esp32s3.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "xtensa",
+      availableArchitectures: ["xtensa"],
+    } as const satisfies BinaryTarget;
+    expect(provider.inspectTargetSupport(target)).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason: hopperDeclinedArchitectureReason("xtensa"),
+    });
+  });
+});
+
 describe("Hopper relationship coverage", () => {
   it.each([
     ["procedure_callers", ["callers"]],

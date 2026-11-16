@@ -1,4 +1,4 @@
-import { access, copyFile, cp, symlink } from "node:fs/promises";
+import { access, cp, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -6,6 +6,7 @@ import { describe, expect } from "vitest";
 
 import { unsupportedRuntimeMessage } from "../../../scripts/lib/runtime-admission.mjs";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
 import type { TestWorkspace } from "../../support/workspace/workspaceFixture.js";
 
 const installCliRuntime = async (
@@ -13,11 +14,10 @@ const installCliRuntime = async (
   cliSource: string,
   resultOutput = "export const createCliResultOutput = () => undefined;\n",
 ): Promise<void> => {
-  await workspace.mkdir("scripts/lib");
   await workspace.mkdir("dist");
   // The bundle's entrypoints and shared chunks form one emitted runtime. The
   // one-shot owner and its output admission stay production code; only the
-  // command runtime and result output are replaced below.
+  // command runtime, its recorded registrars, and result output are replaced.
   await cp("dist/cli-runtime", workspace.path("dist/cli-runtime"), {
     recursive: true,
   });
@@ -27,22 +27,19 @@ const installCliRuntime = async (
     workspace.path("node_modules"),
     "junction",
   );
+  await copyScriptsWithImports(["scripts/rea.mjs"], workspace.root);
   await Promise.all([
-    copyFile("scripts/rea.mjs", workspace.path("scripts/rea.mjs")),
-    copyFile(
-      "scripts/lib/cli-process-environment.mjs",
-      workspace.path("scripts/lib/cli-process-environment.mjs"),
-    ),
-    copyFile(
-      "scripts/lib/runtime-admission.mjs",
-      workspace.path("scripts/lib/runtime-admission.mjs"),
-    ),
     workspace.write(
       "package.json",
       JSON.stringify({ type: "module", version: "1.0.0" }),
     ),
     workspace.write("dist/cli-runtime/cli.js", cliSource),
     workspace.write("dist/cli-runtime/cliResultOutput.js", resultOutput),
+    // Without a recording, every command loads the replaced complete CLI.
+    workspace.write(
+      "dist/recordedCliCommandRegistrations.js",
+      "export const RECORDED_CLI_COMMAND_REGISTRATIONS = undefined;\n",
+    ),
   ]);
 };
 
@@ -354,28 +351,16 @@ describe("executable dispatcher", () => {
   workspaceCliTest(
     "explains how to restore a missing compiled runtime",
     async ({ processes, workspace }) => {
-      const scripts = await workspace.mkdir("scripts");
-      await workspace.mkdir("scripts/lib");
-      await Promise.all([
-        copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
-        copyFile(
-          "scripts/lib/cli-process-environment.mjs",
-          workspace.path("scripts/lib/cli-process-environment.mjs"),
-        ),
-        copyFile(
-          "scripts/lib/runtime-admission.mjs",
-          workspace.path("scripts/lib/runtime-admission.mjs"),
-        ),
-        workspace.write(
-          "package.json",
-          JSON.stringify({ type: "module", version: "1.0.0" }),
-        ),
-      ]);
+      await copyScriptsWithImports(["scripts/rea.mjs"], workspace.root);
+      await workspace.write(
+        "package.json",
+        JSON.stringify({ type: "module", version: "1.0.0" }),
+      );
 
       for (const args of [["mcp"], ["mcp", "doctor"], ["--help"]]) {
         const result = await processes.run(
           process.execPath,
-          [join(scripts, "rea.mjs"), ...args],
+          [workspace.path("scripts/rea.mjs"), ...args],
           { cwd: workspace.root },
         );
         expect(result).toMatchObject({
@@ -645,6 +630,43 @@ describe("project-scoped Amp registration dispatch", () => {
       expect(plain.stdout).toBe("");
       expect(plain.stderr.length).toBeGreaterThan(0);
       expect(plain.stdout).not.toContain(runtimeReached);
+    },
+  );
+});
+
+describe("executable dispatcher exit", () => {
+  workspaceCliTest(
+    "exits with the requested status once the command's handles close",
+    async ({ processes, workspace }) => {
+      // The interval stops after the exit request: the loop drains, the
+      // process does not wait for the forced-exit grace, and the status holds.
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { const timer = setInterval(() => {}, 50); options.exit(3); setTimeout(() => clearInterval(timer), 100); } });\n",
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode, result.stderr).toBe(3);
+    },
+  );
+
+  workspaceCliTest(
+    "forces the requested exit when a command leaves a handle open",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { setInterval(() => {}, 1_000); options.exit(4); } });\n",
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode, result.stderr).toBe(4);
+      expect(result.signal).toBeNull();
     },
   );
 });

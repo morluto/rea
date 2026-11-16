@@ -112,8 +112,7 @@ test(
 
 test("rejects source changes after reading before output", async () =>
   withSource(async ({ root, path }) => {
-    const { ArtifactFileSource } =
-      await import("../../src/artifacts/ArtifactFileSource.ts");
+    const { ArtifactFileSource } = await import("../../src/resources/index.ts");
     const original = ArtifactFileSource.prototype.readSelectedPath;
     let rangeRead = false;
     ArtifactFileSource.prototype.readSelectedPath = async function (...args) {
@@ -139,8 +138,7 @@ test("rejects source changes after reading before output", async () =>
 
 test("rejects physical EOF at the selected-range read before output", async () =>
   withSource(async ({ root, path }) => {
-    const { ArtifactFileSource } =
-      await import("../../src/artifacts/ArtifactFileSource.ts");
+    const { ArtifactFileSource } = await import("../../src/resources/index.ts");
     const original = ArtifactFileSource.prototype.readSelectedPath;
     let rangeRead = false;
     ArtifactFileSource.prototype.readSelectedPath = async function (...args) {

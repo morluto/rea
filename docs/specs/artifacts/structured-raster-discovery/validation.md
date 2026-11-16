@@ -50,3 +50,20 @@ A standalone palette-looking-byte heuristic produced many plausible regions in
 both the developmental sample and ordinary executables. No correct palette
 binding follows from that appearance. This implementation therefore stops at
 indices and explicit unresolved alternatives rather than invent colors.
+
+## Upstream integration refresh
+
+The follow-up integrates upstream `a10037ef` rather than restoring its removed
+CLI-name table or effect registry. Both commands now use the canonical contract
+builder and the REA-owned command registry. Shared numeric argv projection keeps
+repeated decimal dimensions, bounded fractional thresholds and numeric-literal
+choices; regression tests cover their defaults, refusals and advertised schema.
+The raster file owner uses the shared resource toolkit and failure classifier;
+13 additional cases preserve errors before/after file admission and typed-error
+identity. Cancellation and cleanup retention remain covered by source tests.
+
+The dedicated workflow now builds the matching Windows native artifact before
+its test lanes, downloads/verifies it on Windows, and runs contract-parity,
+command-registry and artifact-verifier tests alongside the public raster CLI/MCP
+checks. This fixes a missing Windows test prerequisite, not an image-discovery
+algorithm. A local Linux pass does not establish a Windows CI pass.

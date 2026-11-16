@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { Client } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -23,12 +23,14 @@ import {
   expectNoToken,
   startBuildComputer,
 } from "../../fixtures/buildComputerMcp.js";
+import { COMPUTER_START_TIMING } from "../../../src/desktop/AgentEnvComputer.js";
 import {
   FAKE_FRAME_PNG,
   type FakeApp,
   type FakeComputer,
 } from "../../fixtures/fakeAgentEnvComputer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { waitFor } from "../../support/testWait.js";
 
 const images = (result: CallToolResult) =>
   result.content.filter((block) => block.type === "image");
@@ -449,14 +451,17 @@ it("waits for the desktop to draw before it returns the first screenshot", async
 });
 
 it("returns the latest frame when a retried screenshot outlasts the wait for the desktop, sending progress meanwhile", async () => {
-  // The third screenshot would answer a minute later, well past the 10 s wait.
+  // The third screenshot would answer only after the test deadline, so the
+  // call returns only if the shortened drawn wait abandons it.
   const { computer, runner } = await fakes({
     blankFrames: 10_000,
-    screenshotDelaysMs: [0, 0, 60_000],
+    screenshotDelaysMs: [0, 0, 3_600_000],
   });
-  const client = await connect(runner.environment);
+  const client = await connect(runner.environment, undefined, undefined, {
+    drawnWaitMs: 2_000,
+    progressMs: 250,
+  });
   const progress: { message?: string | undefined }[] = [];
-  const startedAt = Date.now();
   const started = await client.callTool(
     {
       name: "start_build_computer",
@@ -466,7 +471,6 @@ it("returns the latest frame when a retried screenshot outlasts the wait for the
   );
 
   expect(started.isError, JSON.stringify(started)).not.toBe(true);
-  expect(Date.now() - startedAt).toBeLessThan(20_000);
   expect(computer.calls).toHaveLength(3);
   expect(images(started)).toHaveLength(1);
   expect(progress.map(({ message }) => message)).toContainEqual(
@@ -677,7 +681,7 @@ it("runs one computer's calls in the order they arrive and another computer's be
     callOk(client, "act_on_build_computer", { computer_id: id, action });
   const order: string[] = [];
   const reset = act(first, "reset").then(() => order.push("reset"));
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
   const behind = act(first, "screenshot").then(() =>
     order.push("screenshot behind the reset"),
   );
@@ -692,9 +696,14 @@ it("runs one computer's calls in the order they arrive and another computer's be
 });
 
 it("sends progress while an action waits for the call before it on its computer", async () => {
-  const app = slowApp(14);
+  const app = slowApp(2);
   const { runner } = await fakes({ app });
-  const client = await connect(runner.environment);
+  // A short heartbeat lets the queued action report progress while the reset
+  // before it is still polling the relaunched app.
+  const client = await connect(runner.environment, undefined, undefined, {
+    ...COMPUTER_START_TIMING,
+    progressMs: 100,
+  });
   const id = await startBuildComputer(client, {
     kind: "bundle",
     path: await bundleFolder(),
@@ -703,7 +712,7 @@ it("sends progress while an action waits for the call before it on its computer"
     computer_id: id,
     action: "reset",
   });
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
   const progress: unknown[] = [];
   const waited = await client.callTool(
     {
@@ -729,7 +738,7 @@ it("cancels a computer's call in progress on close and refuses the calls waiting
   const call = (name: string, fields: Record<string, unknown> = {}) =>
     client.callTool({ name, arguments: { computer_id: id, ...fields } });
   const reset = call("act_on_build_computer", { action: "reset" });
-  await vi.waitFor(() => expect(app.methods).toEqual(["data/reset"]));
+  await waitFor(() => expect(app.methods).toEqual(["data/reset"]));
   const waiting = [
     call("act_on_build_computer", { action: "screenshot" }),
     call("stop_build_capture"),

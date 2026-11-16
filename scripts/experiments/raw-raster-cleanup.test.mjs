@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ArtifactFileSource } from "../../src/artifacts/ArtifactFileSource.ts";
+import { ArtifactFileSource } from "../../src/resources/index.ts";
 import { previewRawRasterFile, runFilePreviewCli } from "./raw-raster-file.mjs";
 
 const layout = {

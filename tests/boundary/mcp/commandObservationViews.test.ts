@@ -1,13 +1,12 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import {
-  registerGdbTools,
-  type GdbToolManager,
-} from "../../../src/server/registerGdbTools.js";
-import { registerReverseEngineeringTools } from "../../../src/server/registerReverseEngineeringTools.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
+  registerServiceTools,
+  type GdbToolOptions,
+} from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createEvidence,
@@ -17,7 +16,9 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
+import { ownedOutput } from "../../support/reverseEngineeringCompositionFixtures.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const capture = {
@@ -43,7 +44,7 @@ const gdbEvidence = (
   parameters = { session_id: sessionId, command: capture.command },
 ) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gdb", name: "GDB", version: null },
     {
       operation: "gdb_console",
@@ -71,7 +72,7 @@ const connect = async (retain = true) => {
   const execute = vi.fn(async () =>
     ok({ result: capture, evidence: gdbEvidence() }),
   );
-  const manager: GdbToolManager = {
+  const manager: GdbToolOptions["manager"] = {
     start: async () =>
       ok({ session_id: sessionId, mi_version: "mi3" as const }),
     execute,
@@ -79,39 +80,28 @@ const connect = async (retain = true) => {
     close: async () => ok({ target_state: "none_observed" as const }),
     retryCleanupFailures: async () => ok(null),
   };
-  const run = vi.fn(async () => ({
-    stdout: "BFD advertised targets\n",
-    stderr: "diagnostic\n",
-  }));
-  const service = new TestReverseEngineeringService({ run });
+  const run = vi.fn(async () =>
+    ownedOutput("BFD advertised targets\n", "diagnostic\n"),
+  );
+  const service = new TestReverseEngineeringService({ runOwned: run });
   const logger = pino({ enabled: false });
-  registerGdbTools(
+  registerServiceTools(
     server,
-    manager,
-    logger,
-    delivery,
-    retain ? record : undefined,
-    undefined,
-    retain ? lookup : undefined,
+    {
+      analysisView: {},
+      gdb: { manager, session: undefined },
+      reverseEngineering: { service, session: undefined },
+    },
+    {
+      logger,
+      evidenceById: retain ? lookup : undefined,
+      recordEvidence: retain ? record : undefined,
+    },
   );
-  registerReverseEngineeringTools(
-    server,
-    service,
-    logger,
-    delivery,
-    retain ? record : undefined,
-    undefined,
-    undefined,
-    undefined,
-    retain ? lookup : undefined,
+  const client = new Client(
+    { name: "command-view-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  registerAnalysisViewTool(
-    server,
-    logger,
-    retain ? lookup : undefined,
-    retain ? record : undefined,
-  );
-  const client = new Client({ name: "command-view-client", version: "1" });
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -145,7 +135,7 @@ it("delivers ordered GDB records once and queries their retained parent after cl
   expect(parseEvidence(full.structuredContent)).toEqual(gdbEvidence());
   const selected = parseEvidence(summary.structuredContent);
   expect(selected.raw_result).toBeNull();
-  expect(selected.subject).toBeNull();
+  expect(selected.subject.identity.kind).toBe("unknown");
   expect(selected.normalized_result).toMatchObject({
     parent_evidence_id: gdbEvidence().evidence_id,
     artifact: null,
@@ -222,7 +212,7 @@ it("keeps pathless objdump observations subjectless and preserves the default co
     summary: parent.normalized_result,
   });
   expect(summary.raw_result).toBeNull();
-  expect(summary.subject).toBeNull();
+  expect(summary.subject.identity.kind).toBe("unknown");
   expect(ledger.get(parent.evidence_id)).toEqual(parent);
 });
 
@@ -260,11 +250,15 @@ it("rejects malformed historical GDB facts and conflicting source commands", asy
       })
     ).ok,
   ).toBe(false);
-  const malformed = createEvidence(undefined, source.provider, {
-    operation: "gdb_console",
-    parameters: {},
-    result: { ...capture, records: [123] },
-  });
+  const malformed = createEvidence(
+    unknownTarget("not-observed"),
+    source.provider,
+    {
+      operation: "gdb_console",
+      parameters: {},
+      result: { ...capture, records: [123] },
+    },
+  );
   expect(
     (
       await inspectAnalysisView({

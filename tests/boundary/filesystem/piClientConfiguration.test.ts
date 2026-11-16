@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -165,6 +166,7 @@ describe("Pi registration semantics", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "pi"),
@@ -207,6 +209,7 @@ describe("Pi registration semantics", () => {
         }),
       );
       const statuses = await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses.find(({ client: name }) => name === "pi")).toMatchObject({
@@ -253,6 +256,7 @@ describe("Pi strict JSON parsing", () => {
       expect(
         (
           await readClientRegistrationStatuses(home, undefined, {
+            platform: HOST_PLATFORM.platform,
             environment: {},
           })
         ).find(({ client: name }) => name === "pi"),
@@ -303,6 +307,7 @@ describe("Pi strict JSON parsing", () => {
     expect(
       (
         await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
           environment: {},
         })
       ).find(({ client: name }) => name === "pi"),

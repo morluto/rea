@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { reconstructionProofApplicabilityCases } from "../../fixtures/reconstructionProofApplicability.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -83,7 +84,7 @@ describe("reconstruction obligation ledger CLI bundle validation", () => {
   it("reports non-canonical authenticated bundles as caller input", async () => {
     const records = ["first", "second"].map((label) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           operation: "observe",
@@ -143,7 +144,7 @@ describe("reconstruction obligation ledger CLI bundle validation", () => {
       retryable: false,
       details: {
         reason: expect.stringContaining(
-          "Evidence bundle manifests are not canonical",
+          "Evidence bundle sections are not canonical: records",
         ),
       },
     });

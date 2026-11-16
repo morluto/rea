@@ -4,7 +4,7 @@ import {
   rawRasterDiscoverySchema,
 } from "../../domain/native/rawRasterCandidates.js";
 import { SelectedRasterAnalysisService } from "./SelectedRasterAnalysisService.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 /** Shared transport-independent raw heuristic workflow with bounded artifact ownership. */
 export class RawRasterDiscoveryService extends SelectedRasterAnalysisService<
   ReturnType<typeof inspectRawRasterCandidatesInputSchema.parse>,

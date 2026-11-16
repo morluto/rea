@@ -8,7 +8,7 @@ import {
   structuredRasterCandidatesSchema,
 } from "../../domain/native/structuredRasterCandidates.js";
 import { SelectedRasterAnalysisService } from "./SelectedRasterAnalysisService.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import { renderIndexThumbnail } from "./IndexRasterThumbnail.js";
 /** Configured descriptor grammar over explicitly mapped bytes, not firmware identification. */
 export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisService<

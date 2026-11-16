@@ -1,3 +1,4 @@
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 /** Bounded, format-agnostic raw raster hypotheses. Scores are not probabilities. */
 export interface RawRasterDiscoveryOptions {
   widths?: number[];
@@ -104,7 +105,7 @@ export function discoverRawRaster(
           a.layout.offset - b.layout.offset ||
           a.layout.width - b.layout.width ||
           a.layout.height - b.layout.height ||
-          a.layout.format.localeCompare(b.layout.format),
+          compareUnicodeCodePoints(a.layout.format, b.layout.format),
       );
       if (candidates.length > maxCandidates) candidates.pop();
     }

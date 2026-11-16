@@ -1,4 +1,5 @@
 import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { tmpdir } from "node:os";
 
 /** Session roots may not contain a dot-prefixed path element. */
@@ -42,7 +43,7 @@ export const ghidraSessionRoot = (
 ): string => {
   const base = resolve(options.base ?? tmpdir());
   if (!hasDotPrefixElement(base)) return base;
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const fallback =
     options.fallback ?? (platform === "win32" ? undefined : "/tmp");
   if (

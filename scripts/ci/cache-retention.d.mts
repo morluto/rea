@@ -26,8 +26,6 @@ export type CacheRequest = (
   endpoint: string,
 ) => Promise<unknown>;
 
-export function assertRetentionPrefix(prefix: string): void;
-
 export function selectPrefixDeletions(
   caches: readonly unknown[],
   family?: RetentionFamily,
