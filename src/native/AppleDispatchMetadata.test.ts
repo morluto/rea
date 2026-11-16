@@ -2818,29 +2818,40 @@ describe("Swift type record sections", () => {
       u32(command + 48, record);
       rel(record, descriptor);
       u32(descriptor, 0x11);
+      rel(descriptor + 4, 0x400);
       rel(descriptor + 8, 0x500 + index * 0x20);
     }
+    rel(0x408, 0x540);
     bytes.write("Plain\0", 0x500);
     bytes.write("Owned\0", 0x520);
+    bytes.write("Fixture\0", 0x540);
 
     const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
     expect(
-      result.swift_decls.map(({ kind, name, evidence }) => ({
-        kind,
-        name,
-        evidence: evidence.map(({ description }) => description),
-      })),
+      result.swift_decls.map(
+        ({ kind, qualified_name, module, decode, evidence }) => ({
+          kind,
+          qualified_name,
+          module,
+          decode,
+          evidence: evidence.map(({ description }) => description),
+        }),
+      ),
     ).toEqual([
       {
         kind: "struct",
-        name: "Plain",
+        qualified_name: "Plain",
+        module: "Fixture",
+        decode: { status: "decoded", reason: null },
         evidence: [
           "Swift __swift5_types record of the nominal type descriptor at location",
         ],
       },
       {
         kind: "struct",
-        name: "Owned",
+        qualified_name: "Owned",
+        module: "Fixture",
+        decode: { status: "decoded", reason: null },
         evidence: [
           "Swift __swift5_types2 record of the nominal type descriptor at location",
         ],
@@ -2848,6 +2859,6 @@ describe("Swift type record sections", () => {
     ]);
     expect(
       result.coverage.find(({ facet }) => facet === "swift_declarations"),
-    ).toMatchObject({ examined: 2 });
+    ).toMatchObject({ status: "complete", examined: 2, decoded: 2 });
   });
 });
