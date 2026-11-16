@@ -1108,6 +1108,38 @@ describe("Ghidra installation version admission", () => {
   );
 });
 
+describe("Ghidra absent installation admission", () => {
+  it.each(["linux", "darwin", "win32"] as const)(
+    "does not run Java for an installation missing application properties (%s)",
+    async (platform) => {
+      const probeJava = vi.fn(() => javaProbeOk<GhidraJavaObservation>(JAVA));
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: { PATH: "/usr/bin" },
+          installDir: platform === "win32" ? WINDOWS_INSTALL : INSTALL,
+          platform,
+          architecture: "x64",
+        },
+        host({ readText: () => undefined, probeJava }),
+      );
+      expect(probeJava).not.toHaveBeenCalled();
+      expect(result.status).toBe("unavailable");
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "installation",
+          status: "failed",
+          code: "executable_missing",
+        }),
+      );
+      expect(projectGhidraDoctorInspection(result)).toMatchObject({
+        available: false,
+        registrationEnvironment: {},
+      });
+    },
+  );
+});
+
 describe("Ghidra configuration paths", () => {
   it.each([
     [{ installDir: "./ghidra" }, "GHIDRA_INSTALL_DIR must be absolute"],
