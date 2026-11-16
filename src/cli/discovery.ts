@@ -1,9 +1,12 @@
 import { z } from "zod";
 
 import {
+  CLI_COMPLETION_SHELLS,
+  declaredSensitiveValues,
   parseCliGlobalArguments,
   type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   CLI_OUTPUT_FORMATS,
@@ -52,8 +55,15 @@ export const CLI_CUSTOM_GLOBAL_OPTIONS = z.object({
 export const MCP_GROUP_DESCRIPTION = "Register as MCP server";
 export const COMPLETIONS_DESCRIPTION = "Generate shell completion script";
 
+/** REA's verified update command is the only CLI installation workflow. */
+export const CLI_UPDATE_REFUSAL = {
+  code: "UPDATE_FAILED",
+  message:
+    "Use 'rea update' to update the identified installation. The '--update' alias accepts only global output flags.",
+} as const;
+
 /** Shells in the order the completions page lists them. */
-const HELP_SHELLS = ["bash", "fish", "nushell", "zsh"] as const;
+const HELP_SHELLS = [...CLI_COMPLETION_SHELLS].sort();
 
 const completionsHint = (name: string): string => {
   const rows = [
@@ -188,7 +198,6 @@ const schemaAnswer = (
     return answer(`Error: ${failure.message}`, 1);
   }
   const { format, formatExplicit } = readCliOutputArguments(global);
-  if (formatExplicit && format === "md") return undefined;
   return answer(
     formatCliOutput(
       commandSchemaDocument(entry, CLI_CUSTOM_GLOBAL_OPTIONS),
@@ -204,6 +213,68 @@ interface Invocation {
   /** `performance.now()` when the dispatcher received the invocation. */
   readonly started: number;
 }
+
+/** Preserve the existing installer refusal without delegating to an installer. */
+const updateRefusalAnswer = (
+  global: CliGlobalArguments,
+  invocation: Invocation,
+): DiscoveryAnswer => {
+  const controls = readCliOutputArguments(global);
+  const failure = {
+    ...CLI_UPDATE_REFUSAL,
+    message: redactExplicitText(
+      CLI_UPDATE_REFUSAL.message,
+      declaredSensitiveValues(global.command),
+    ),
+  };
+  return answer(
+    invocation.stdoutIsTerminal && !controls.formatExplicit
+      ? `Error (${failure.code}): ${failure.message}`
+      : formatCliOutput(failure, controls.format),
+    1,
+  );
+};
+
+/** The production MCP entry owns server startup; a command cannot start another. */
+const retiredMcpAnswer = (
+  cli: CliInstance,
+  global: CliGlobalArguments,
+  invocation: Invocation,
+): DiscoveryAnswer => {
+  const controls = readCliOutputArguments(global);
+  const sensitive = declaredSensitiveValues(global.command);
+  const text = (value: string): string => redactExplicitText(value, sensitive);
+  return answer(
+    renderFailure(
+      {
+        code: "MCP_MODE_REMOVED",
+        message: text(
+          `Per-command --mcp has been removed. Use '${cli.name} mcp' to start REA's MCP server.`,
+        ),
+      },
+      {
+        command: text(global.command[0] ?? cli.name),
+        duration: `${Math.round(performance.now() - invocation.started)}ms`,
+      },
+      {
+        description: text("Suggested command:"),
+        commands: [{ command: text(`${cli.name} mcp`) }],
+      },
+      {
+        format:
+          controls.format === "csv" || controls.format === "tsv"
+            ? "json"
+            : controls.format,
+        human: invocation.stdoutIsTerminal && !controls.formatExplicit,
+        fullOutput: controls.fullOutput,
+        tokenCount: controls.tokenCount,
+        tokenLimit: controls.tokenLimit,
+        tokenOffset: controls.tokenOffset,
+      },
+    ),
+    1,
+  );
+};
 
 /**
  * An unknown command: the closest command name, the corrected invocation and
@@ -261,7 +332,8 @@ const unknownCommandAnswer = (
 /**
  * The document an invocation asks for instead of running a command, or
  * undefined. Precedence (after the detached update refresh): `--update`
- * without help and `--mcp` stay with the dispatcher; the LLM manifests answer
+ * without help is refused; per-command `--mcp` is retired and a root MCP
+ * entry stays with the production launcher; the LLM manifests answer
  * next; then the
  * integrations (`completions` shows its page for help or without a shell,
  * `mcp` shows its page without a subcommand); then `--version` without help;
@@ -276,12 +348,30 @@ const discoveryAnswer = (
 ): DiscoveryAnswer | undefined => {
   const { command, flags } = global;
   const help = flags.has("--help") || flags.has("-h");
-  if ((flags.has("--update") && !help) || flags.has("--mcp")) return undefined;
+  if (flags.has("--update") && !help)
+    return updateRefusalAnswer(global, invocation);
+  if (flags.has("--mcp"))
+    return command.length === 0
+      ? undefined
+      : retiredMcpAnswer(cli, global, invocation);
   if (flags.has("--llms") || flags.has("--llms-full"))
     return llmsAnswer(cli, global, flags.has("--llms-full"));
   const completions = integrationIndex(command, cli.name, "completions");
-  if (completions >= 0)
-    return help || command[completions + 1] === undefined
+  if (completions >= 0) {
+    const shell = command[completions + 1];
+    if (
+      !help &&
+      shell !== undefined &&
+      !HELP_SHELLS.includes(shell as (typeof HELP_SHELLS)[number])
+    )
+      return answer(
+        redactExplicitText(
+          `Error (INVALID_SHELL): Unknown shell '${shell}'. Supported: ${HELP_SHELLS.join(", ")}`,
+          declaredSensitiveValues(global.command),
+        ),
+        1,
+      );
+    return help || shell === undefined
       ? answer(
           formatCommandHelp(`${cli.name} completions`, {
             description: COMPLETIONS_DESCRIPTION,
@@ -294,6 +384,7 @@ const discoveryAnswer = (
           }),
         )
       : undefined;
+  }
   const mcp = integrationIndex(command, cli.name, "mcp");
   if (mcp >= 0) {
     const subcommand = command[mcp + 1];
