@@ -202,6 +202,11 @@ import {
   type ContractToolDependencies,
 } from "./contractToolBindings.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import type {
+  ProviderOperation,
+  ProviderOperationOptions,
+} from "./providerOperationToolHandler.js";
+import type { ToolContract } from "../contracts/toolContractTypes.js";
 import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
 import {
   CLOSE_RETRY,
@@ -305,6 +310,11 @@ export interface BrowserScenarioToolOptions {
 export interface JavaScriptRuntimeToolOptions {
   readonly runtime: JavaScriptRuntimeObservationPort | undefined;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** One family's provider operations and how they run. */
+export interface ProviderOperationToolOptions extends ProviderOperationOptions {
+  readonly contracts: readonly ToolContract<ProviderOperation>[];
 }
 
 /** The artifact resource scope application workflows read caller-named files under. */
@@ -1791,6 +1801,18 @@ const SERVICE_TOOL_BINDINGS = {
         observeJavaScriptRuntime(runtime, input, options),
     },
   })) satisfies Bind<JavaScriptRuntimeToolOptions>,
+  // Provider operations whose observation becomes atomic Evidence, run on
+  // the analysis admission grants; each family routes its own operations.
+  providerOperations: (({ contracts, ...options }) =>
+    Object.fromEntries(
+      contracts.map((contract) => [
+        contract.name,
+        {
+          admission: "sdk",
+          provider: { ...options, operation: contract.name },
+        },
+      ]),
+    )) satisfies Bind<ProviderOperationToolOptions>,
   // Provider-free access to the guided prompts this server advertises.
   guidedWorkflows: ((prompts) => ({
     guided_workflows: {
