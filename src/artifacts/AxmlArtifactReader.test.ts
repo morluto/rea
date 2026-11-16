@@ -15,7 +15,7 @@ import {
 import type {
   ArtifactEntry,
   ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { hasAxmlHeader, readAxmlHeaderFacts } from "../domain/axmlFormat.js";
 import { AxmlArtifactReader } from "./AxmlArtifactReader.js";
 

@@ -13,7 +13,7 @@ import {
 import type {
   ArtifactEntry,
   ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { AxmlArtifactReader } from "./AxmlArtifactReader.js";
 
 const writeDocument = async (bytes: Buffer): Promise<string> => {

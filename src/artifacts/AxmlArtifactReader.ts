@@ -29,14 +29,10 @@ const axmlRegions: RegionDecoding<AxmlDocumentImage> = {
         bytes: image.xml,
       },
     ],
-    ...(image.terminated && image.limitations.length === 0
-      ? {}
-      : {
-          coverage: {
-            status: image.terminated ? "complete" : "unknown",
-            limitations: image.limitations,
-          },
-        }),
+    coverage: {
+      status: image.terminated ? "complete" : "unknown",
+      limitations: image.limitations,
+    },
   }),
 };
 

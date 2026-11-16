@@ -371,6 +371,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   "godot-pck": "archive",
   unityfs: "archive",
   wxapkg: "archive",
+  axml: "archive",
   uimage: "archive",
   dmg: "archive",
   pkg: "archive",
