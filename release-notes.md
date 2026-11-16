@@ -145,6 +145,8 @@
 * **browser:** qualify target listing coverage by transport admission ([0c083b7](https://github.com/morluto/rea/commit/0c083b7271d41ad0f1956c2417e04e10cf21290b)), closes [#7687](https://github.com/morluto/rea/issues/7687) [#7746](https://github.com/morluto/rea/issues/7746)
 * **browser:** record malformed optional CDP replies as section gaps ([#10657](https://github.com/morluto/rea/issues/10657)) ([ad6e27e](https://github.com/morluto/rea/commit/ad6e27e256e82c308cbed55cb9e8b5fad118ad9f))
 * **browser:** report non-literal request URLs as unknown endpoints instead of dropping them ([#11630](https://github.com/morluto/rea/issues/11630)) ([7b500d7](https://github.com/morluto/rea/commit/7b500d78339901a16db2626ae3822cb15de89dac))
+* **browser:** report semantic limits reached by captured scripts ([#11755](https://github.com/morluto/rea/issues/11755)) ([1aad5c4](https://github.com/morluto/rea/commit/1aad5c449d5db2d17dd657ba1ba8aea3ff16456a))
+* **browser:** retain captured-script semantic budget limits ([1aad5c4](https://github.com/morluto/rea/commit/1aad5c449d5db2d17dd657ba1ba8aea3ff16456a))
 * **browser:** type CDP command replies and parse frame trees once ([#10604](https://github.com/morluto/rea/issues/10604)) ([3e0dc29](https://github.com/morluto/rea/commit/3e0dc2904120127f973724b288b16b00b8698cbc))
 * **browser:** type DOM listener, metrics and emulation CDP replies ([#10641](https://github.com/morluto/rea/issues/10641)) ([6f19681](https://github.com/morluto/rea/commit/6f196815519efad64c2b6d71cbd73a8cb5ffee96))
 * **browser:** type screenshot, WebMCP and domain toggle CDP replies ([#10647](https://github.com/morluto/rea/issues/10647)) ([47925f3](https://github.com/morluto/rea/commit/47925f3bef16e10afd89c3be000c1ccc976b0b52))
