@@ -11,7 +11,12 @@ it.each([
   ["win32", "\\\\server\\share\\adb.exe", true],
   ["win32", "//server/share/adb.exe", true],
   ["win32", "\\\\?\\C:\\tools\\adb.exe", true],
+  ["win32", "//server//share/adb.exe", true],
   ["win32", "\\tools\\adb.exe", false],
+  // Repeated separators without a share still resolve on the current drive.
+  ["win32", "///tools/adb.exe", false],
+  ["win32", "\\\\\\tools\\adb.exe", false],
+  ["win32", "\\\\server", false],
   ["win32", "/tools/adb.exe", false],
   ["win32", "C:tools\\adb.exe", false],
   ["win32", "tools\\adb.exe", false],
