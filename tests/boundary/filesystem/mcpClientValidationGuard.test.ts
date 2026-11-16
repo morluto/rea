@@ -22,7 +22,10 @@ it.each([
   ['NEW({ name: "\\")" }, { jsonSchemaValidator })', 0],
   ['NEW({ name: "(" })', 1],
   // Comments, string literals and names do not stand in for the option.
-  ["NEW(info, {\n  capabilities: {}, // TODO: add jsonSchemaValidator\n})", 1],
+  [
+    "NEW(info, {\n  capabilities: {}, // jsonSchemaValidator belongs here\n})",
+    1,
+  ],
   ["NEW(info /* jsonSchemaValidator */)", 1],
   ['NEW({ name: "jsonSchemaValidator-client" })', 1],
   ["NEW(info, { note: `jsonSchemaValidator` })", 1],

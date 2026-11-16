@@ -114,7 +114,7 @@ const callerScanTargetSchema = z.strictObject({
  * Bridge reply contracts, keyed by method and built from the shared native
  * domain schemas. A reply is validated once here, before any consumer reads it.
  */
-export const hopperReplySchemas = {
+const replySchemas = {
   address_name: nullableText,
   comment: nullableText,
   inline_comment: nullableText,
@@ -183,10 +183,10 @@ export const hopperReplySchemas = {
 } as const satisfies Record<HopperBridgeMethod, z.ZodType>;
 
 /** The production table's type; `HopperClient` defaults to it. */
-export type HopperBridgeReplyContracts = typeof hopperReplySchemas;
+export type HopperBridgeReplyContracts = typeof replySchemas;
 export type HopperReplyMethod = keyof HopperBridgeReplyContracts;
 export type HopperReply<M extends HopperReplyMethod> = z.output<
-  (typeof hopperReplySchemas)[M]
+  (typeof replySchemas)[M]
 >;
 
 /**
@@ -216,8 +216,8 @@ export type ValueKeepingContracts<Contracts extends HopperReplyContracts> = {
 };
 
 /** The production table, checked to keep every reply value unchanged. */
-export const hopperBridgeReplyContracts: ValueKeepingContracts<HopperBridgeReplyContracts> =
-  hopperReplySchemas;
+export const hopperReplySchemas: ValueKeepingContracts<HopperBridgeReplyContracts> =
+  replySchemas;
 
 /** The validated reply a contract table assigns to one method. */
 export type HopperContractReply<
