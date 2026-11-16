@@ -36,7 +36,7 @@ import {
   type LaunchUnavailableFailure,
 } from "../process/classifyProviderOutcome.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { isUtf8 } from "node:buffer";
 import { readlink, realpath, stat } from "node:fs/promises";
@@ -1709,6 +1709,20 @@ export class GdbSessionManager {
       if (line.length > 0) lines.push({ value: line, invalidUtf8 });
       offset = newline + 1;
     }
+    // A prompt may have no LF and span chunks. Frame it before sending any
+    // query so its bytes cannot prefix that query's result on the next receive.
+    if (
+      session.bufferBytes === 6 &&
+      session.bufferChunks.length === 0 &&
+      session.bufferTail
+        ?.subarray(0, session.bufferTailBytes)
+        .equals(Buffer.from("(gdb) "))
+    ) {
+      session.bufferTail = undefined;
+      session.bufferTailBytes = 0;
+      session.bufferBytes = 0;
+      lines.push({ value: "(gdb) ", invalidUtf8: false });
+    }
     for (const { value: line } of lines) {
       if (Buffer.byteLength(line, "utf8") > MAX_RECENT_MI_LINE_BYTES) {
         session.lines.push(truncateUtf8RecordPrefix(line));
@@ -1747,7 +1761,8 @@ export class GdbSessionManager {
             pending.terminalRecord === undefined &&
             pending.completionToken === undefined
           ) {
-            pending.completionToken = session.nextToken++;
+            // Shared shell stdout can forge a prompt and predict sequential tokens.
+            pending.completionToken = randomInt(2 ** 32, 2 ** 48 - 1);
             this.#writeMiRequest(
               session,
               pending.completionToken,
@@ -1791,7 +1806,8 @@ export class GdbSessionManager {
           // ^running and *stopped describe inferior execution, not completion
           // of an outer CLI command such as a multi-run command file. GDB
           // processes this read-only query after returning to its command loop.
-          pending.completionToken = session.nextToken++;
+          // Shared shell stdout can forge a prompt and predict sequential tokens.
+          pending.completionToken = randomInt(2 ** 32, 2 ** 48 - 1);
           this.#writeMiRequest(
             session,
             pending.completionToken,
@@ -2090,7 +2106,9 @@ export class GdbSessionManager {
       this.#failProtocol(session, "input-stream-failure", message);
       return Promise.reject(new Error(message));
     }
-    const token = session.nextToken++;
+    const token = command.startsWith("-interpreter-exec console ")
+      ? randomInt(2 ** 32, 2 ** 48 - 1)
+      : session.nextToken++;
     const acceptedDeadline = accepted?.deadline ?? this.#commandDeadline;
     const acceptedOutput = command.startsWith("-interpreter-exec console ")
       ? (accepted?.output ?? this.#commandOutput)
