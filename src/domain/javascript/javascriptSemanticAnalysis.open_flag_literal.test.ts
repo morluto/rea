@@ -417,3 +417,1058 @@ it.each([
     { kind: "acquire", method: "openSync" },
   ]);
 });
+/**
+ * `fs.createReadStream` and `fs.createWriteStream` validate their options object
+ * before constructing the stream, so a refused member throws and no handle exists.
+ *
+ * Measured on Node 24.22.1, per member:
+ *
+ *   start / end   -1, 1.5, NaN, Infinity  -> THREW ERR_OUT_OF_RANGE
+ *                 "10", null, true, 1n    -> THREW ERR_INVALID_ARG_TYPE
+ *                 -0, 0, undefined        -> stream
+ *   fd            -1, 1.5                 -> THREW ERR_OUT_OF_RANGE
+ *                 "x"                     -> THREW ERR_INVALID_ARG_TYPE
+ *                 null, 0                 -> stream
+ *   highWaterMark -1, 1.5, "x"            -> THREW ERR_INVALID_ARG_VALUE
+ *                 null, 0                 -> stream
+ *   encoding      "nope", 1, true         -> THREW ERR_INVALID_ARG_VALUE
+ *                 "utf8", "", null, 0, false -> stream
+ *   start > end                            -> THREW ERR_OUT_OF_RANGE
+ *   createWriteStream ignores `end`        -> stream even for `{end: -1}`
+ *   flags / mode / autoClose are not validated eagerly
+ */
+const streamAcquisitionsFor = (call: string) =>
+  analyzeJavaScriptSemantics(
+    `import fs from "node:fs";\nfunction g(p, opts, n) { ${call}; }`,
+  ).resourceOperations.map(({ kind, method }) => ({ kind, method }));
+
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "retains %s and its release when Object.prototype may intercept option copying",
+  (method) => {
+    const operations = analyzeJavaScriptSemantics(`
+      import fs from "node:fs";
+      Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true });
+      const stream = fs.${method}("input", { start: -1 });
+      stream.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "acquire", method }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
+
+it.each([
+  ["createReadStream", "Readable"],
+  ["createWriteStream", "Writable"],
+] as const)(
+  "retains %s when a shared Stream ancestor member is installed",
+  (method, ancestor) => {
+    // `Readable` and `Writable` both extend `Stream`, so a member installed on that
+    // shared ancestor is inherited by the stream Node builds. Measured on Node
+    // 24.22.1: with `Stream.prototype.start` defined as a getter returning 0,
+    // `createReadStream(p, {start:-1})` returns a handle while the unmutated call
+    // throws `ERR_OUT_OF_RANGE`.
+    const operations = analyzeJavaScriptSemantics(`
+      const { Stream } = require("node:stream");
+      const fs = require("node:fs");
+      Object.defineProperty(Stream.prototype, "start", {
+        get() { return 0; },
+        set() {},
+        configurable: true,
+      });
+      const stream = fs.${method}("input", { start: -1 });
+      stream.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
+      ]),
+    );
+    expect(ancestor.length).toBeGreaterThan(0);
+  },
+);
+
+it("retains a read stream when Array.prototype is set to a FileHandle", () => {
+  // An array literal is normally not a valid `fd`, but `Object.setPrototypeOf` on
+  // `Array.prototype` makes it `instanceof FileHandle`. Measured on Node 24.22.1 with a
+  // real `FileHandle` as that prototype, `createReadStream(p, {fd: []})` constructs a
+  // stream and reads from the descriptor.
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const handle = fs.openSync("input", "r");
+    Object.setPrototypeOf(Array.prototype, handle);
+    const stream = fs.createReadStream("input", { fd: [] });
+    stream.close();
+  `).resourceOperations;
+  expect(
+    operations.filter(
+      ({ kind, method }) => kind === "acquire" && method === "createReadStream",
+    ),
+  ).toHaveLength(1);
+});
+
+it("retains a read stream when RegExp.prototype is set to a FileHandle", () => {
+  // A regular-expression literal is not a valid `fd`, but `Object.setPrototypeOf` on
+  // `RegExp.prototype` makes it `instanceof FileHandle`. Measured on Node 24.22.1 with a
+  // real `FileHandle` as that prototype, `createReadStream(p, {fd: /x/})` constructs a
+  // stream and reads from the descriptor.
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const handle = fs.openSync("input", "r");
+    function seed() {}
+    Object.setPrototypeOf(RegExp.prototype, handle);
+    const stream = fs.createReadStream("input", { fd: /x/ });
+    stream.close();
+  `).resourceOperations;
+  expect(
+    operations.filter(
+      ({ kind, method }) => kind === "acquire" && method === "createReadStream",
+    ),
+  ).toHaveLength(1);
+});
+
+it("still rejects an fd regexp when RegExp.prototype is untouched", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    function seed() {}
+    fs.createReadStream("input", { fd: /x/ });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+it("still rejects an fd array when Array.prototype is untouched", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    fs.createReadStream("input", { fd: [] });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+it.each([
+  [
+    "a default import",
+    `import sd from "node:string_decoder";
+     sd.StringDecoder = class { write(c) { return String(c); } end() { return ""; } };`,
+  ],
+  [
+    "a named StringDecoder import",
+    `import { StringDecoder } from "node:string_decoder";
+     StringDecoder.extra = 1;`,
+  ],
+] as const)(
+  "retains a read stream when the decoder is replaced through %s",
+  (_label, setup) => {
+    // `fs.createReadStream` builds its `StringDecoder` from this module at first use.
+    // Measured on Node 24.22.1 with an admitting `Buffer.isEncoding`, replacing the
+    // export through an ESM default import constructs a handle from `{encoding:"nope"}`.
+    const operations = analyzeJavaScriptSemantics(`
+      ${setup}
+      import fs from "node:fs";
+      Buffer.isEncoding = () => true;
+      const stream = fs.createReadStream("input", { encoding: "nope" });
+      stream.close();
+    `).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toHaveLength(1);
+  },
+);
+it("retains a read stream mutated through the stream root export", () => {
+  // The CommonJS root export of `node:stream` *is* the constructor, so
+  // `const Stream = require("node:stream")` records its mutation at `["prototype", …]`
+  // rather than under the named slot. Measured on Node 24.22.1, both spellings construct
+  // a handle from `{start:-1}` while the unmutated call throws `ERR_OUT_OF_RANGE`.
+  const operations = analyzeJavaScriptSemantics(`
+    const Stream = require("node:stream");
+    const fs = require("node:fs");
+    Object.defineProperty(Stream.prototype, "start", {
+      get() { return 0; },
+      set() {},
+      configurable: true,
+    });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        method: "createReadStream",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+it("retains a read stream mutated through the events root export", () => {
+  // The CommonJS root export of `node:events` *is* the constructor, so
+  // `const EventEmitter = require("node:events")` records its mutation at
+  // `["prototype", …]` rather than under the named slot. Measured on Node 24.22.1, both
+  // spellings construct a handle from `{start:-1}`.
+  const operations = analyzeJavaScriptSemantics(`
+    const EventEmitter = require("node:events");
+    const fs = require("node:fs");
+    Object.defineProperty(EventEmitter.prototype, "start", {
+      get() { return 0; },
+      set() {},
+      configurable: true,
+    });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "acquire",
+        method: "createReadStream",
+        resolution: "partial",
+      }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+
+it.each([
+  [
+    "a replaced StringDecoder and an admitting Buffer.isEncoding",
+    `const sd = require("node:string_decoder");
+     sd.StringDecoder = class { write(c) { return String(c); } end() { return ""; } };
+     Buffer.isEncoding = () => true;`,
+    true,
+  ],
+  [
+    "an admitting Buffer.isEncoding only",
+    "Buffer.isEncoding = () => true;",
+    false,
+  ],
+  [
+    "a replaced StringDecoder only",
+    `const sd = require("node:string_decoder");
+     sd.StringDecoder = class { write(c) { return String(c); } end() { return ""; } };`,
+    false,
+  ],
+] as const)(
+  "read stream encoding acceptance with %s",
+  (_label, setup, expectKept) => {
+    // Measured on Node 24.22.1: a read stream throws from whichever gate runs first, so
+    // it still rejects while either the decoder or `Buffer.isEncoding` is Node's own.
+    // Only replacing both lifts the rejection.
+    const operations = analyzeJavaScriptSemantics(`
+      ${setup}
+      const fs = require("node:fs");
+      const stream = fs.createReadStream("input", { encoding: "nope" });
+      stream.close();
+    `).resourceOperations;
+    const acquisitions = operations.filter(({ kind }) => kind === "acquire");
+    expect(acquisitions).toHaveLength(expectKept ? 1 : 0);
+  },
+);
+it.each([
+  ["a named Stream import", `import { Stream } from "node:stream";`, "Stream"],
+  [
+    "a named EventEmitter import",
+    `import { EventEmitter } from "node:events";`,
+    "EventEmitter",
+  ],
+] as const)(
+  "retains a read stream mutated through %s",
+  (_label, importLine, ancestor) => {
+    // `Readable` and `Writable` extend `Stream`, which extends `EventEmitter`, so a
+    // member installed on either ancestor is inherited by the stream Node builds.
+    // Measured on Node 24.22.1, defining `start` on either prototype makes
+    // `createReadStream(p, {start:-1})` return a handle while the unmutated call
+    // throws `ERR_OUT_OF_RANGE`.
+    const operations = analyzeJavaScriptSemantics(`
+      ${importLine}
+      import fs from "node:fs";
+      Object.defineProperty(${ancestor}.prototype, "start", {
+        get() { return 0; },
+        set() {},
+        configurable: true,
+      });
+      const stream = fs.createReadStream("input", { start: -1 });
+      stream.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method: "createReadStream",
+          resolution: "partial",
+        }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
+it("retains a write stream when Buffer is mutated through its prototype constructor", () => {
+  // `Buffer.prototype.constructor` is `Buffer`, so a write through that route replaces
+  // the same predicate the encoding check calls. Measured on Node 24.22.1, with a named
+  // `Buffer as B` import, `B.prototype.constructor.isEncoding = () => true` makes
+  // `createWriteStream(p, {encoding:"nope"})` return a handle. The stream itself is
+  // real, so only the acquisition and its release are asserted, as the neighbouring
+  // validator-mutation cases do.
+  const operations = analyzeJavaScriptSemantics(`
+    const { Buffer: B } = require("node:buffer");
+    const fs = require("node:fs");
+    B.prototype.constructor.isEncoding = () => true;
+    const stream = fs.createWriteStream("input", { encoding: "nope" });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "acquire",
+        method: "createWriteStream",
+      }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+it("keeps native rejection when the other stream prototype changes or the change is later", () => {
+  for (const setup of [
+    'Object.defineProperty(fs.WriteStream.prototype, "start", { set(value) {} }); fs.createReadStream("input", { start: -1 });',
+    'fs.createReadStream("input", { start: -1 }); Object.defineProperty(fs.ReadStream.prototype, "start", { set(value) {} });',
+  ]) {
+    const operations = analyzeJavaScriptSemantics(
+      `const fs = require("node:fs"); ${setup}`,
+    ).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+  }
+});
+
+it.each([
+  ["createReadStream", "ReadStream"],
+  ["createWriteStream", "WriteStream"],
+] as const)(
+  "retains %s when its constructor may be replaced",
+  (method, constructor) => {
+    const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    const Native = fs.${constructor};
+    fs.${constructor} = class extends Native { constructor(p, opts) { super(p, { ...opts, start: 0 }); } };
+    const stream = fs.${method}("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
+      ]),
+    );
+  },
+);
+
+it("still rejects a bad read option when only the write constructor changed", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    fs.WriteStream = Custom;
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it.each([
+  ["ReadStream", "createReadStream"],
+  ["WriteStream", "createWriteStream"],
+] as const)(
+  "retains %s prototype effects through named imports",
+  (constructor, method) => {
+    const operations = analyzeJavaScriptSemantics(`
+    import fs, { ${constructor} } from "node:fs";
+    Object.defineProperty(${constructor}.prototype, "start", { get() { return 0; }, set(value) {} });
+    const stream = fs.${method}("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
+      ]),
+    );
+  },
+);
+
+it.each([
+  ["ReadStream", "createReadStream", "FileReadStream", "Readable"],
+  ["WriteStream", "createWriteStream", "FileWriteStream", "Writable"],
+] as const)(
+  "retains %s after shared constructor escapes or inherited mutations",
+  (constructor, method, alias, parent) => {
+    for (const setup of [
+      `import { ${constructor} } from "node:fs"; configure(${constructor});`,
+      `Object.defineProperty(fs.${alias}.prototype, "start", { get() { return 0; }, set(value) {} });`,
+      `Object.defineProperty(require("node:stream").${parent}.prototype, "start", { get() { return 0; }, set(value) {} });`,
+      `import { ${parent} } from "node:stream"; Object.defineProperty(${parent}.prototype, "start", { get() { return 0; }, set(value) {} });`,
+    ]) {
+      const preamble = setup.includes('require("node:stream")')
+        ? 'const fs = require("node:fs");'
+        : 'import fs from "node:fs";';
+      const operations = analyzeJavaScriptSemantics(
+        `${preamble} ${setup} const stream = fs.${method}("input", { start: -1 }); stream.close();`,
+      ).resourceOperations;
+      expect(operations, setup).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "acquire", method }),
+          expect.objectContaining({ kind: "release", method: "close" }),
+        ]),
+      );
+    }
+  },
+);
+
+it.each([
+  ["Readable", "createReadStream"],
+  ["Writable", "createWriteStream"],
+] as const)(
+  "retains %s when its export is replaced before stream initialization",
+  (parent, method) => {
+    const operations = analyzeJavaScriptSemantics(`
+      const stream = require("node:stream");
+      stream.${parent} = wrapper;
+      const fs = require("node:fs");
+      const handle = fs.${method}("input", { highWaterMark: -1 });
+      handle.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "acquire", method }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
+
+it("retains write streams when the named Buffer constructor escapes", () => {
+  const operations = analyzeJavaScriptSemantics(
+    `import fs from "node:fs"; import { Buffer as B } from "node:buffer"; configure(B); const stream = fs.createWriteStream("input", { encoding: "nope" }); stream.close();`,
+  ).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method: "createWriteStream" }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+
+it("keeps native rejection after unrelated prototype or local binding changes", () => {
+  for (const setup of [
+    'const { Writable } = require("node:stream"); Object.defineProperty(Writable.prototype, "start", { set(value) {} });',
+    'let { ReadStream } = require("node:fs"); ReadStream = Custom;',
+    "fs.FileReadStream = Custom;",
+  ]) {
+    const operations = analyzeJavaScriptSemantics(
+      `const fs = require("node:fs"); ${setup} fs.createReadStream("input", { start: -1 });`,
+    ).resourceOperations;
+    expect(
+      operations.filter(({ kind }) => kind === "acquire"),
+      setup,
+    ).toEqual([]);
+  }
+});
+
+it.each([
+  "Buffer.isEncoding = () => true",
+  "globalThis.Buffer.isEncoding = () => true",
+  "const { Buffer: B } = require('node:buffer'); B.isEncoding = () => true",
+  "import { Buffer as B } from 'node:buffer'; B.isEncoding = () => true",
+  "import * as b from 'node:buffer'; b.Buffer.isEncoding = () => true",
+])("retains write streams after validator mutation: %s", (setup) => {
+  const operations = analyzeJavaScriptSemantics(`
+    ${setup.startsWith("import") ? 'import fs from "node:fs";' : 'const fs = require("node:fs");'} ${setup};
+    const stream = fs.createWriteStream("input", { encoding: "nope" });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method: "createWriteStream" }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+
+it.each([
+  "Buffer.isEncoding = () => true",
+  "globalThis.Buffer.isEncoding = () => true",
+  "const { Buffer: B } = require('node:buffer'); B.isEncoding = () => true",
+  "import { Buffer as B } from 'node:buffer'; B.isEncoding = () => true",
+])(
+  "retains read streams with a boxed encoding after validator mutation: %s",
+  (setup) => {
+    const operations = analyzeJavaScriptSemantics(`
+    ${setup.startsWith("import") ? 'import fs from "node:fs";' : 'const fs = require("node:fs");'} ${setup};
+    const stream = fs.createReadStream("input", { encoding: new String("utf8") });
+    stream.close();
+  `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method: "createReadStream",
+        }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
+
+it("keeps independent rejection and later or unrelated validator writes precise", () => {
+  for (const body of [
+    'fs.createWriteStream("input", { encoding: "nope" }); Buffer.isEncoding = () => true;',
+    'Buffer.other = 1; fs.createWriteStream("input", { encoding: "nope" });',
+    'Buffer.isEncoding = () => true; fs.createWriteStream("input", { start: -1, encoding: "nope" });',
+    'Buffer.isEncoding = () => true; fs.createReadStream("input", { encoding: "nope" });',
+  ]) {
+    const operations = analyzeJavaScriptSemantics(
+      `const fs = require("node:fs"); ${body}`,
+    ).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+  }
+});
+
+it.each([
+  ["ReadStream", "createReadStream"],
+  ["WriteStream", "createWriteStream"],
+] as const)(
+  "retains %s acquisition and release when its prototype intercepts start",
+  (constructor, method) => {
+    const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty(fs.${constructor}.prototype, "start", { get() { return 0; }, set(value) {} });
+    const stream = fs.${method}("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
+      ]),
+    );
+  },
+);
+
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "does not attribute %s to fs after mutating the result of defineProperty",
+  (method) => {
+    const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const alias = Object.defineProperty(fs, "tag", { value: 1 });
+    alias.${method} = () => null;
+    const stream = fs.${method}("input");
+    stream.close();
+  `).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+  },
+);
+
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "keeps descriptor-installed accessors conservative for %s",
+  (method) => {
+    for (const [descriptor, use] of [
+      [`get: function () { this.${method} = () => null; }`, "fs.tag;"],
+      [`set: function (_) { this.${method} = () => null; }`, "fs.tag = 1;"],
+    ]) {
+      const operations = analyzeJavaScriptSemantics(`
+        const fs = require("node:fs");
+        Object.defineProperty(fs, "tag", { ${descriptor} });
+        ${use}
+        const stream = fs.${method}("input");
+        stream.close();
+      `).resourceOperations;
+      expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+    }
+  },
+);
+
+it("checks the constructor at the factory call even when the factory was saved earlier", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const read = fs.createReadStream;
+    fs.ReadStream = Custom;
+    const stream = read("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method: "createReadStream" }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+
+it("still rejects a bad option when the matching constructor changes afterward", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    fs.createReadStream("input", { start: -1 });
+    fs.ReadStream = Custom;
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("retains a stream when its constructor is replaced through a module alias", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("fs");
+    const alias = require("node:fs");
+    alias.ReadStream = Custom;
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method: "createReadStream" }),
+    ]),
+  );
+});
+
+it("retains a stream when Object.defineProperty replaces its constructor through a module alias", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("fs");
+    const alias = require("node:fs");
+    Object.defineProperty(alias, "ReadStream", { value: Custom });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "acquire",
+        method: "createReadStream",
+        resolution: "partial",
+      }),
+      expect.objectContaining({
+        kind: "release",
+        method: "close",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it("keeps native rejection when Object.defineProperty changes an unrelated fs slot", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty(fs, "WriteStream", { value: Custom });
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("does not trust a replaced Object.defineProperty as a confined mutation", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty = patched;
+    Object.defineProperty(fs, "WriteStream", { value: Custom });
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("does not attribute a redefined factory to the native built-in", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty(fs, "createReadStream", { value: Custom });
+    fs.createReadStream("input", { start: 0 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("still rejects a bad option when a prototype change is definitely later", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    fs.createReadStream("input", { start: -1 });
+    Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("retains a bad option when prototype mutation timing crosses a callable", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    function configure() { Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true }); }
+    function open() { return fs.createReadStream("input", { start: -1 }); }
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toHaveLength(1);
+});
+
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "rejects boxed numeric and encoding values for %s while leaving constructed fd unknown",
+  (method) => {
+    for (const member of [
+      "start: new Number(0)",
+      "highWaterMark: new Number(0)",
+      "encoding: new String('utf8')",
+    ])
+      expect(streamAcquisitionsFor(`fs.${method}(p, { ${member} })`)).toEqual(
+        [],
+      );
+    expect(
+      streamAcquisitionsFor(`fs.${method}(p, { end: new Number(0) })`),
+    ).toHaveLength(method === "createReadStream" ? 0 : 1);
+    expect(
+      streamAcquisitionsFor(`fs.${method}(p, { fd: new Handle() })`),
+    ).toHaveLength(1);
+  },
+);
+
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "keeps %s and its close when delete may evaluate to false",
+  (method) => {
+    const operations = analyzeJavaScriptSemantics(`
+      const fs = require("node:fs");
+      function open(p) {
+        const o = {};
+        Object.defineProperty(o, "x", { value: 1 });
+        const stream = fs.${method}(p, { encoding: delete o.x });
+        stream.close();
+      }
+    `).resourceOperations;
+    const acquire = operations.find(
+      (operation) => operation.kind === "acquire",
+    );
+    const release = operations.find(
+      (operation) => operation.kind === "release",
+    );
+    expect(acquire).toMatchObject({ kind: "acquire", method });
+    expect(release).toMatchObject({ kind: "release", method: "close" });
+    expect(release?.linkedResourceIds).toContain(acquire?.resourceId);
+  },
+);
+
+it.each([
+  ["a negative start", `fs.createReadStream(p, {start: -1})`],
+  ["a fractional start", `fs.createReadStream(p, {start: 1.5})`],
+  ["a NaN start", `fs.createReadStream(p, {start: NaN})`],
+  ["an Infinity start", `fs.createReadStream(p, {start: Infinity})`],
+  ["a string start", `fs.createReadStream(p, {start: "10"})`],
+  ["a null start", `fs.createReadStream(p, {start: null})`],
+  ["a boolean start", `fs.createReadStream(p, {start: true})`],
+  ["a BigInt start", `fs.createReadStream(p, {start: 1n})`],
+  ["a negative end", `fs.createReadStream(p, {end: -1})`],
+  ["a fractional end", `fs.createReadStream(p, {end: 1.5})`],
+  ["a string end", `fs.createReadStream(p, {end: "x"})`],
+  ["a null end", `fs.createReadStream(p, {end: null})`],
+  ["a start above the end", `fs.createReadStream(p, {start: 10, end: 2})`],
+  ["a negative fd", `fs.createReadStream(p, {fd: -1})`],
+  ["a fractional fd", `fs.createReadStream(p, {fd: 1.5})`],
+  ["a string fd", `fs.createReadStream(p, {fd: "x"})`],
+  ["a negative high-water mark", `fs.createReadStream(p, {highWaterMark: -1})`],
+  [
+    "a fractional high-water mark",
+    `fs.createReadStream(p, {highWaterMark: 1.5})`,
+  ],
+  ["a string high-water mark", `fs.createReadStream(p, {highWaterMark: "x"})`],
+  ["an unknown encoding", `fs.createReadStream(p, {encoding: "nope"})`],
+  ["a numeric encoding", `fs.createReadStream(p, {encoding: 5})`],
+  ["a truthy boolean encoding", `fs.createReadStream(p, {encoding: true})`],
+  ["a write-stream negative start", `fs.createWriteStream(p, {start: -1})`],
+  ["a write-stream fractional start", `fs.createWriteStream(p, {start: 1.5})`],
+  ["a write-stream string start", `fs.createWriteStream(p, {start: "x"})`],
+  ["a write-stream negative fd", `fs.createWriteStream(p, {fd: -1})`],
+  [
+    "a write-stream negative high-water mark",
+    `fs.createWriteStream(p, {highWaterMark: -1})`,
+  ],
+  ["a write-stream numeric encoding", `fs.createWriteStream(p, {encoding: 5})`],
+] as const)("emits no stream acquisition for %s", (_name, call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a descriptor with an unknown prototype",
+    `fs.createReadStream(p, {fd: {__proto__: opts}})`,
+  ],
+  [
+    "a copied prototype setter",
+    `fs.createReadStream(p, {["__proto__"]: {set start(v) {}}, start: -1})`,
+  ],
+  [
+    "a spread that may supply a prototype setter",
+    `fs.createReadStream(p, {...opts, start: -1})`,
+  ],
+  [
+    "a computed key that may be a prototype setter",
+    `fs.createWriteStream(p, {[n]: opts, start: -1})`,
+  ],
+  ["a zero start", `fs.createReadStream(p, {start: 0})`],
+  ["a negative zero start", `fs.createReadStream(p, {start: -0})`],
+  ["an undefined start", `fs.createReadStream(p, {start: undefined})`],
+  ["a zero end", `fs.createReadStream(p, {end: 0})`],
+  ["an end equal to the start", `fs.createReadStream(p, {start: 2, end: 2})`],
+  ["an end above the start", `fs.createReadStream(p, {start: 2, end: 10})`],
+  ["a null fd", `fs.createReadStream(p, {fd: null})`],
+  ["a null high-water mark", `fs.createReadStream(p, {highWaterMark: null})`],
+  ["a known encoding", `fs.createReadStream(p, {encoding: "utf8"})`],
+  [
+    "an upper-case known encoding",
+    `fs.createReadStream(p, {encoding: "UTF8"})`,
+  ],
+  ["an empty encoding", `fs.createReadStream(p, {encoding: ""})`],
+  ["a null encoding", `fs.createReadStream(p, {encoding: null})`],
+  ["a zero encoding", `fs.createReadStream(p, {encoding: 0})`],
+  ["a false encoding", `fs.createReadStream(p, {encoding: false})`],
+  ["an unvalidated flags value", `fs.createReadStream(p, {flags: 123})`],
+  ["an unvalidated mode value", `fs.createReadStream(p, {mode: -1})`],
+  ["an ignored end on a write stream", `fs.createWriteStream(p, {end: -1})`],
+  ["an unreadable start", `fs.createReadStream(p, {start: n})`],
+  ["no options object", `fs.createReadStream(p)`],
+] as const)("keeps the stream acquisition for %s", (_name, call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([
+    {
+      kind: "acquire",
+      method: call.includes("createWriteStream")
+        ? "createWriteStream"
+        : "createReadStream",
+    },
+  ]);
+});
+/**
+ * Five shapes where the stream-option filter disagreed with Node 24.22.1:
+ *
+ * 1. A write stream ignores `end`, so neither its own check nor the `start > end`
+ *    ordering applies: `createWriteStream(p, {start: 10, end: 2})` creates a handle.
+ * 2. `end: Infinity` is a valid unlimited end on a read stream, while `start: Infinity`
+ *    is out of range and `end: -Infinity` and `end: NaN` throw.
+ * 3. A unary member is not always `+`: `~0` is `-1` and throws, `~-1` is `0` and does
+ *    not, and `!0`, `!1` and `typeof 1` yield a boolean or a string Node refuses.
+ * 4. Each integer member has its own upper bound: `start` and `end` stop at
+ *    `Number.MAX_SAFE_INTEGER`, `fd` at `2_147_483_647`, and `highWaterMark` has none
+ *    (`1e21` is accepted, `Infinity` is not).
+ * 5. An object, array, function or regular expression member throws
+ *    `ERR_INVALID_ARG_TYPE`.
+ */
+it.each([
+  [`fs.createReadStream(p, {start: 10, end: 2})`],
+  [`fs.createReadStream(p, {start: Infinity})`],
+  [`fs.createReadStream(p, {end: -Infinity})`],
+  [`fs.createReadStream(p, {end: NaN})`],
+  [`fs.createReadStream(p, {start: ~0})`],
+  [`fs.createReadStream(p, {end: ~0})`],
+  [`fs.createReadStream(p, {start: !0})`],
+  [`fs.createReadStream(p, {start: !1})`],
+  [`fs.createReadStream(p, {start: typeof 1})`],
+  [`fs.createReadStream(p, {start: 9007199254740992})`],
+  [`fs.createReadStream(p, {end: 9007199254740992})`],
+  [`fs.createReadStream(p, {fd: 2147483648})`],
+  [`fs.createReadStream(p, {fd: -2147483648})`],
+  [`fs.createWriteStream(p, {fd: 2147483648})`],
+  [`fs.createReadStream(p, {highWaterMark: Infinity})`],
+  [`fs.createReadStream(p, {highWaterMark: NaN})`],
+  [`fs.createReadStream(p, {start: []})`],
+  [`fs.createReadStream(p, {start: {}})`],
+  [`fs.createReadStream(p, {start: () => {}})`],
+  [`fs.createReadStream(p, {start: /x/})`],
+] as const)("emits no stream acquisition for %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a write stream ignoring end",
+    `fs.createWriteStream(p, {start: 10, end: 2})`,
+  ],
+  [
+    "a write stream ignoring a negative end",
+    `fs.createWriteStream(p, {end: -1})`,
+  ],
+  [
+    "a write stream ignoring an infinite end",
+    `fs.createWriteStream(p, {end: Infinity})`,
+  ],
+  ["an infinite end", `fs.createReadStream(p, {end: Infinity})`],
+  ["an overflowing end", `fs.createReadStream(p, {end: 1e400})`],
+  [
+    "an infinite end above a start",
+    `fs.createReadStream(p, {start: 5, end: Infinity})`,
+  ],
+  ["a complemented minus one", `fs.createReadStream(p, {start: ~-1})`],
+  ["a complemented uint32 max", `fs.createReadStream(p, {start: ~4294967295})`],
+  ["a void start", `fs.createReadStream(p, {start: void 0})`],
+  [
+    "an offset at the safe-integer ceiling",
+    `fs.createReadStream(p, {start: 9007199254740991})`,
+  ],
+  ["a descriptor at int32 max", `fs.createReadStream(p, {fd: 2147483647})`],
+  [
+    "a descriptor above int32 on a write stream",
+    `fs.createWriteStream(p, {fd: 2147483647})`,
+  ],
+  [
+    "a high-water mark above int32",
+    `fs.createReadStream(p, {highWaterMark: 2147483648})`,
+  ],
+  [
+    "a high-water mark of 1e21",
+    `fs.createReadStream(p, {highWaterMark: 1e21})`,
+  ],
+] as const)("keeps the stream acquisition for %s", (_name, call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
+/**
+ * A getter in the options literal runs while Node enumerates and copies the object, so
+ * it can replace another member before that member is read. Measured on Node 24.22.1:
+ *
+ *   createReadStream(p, {get reset(){this.start=0}, start:-1})  -> stream
+ *   createReadStream(p, {get reset(){}, start:-1})              -> stream
+ *   createReadStream(p, {set x(v){}, start:-1})                 -> THREW
+ *   createReadStream(p, {reset(){this.start=0}, start:-1})      -> THREW (methods are not invoked)
+ *   createReadStream(p, {start:-1, get z(){}})                  -> THREW (the getter runs after)
+ *
+ * A `set` accessor and a plain method do not run during the copy, so a bad member there
+ * is still decided.
+ */
+it.each([
+  [`fs.createReadStream(p, {get reset(){this.start=0}, start:-1})`],
+  [`fs.createReadStream(p, {get reset(){}, start:-1})`],
+  [`fs.createReadStream(p, {start:-1, get z(){}})`],
+  [`fs.createReadStream(p, {get z(){this.highWaterMark=-1}, highWaterMark:0})`],
+  [`fs.createWriteStream(p, {get reset(){this.start=0}, start:-1})`],
+] as const)("leaves a getter-bearing options literal undecided: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
+
+it.each([
+  [`fs.createReadStream(p, {set x(v){}, start:-1})`],
+  [`fs.createReadStream(p, {reset(){this.start=0}, start:-1})`],
+  [`fs.createReadStream(p, {start:-1})`],
+] as const)(
+  "still decides a literal whose accessors do not run: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);
+/**
+ * A computed string key does not stop a getter from running while Node copies the
+ * literal. Measured on Node 24.22.1:
+ *
+ *   createReadStream(p, {get ["reset"](){this.start=0}, start:-1})  -> stream
+ *   createReadStream(p, {get ["reset"](){}, start:-1})              -> stream
+ */
+it("treats a computed string-key getter as eager", () => {
+  expect(
+    streamAcquisitionsFor(
+      `fs.createReadStream(p, {get ["reset"](){this.start=0}, start:-1})`,
+    ),
+  ).toHaveLength(1);
+  expect(
+    streamAcquisitionsFor(
+      `fs.createReadStream(p, {get ["reset"](){}, start:-1})`,
+    ),
+  ).toHaveLength(1);
+});
+
+/**
+ * A method written in shorthand reaches the reader as an `ObjectMethod`, and a class
+ * expression has the same runtime type as a function. Measured on Node 24.22.1, all of
+ * `{start(){}}`, `{start: function(){}}`, `{start: class{}}` and `{start: function*(){}}`
+ * throw `ERR_INVALID_ARG_TYPE`, and `{encoding(){}}` throws `ERR_INVALID_ARG_VALUE`.
+ */
+it.each([
+  [`fs.createReadStream(p, {start(){}})`],
+  [`fs.createReadStream(p, {end(){}})`],
+  [`fs.createReadStream(p, {fd(){}})`],
+  [`fs.createReadStream(p, {highWaterMark(){}})`],
+  [`fs.createReadStream(p, {start: class{}})`],
+  [`fs.createReadStream(p, {start: function*(){}})`],
+  [`fs.createReadStream(p, {encoding(){}})`],
+] as const)("emits no acquisition for a method-valued member: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+/**
+ * Any truthy non-string `encoding` reaches Node's check and is refused; a falsy one is
+ * skipped first. Measured on Node 24.22.1: `-1`, `1.5`, `Infinity`, `-Infinity`, `{}`
+ * and `[]` throw `ERR_INVALID_ARG_VALUE`, while `0`, `-0`, `""`, `false`, `0n` and `NaN`
+ * all construct a stream.
+ */
+it.each([
+  [`fs.createReadStream(p, {encoding: -1})`],
+  [`fs.createReadStream(p, {encoding: 1.5})`],
+  [`fs.createReadStream(p, {encoding: Infinity})`],
+  [`fs.createReadStream(p, {encoding: -Infinity})`],
+  [`fs.createReadStream(p, {encoding: {}})`],
+  [`fs.createReadStream(p, {encoding: []})`],
+] as const)(
+  "emits no acquisition for a truthy non-string encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  [`fs.createReadStream(p, {encoding: NaN})`],
+  [`fs.createReadStream(p, {encoding: -0})`],
+  [`fs.createReadStream(p, {encoding: 0})`],
+  [`fs.createReadStream(p, {encoding: ""})`],
+  [`fs.createReadStream(p, {encoding: false})`],
+] as const)("keeps the acquisition for a falsy encoding: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
+/**
+ * `encoding` truthiness is a separate question from the numeric bounds. Measured on
+ * Node 24.22.1:
+ *
+ *   {encoding: !1}        -> false, skipped          -> stream
+ *   {encoding: !0}        -> true,  refused          -> THREW ERR_INVALID_ARG_VALUE
+ *   {encoding: ~-1}       -> 0,     skipped          -> stream
+ *   {encoding: ~0}        -> -1,    refused          -> THREW
+ *   {encoding: typeof 1}  -> "number", refused       -> THREW
+ *   {encoding: `utf8`}                               -> stream
+ *   {encoding: `ut${"f8"}`}                          -> stream (interpolated, undecided)
+ *   {encoding: `nope${"x"}`}                         -> THREW, but undecided here
+ */
+it.each([
+  [`fs.createReadStream(p, {encoding: !1})`],
+  [`fs.createReadStream(p, {encoding: ~-1})`],
+  [`fs.createReadStream(p, {encoding: \`utf8\`})`],
+  [`fs.createReadStream(p, {encoding: \`ut\${"f8"}\`})`],
+  [`fs.createReadStream(p, {encoding: \`nope\${"x"}\`})`],
+] as const)(
+  "keeps the acquisition for a skipped or undecided encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toHaveLength(1);
+  },
+);
+
+it.each([
+  [`fs.createReadStream(p, {encoding: !0})`],
+  [`fs.createReadStream(p, {encoding: ~0})`],
+  [`fs.createReadStream(p, {encoding: typeof 1})`],
+  // A regular expression is an object at runtime, and Node refuses it as an encoding.
+  [`fs.createReadStream(p, {encoding: /x/})`],
+  [`fs.createWriteStream(p, {encoding: /x/})`],
+] as const)(
+  "emits no acquisition for a truthy non-string encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);

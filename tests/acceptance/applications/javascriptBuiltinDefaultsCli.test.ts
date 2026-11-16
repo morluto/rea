@@ -12,6 +12,129 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 
 const execute = promisify(execFile);
 
+it("retains streams with an undecidable delete encoding through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-stream-delete-");
+  await writeFile(
+    join(root, "app.cjs"),
+    `throw new Error("parse only");
+     const fs = require("node:fs");
+     const o = {}; Object.defineProperty(o, "x", { value: 1 });
+     const read = fs.createReadStream("input", { encoding: delete o.x });
+     const write = fs.createWriteStream("output", { encoding: delete o.x });
+     read.close(); write.close();`,
+  );
+  const { stdout } = await execute(
+    process.execPath,
+    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
+    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
+  );
+  const evidence = parseEvidence(JSON.parse(stdout));
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(
+    result.semantic_graph.nodes.filter(({ kind }) => kind === "resource"),
+  ).toHaveLength(2);
+  expect(
+    result.semantic_graph.relations.filter(
+      ({ relation }) => relation === "releases",
+    ),
+  ).toHaveLength(2);
+  const { client, call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: root,
+    format: "auto",
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(response.structuredContent).toEqual(evidence);
+  await client.ping();
+}, 60000);
+
+it("keeps prototype-intercepted streams and rejects boxed options through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-stream-option-ownership-");
+  await writeFile(
+    join(root, "prototype.cjs"),
+    `
+    const fs = require("node:fs");
+    Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true });
+    const read = fs.createReadStream("input", { start: -1 });
+    const write = fs.createWriteStream("output", { start: -1 });
+    read.close(); write.close();
+  `,
+  );
+  await writeFile(
+    join(root, "boxed.cjs"),
+    `
+    const fs = require("node:fs");
+    fs.createReadStream("input", { start: new Number(0) });
+    fs.createWriteStream("output", { encoding: new String("utf8") });
+    fs.createReadStream("input", { fd: new Handle() });
+  `,
+  );
+  await writeFile(
+    join(root, "validator.cjs"),
+    `
+    const fs = require("node:fs");
+    fs.createReadStream("before", { encoding: new String("utf8") });
+    Buffer.isEncoding = () => true;
+    const read = fs.createReadStream("input", { encoding: new String("utf8") });
+    read.close();
+    fs.createReadStream("invalid", { encoding: "nope" });
+  `,
+  );
+  await writeFile(
+    join(root, "superclass.cjs"),
+    `
+    const stream = require("node:stream");
+    stream.Readable = wrapRead;
+    stream.Writable = wrapWrite;
+    const fs = require("node:fs");
+    const read = fs.createReadStream("input", { highWaterMark: -1 });
+    const write = fs.createWriteStream("output", { highWaterMark: -1 });
+    read.close(); write.close();
+  `,
+  );
+  const { stdout } = await execute(
+    process.execPath,
+    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
+    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
+  );
+  const evidence = parseEvidence(JSON.parse(stdout));
+  const graph = javascriptApplicationAnalysisResultSchema.parse(
+    evidence.normalized_result,
+  ).semantic_graph;
+  const resources = graph.nodes.filter(({ kind }) => kind === "resource");
+  expect(
+    resources.filter(
+      ({ identity }) => identity.module_path === "prototype.cjs",
+    ),
+  ).toHaveLength(2);
+  expect(
+    resources.filter(({ identity }) => identity.module_path === "boxed.cjs"),
+  ).toHaveLength(1);
+  expect(
+    resources.filter(
+      ({ identity }) => identity.module_path === "validator.cjs",
+    ),
+  ).toHaveLength(1);
+  expect(
+    resources.filter(
+      ({ identity }) => identity.module_path === "superclass.cjs",
+    ),
+  ).toHaveLength(2);
+  expect(
+    graph.relations.filter(({ relation }) => relation === "releases"),
+  ).toHaveLength(5);
+  const { client, call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: root,
+    format: "auto",
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(response.structuredContent).toEqual(evidence);
+  await client.ping();
+}, 60000);
+
 it("preserves earlier and sibling effects without inventing replaced cached-module or process effects", async () => {
   const root = await createTestTempDirectory("rea-builtin-identity-");
   await writeFile(
