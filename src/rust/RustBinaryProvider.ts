@@ -284,8 +284,11 @@ const rustcLimitation = (
 /**
  * Optional inferred paths never displace independently observed dependency
  * facts. The compiler guidance describes the retained result: the reader's
- * guidance when every retained path fits, otherwise the trimming guidance,
- * which names its control directly because no compiler record may survive.
+ * guidance when it fits; the reader's record and control without that
+ * guidance (which restates rustc_commit.coverage) when only the guidance
+ * does not fit; otherwise the trimming guidance, which names its control
+ * directly because no compiler record may survive. Byte trimming is reported
+ * only when it removes a path.
  */
 const retainCompilerPathsWithinReport = (
   report: RustBinary,
@@ -303,6 +306,7 @@ const retainCompilerPathsWithinReport = (
     report.limitations = withGuidance;
     return;
   }
+  if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return;
   const limitation =
     "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call; no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
   const baseline = {
@@ -320,7 +324,9 @@ const retainCompilerPathsWithinReport = (
     Buffer.byteLength(JSON.stringify({ ...baseline, rustc_commit: empty }));
   let retainedBytes = 0;
   let count = 0;
-  for (const hash of commit.hashes) {
+  // The complete record does not fit, so trimming removes at least one path
+  // and the byte coverage it records stays true.
+  for (const hash of commit.hashes.slice(0, -1)) {
     const bytes =
       Buffer.byteLength(JSON.stringify(hash)) + (count === 0 ? 0 : 1);
     if (bytes > available - retainedBytes) break;

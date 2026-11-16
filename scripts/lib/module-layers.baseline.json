@@ -8,12 +8,10 @@
     "main <-> server"
   ],
   "crossProvider": {
-    "desktop -> electron": 1,
     "gpu -> artifacts": 1,
     "model -> artifacts": 1
   },
   "entry": {
-    "application -> desktop": 28,
-    "application -> frida": 2
+    "application -> desktop": 28
   }
 }

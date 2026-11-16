@@ -54,6 +54,10 @@ import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheS
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import { projectManagedApplicationGraphExecution } from "../application/managed/ManagedApplicationGraphService.js";
+import { compareManagedMembersExecution } from "../application/managed/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesExecution } from "../application/managed/ManagedNativeVerificationService.js";
+import { importManagedReconstructionExecution } from "../application/managed/ManagedReconstructionService.js";
 import { compareFunctionEvidence } from "../application/investigation/FunctionComparisonEvidence.js";
 import { compareProcessEvidence } from "../application/process/ProcessComparisonService.js";
 import {
@@ -89,6 +93,8 @@ import { traceApplicationFeatureEvidence } from "../application/javascript/JavaS
 import { traceJavaScriptSemanticsEvidence } from "../application/javascript/JavaScriptSemanticTraceService.js";
 import { compareStaticAndObservedEndpointsEvidence } from "../application/javascript/StaticObservedEndpointComparisonService.js";
 import { inspectNtfsJournalEvidence } from "../application/ntfs/NtfsJournalService.js";
+import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
+import { exportEnvironmentBundleTool } from "../application/environment/environmentBundleTool.js";
 import { PlaywrightTraceService } from "../application/playwrightTrace/PlaywrightTraceService.js";
 import { PlaywrightTraceDecoder } from "../browser/history/playwrightTrace/PlaywrightTraceDecoder.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -148,6 +154,10 @@ const requestedView = (input: {
   readonly view?: AnalysisViewRequest | undefined;
 }): AnalysisViewRequest | undefined =>
   input.view ?? (input.detail === "summary" ? { kind: "summary" } : undefined);
+
+const exportEnvironmentBundleContract = toolContract(
+  "export_environment_bundle",
+);
 
 /** A completed workflow that leaves no residual unknown. */
 const settledResult = (
@@ -704,8 +714,43 @@ const SERVICE_TOOL_BINDINGS = {
       },
     },
   })) satisfies Bind<SessionDerivedToolOptions>,
+  // Managed-code workflows derive from session-held managed and native
+  // Evidence; the CLI runs the same owners without a session.
+  managedWorkflows: ((session) => ({
+    compare_managed_members: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        compareManagedMembersExecution(input, evidenceForAnalysis, { signal }),
+    },
+    verify_managed_native_boundaries: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        verifyManagedNativeBoundariesExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+    import_managed_reconstruction: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        importManagedReconstructionExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+    project_managed_application_graph: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        projectManagedApplicationGraphExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+  })) satisfies Bind<BinarySessionPort>,
   // Application workflows complete Evidence from session-held Evidence or
-  // caller-named files; a requested view or summary is staged against it.
+  // caller-named files under analysis admission; a requested view or summary
+  // is staged against it.
   applicationWorkflows: (({ resources }, { evidenceById }) => {
     const playwright = new PlaywrightTraceService(
       new PlaywrightTraceDecoder(resources),
@@ -805,6 +850,33 @@ const SERVICE_TOOL_BINDINGS = {
           settledResult(
             projectHarmonyApplicationEvidence(input, evidenceById, { signal }),
           ),
+      },
+      // Plain results under the same admission as the workflows above.
+      evaluate_reconstruction_coverage: {
+        admission: "application",
+        admitted: true,
+        value: async (input) => evaluateReconstructionCoverage(input),
+      },
+      // The export validates its own request so refusals name the field.
+      export_environment_bundle: {
+        admission: "application",
+        admitted: true,
+        value: async (rawInput, { signal }) => {
+          const parsed =
+            exportEnvironmentBundleContract.inputSchema.safeParse(rawInput);
+          return parsed.success
+            ? exportEnvironmentBundleTool(parsed.data, evidenceById, {
+                signal,
+              })
+            : err(
+                analysisInputErrorFromIssues(
+                  exportEnvironmentBundleContract.name,
+                  parsed.error.issues,
+                  rawInput,
+                  { cause: parsed.error },
+                ),
+              );
+        },
       },
     };
   }) satisfies Bind<ApplicationWorkflowToolOptions>,

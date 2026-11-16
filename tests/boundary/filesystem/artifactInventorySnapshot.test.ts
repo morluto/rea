@@ -132,6 +132,7 @@ it("unwinds every nested traversal and preserves its primary failure", async () 
           throw new ArtifactReaderFailure(
             "integrity",
             "primary nested member failure",
+            { integrityCheck: "container-identity" },
           );
         },
         async return() {

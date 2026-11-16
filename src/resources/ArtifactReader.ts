@@ -42,7 +42,7 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
   /** For an `integrity` failure, the check that failed, when the reader names it. */
-  readonly integrityCheck?: ArtifactIntegrityCheck;
+  readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
 }
 
 /** Archive-neutral entry metadata. Reader adapters never choose output paths. */
@@ -268,6 +268,16 @@ export type CleanupFailedRead = ArtifactReaderFailure & {
   readonly cleanup: AnalysisCleanupObservation;
 };
 
+/** Why an artifact reader failed. */
+export type ArtifactReaderFailureReason =
+  | "cancelled"
+  | "format"
+  | "integrity"
+  | "io"
+  | "limit"
+  | "path"
+  | "unavailable";
+
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
   readonly resolvedPath: string | undefined;
@@ -282,15 +292,35 @@ export class ArtifactReaderFailure extends Error {
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
+  /** An `integrity` failure names the check that failed. */
   constructor(
-    readonly reason:
-      | "cancelled"
-      | "format"
-      | "integrity"
-      | "io"
-      | "limit"
-      | "path"
-      | "unavailable",
+    reason: "integrity",
+    message: string,
+    options: ArtifactReaderFailureOptions & {
+      readonly integrityCheck: ArtifactIntegrityCheck;
+    },
+    details?: ArtifactIntegrityDetails,
+  );
+  constructor(
+    reason: Exclude<ArtifactReaderFailureReason, "integrity">,
+    message: string,
+    options?: ArtifactReaderFailureOptions,
+    details?: ArtifactIntegrityDetails,
+  );
+  /**
+   * A rebuild whose reason is not a literal carries the check explicitly, as
+   * {@link primaryFacts} does, so a rewrapped integrity failure keeps it.
+   */
+  constructor(
+    reason: ArtifactReaderFailureReason,
+    message: string,
+    options: ArtifactReaderFailureOptions & {
+      readonly integrityCheck: ArtifactIntegrityCheck | undefined;
+    },
+    details?: ArtifactIntegrityDetails,
+  );
+  constructor(
+    readonly reason: ArtifactReaderFailureReason,
     message: string,
     options?: ArtifactReaderFailureOptions,
     readonly details?: ArtifactIntegrityDetails,
@@ -319,13 +349,8 @@ export class ArtifactReaderFailure extends Error {
    */
   primaryFacts(): Pick<
     ArtifactReaderFailureOptions,
-    | "userMessage"
-    | "resolvedPath"
-    | "boundary"
-    | "admission"
-    | "readerLimit"
-    | "integrityCheck"
-  > {
+    "userMessage" | "resolvedPath" | "boundary" | "admission" | "readerLimit"
+  > & { readonly integrityCheck: ArtifactIntegrityCheck | undefined } {
     return {
       ...(this.userMessage === undefined
         ? {}
@@ -338,9 +363,7 @@ export class ArtifactReaderFailure extends Error {
       ...(this.readerLimit === undefined
         ? {}
         : { readerLimit: this.readerLimit }),
-      ...(this.integrityCheck === undefined
-        ? {}
-        : { integrityCheck: this.integrityCheck }),
+      integrityCheck: this.integrityCheck,
     };
   }
 

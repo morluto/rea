@@ -483,7 +483,16 @@ it("rejects replacement, forged entry metadata and cancellation without losing c
     const entry = entries[0]!;
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+    await expect(
+      reader.open({ ...entry, adapterKey: "foreign" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
     const controller = new AbortController();
     controller.abort();
     await expect(reader.open(entry, controller.signal)).rejects.toMatchObject({

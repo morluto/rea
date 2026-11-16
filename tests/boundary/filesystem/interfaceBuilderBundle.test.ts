@@ -784,6 +784,10 @@ describe("bounded Interface Builder archive decoding", () => {
       const failure = new ArtifactReaderFailure(
         reason,
         "source acquisition failed",
+        {
+          integrityCheck:
+            reason === "integrity" ? "container-identity" : undefined,
+        },
       );
       const open = vi
         .spyOn(DirectoryArtifactReader.prototype, "open")

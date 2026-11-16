@@ -17,6 +17,8 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
+import { workflowUnknownInput } from "../investigation/WorkflowUnknown.js";
 
 export interface ManagedMemberComparisonExecution {
   readonly evidence: Evidence;
@@ -86,6 +88,42 @@ export const executeManagedMemberComparison = (
     summary: result.summary,
     sources: [left.value.evidence, right.value.evidence],
   });
+};
+
+/**
+ * Compare session-held inspections and keep members that remain unmatched or
+ * ambiguous as the comparison's residual unknown.
+ */
+export const compareManagedMembersExecution = (
+  input: unknown,
+  lookup: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal">,
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const compared = executeManagedMemberComparison(input, lookup, options);
+  if (!compared.ok) return compared;
+  const { evidence, sources, summary } = compared.value;
+  if (summary.unknown === 0)
+    return ok({ evidence, sources, unknown: undefined });
+  const unknown = workflowUnknownInput(evidence.evidence_id, {
+    question:
+      "Which managed members remain unmatched or ambiguous across these versions?",
+    severity: "medium",
+    domain: "managed-member-comparison",
+    required_authority: "shipped-artifact",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [
+      {
+        operation: "inspect_managed_members",
+        rationale:
+          "Review the inspection Evidence coverage and limit diagnostics; this operation has no page override, so unresolved members must remain unknown.",
+      },
+    ],
+    relationships: [],
+  });
+  return unknown.ok
+    ? ok({ evidence, sources, unknown: unknown.value })
+    : unknown;
 };
 
 const createManagedMemberComparisonEvidence = (
