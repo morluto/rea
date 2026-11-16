@@ -138,9 +138,9 @@ describe("tools/list pagination", () => {
       const pages = replies.filter(isToolsListReply);
       expect(pages.length).toBeGreaterThan(1);
       for (const page of pages) {
-        expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(
-          PAGING_TEST_PAGE_BUDGET_BYTES,
-        );
+        expect(
+          Buffer.byteLength(JSON.stringify(page), "utf8"),
+        ).toBeLessThanOrEqual(PAGING_TEST_PAGE_BUDGET_BYTES);
       }
       expect(typeof pages[0]?.result.nextCursor).toBe("string");
       expect(pages.at(-1)?.result.nextCursor).toBeUndefined();
