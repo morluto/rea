@@ -382,11 +382,9 @@ export function* readPeSectionDirectory(
     optionalHeaderSize: optionalSize,
     machine,
     characteristics,
+    symbolTableOffset,
+    symbolCount,
   } = parsedCoff.value;
-  // PointerToSymbolTable and NumberOfSymbols follow the signature, machine,
-  // section count and timestamp; they locate the long-section-name strings.
-  const symbolTableOffset = coff.u32(12);
-  const symbolCount = coff.u32(16);
   const optional = readPeOptionalHeaderStructure(
     yield request(fileSize, BigInt(pe + 24), BigInt(optionalSize)),
   );
