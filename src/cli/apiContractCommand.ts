@@ -36,7 +36,8 @@ export const registerApiContractCommand = (
         path: { description: "Local OpenAPI JSON/YAML or GraphQL SDL path" },
         format: {
           name: "contractFormat",
-          description: "Input API contract syntax: OpenAPI JSON, OpenAPI YAML, or GraphQL SDL",
+          description:
+            "Input API contract syntax: OpenAPI JSON, OpenAPI YAML, or GraphQL SDL",
         },
         operations_path: {
           description:
