@@ -311,6 +311,27 @@ export const ambientPathMayHaveChanged = (
   state.ambientWrites.covers(path) ||
   (observes === "contents" && state.ambientEscapes.covers(path));
 
+/**
+ * Whether a source-visible ambient write or escape recorded anywhere in the
+ * source reaches `path`, one of its prefixes or any member below it. A reader
+ * that depends on every member of an ambient object asks this. The answer
+ * ignores timing, so it holds at every read site.
+ */
+export const ambientPathOrMemberMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  path: JavaScriptSemanticPropertyPath,
+): boolean =>
+  state.ambientWrites.touches(path) || state.ambientEscapes.touches(path);
+
+/**
+ * Whether an assignment to the ambient binding `name` is recorded anywhere in
+ * the source. The answer ignores timing, so it holds at every read site.
+ */
+export const ambientBindingHasWrites = (
+  state: JavaScriptSemanticAnalysisState,
+  name: string,
+): boolean => state.ambientBindingWrites.has(name);
+
 /** Whether a recorded ambient effect's path is `target` or one of its prefixes. */
 export const ambientEffectCovers = (
   effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
@@ -591,6 +612,15 @@ export const prototypeMutationMayPrecede = (
 export const bindingHasMemberWrites = (
   binding: JavaScriptSemanticBindingState,
 ): boolean => binding.memberWrites.length > 0;
+
+/**
+ * Whether an escape of `binding`'s object is recorded at a site other than
+ * `except`, the call a reader is already evaluating.
+ */
+export const bindingHasEscapesOutside = (
+  binding: JavaScriptSemanticBindingState,
+  except: t.Node | undefined,
+): boolean => binding.escapedPaths.some((effect) => effect.node !== except);
 
 /**
  * The nodes recorded member writes to `binding`'s object involve, in record

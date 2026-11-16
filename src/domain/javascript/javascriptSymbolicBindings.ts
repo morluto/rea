@@ -24,6 +24,13 @@ import {
 } from "./javascriptSemanticAnalysis.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  ambientBindingHasWrites,
+  ambientPathMayHaveChanged,
+  ambientPathOrMemberMayHaveChanged,
+  bindingHasEscapesOutside,
+  bindingHasMemberWrites,
+} from "./javascriptSemanticEffectLog.js";
 import { symbolicLogicalRight } from "./javascriptSymbolicControlFlow.js";
 import {
   moduleFactory,
@@ -969,8 +976,8 @@ export class JavaScriptSymbolicBindings {
     if (
       this.#bindingMutated(binding.bindingId) ||
       this.#bindingHasWrites(binding.bindingId) ||
-      binding.memberWrites.length > 0 ||
-      binding.escapedPaths.some((effect) => effect.node !== proofInvocation)
+      bindingHasMemberWrites(binding) ||
+      bindingHasEscapesOutside(binding, proofInvocation)
     )
       return false;
     if (invocation === undefined && proofInvocation === undefined) {
@@ -1303,17 +1310,13 @@ export class JavaScriptSymbolicBindings {
       const path = ["global", prototypeOwner, "prototype"] as const;
       return (
         this.#prototypeMutationOwners.has(prototypeOwner) ||
-        this.state.ambientWrites.touches(path) ||
-        this.state.ambientEscapes.touches(path)
+        ambientPathOrMemberMayHaveChanged(this.state, path)
       );
     });
   }
 
   #importMetaMembersChanged(): boolean {
-    return (
-      this.state.ambientWrites.touches(["import-meta"]) ||
-      this.state.ambientEscapes.touches(["import-meta"])
-    );
+    return ambientPathOrMemberMayHaveChanged(this.state, ["import-meta"]);
   }
 
   #isLoaderFreeFunctionReference(
@@ -1357,16 +1360,12 @@ export class JavaScriptSymbolicBindings {
   #isLoaderFreeAmbientReference(node: t.Identifier): boolean {
     if (
       semanticResolutionBlocked(this.state, node, node.name) ||
-      this.state.ambientBindingWrites.has(node.name) ||
+      ambientBindingHasWrites(this.state, node.name) ||
       !LOADER_FREE_AMBIENT_VALUES.has(node.name)
     )
       return false;
     const path = ["global", node.name] as const;
-    if (
-      this.state.ambientWrites.covers(path) ||
-      this.state.ambientEscapes.covers(path)
-    )
-      return false;
+    if (ambientPathMayHaveChanged(this.state, path, "contents")) return false;
     const parent = this.state.parentsByNode.get(node);
     if (
       !(t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) ||
@@ -1382,12 +1381,10 @@ export class JavaScriptSymbolicBindings {
       ["global", "Object", "prototype", key],
     ] as const;
     return (
-      !this.state.ambientWrites.covers(memberPath) &&
-      !this.state.ambientEscapes.covers(memberPath) &&
+      !ambientPathMayHaveChanged(this.state, memberPath, "contents") &&
       inheritedMemberPaths.every(
         (inheritedPath) =>
-          !this.state.ambientWrites.covers(inheritedPath) &&
-          !this.state.ambientEscapes.covers(inheritedPath),
+          !ambientPathMayHaveChanged(this.state, inheritedPath, "contents"),
       )
     );
   }
@@ -1467,10 +1464,7 @@ export class JavaScriptSymbolicBindings {
       (owner === "Object" ? [owner] : [owner, "Object"]).some(
         (prototypeOwner) => {
           const path = ["global", prototypeOwner, "prototype", key] as const;
-          return (
-            this.state.ambientWrites.covers(path) ||
-            this.state.ambientEscapes.covers(path)
-          );
+          return ambientPathMayHaveChanged(this.state, path, "contents");
         },
       );
     return (
