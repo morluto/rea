@@ -5,7 +5,7 @@ import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   inspectSourceMap,
   isSourceMapSectionOverlap,
-} from "./SourceMapFormat.js";
+} from "../../domain/sourceMapFormat.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const url = "https://app.test/maps/app.js.map?v=2#map";

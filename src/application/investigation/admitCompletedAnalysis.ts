@@ -1,4 +1,3 @@
-import { MISSING_EVIDENCE_SUBJECT_LIMITATION } from "../../domain/evidence.js";
 import {
   analysisExecutionEnvelopeForAdmission,
   type AnalysisObservation,
@@ -25,14 +24,6 @@ export const admitCompletedAnalysis = (
   );
   let valueBytes = 0;
   let serializedUtf16Bytes = 0;
-  if (observation.subject == null) {
-    const entry = estimateJsonArrayScalarEntry(
-      MISSING_EVIDENCE_SUBJECT_LIMITATION,
-      observation.limitations.length > 0,
-    );
-    valueBytes += entry.valueBytes;
-    serializedUtf16Bytes += entry.serializedUtf16Bytes;
-  }
   for (const [index, source] of (observation.sourceEvidence ?? []).entries()) {
     const entry = estimateJsonArrayScalarEntry(source.evidence_id, index > 0);
     valueBytes += entry.valueBytes;

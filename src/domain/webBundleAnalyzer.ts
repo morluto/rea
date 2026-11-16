@@ -65,6 +65,7 @@ export const analyzeCapturedWebScript = (
       routes: accumulator.routes,
       endpoints: accumulator.endpoints,
       webmcp_declarations: accumulator.webMcp,
+      unresolved_endpoints: accumulator.unresolvedEndpoints,
     },
     inferences: accumulator.inferences,
   });

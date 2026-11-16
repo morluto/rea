@@ -1,3 +1,4 @@
+import { unknownTarget } from "../targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../contracts/managed/managedWorkflowExamples.js";
@@ -14,13 +15,17 @@ describe("managed/native verification source", () => {
       );
     const { encryption: _omitted, ...withoutEncryption } =
       inspectMachoSchema.parse(original.normalized_result);
-    const evidence = createEvidence(undefined, original.provider, {
-      operation: "inspect_macho",
-      parameters: original.parameters,
-      result: withoutEncryption,
-      rawResult: null,
-      limitations: [],
-    });
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      original.provider,
+      {
+        operation: "inspect_macho",
+        parameters: original.parameters,
+        result: withoutEncryption,
+        rawResult: null,
+        limitations: [],
+      },
+    );
     const source = readManagedNativeVerificationSource({
       managed_boundaries:
         MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries,

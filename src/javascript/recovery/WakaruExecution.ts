@@ -3,9 +3,11 @@ import { join } from "node:path";
 import {
   createAnalysisExecution,
   type ExecutionOptions,
-} from "../../application/AnalysisProvider.js";
-import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+} from "../../ports/AnalysisProvider.js";
+import type {
+  SafeOutputTree,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,

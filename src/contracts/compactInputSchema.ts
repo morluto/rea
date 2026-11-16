@@ -10,10 +10,10 @@ import {
   stripAnnotations,
 } from "./compactJsonSchema.js";
 
-// The compact input presentation: every advertised input schema is self-contained
-// (clients such as Kimi expand references before sending tools to Moonshot),
-// inside the per-tool byte budget, and in the portable advertised dialect.
-// Canonical server-side validation remains unchanged.
+// The compact input presentation: every advertised input schema is
+// self-contained (the dialect admits no `$ref` or `$defs`), inside the
+// per-tool byte budget, and in the portable advertised dialect. Canonical
+// server-side validation remains unchanged.
 
 export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
 

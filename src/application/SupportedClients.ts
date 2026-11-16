@@ -48,6 +48,7 @@ import type {
   McpRegistrationLocation,
   McpRegistrationLocationContext,
 } from "./McpRegistrationLocations.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** One supported client configuration location. */
 export interface SetupClient {
@@ -304,7 +305,7 @@ const lmStudioLocation = ({
     if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
       return err({
         path: pointerPath,
-        message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${cause instanceof Error ? cause.message : String(cause)}. Repair access to that file, then rerun.`,
+        message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${errorMessage(cause)}. Repair access to that file, then rerun.`,
       });
     const cache = join(home, ".cache", "lm-studio");
     directory = existsSync(cache) ? cache : join(home, ".lmstudio");
@@ -669,7 +670,7 @@ const directoryPresent = (path: string): Result<boolean, ClientPathFailure> => {
       return ok(false);
     return err({
       path,
-      message: `Cannot determine whether ${path} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Zed.`,
+      message: `Cannot determine whether ${path} exists: ${errorMessage(cause)}. Repair its access before configuring Zed.`,
     });
   }
 };
@@ -687,7 +688,7 @@ const sameDirectory = (
     } catch (cause: unknown) {
       return err({
         path,
-        message: `Cannot resolve ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Repair it before configuring Zed.`,
+        message: `Cannot resolve ${path}: ${errorMessage(cause)}. Repair it before configuring Zed.`,
       });
     }
   }
@@ -757,7 +758,7 @@ const regularPathPresent = (
       return ok(false);
     return err({
       path,
-      message: `Cannot determine whether ${path} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring MCPorter.`,
+      message: `Cannot determine whether ${path} exists: ${errorMessage(cause)}. Repair its access before configuring MCPorter.`,
     });
   }
 };
@@ -869,7 +870,7 @@ const ampLocation = ({
       )
         return err({
           path: candidate,
-          message: `Cannot determine whether ${candidate} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Amp.`,
+          message: `Cannot determine whether ${candidate} exists: ${errorMessage(cause)}. Repair its access before configuring Amp.`,
         });
     }
   }
@@ -2080,7 +2081,7 @@ export const supportedClients = (
         displayName: definition.displayName,
         format: definition.format,
         configPath: env.PI_CODING_AGENT_DIR ?? "",
-        configPathError: `Invalid PI_CODING_AGENT_DIR: ${cause instanceof Error ? cause.message : String(cause)}. Repair the override before configuring Pi.`,
+        configPathError: `Invalid PI_CODING_AGENT_DIR: ${errorMessage(cause)}. Repair the override before configuring Pi.`,
       };
     }
   });

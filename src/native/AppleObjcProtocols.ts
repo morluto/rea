@@ -9,6 +9,7 @@ import { readObjcPropertyList } from "./AppleObjcProperties.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { SwiftNominalReaders } from "./AppleSwiftNominalTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A failed list still owns the names read before its unreadable suffix. */
 export type ObjcProtocolListResult = Result<
@@ -68,7 +69,7 @@ export const createObjcProtocolReader = (input: {
       return err({
         _tag: "ProtocolListUnreadable",
         names,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
   };
@@ -201,9 +202,7 @@ export const createObjcProtocolReader = (input: {
           propertyReasons.push("protocol class properties are not decoded");
       } catch (cause) {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
-        propertyReasons.push(
-          cause instanceof Error ? cause.message : String(cause),
-        );
+        propertyReasons.push(errorMessage(cause));
       }
       for (const message of propertyReasons)
         failures.push(
@@ -239,7 +238,7 @@ export const createObjcProtocolReader = (input: {
     } catch (cause) {
       if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
       failures.push(
-        `Protocol 0x${address.toString(16)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `Protocol 0x${address.toString(16)}: ${errorMessage(cause)}`,
       );
     }
   };

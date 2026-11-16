@@ -1,12 +1,12 @@
 import { expect, it } from "vitest";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   captureDecoderHeapContinuingRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../config/captureDecoderHeap.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import {
   historicalCaptureFailure,
@@ -255,6 +255,7 @@ it.each(["before open", "during read"])(
     const cause = new ArtifactReaderFailure(
       "integrity",
       `Artifact changed ${stage}: ${path}`,
+      { integrityCheck: "container-identity" },
     );
     const error = historicalCaptureFailure(input, cause, "capture-read");
     const projected = projectAnalysisError(error);
@@ -409,7 +410,9 @@ it("preserves the exact cancellation reason and an earlier reader failure", () =
 
   const changed = historicalCaptureFailure(
     input,
-    new ArtifactReaderFailure("integrity", "Observed changed capture"),
+    new ArtifactReaderFailure("integrity", "Observed changed capture", {
+      integrityCheck: "container-identity",
+    }),
     "capture-read",
     { signal: controller.signal },
   );

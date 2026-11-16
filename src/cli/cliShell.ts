@@ -1,11 +1,11 @@
-import { Cli, z } from "incur";
+import { Cli } from "incur";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
 import {
   adaptCliOutputArgumentsForIncur,
-  normalizeCliArguments,
+  parseCliGlobalArguments,
 } from "../cliBuiltinArguments.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { parseLogLevel } from "../config/processStart.js";
@@ -27,6 +27,12 @@ import {
 } from "./cliResultOutput.js";
 import { completionHelpNote, createCliCompletions } from "./completions.js";
 import { excludeDeclaredSensitiveArguments } from "./explicitSensitiveArguments.js";
+import {
+  CLI_CUSTOM_GLOBAL_OPTIONS,
+  CLI_DESCRIPTION,
+  CLI_UPDATE_REFUSAL,
+  serveDiscovery,
+} from "./discovery.js";
 import { reportUnknownMcpSubcommand } from "./mcpBuiltinCommands.js";
 import { serveMcpRegistration } from "./mcpRegistration.js";
 import { presentOmittableDefaults } from "./omittableDefaults.js";
@@ -94,25 +100,18 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   );
   const timedCli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: PRODUCT_IDENTITY.packageVersion,
-    description: "Reverse engineer anything from your terminal or agent.",
-    globals: z.object({
-      timings: z
-        .boolean()
-        .default(false)
-        .describe("Write measured command timing to stderr."),
-    }),
+    description: CLI_DESCRIPTION,
+    globals: CLI_CUSTOM_GLOBAL_OPTIONS,
     mcp: {
       instructions:
         "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
     },
     sync: false,
     update: {
-      // Incur's update:false only suppresses notices. Reject its explicit
-      // installer so ambiguous flags cannot bypass REA's verified workflow.
+      // Incur still supplies ordinary-command notices. Keep its installer
+      // disabled while REA owns the update refusal and verified update command.
       install: () => {
-        throw new Error(
-          "Use 'rea update' to update the identified installation. The '--update' alias accepts only global output flags.",
-        );
+        throw new Error(CLI_UPDATE_REFUSAL.message);
       },
     },
   });
@@ -145,6 +144,16 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   );
 
   presentOmittableDefaults(cli);
+  // Discovery reads the arguments the dispatcher would, after result output
+  // has adapted them, so its documents are counted and buffered alike.
+  const dispatch = cli.serve.bind(cli);
+  const updateEnvironment = {
+    variables: environment,
+    platform: HOST_PLATFORM.platform,
+  };
+  cli.serve = (arguments_ = process.argv.slice(2), serveOptions) =>
+    serveDiscovery(cli, arguments_, serveOptions ?? {}, updateEnvironment) ??
+    dispatch(arguments_, serveOptions);
   if (options.resultOutput !== undefined)
     streamCliCommandResults(cli, options.resultOutput);
   const serveStrict = validateCliArguments(cli);
@@ -152,31 +161,31 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   encodeCliArgumentErrors(cli);
   const serve = cli.serve.bind(cli);
-  const complete = createCliCompletions(
-    cli as unknown as Parameters<typeof createCliCompletions>[0],
-    environment,
-  );
+  const completions = createCliCompletions(cli, environment);
   cli.serve = (arguments_ = process.argv.slice(2), serveOptions) => {
-    if (complete(arguments_, serveOptions ?? {})) return Promise.resolve();
-    const normalized = normalizeCliArguments(arguments_);
+    if (completions.complete(arguments_, serveOptions ?? {}))
+      return Promise.resolve();
+    const global = parseCliGlobalArguments(arguments_);
+    if (completions.writeScript(global, serveOptions ?? {}))
+      return Promise.resolve();
     const registration = serveMcpRegistration(
-      normalized,
+      global,
       environment,
       defaultRegistration,
       serveOptions ?? {},
     );
     if (registration !== undefined) return registration;
-    const result = serveStrict(
-      normalized,
-      serveOptions ?? {},
-      (tokens, selected) =>
-        serveDeclared(tokens, selected, (declared, declaredOptions) =>
-          reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
-            ? Promise.resolve()
-            : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
-        ),
+    const result = serveStrict(global, serveOptions ?? {}, (selected) =>
+      serveDeclared(global, selected, (declaredOptions) =>
+        reportUnknownMcpSubcommand(cli.name, global, declaredOptions)
+          ? Promise.resolve()
+          : serve(
+              adaptCliOutputArgumentsForIncur(global.arguments),
+              declaredOptions,
+            ),
+      ),
     );
-    const note = completionHelpNote(normalized);
+    const note = completionHelpNote(global);
     if (note === undefined) return result;
     return result.then(() => {
       const write =

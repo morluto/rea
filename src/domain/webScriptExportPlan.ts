@@ -1,13 +1,10 @@
-import { createHash } from "node:crypto";
-
 import type {
   CapturedWebScript,
   ExportedWebScript,
 } from "./webScriptExport.js";
 import { urlDeclaresQueryOrFragment } from "./urlComponents.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
-const hash = (text: string): string =>
-  createHash("sha256").update(text).digest("hex");
 // Literal URL path characters that are also portable filename characters.
 // Percent escapes remain isolated: decoding them could change path identity.
 const PORTABLE_SEGMENT = /^[A-Za-z0-9_~.!$&'()+,;=@-]+$/u;
@@ -23,7 +20,8 @@ export interface PlannedWebScript {
 export const isolatedWebScriptPath = (
   source: CapturedWebScript["source"],
   index: number,
-): string => `isolated/source-${index + 1}-${hash(JSON.stringify(source))}.js`;
+): string =>
+  `isolated/source-${index + 1}-${sha256Hex(JSON.stringify(source))}.js`;
 
 /** Preserve safe URL layouts only when every captured path is unambiguous. */
 export const planWebScriptExport = (
@@ -99,7 +97,7 @@ const candidatePath = (script: CapturedWebScript): CandidatePath => {
       reason: "URL path is not an ordinary portable JavaScript module path.",
     };
   return {
-    path: `origins/${hash(url.origin)}/${parts.join("/")}`,
+    path: `origins/${sha256Hex(url.origin)}/${parts.join("/")}`,
     reason:
       urlDeclaresQueryOrFragment(url) ||
       url.username !== "" ||

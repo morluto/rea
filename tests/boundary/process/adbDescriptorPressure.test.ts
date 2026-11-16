@@ -19,7 +19,12 @@ const selection = { binary, pathSource: "environment", environment: {} };
 const probe = () =>
   inspectAdbClient(selection).then(
     (identity) => ({ version: identity.version }),
-    (cause) => ({ code: cause.code, diagnostics: cause.diagnostics }),
+    (cause) => ({
+      tag: cause._tag,
+      resource: cause.resource,
+      retryable: cause.retryable,
+      reportedLimits: cause.reportedLimits,
+    }),
   );
 const command = () =>
   runAdbCapture("adb devices", { device: "serial" }, selection, ["devices"],
@@ -80,17 +85,24 @@ exit 0
     expect(JSON.parse(stdout)).toEqual({
       pressure: {
         probe: {
-          code: "host_capacity",
-          diagnostics: expect.objectContaining({
-            selected_binary: adb,
-            filesystem_error: "EMFILE",
-          }),
+          tag: "AnalysisResourceConstraintError",
+          resource: "capacity",
+          retryable: true,
+          reportedLimits: {
+            spawn_error: "EMFILE",
+            exhausted_resource: "file-descriptors",
+            command: adb,
+          },
         },
         command: {
           tag: "AnalysisResourceConstraintError",
           resource: "capacity",
           retryable: true,
-          reportedLimits: { spawn_error: "EMFILE" },
+          reportedLimits: {
+            spawn_error: "EMFILE",
+            exhausted_resource: "file-descriptors",
+            command: adb,
+          },
         },
       },
       after: { probe: { version: "34.0.5-cli" }, command: { ok: true } },

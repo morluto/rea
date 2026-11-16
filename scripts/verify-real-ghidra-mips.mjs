@@ -178,7 +178,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     );
     assert.ok(Array.isArray(observation.normalized_result));
     const parameters = observation.analysis_profile?.parameters;
-    assert.equal(parameters?.import_mode, "existing-project-private-copy-v1");
+    assert.equal(parameters?.import_mode, "existing-project-private-copy");
     assert.equal(parameters?.mips_elf?.byte_order, byteOrder);
     assert.equal(parameters?.mips_support_lane, undefined);
     assert.deepEqual(parameters?.original_analysis, {
@@ -347,18 +347,18 @@ try {
         const snapshot = parseAnalysisSnapshot(
           JSON.parse(await readFile(snapshotPath, "utf8")),
         );
-        assert.equal(snapshot.target.architecture, "mips");
+        assert.equal(snapshot.target.identity.architecture, "mips");
         const parameters = snapshot.binding.analysis_profile.parameters;
         assert.equal(
           parameters.language_id,
           `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
         );
-        assert.equal(parameters.language_selection, "provider-pinned-v1");
+        assert.equal(parameters.language_selection, "provider-pinned");
         assert.equal(
           parameters.mips_support_lane,
-          "elf32-exec-arch32-legacy-pinned-v1",
+          "elf32-exec-arch32-legacy-pinned",
         );
-        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption-v1");
+        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption");
         assert.ok(
           snapshot.evidence_bundle.records.some((record) =>
             parseEvidence(record).limitations.some((item) =>
@@ -660,7 +660,7 @@ try {
       const snapshot = parseAnalysisSnapshot(
         JSON.parse(await readFile(snapshotPath, "utf8")),
       );
-      assert.equal(snapshot.target.architecture, "mips");
+      assert.equal(snapshot.target.identity.architecture, "mips");
       assert.deepEqual(
         snapshot.binding.analysis_profile.parameters.mips_elf,
         expectedMipsElfProfile(independent.mips),
@@ -697,7 +697,10 @@ try {
         );
       }
       for (const evidence of snapshot.evidence_bundle.records)
-        assert.equal(parseEvidence(evidence).subject?.architecture, "mips");
+        assert.equal(
+          parseEvidence(evidence).subject?.identity.architecture,
+          "mips",
+        );
       await call("open_binary", {
         path: fixture.path,
         provider_id: "ghidra",
@@ -766,8 +769,8 @@ try {
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
       const evidence = parseEvidence(JSON.parse(cli.stdout));
-      assert.equal(evidence.subject?.architecture, "mips");
-      assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject?.identity.architecture, "mips");
+      assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
       const cliDossier = functionDossierSchema.parse(
         evidence.normalized_result,
       );
