@@ -419,6 +419,8 @@ describe("FridaInstrumentationManager", () => {
       });
       expect(projected.remediation.action).toContain("PTRACE_SEIZE");
       expect(projected.remediation.action).toContain("PRoot");
+      expect(projected.remediation.action).toContain("this target alone");
+      expect(projected.remediation.action).not.toContain("whatever the target");
       expect(projected.remediation.action).not.toContain(
         "Choose another analysis or target",
       );
