@@ -1,7 +1,4 @@
-import {
-  environmentCard,
-  environmentToolDefinitions,
-} from "../../../src/application/environment/environmentTools.js";
+import { readFile } from "node:fs/promises";
 import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
 import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
@@ -302,10 +299,16 @@ describe("rea environment-serve --replay-only", () => {
       expect(card.status).toBe(200);
       const text = await card.text();
       const body: unknown = JSON.parse(text);
-      const definitions = environmentToolDefinitions(source, "renamed");
-      expect(definitions.ok).toBe(true);
-      if (!definitions.ok) throw definitions.error;
-      expect(body).toEqual(environmentCard("renamed", definitions.value));
+      // Keep a readable independent golden for every description and input
+      // schema; deriving this expectation with environmentCard would hide drift.
+      const expectedCard: unknown = JSON.parse(
+        await readFile(
+          new URL("../../fixtures/environmentReplayCard.json", import.meta.url),
+          "utf8",
+        ),
+      );
+      expect(body).toEqual(expectedCard);
+      expect(text).toBe(JSON.stringify(expectedCard));
       expect(body).toMatchObject({
         name: "renamed",
         protocolVersion: "1.0",
@@ -318,11 +321,6 @@ describe("rea environment-serve --replay-only", () => {
       expect(
         (body as { capabilities: { tools: unknown[] } }).capabilities.tools,
       ).toHaveLength(source.manifest.tools.length);
-      expect(
-        (
-          body as { capabilities: { tools: { name: string }[] } }
-        ).capabilities.tools.map((tool) => tool.name),
-      ).toEqual(source.manifest.tools.map((tool) => tool.name));
       const rpc = await fetch(new URL("/agentenv", origin), {
         method: "POST",
         headers: { "content-type": "application/json" },
