@@ -1619,8 +1619,9 @@ const sanitizeError = (
 
 /**
  * Frida reports a refused ptrace seize with this prefix. Only that request
- * is recognized: the reason carries no errno, so it does not identify the
- * environment, and discovery can succeed where injection is refused.
+ * is recognized: the reason carries no errno, so it does not say whether the
+ * host lacks ptrace support or permissions refused this target, and discovery
+ * can succeed where injection is refused.
  */
 const PTRACE_SEIZE_REFUSAL = /^Unable to perform ptrace seize\b/i;
 
@@ -1645,7 +1646,7 @@ const providerFailureGuidance = (
       userMessage:
         "Frida could not start tracing the target because its ptrace seize request was refused.",
       remediationAction:
-        "Injection is unavailable here whatever the target: the operating system refused Frida's PTRACE_SEIZE request (see details.reason). Emulated environments such as PRoot-Distro on Android do not implement it, although device and process discovery still succeed, and restrictive ptrace policies can also refuse it. Run REA on a host with native ptrace support, or select a Frida server running on one with the remote options, then retry.",
+        "The operating system refused Frida's PTRACE_SEIZE request (see details.reason). Either the host does not implement it, as emulated environments such as PRoot-Distro on Android do, so no target can be injected although device and process discovery still succeed, or ptrace permissions refused this target alone. If other targets fail the same way, run REA on a host with native ptrace support, or select a Frida server running on one with the remote options. Otherwise check the ptrace permissions that apply to this target. Then retry.",
     };
   return {};
 };
