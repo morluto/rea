@@ -17,7 +17,7 @@ import {
   type CompletionCommand,
 } from "./completionProtocol.js";
 import { cliCommands } from "./commandRegistry.js";
-import { COMPLETIONS_DESCRIPTION, MCP_GROUP_DESCRIPTION } from "./helpPages.js";
+import { COMPLETIONS_DESCRIPTION, MCP_GROUP_DESCRIPTION } from "./discovery.js";
 import { MCP_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
 import type { CliInstance } from "./types.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
