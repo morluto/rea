@@ -153,10 +153,7 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   encodeCliArgumentErrors(cli);
   const serve = cli.serve.bind(cli);
-  const complete = createCliCompletions(
-    cli as unknown as Parameters<typeof createCliCompletions>[0],
-    environment,
-  );
+  const complete = createCliCompletions(cli, environment);
   cli.serve = (arguments_ = process.argv.slice(2), serveOptions) => {
     if (complete(arguments_, serveOptions ?? {})) return Promise.resolve();
     const normalized = normalizeCliArguments(arguments_);

@@ -3,6 +3,7 @@ import { access, stat } from "node:fs/promises";
 
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { posixPathCandidates } from "../process/executableSearch.js";
+import type { FoundProgram } from "../ports/DesktopApplicationSession.js";
 
 const isExecutable = async (path: string): Promise<boolean> => {
   try {
@@ -12,12 +13,6 @@ const isExecutable = async (path: string): Promise<boolean> => {
     return false;
   }
 };
-
-/** A program as found, and whether a relative or empty PATH entry found it. */
-export interface FoundProgram {
-  readonly path: string;
-  readonly fromRelativeEntry: boolean;
-}
 
 /**
  * Find a program as the launch will, without running a shell: a relative path,

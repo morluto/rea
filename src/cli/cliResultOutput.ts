@@ -1,7 +1,6 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
-import { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
@@ -44,6 +43,7 @@ import {
   type CliResultControls,
 } from "./cliResultControls.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
+import type { OutputFilterPath } from "./outputFilter.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
 import {
   jsonOutputParts,
@@ -459,8 +459,8 @@ export const createCliResultOutput = (
       receipt: cliEvidencePublicationReceipt(),
       originalFailure: cliOperationFailureIdentity(value),
     };
-    const filterPaths = options.filterOutput
-      ? Filter.parse(options.filterOutput)
+    const filterPaths = options.filterPaths?.ok
+      ? options.filterPaths.value
       : undefined;
     const operationFailure = metadata.failure
       ? value
@@ -909,9 +909,6 @@ const fullFailureEnvelope = (
   };
 };
 
-type FilterPaths = ReturnType<typeof Filter.parse>;
-type FilterPath = FilterPaths[number];
-
 interface DelimitedRowsSelection {
   readonly rows: readonly unknown[];
   readonly path: readonly string[];
@@ -920,7 +917,7 @@ interface DelimitedRowsSelection {
 
 const resolveDelimitedRows = (
   source: unknown,
-  paths: FilterPaths | undefined,
+  paths: readonly OutputFilterPath[] | undefined,
   operation: string,
 ): Result<DelimitedRowsSelection, AnalysisInputError> => {
   const invalidSelection = (): Result<never, AnalysisInputError> =>
@@ -1015,7 +1012,7 @@ type FilterProjection = Result<unknown, string>;
 
 const applyCliOutputFilter = (
   value: unknown,
-  paths: FilterPaths,
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
   if (paths.length === 0) return ok(value);
   if (Array.isArray(value)) {
@@ -1064,8 +1061,8 @@ const applyCliOutputFilter = (
 /** Preserve implicit traversal through every root-array layer before merging slices. */
 const expandImplicitArrayPath = (
   value: unknown,
-  path: FilterPath,
-): FilterPaths => {
+  path: OutputFilterPath,
+): readonly OutputFilterPath[] => {
   if (Array.isArray(value))
     return value.flatMap((item, index) =>
       expandImplicitArrayPath(item, path).map((tail) => [
@@ -1086,10 +1083,10 @@ const expandImplicitArrayPath = (
 /** Build a fresh object projection; a path ending at a key selects its subtree. */
 const projectObjectPaths = (
   value: unknown,
-  paths: FilterPaths,
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
   if (typeof value !== "object" || value === null) return ok({});
-  const byKey = new Map<string, FilterPath[]>();
+  const byKey = new Map<string, OutputFilterPath[]>();
   for (const path of paths) {
     const [segment, ...tail] = path;
     if (segment === undefined || !("key" in segment)) continue;
@@ -1117,7 +1114,7 @@ const projectObjectPaths = (
 /** Keep key-only array projections compatible; mixed projections use source indices. */
 const projectChildPaths = (
   value: unknown,
-  paths: FilterPaths,
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
   if (typeof value !== "object" || value === null) return ok(undefined);
   return Array.isArray(value) &&
@@ -1129,10 +1126,10 @@ const projectChildPaths = (
 /** Union sliced rows and explicit array indices, then emit them in source order. */
 const projectArraySlices = (
   source: readonly unknown[],
-  paths: readonly FilterPath[],
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
-  const selected = new Map<number, FilterPath[]>();
-  const select = (index: number, tail: FilterPath): void => {
+  const selected = new Map<number, OutputFilterPath[]>();
+  const select = (index: number, tail: OutputFilterPath): void => {
     const siblings = selected.get(index) ?? [];
     siblings.push(tail);
     selected.set(index, siblings);

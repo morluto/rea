@@ -9,7 +9,10 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
-import { incurZodImportCount } from "./incur-import-guard.mjs";
+import {
+  incurImportedNameCount,
+  incurZodImportCount,
+} from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
@@ -956,6 +959,29 @@ checkCounted(
   "incur-zod-reexport",
   [...files, ...testFiles],
   (_content, file) => incurZodImportCount(file.source ?? file.content),
+  [],
+);
+
+// Every CLI command is registered through src/cli/commandRegistry.ts, which
+// records it in REA's command table (name, inputs, contract operations and
+// their flags) before handing it to the dispatcher (#11654). A direct
+// `cli.command(...)` would be dispatched but missing from that table.
+checkCounted(
+  "CLI command registered outside REA's command table (use registerCliCommand)",
+  "cli-command-outside-registry",
+  files,
+  /\bcli\.command\(/gu,
+  ["src/cli/commandRegistry.ts"],
+);
+
+// REA is replacing incur with its own CLI owners (#11654). Each replacement
+// removes the names it superseded; this counted list only shrinks until incur
+// leaves package.json.
+checkCounted(
+  "name imported from incur (use REA's CLI owner in src/cli)",
+  "incur-import",
+  [...files, ...testFiles],
+  (_content, file) => incurImportedNameCount(file.source ?? file.content),
   [],
 );
 

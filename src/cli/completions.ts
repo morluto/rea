@@ -1,4 +1,3 @@
-import { Cli } from "incur";
 import { z } from "zod";
 
 import {
@@ -17,11 +16,12 @@ import {
   formatCompletions,
   type CompletionCommand,
 } from "./completionProtocol.js";
+import { cliCommands } from "./commandRegistry.js";
 import { MCP_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
+import type { CliInstance } from "./types.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
 
-type CompletionCli = Parameters<typeof Cli.toCommands.get>[0];
-type ServeOptions = NonNullable<Parameters<CompletionCli["serve"]>[1]>;
+type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);
 
 /** Supplement Incur's built-in setup instructions without replacing its help. */
@@ -85,12 +85,19 @@ const standardGlobals = (root: boolean): z.ZodObject =>
     ]),
   );
 
-/** Pinned Incur builtins are not exported in its registered command map. */
+/** Registered commands in registration order, then the builtin groups. */
 const completionCommands = (
-  cli: CompletionCli,
+  cli: CliInstance,
 ): ReadonlyMap<string, CompletionCommand> => {
   const commands = new Map<string, CompletionCommand>(
-    Cli.toCommands.get(cli) as ReadonlyMap<string, CompletionCommand>,
+    cliCommands(cli).map(({ name, definition }) => [
+      name,
+      {
+        description: definition.description,
+        options: definition.options,
+        alias: definition.alias,
+      },
+    ]),
   );
   commands.set("mcp", {
     _group: true,
@@ -108,7 +115,7 @@ const completionCommands = (
 
 /** One tree owns command scope; completionProtocol owns candidates and shell encoding. */
 export const createCliCompletions = (
-  cli: CompletionCli,
+  cli: CliInstance,
   environment: Readonly<NodeJS.ProcessEnv>,
 ) => {
   const script = (shell: (typeof CLI_COMPLETION_SHELLS)[number]) =>
