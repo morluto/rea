@@ -9,6 +9,7 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { incurZodImportCount } from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import {
@@ -904,6 +905,18 @@ checkCounted(
   "test-host-platform-stub",
   testFiles,
   /\b(?:defineProperty|spyOn)\(\s*(?:globalThis\.)?process\s*,\s*["'`](?:platform|arch)["'`]/gu,
+  [],
+);
+
+// Schemas import zod directly. incur's `z` is a re-export of the same package;
+// importing it through the CLI framework ties schemas to a dependency REA is
+// removing (#11654). Declarations are read from code tokens, so the text in a
+// comment or string fixture does not count.
+checkCounted(
+  'zod imported through incur (import { z } from "zod")',
+  "incur-zod-reexport",
+  [...files, ...testFiles],
+  (_content, file) => incurZodImportCount(file.source ?? file.content),
   [],
 );
 

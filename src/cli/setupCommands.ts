@@ -1,6 +1,6 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { z } from "incur";
+import { z } from "zod";
 
 import type { DoctorScope } from "../application/Doctor.js";
 import {

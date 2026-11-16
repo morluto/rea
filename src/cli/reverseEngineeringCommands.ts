@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";

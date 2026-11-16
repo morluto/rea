@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { createCliCompletions } from "../../../src/cli/completions.js";
