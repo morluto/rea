@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { expect, it } from "vitest";
 
 import { toolContract } from "../contracts/toolContracts.js";
+import { projectPortablePattern } from "../contracts/portablePattern.js";
 import { toolOutputSchemaWithMetadata } from "../contracts/toolSchemaMetadata.js";
 import { javaScriptRouteCandidateSchema } from "../domain/javascript/javascriptRouteFacts.js";
 import { javaScriptInventoryRouteSchema } from "../domain/javascript/javascriptRouteInventory.js";
@@ -47,7 +48,10 @@ it("advertises JavaScript route outputs with standard JSON Schema path constrain
     addFormats(ajv);
     expect(() => ajv.compile(advertised as AnySchema)).not.toThrow();
 
-    // The inventory path is nested inside the advertised complete Evidence branch.
+    // The inventory path is nested inside the advertised complete Evidence
+    // branch, re-emitted as a portable anchored pattern.
+    const portable = projectPortablePattern("^\\/");
+    expect(portable.kind).toBe("exact");
     const patterns: Record<string, unknown>[] = [];
     const visit = (value: unknown): void => {
       if (value === null || typeof value !== "object") return;
@@ -56,7 +60,11 @@ it("advertises JavaScript route outputs with standard JSON Schema path constrain
         return;
       }
       const record = value as Record<string, unknown>;
-      if (record.pattern === "^\\/") patterns.push(record);
+      if (
+        portable.kind !== "unexpressible" &&
+        record.pattern === portable.pattern
+      )
+        patterns.push(record);
       Object.values(record).forEach(visit);
     };
     visit(advertised);

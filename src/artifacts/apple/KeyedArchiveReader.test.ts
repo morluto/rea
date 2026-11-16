@@ -5,12 +5,13 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { build, buildBinary, type PlistValue } from "plist";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   decodeKeyedArchiveBytes,
   inspectBundleKeyedArchive,
 } from "./KeyedArchiveReader.js";
 import { PlistNestingLimitError } from "../../domain/apple/plistValue.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { deeplyNestedXmlPlist } from "../../../tests/fixtures/keyedArchiveXmlNesting.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { embedSubmillisecondDateInWideIntegerPayload } from "../../../tests/fixtures/binaryPlistScalarAlias.js";
@@ -421,9 +422,13 @@ describe("binary plist reference preflight", () => {
     expect(() =>
       decodeKeyedArchiveBytes(keyedRoot([plistArray([8])]), selection),
     ).toThrow(
-      new TypeError(
-        "binary plist object references form a cycle, which a property list cannot represent",
-      ),
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          detail:
+            "binary plist object references form a cycle, which a property list cannot represent",
+        }),
+      }),
     );
   });
 
@@ -437,7 +442,14 @@ describe("binary plist reference preflight", () => {
         keyedRoot([...levels, plistString("x")]),
         selection,
       ),
-    ).toThrow(RangeError);
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "plist-decode-bytes", maximum: 512 * 1024 * 1024 },
+        }),
+      }),
+    );
   });
 
   it("decodes shared leaf references", () => {
@@ -646,7 +658,8 @@ describe("binary keyed archive invalid dates", () => {
       } catch (cause: unknown) {
         decodeFailure = cause;
       }
-      expect(decodeFailure).toBeInstanceOf(TypeError);
+      expect(decodeFailure).toBeInstanceOf(ParseFailureError);
+      expect(decodeFailure).toMatchObject({ kind: "malformed" });
       if (!(decodeFailure instanceof Error))
         throw new Error("Expected invalid date marker to fail");
       expect(decodeFailure.message).toContain(`0x${marker.toString(16)}`);

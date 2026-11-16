@@ -4,7 +4,7 @@ import { ok } from "../domain/result.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { createUnrealPakService } from "../composition/unreal.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -19,7 +19,7 @@ export const registerUnrealCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectUnrealPak, {
+  cli.command(cliCommandFor("inspect_unreal_pak"), {
     description: "Inventory an Unreal Engine .pak footer and index entries",
     args: z.object({
       path: localPathStringSchema.describe(
@@ -29,7 +29,7 @@ export const registerUnrealCommands = (
     options: z.object(analysisEvidenceDeliveryOptions),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectUnrealPak, async () => {
+        logCliCommand(logger, cliCommandFor("inspect_unreal_pak"), async () => {
           const service = createUnrealPakService();
           return deliverCliAnalysisEvidence({
             run: async () => {

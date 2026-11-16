@@ -27,6 +27,7 @@ it("uses one selected host identity for manifest and settlement", async () => {
     new Date(0),
     new Date(1),
     observeLaunchedExecutable(scenario.executable, selectedExecutable),
+    { state: "withheld-by-caller" },
     selectedHost,
   );
   const settlement = await observeSettlement({

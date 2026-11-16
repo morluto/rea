@@ -82,11 +82,11 @@ npx rea-agents setup
 
 يدعم الإعداد Claude Code وCodex وCursor وGemini CLI وGrok Build و[وكلاء آخرين](../getting-started/installation.md#supported-agents). راجع [التثبيت والإعداد](../getting-started/installation.md) لتهيئة موفّري التحليل وتسجيل MCP يدويًا.
 
-يستخدم MCP مخططات إدخال مختصرة افتراضيًا. للحصول على إرشادات الحقول الكاملة وتفاصيل التحقق المتداخل، اضبط `REA_MCP_INPUT_SCHEMA_PROFILE=full` في تسجيل MCP. يحتفظ الخياران بجميع الأدوات والتحقق القياسي نفسه على الخادم؛ راجع دليل عقود MCP.
+يستخدم MCP مخططات إدخال مختصرة افتراضيًا. تنتقل الإرشادات التي يحذفها المخطط المختصر إلى وصف الأداة. تبقى جميع الأدوات والتحقق القياسي على الخادم دون تغيير؛ راجع دليل عقود MCP.
 
 يسجّل الإعداد بيئة التشغيل المحددة وملف دخول REA مباشرةً. عند استخدام مشغّل حزم، احتفظ بإدخال ذاكرة التخزين المؤقت وبيئة التشغيل؛ ونفّذ تنزيل الحزمة من دليل موثوق خارج المشروع المستهدف. راجع دليل التثبيت والإعداد.
 
-تُعلن مخططات الإخراج الكاملة افتراضيًا. إذا حدّ عميلك من حجم `tools/list`، فاضبط `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` أو `off` في تسجيل MCP؛ يظل التحقق والخروج المنظّم كاملين على الخادم. راجع قسم مخططات الإخراج في دليل عقود MCP.
+تُحذف مخططات الإخراج من `tools/list` افتراضيًا: لا تقرؤها أي واجهة برمجة لنموذج، ويتحقق REA من كل نتيجة بنفسه. اضبط `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` في تسجيل MCP لإعلان كل مخطط إخراج ضمن حد 4096 بايت؛ يظل التحقق والخروج المنظّم كاملين على الخادم في كل الإعدادات. راجع قسم مخططات الإخراج في دليل عقود MCP.
 
 ### اطلب من وكيلك
 
@@ -174,7 +174,7 @@ npx rea-agents@latest setup
 | JavaScript / Electron           | الوحدات، وعمليات الاستيراد، وخرائط المصدر، والمسارات، وIPC، وعلاقات إضافات الشيفرة الأصلية                    | Node.js وnpm؛ [تحليل التطبيقات](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                                |
 | المواقع                         | بنية الصفحة، والسكربتات، وملاحظات الشبكة، ولقطات الشاشة المطلوبة                                            | متصفح من عائلة Chrome؛ [تحليل المتصفح](../guides/web/browser-observation.md)                                                                                 |
 | تسجيلات الشبكة المحفوظة          | الطلبات، والاستجابات، ومحتويات الحمولة المتاحة، ومواضعها في المصدر                                          | HAR / Fiddler Everywhere SAZ؛ وmitmdump على Linux لتسجيلات mitmproxy بصيغتها الأصلية؛ [دليل تسجيلات الشبكة](../guides/web/web-network-captures.md)              |
-| التقاط الحزم                    | نقاط النهاية وDNS وTLS SNI وتوزيع البروتوكولات وطلبات HTTP                                                  | tshark وcapinfos يوفّرهما المُستدعي؛ [دليل pcap](../guides/data/pcap-analysis.md)                                                                              |
+| التقاط الحزم                    | نقاط النهاية وDNS وTLS SNI وتوزيع البروتوكولات وطلبات HTTP                                                  | tshark وcapinfos يوفّرهما المُستدعي (تم التحقق على Linux)؛ [دليل pcap](../guides/data/pcap-analysis.md)                                                        |
 | تجميعات .NET                    | البيانات الوصفية، وتعليمات CIL، واعتماديات الشيفرة الأصلية المعلنة، ومقارنات البناء                         | فحص ثابت؛ [دليل الشيفرة المُدارة](../guides/managed/managed-code-analysis.md)                                                                                 |
 | PyInstaller                     | CArchive, PYZ, Python bytecode                                                                             | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                        |
 | Deno compile binaries           | Virtual files, entry point, recorded options, npm snapshot length                                          | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                         |

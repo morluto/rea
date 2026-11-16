@@ -1,10 +1,9 @@
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
-import { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import type { ParsedCliOutputArguments } from "../cliOutput.js";
 import {
   normalizeCliArguments,
@@ -38,7 +37,13 @@ import {
   retainCliPublicationOnError,
   withCliEvidencePublication,
 } from "./cliEvidencePublication.js";
+import {
+  cliResultControls,
+  withCliResultControls,
+  type CliResultControls,
+} from "./cliResultControls.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
+import type { OutputFilterPath } from "./outputFilter.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
 import {
   jsonOutputParts,
@@ -63,7 +68,23 @@ export interface CliResultOutputMetadata {
   readonly forceOutput?: boolean;
   /** The producer owns a failure document whose complete facts must survive filtering. */
   readonly failure?: boolean;
+  /**
+   * Flags of the per-call controls the result records, by contract field,
+   * collected only when a full-output envelope will show them.
+   */
+  readonly cliControls?: CliResultControls | undefined;
+  /** Collects `cliControls` on demand. */
+  readonly collectCliControls?: () => CliResultControls | undefined;
 }
+
+/** The full-output envelope's metadata: the CLI's presentation, not the result. */
+const resultMeta = (metadata: CliResultOutputMetadata) => ({
+  command: metadata.command,
+  duration: metadata.duration,
+  ...(metadata.cliControls === undefined
+    ? {}
+    : { cli_controls: { ...metadata.cliControls } }),
+});
 
 /** Optional executable-owned result surface for one CLI invocation. */
 export interface CliResultOutput {
@@ -105,42 +126,45 @@ const wrapCommand = (
 ): void => {
   const run = command.run;
   command.run = (context) =>
-    withCliEvidencePublication(() => {
-      const started = performance.now();
-      const result: unknown = run(context);
-      // Generator results and Incur's sentinel responses retain their own protocol.
-      if (
-        typeof result === "object" &&
-        result !== null &&
-        Symbol.asyncIterator in result
-      ) {
-        output.delegateStreaming();
-        return result;
-      }
-      return Promise.resolve(result).then(async (value: unknown) => {
+    withCliEvidencePublication(() =>
+      withCliResultControls(() => {
+        const started = performance.now();
+        const result: unknown = run(context);
+        // Generator results and Incur's sentinel responses retain their own protocol.
         if (
-          typeof value === "object" &&
-          value !== null &&
-          Symbol.for("incur.sentinel") in value
-        )
-          return value;
-        if (
-          !(await output.write(value, {
-            command: name,
-            format: context.format,
-            renderOutput: context.agent || inheritedPolicy !== "agent-only",
-            duration: `${Math.round(performance.now() - started)}ms`,
-          }))
-        )
-          return value;
-        if (output.error !== undefined)
-          return context.error({
-            code: output.error.code,
-            message: output.error.message,
-          });
-        return undefined;
-      });
-    });
+          typeof result === "object" &&
+          result !== null &&
+          Symbol.asyncIterator in result
+        ) {
+          output.delegateStreaming();
+          return result;
+        }
+        return Promise.resolve(result).then(async (value: unknown) => {
+          if (
+            typeof value === "object" &&
+            value !== null &&
+            Symbol.for("incur.sentinel") in value
+          )
+            return value;
+          if (
+            !(await output.write(value, {
+              command: name,
+              format: context.format,
+              renderOutput: context.agent || inheritedPolicy !== "agent-only",
+              duration: `${Math.round(performance.now() - started)}ms`,
+              collectCliControls: cliResultControls,
+            }))
+          )
+            return value;
+          if (output.error !== undefined)
+            return context.error({
+              code: output.error.code,
+              message: output.error.message,
+            });
+          return undefined;
+        });
+      }),
+    );
 };
 
 /** Preserve Incur output controls and stream JSON while framing failures. */
@@ -246,8 +270,16 @@ export const createCliResultOutput = (
       !((format === "csv" || format === "tsv") && metadata.format === "json")
     )
       return false;
+    // Only the full-output envelope shows the result's control flags, so the
+    // result is read for them only then.
+    const cliControls = options.fullOutput
+      ? metadata.collectCliControls?.()
+      : undefined;
     try {
-      return await writeResult(value, metadata);
+      return await writeResult(
+        value,
+        cliControls === undefined ? metadata : { ...metadata, cliControls },
+      );
     } catch (cause: unknown) {
       if (await recoverFormattingFailure(cause)) return true;
       throw cause;
@@ -427,8 +459,8 @@ export const createCliResultOutput = (
       receipt: cliEvidencePublicationReceipt(),
       originalFailure: cliOperationFailureIdentity(value),
     };
-    const filterPaths = options.filterOutput
-      ? Filter.parse(options.filterOutput)
+    const filterPaths = options.filterPaths?.ok
+      ? options.filterPaths.value
       : undefined;
     const operationFailure = metadata.failure
       ? value
@@ -451,10 +483,7 @@ export const createCliResultOutput = (
     )
       return false;
     if (format === "csv" || format === "tsv") {
-      const meta = {
-        command: metadata.command,
-        duration: metadata.duration,
-      };
+      const meta = resultMeta(metadata);
       if (operationFailure !== undefined) {
         const parsedFailure =
           analysisErrorProjectionSchema.safeParse(operationFailure);
@@ -625,6 +654,10 @@ export const createCliResultOutput = (
       Array.isArray(selected)
         ? normalizeJsonArrayValues(selected)
         : selected;
+    // A full-output envelope that shows the result's control flags is written
+    // here in every format; Incur's envelope cannot carry them.
+    const ownsControlEnvelope =
+      options.fullOutput && metadata.cliControls !== undefined;
     const ownsSuccessfulTokenWindow =
       operationFailure === undefined &&
       options.tokenWindow &&
@@ -632,7 +665,9 @@ export const createCliResultOutput = (
       format !== "json" &&
       format !== "jsonl";
     // Delegate other human formats to Incur. Markdown stays here so admission
-    // and emitted table text use the same safe formatter.
+    // and emitted table text use the same safe formatter. A full-output token
+    // count stays here too: Incur counts only the selected data, so delegating
+    // it would report the bare result instead of the emitted envelope.
     if (
       !metadata.forceOutput &&
       format !== "md" &&
@@ -640,7 +675,10 @@ export const createCliResultOutput = (
       format !== "jsonl" &&
       operationFailure === undefined &&
       !ownsFilteredOutput &&
-      !ownsSuccessfulTokenWindow
+      !ownsSuccessfulTokenWindow &&
+      !(options.tokenCount && options.fullOutput) &&
+      // Incur's own envelope cannot carry the result's control flags.
+      !ownsControlEnvelope
     )
       return false;
     if (format === "jsonl") {
@@ -655,6 +693,9 @@ export const createCliResultOutput = (
             operationFailure,
             command: metadata.command,
             duration: metadata.duration,
+            ...(metadata.cliControls === undefined
+              ? {}
+              : { cliControls: metadata.cliControls }),
           },
           destination,
         );
@@ -664,10 +705,7 @@ export const createCliResultOutput = (
       }
       return true;
     }
-    const meta = {
-      command: metadata.command,
-      duration: metadata.duration,
-    };
+    const meta = resultMeta(metadata);
     const errorDocument =
       options.fullOutput && failure !== undefined
         ? fullFailureEnvelope(
@@ -781,8 +819,7 @@ export const createCliResultOutput = (
                   ok: true,
                   data: sliced,
                   meta: {
-                    command: metadata.command,
-                    duration: metadata.duration,
+                    ...resultMeta(metadata),
                     ...(window.end < window.total
                       ? { nextOffset: window.end }
                       : {}),
@@ -812,7 +849,8 @@ export const createCliResultOutput = (
     // document from Incur's error formatter.
     const formattedText =
       format === "md" ||
-      (metadata.forceOutput === true && format !== "json") ||
+      ((metadata.forceOutput === true || ownsControlEnvelope) &&
+        format !== "json") ||
       ((operationFailure !== undefined || ownsFilteredOutput) &&
         format !== "json")
         ? formatCliOutput(document, format)
@@ -871,9 +909,6 @@ const fullFailureEnvelope = (
   };
 };
 
-type FilterPaths = ReturnType<typeof Filter.parse>;
-type FilterPath = FilterPaths[number];
-
 interface DelimitedRowsSelection {
   readonly rows: readonly unknown[];
   readonly path: readonly string[];
@@ -882,7 +917,7 @@ interface DelimitedRowsSelection {
 
 const resolveDelimitedRows = (
   source: unknown,
-  paths: FilterPaths | undefined,
+  paths: readonly OutputFilterPath[] | undefined,
   operation: string,
 ): Result<DelimitedRowsSelection, AnalysisInputError> => {
   const invalidSelection = (): Result<never, AnalysisInputError> =>
@@ -977,7 +1012,7 @@ type FilterProjection = Result<unknown, string>;
 
 const applyCliOutputFilter = (
   value: unknown,
-  paths: FilterPaths,
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
   if (paths.length === 0) return ok(value);
   if (Array.isArray(value)) {
@@ -1026,8 +1061,8 @@ const applyCliOutputFilter = (
 /** Preserve implicit traversal through every root-array layer before merging slices. */
 const expandImplicitArrayPath = (
   value: unknown,
-  path: FilterPath,
-): FilterPaths => {
+  path: OutputFilterPath,
+): readonly OutputFilterPath[] => {
   if (Array.isArray(value))
     return value.flatMap((item, index) =>
       expandImplicitArrayPath(item, path).map((tail) => [
@@ -1048,10 +1083,10 @@ const expandImplicitArrayPath = (
 /** Build a fresh object projection; a path ending at a key selects its subtree. */
 const projectObjectPaths = (
   value: unknown,
-  paths: FilterPaths,
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
   if (typeof value !== "object" || value === null) return ok({});
-  const byKey = new Map<string, FilterPath[]>();
+  const byKey = new Map<string, OutputFilterPath[]>();
   for (const path of paths) {
     const [segment, ...tail] = path;
     if (segment === undefined || !("key" in segment)) continue;
@@ -1079,7 +1114,7 @@ const projectObjectPaths = (
 /** Keep key-only array projections compatible; mixed projections use source indices. */
 const projectChildPaths = (
   value: unknown,
-  paths: FilterPaths,
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
   if (typeof value !== "object" || value === null) return ok(undefined);
   return Array.isArray(value) &&
@@ -1091,10 +1126,10 @@ const projectChildPaths = (
 /** Union sliced rows and explicit array indices, then emit them in source order. */
 const projectArraySlices = (
   source: readonly unknown[],
-  paths: readonly FilterPath[],
+  paths: readonly OutputFilterPath[],
 ): FilterProjection => {
-  const selected = new Map<number, FilterPath[]>();
-  const select = (index: number, tail: FilterPath): void => {
+  const selected = new Map<number, OutputFilterPath[]>();
+  const select = (index: number, tail: OutputFilterPath): void => {
     const siblings = selected.get(index) ?? [];
     siblings.push(tail);
     selected.set(index, siblings);

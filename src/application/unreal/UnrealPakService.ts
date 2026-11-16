@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,

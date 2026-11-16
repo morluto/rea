@@ -1,6 +1,11 @@
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
-import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
+import {
+  analyzeParsedJavaScriptStaticSourceSteps,
+  memberMutationRefusedJavaScriptStaticAnalysis,
+} from "../domain/javascript/javascriptStaticAnalysis.js";
+import type { JavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisTypes.js";
+import { isJavaScriptMemberMutationRefusal } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
@@ -15,6 +20,7 @@ import {
   serveJavaScriptAnalysisWorker,
   type JavaScriptSourceWorkerAnalyzer,
 } from "../javascript/analysis/JavaScriptAnalysisWorkerServer.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
@@ -23,6 +29,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   packageType,
   purpose,
   precision,
+  memberMutationAllowance,
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
@@ -33,13 +40,29 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     return null;
   }
   await callbacks.phase("static");
-  const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(
-      file.text.value,
-      parsed,
-      precision,
-    ),
-  );
+  let facts: JavaScriptStaticAnalysis;
+  try {
+    facts = await completeJavaScriptAnalysisSteps(
+      analyzeParsedJavaScriptStaticSourceSteps(
+        file.text.value,
+        parsed,
+        precision,
+        memberMutationAllowance,
+      ),
+    );
+  } catch (cause: unknown) {
+    // The semantic phase indexes the same mutations under the same
+    // allowance, so it is not started; the syntax facts cross first.
+    if (purpose === "analysis" && isJavaScriptMemberMutationRefusal(cause))
+      await callbacks.checkpoint(
+        memberMutationRefusedJavaScriptStaticAnalysis(
+          file.text.value,
+          parsed,
+          cause,
+        ),
+      );
+    throw cause;
+  }
   if (purpose === "preload-discovery") {
     // Only declarations cross this preliminary pass. The normal pass owns
     // full static/semantic facts and their result reservations.
@@ -48,9 +71,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       ...empty,
       parse_status: facts.parse_status,
       parse_error_count: facts.parse_error_count,
-      ...(facts.analysis_coverage === undefined
-        ? {}
-        : { analysis_coverage: facts.analysis_coverage }),
+      analysis_coverage: facts.analysis_coverage,
       visited_ast_nodes: facts.visited_ast_nodes,
       limitations: facts.limitations,
       electron: {
@@ -68,6 +89,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       "memory",
       `The parent reserved its remaining result capacity for static observations; semantic analysis of ${file.path} was not started`,
       { semantic_result_budget_bytes: 0 },
+      { measuredExhaustion: true },
     );
   await callbacks.phase("semantic");
   const ir = await completeJavaScriptAnalysisSteps(
@@ -76,6 +98,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
       capacity.nodes,
       precision,
+      memberMutationAllowance,
     ),
   );
   parsed = null;
@@ -93,6 +116,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
         semantic_result_budget_bytes: resultBudgetBytes,
         module_transfer_bytes: measured.bytes,
       },
+      { measuredExhaustion: true },
     );
   await callbacks.phase("projection");
   const projection = await completeJavaScriptAnalysisSteps(
@@ -109,8 +133,6 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
 try {
   await serveJavaScriptAnalysisWorker(analyze);
 } catch (cause: unknown) {
-  process.stderr.write(
-    `${cause instanceof Error ? cause.message : String(cause)}\n`,
-  );
+  process.stderr.write(`${errorMessage(cause)}\n`);
   process.exitCode = 1;
 }

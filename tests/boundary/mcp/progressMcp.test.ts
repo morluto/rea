@@ -7,13 +7,20 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const testClient = (name: string) =>
+  new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
 
 describe("ordinary MCP progress and cancellation", () => {
   it("advances MCP progress when provider waiting does not advance completed work", async () => {
@@ -32,7 +39,7 @@ describe("ordinary MCP progress and cancellation", () => {
       },
     };
     const server = createServer({ kind: "fixed", analysis });
-    const client = new Client({ name: "progress-test", version: "1" });
+    const client = testClient("progress-test");
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const progress: {
@@ -81,7 +88,7 @@ describe("ordinary MCP progress and cancellation", () => {
         ),
     };
     const server = createServer({ kind: "fixed", analysis });
-    const client = new Client({ name: "function-progress-test", version: "1" });
+    const client = testClient("function-progress-test");
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const progress: number[] = [];
@@ -107,29 +114,21 @@ describe("ordinary MCP progress and cancellation", () => {
   it("propagates client cancellation to the active provider request", async () => {
     let providerObservedCancellation = false;
     let providerWasStarted = false;
-    let markProviderStarted!: () => void;
     let markProviderFinished!: () => void;
-    let releaseProvider!: () => void;
-    const providerStarted = new Promise<void>((resolve) => {
-      markProviderStarted = resolve;
-    });
     const providerFinished = new Promise<void>((resolve) => {
       markProviderFinished = resolve;
     });
-    const providerGate = new Promise<void>((resolve) => {
-      releaseProvider = resolve;
-    });
+    const providerRequest = phaseGate();
     const analysis: AnalysisOperationPort = {
       execute: async (operation, _parameters, options) => {
         const onAbort = () => {
           providerObservedCancellation = true;
-          releaseProvider();
+          providerRequest.release();
         };
         options?.signal?.addEventListener("abort", onAbort, { once: true });
         providerWasStarted = true;
-        markProviderStarted();
         try {
-          await providerGate;
+          await providerRequest.hold();
           return err(new AnalysisCancelledError(operation));
         } finally {
           options?.signal?.removeEventListener("abort", onAbort);
@@ -138,7 +137,7 @@ describe("ordinary MCP progress and cancellation", () => {
       },
     };
     const server = createServer({ kind: "fixed", analysis });
-    const client = new Client({ name: "cancellation-test", version: "1" });
+    const client = testClient("cancellation-test");
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const controller = new AbortController();
@@ -149,13 +148,13 @@ describe("ordinary MCP progress and cancellation", () => {
         { name: "current_address", arguments: {} },
         { signal: controller.signal },
       );
-      await awaitAcknowledgement(providerStarted, request, "provider request");
+      await providerRequest.reached(request, "provider request");
       controller.abort();
       await expect(request).rejects.toThrow(/abort/iu);
       await expect.poll(() => providerObservedCancellation).toBe(true);
     }, [
       async () => {
-        releaseProvider();
+        providerRequest.release();
         if (providerWasStarted) await providerFinished;
       },
       () => client.close(),

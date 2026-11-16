@@ -7,8 +7,14 @@ import { summarizeEvidenceBundle } from "./evidenceRecordSummary.js";
 it("preserves native identity independently of missing or incompatible value-flow metadata", () => {
   const records = [
     undefined,
+    {
+      available: true,
+      truncated: true,
+      omitted_operations_lower_bound: 1,
+      known_omitted_inputs: 0,
+      known_omitted_edges: 2,
+    },
     { available: true, truncated: true },
-    { unexpected: "legacy" },
     { available: false, reason: "Decompiler unavailable" },
   ].map((flow) =>
     createEvidence(
@@ -39,9 +45,9 @@ it("preserves native identity independently of missing or incompatible value-flo
         value_flow: {
           status: "observed",
           truncated: true,
-          omitted_operations_lower_bound: null,
-          known_omitted_inputs: null,
-          known_omitted_edges: null,
+          omitted_operations_lower_bound: 1,
+          known_omitted_inputs: 0,
+          known_omitted_edges: 2,
         },
       }),
       expect.objectContaining({
@@ -62,7 +68,7 @@ it.each([
       omitted_operations_lower_bound: 2,
       known_omitted_inputs: 3,
       known_omitted_edges: 4,
-      operations: "historical collection representation",
+      operations: "full collections are not parsed",
     },
     expected: {
       status: "observed",
@@ -74,7 +80,7 @@ it.each([
   },
   {
     flow: { available: false, reason: "" },
-    expected: { status: "unavailable", reason: "" },
+    expected: { status: "unknown", reason: expect.any(String) },
   },
   {
     flow: { available: true, truncated: false, known_omitted_edges: -1 },

@@ -8,6 +8,7 @@ import {
   unrealPakSchema,
 } from "../unreal/unrealPak.js";
 import { err, ok, type Result } from "../result.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -151,8 +152,7 @@ export const projectUnrealPakView = (
   const { report, counts } = parsed.value;
   if (
     parent.subject != null &&
-    (parent.subject.format !== "file" ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    evidenceSubjectTarget(parent.subject)?.sha256 !== report.artifact.sha256
   )
     return err(
       analysisViewInputError([
@@ -192,7 +192,7 @@ export const projectUnrealPakView = (
       view,
       ...shared,
       summary: { ...identity, counts },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const rows: readonly Readonly<Record<string, unknown>>[] =
     view.collection === "entries" ? entries : issues;

@@ -1,7 +1,7 @@
 import { UNREAL_PAK_PROVIDER_IDENTITY } from "./UnrealPakProviderIdentity.js";
 import { setImmediate } from "node:timers/promises";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
@@ -10,11 +10,11 @@ import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readStableArtifactRanges } from "../artifacts/readStableArtifact.js";
+} from "../resources/ArtifactFileOperation.js";
+import { readStableArtifactRanges } from "../resources/readStableArtifact.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { UnrealPakPort } from "../application/unreal/UnrealPakPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";

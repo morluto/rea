@@ -115,10 +115,12 @@ it("retains completed body identity when map interpretation reaches its deadline
       return text;
     });
   try {
-    const result = await fetchWebSourceMaps([request(1)], input, undefined, {
-      timeoutMs: 1_000,
-      fetch: () => Promise.resolve(response),
-    });
+    const result = await fetchWebSourceMaps(
+      [request(1)],
+      { ...input, source_map_fetch_timeout_ms: 1_000 },
+      undefined,
+      { fetch: () => Promise.resolve(response) },
+    );
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       status: "unavailable",
@@ -207,25 +209,4 @@ it("refuses oversized text before JSON interpretation while retaining body ident
     false,
   );
   expect(calls).toBe(2);
-});
-
-it("keeps historical invalid rows with no response identity admissible", () => {
-  const historical = {
-    status: "unavailable",
-    requested: 1,
-    processed: 1,
-    items: [
-      {
-        script_key: request(1).scriptKey,
-        declared_url: request(1).declaredUrl,
-        status: "invalid",
-        artifact: null,
-        original_sources: [],
-        original_module_edges: [],
-        mappings: [],
-        limitation: "Source-map JSON is not a version 3 map.",
-      },
-    ],
-  };
-  expect(webSourceMapsSchema.parse(historical)).toMatchObject(historical);
 });

@@ -23,6 +23,8 @@ import {
 const cli = fileURLToPath(
   new URL("../../../scripts/release-notes.mjs", import.meta.url),
 );
+const releaseBody = (notes: string) =>
+  `:robot: I have created a release *beep* *boop*\n---\n\n${notes}\n---\nThis PR was generated with [Release Please](https://github.com/googleapis/release-please).\n`;
 const actor = (login: string, __typename = "User") => ({ login, __typename });
 const author = (login: string | null, type = "User") => ({
   name: login ?? "Unknown",
@@ -319,10 +321,7 @@ it("inventories side branches and paginated credits, then checks and renders syn
     /@(?:merger|automation|platformbot|claude|cursoragent|codex|Copilot|morluto)/u,
   );
   const body = join(f.directory, "body.md");
-  await writeFile(
-    body,
-    `## 🤖 I have created a release beep boop\n\n${f.notes}\n---\nThis PR was generated with [Release Please](https://github.com/googleapis/release-please).\n`,
-  );
+  await writeFile(body, releaseBody(f.notes));
   const report = await f.invoke([
     "check",
     "--manifest",
@@ -436,7 +435,7 @@ it("rejects lost grouped credits, fabricated references, bots, and stale PR bodi
   const body = join(f.directory, "body.md");
   await writeFile(
     body,
-    f.notes.replace("Added the capability", "Stale capability"),
+    releaseBody(f.notes.replace("Added the capability", "Stale capability")),
   );
   await expect(
     f.invoke(["check", "--manifest", f.manifest, "--pr-body", body]),
@@ -559,6 +558,40 @@ it.each([
   },
 );
 
+it("requires release notes that Release Please can extract from the PR body", async () => {
+  const f = await fixture();
+  const body = join(f.directory, "body.md");
+  const readiness = "## Author readiness\nHuman owner: @alice\n";
+  for (const validBody of [
+    readiness + releaseBody(f.notes),
+    releaseBody(f.notes) + readiness,
+    releaseBody(
+      `<details><summary>rea-agents: 6.4.0</summary>\n\n${f.notes}\n</details>`,
+    ),
+  ]) {
+    await writeFile(body, validBody);
+    await f.invoke(["check", "--manifest", f.manifest, "--pr-body", body]);
+  }
+  // The notes match the changelog, but metadata before the version heading
+  // inside the delimiters makes Release Please publish an empty description.
+  for (const invalidBody of [
+    releaseBody(readiness + f.notes),
+    f.notes,
+    releaseBody(
+      `<details><summary>rea-agents: 6.5.0</summary>\n\n${f.notes}\n</details>`,
+    ),
+  ]) {
+    await writeFile(body, invalidBody);
+    await expect(
+      f.invoke(["check", "--manifest", f.manifest, "--pr-body", body]),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        "Release Please cannot extract 6.4.0 notes",
+      ),
+    });
+  }
+});
+
 it("checks the live merged PR and exact Git snapshot before either publication route", async () => {
   const f = await fixture();
   await mkdir(join(f.directory, "docs/releases"), { recursive: true });
@@ -580,9 +613,10 @@ it("checks the live merged PR and exact Git snapshot before either publication r
   const source = await git(f.directory, ["rev-parse", "HEAD"]);
   const pr = {
     number: 1399,
-    body: f.notes,
+    body: releaseBody(f.notes),
     merged_at: "2026-10-11T00:00:00Z",
     merge_commit_sha: source,
+    base: { ref: "main" },
     head: {
       ref: "release-please--branches--main--components--rea-agents",
       repo: { full_name: "fixture/rea" },
@@ -615,11 +649,23 @@ it("checks the live merged PR and exact Git snapshot before either publication r
     "--source",
     source,
   ]);
+  await writeFile(prFile, JSON.stringify({ ...pr, body: null }));
+  await expect(
+    f.invoke([
+      "publication",
+      "--repository",
+      "fixture/rea",
+      "--source",
+      source,
+    ]),
+  ).rejects.toMatchObject({
+    stderr: expect.stringContaining("no release notes body"),
+  });
   await writeFile(
     prFile,
     JSON.stringify({
       ...pr,
-      body: f.notes.replace("Added the capability", "Different release"),
+      body: pr.body.replace("Added the capability", "Different release"),
     }),
   );
   await expect(

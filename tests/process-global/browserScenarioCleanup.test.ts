@@ -3,7 +3,7 @@ import { Cli } from "incur";
 import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import type { BrowserScenarioCapturePort } from "../../src/application/BrowserScenarioCapturePort.js";
+import type { BrowserScenarioCapturePort } from "../../src/ports/BrowserScenarioCapturePort.js";
 import { createBrowserScenarioEvidence } from "../../src/application/BrowserScenarioEvidence.js";
 import type { BrowserScenarioSessionPort } from "../../src/browser/BrowserScenarioSessionPort.js";
 import { PlaywrightBrowserScenarioProvider } from "../../src/browser/PlaywrightBrowserScenarioProvider.js";
@@ -29,6 +29,7 @@ import {
   jsonValueSchema,
 } from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";
+import { waitFor } from "../support/testWait.js";
 
 const state = vi.hoisted(() => ({
   provider: undefined as BrowserScenarioCapturePort | undefined,
@@ -319,7 +320,7 @@ it("retries a late Playwright open after cancellation before accepting another c
     signal: cancellation.signal,
   });
   try {
-    await vi.waitFor(() => expect(launchCount).toBe(1));
+    await waitFor(() => expect(launchCount).toBe(1));
     cancellation.abort();
     const cancelled = await firstCapture;
     if (cancelled.ok) throw new Error("Expected the first capture to cancel.");

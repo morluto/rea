@@ -7,7 +7,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   analysisViewResultSchema,
   unrealPakSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { unrealPakSchema } from "../../src/domain/unreal/unrealPak.js";
 import { createPakFixture } from "../fixtures/unreal/pak.js";

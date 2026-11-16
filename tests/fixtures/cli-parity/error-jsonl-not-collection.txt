@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.blocks --format jsonl
+exit: 1
+--- stdout
+{"$rea":"jsonl/v1","type":"error","ok":false,"result":{"code":"invalid_request","category":"invalid_input","message":"The --filter-output selection normalized_result.blocks is not a JSON Lines record collection: normalized_result.blocks is an array. JSON Lines needs a top-level array, or exactly one rows, items, records, or occurrences array directly in the result, under page, or under normalized_result.","retryable":false,"remediation":{"action":"Use --format json for the complete document, or select one record collection with --filter-output."},"recovery":{"kind":"inspect_input_contract","operation":"inspect-byte-entropy"},"details":{"operation":"inspect-byte-entropy","issues":[{"path":["filter-output"],"reason":"invalid_value","message":"The --filter-output selection normalized_result.blocks is not a JSON Lines record collection: normalized_result.blocks is an array.","observed":[{"path":["normalized_result","blocks"],"shape":"array"}]}]}}}
+<end>
+--- stderr
+<end>

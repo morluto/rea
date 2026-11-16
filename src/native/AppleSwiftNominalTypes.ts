@@ -1,15 +1,19 @@
+import { malformedInput } from "../domain/parseFailure.js";
 import type {
   NativeMetadataEvidence,
   NativeMetadataLocation,
   ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
-import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import {
+  issue,
+  type FacetDecodeFacts,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 import {
   unresolvedSwiftRelativeReason,
   type SwiftRelativeField,
   type SwiftRelativeValue,
 } from "./AppleSwiftDispatchFacets.js";
-import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
+import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 
 /** Byte readers shared with the validated Mach-O metadata boundary. */
 export interface SwiftNominalReaders {
@@ -111,10 +115,14 @@ export const createSwiftContextReader = (
     if (known !== undefined) return known;
     const value = read.relative(descriptor + 8n, field);
     if (value.kind !== "target")
-      throw new RangeError(unresolvedSwiftRelativeReason(value, field));
+      throw malformedInput(
+        "macho",
+        unresolvedSwiftRelativeReason(value, field),
+      );
     const name = read.string(value.target);
     if (name.length === 0)
-      throw new RangeError(
+      throw malformedInput(
+        "macho",
         `Swift ${field === "protocolName" ? "protocol" : "type"} descriptor name is empty`,
       );
     names.set(descriptor, name);
@@ -221,7 +229,7 @@ export const createSwiftContextReader = (
     try {
       facts = readContext(context, walk);
     } catch (cause) {
-      const reason = expectedSwiftMetadataReadFailure(cause);
+      const reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
       facts = unresolved(reason);
     }
@@ -274,7 +282,7 @@ export const decodeSwiftNominalTypes = (input: {
             reason: `Swift metadata accessor ${hex(value.target)} is not in executable mapped code`,
           };
     } catch (cause) {
-      const reason = expectedSwiftMetadataReadFailure(cause);
+      const reason = expectedAppleMetadataReadFailure(cause);
       if (reason === null) throw cause;
       return { address: null, reason };
     }
@@ -301,7 +309,8 @@ export const decodeSwiftNominalTypes = (input: {
     try {
       const value = read.relative(record, "typeMetadataRecord");
       if (value.kind !== "target")
-        throw new RangeError(
+        throw malformedInput(
+          "macho",
           unresolvedSwiftRelativeReason(value, "typeMetadataRecord"),
         );
       descriptor = value.target;
@@ -320,7 +329,7 @@ export const decodeSwiftNominalTypes = (input: {
       }
       name = typeName(descriptor);
     } catch (cause) {
-      const message = expectedSwiftMetadataReadFailure(cause);
+      const message = expectedAppleMetadataReadFailure(cause);
       if (message === null) throw cause;
       if (kind === null || kind === CLASS) visitor.failure({ record, message });
       issues.push(issue(FACET, "type_decode_failed", message, hex(record)));

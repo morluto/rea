@@ -1,3 +1,5 @@
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import { Budget } from "../../domain/budget.js";
 import {
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
@@ -12,15 +14,17 @@ import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  artifactReaderLimitFailure,
+} from "../../resources/index.js";
 
 /** Exact trailer written by Bun's standalone module graph serializer. */
-export const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
-export const BUN_TRAILER_BYTES = BUN_TRAILER.length;
-export const BUN_OFFSETS_BYTES = 32;
-export const BUN_GRAPH_SUFFIX_BYTES = BUN_OFFSETS_BYTES + BUN_TRAILER_BYTES;
+const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");
+const BUN_TRAILER_BYTES = BUN_TRAILER.length;
+const BUN_OFFSETS_BYTES = 32;
+const BUN_GRAPH_SUFFIX_BYTES = BUN_OFFSETS_BYTES + BUN_TRAILER_BYTES;
 /** Current compilers prefix a section with this little-endian payload length. */
 export const BUN_LENGTH_PREFIX_BYTES = 8;
 /** Bun 1.3.3 through 1.3.8 module records. */
@@ -29,8 +33,6 @@ export const BUN_RECORD_BYTES_1_3_3 = 36;
 export const BUN_RECORD_BYTES_1_3_9 = 52;
 
 const MAX_PE_SECTIONS = 96;
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const SEGMENT_64_HEADER_BYTES = 72;
 const SEGMENT_32_HEADER_BYTES = 56;
 const SECTION_64_BYTES = 80;
@@ -211,15 +213,26 @@ const METADATA_CACHE_ENTRIES = 1024;
 /** Exact-range caching avoids page amplification from file-controlled pointers. */
 class BunGraphRangeReader implements BunGraphData {
   readonly #ranges = new Map<string, Buffer>();
-  #retainedBytes = 0;
-  #readBytes = 0;
+  readonly #retained = new Budget(METADATA_CACHE_BYTES);
+  readonly #read: Budget;
   constructor(
     private readonly handle: FileHandle,
     private readonly start: number,
     readonly length: number,
     private readonly signal: AbortSignal | undefined,
-    private readonly maximumReadBytes: number,
-  ) {}
+    maximumReadBytes: number,
+  ) {
+    this.#read = new Budget(maximumReadBytes);
+  }
+
+  /** Drop the least recently used range and return its retained size. */
+  readonly #evictOldest = (): number | undefined => {
+    const oldest = this.#ranges.keys().next();
+    if (oldest.done === true) return undefined;
+    const bytes = this.#ranges.get(oldest.value)?.length ?? 0;
+    this.#ranges.delete(oldest.value);
+    return bytes;
+  };
 
   async read(offset: number, length: number): Promise<Buffer> {
     abortIfNeeded(this.signal);
@@ -240,15 +253,15 @@ class BunGraphRangeReader implements BunGraphData {
       this.#ranges.set(key, existing);
       return Buffer.from(existing);
     }
-    if (length > this.maximumReadBytes - this.#readBytes)
-      throw artifactReaderLimitFailure(
-        "artifact_limits.bun.metadata_read_bytes",
-        this.maximumReadBytes,
-        "bytes",
-        this.#readBytes + length,
-      );
     // Charge physical work before allocation or I/O, including uncached large names.
-    this.#readBytes += length;
+    this.#read.charge(length, () =>
+      artifactReaderLimitFailure(
+        "artifact_limits.bun.metadata_read_bytes",
+        this.#read.maximum,
+        "bytes",
+        this.#read.used + length,
+      ),
+    );
     const bytes = await readExact(
       this.handle,
       this.start + offset,
@@ -256,16 +269,10 @@ class BunGraphRangeReader implements BunGraphData {
       this.signal,
     );
     if (length > METADATA_CACHE_BYTES) return bytes;
-    while (
-      this.#ranges.size >= METADATA_CACHE_ENTRIES ||
-      this.#retainedBytes + length > METADATA_CACHE_BYTES
-    ) {
-      const oldest = this.#ranges.keys().next().value!;
-      this.#retainedBytes -= this.#ranges.get(oldest)!.length;
-      this.#ranges.delete(oldest);
-    }
+    while (this.#ranges.size >= METADATA_CACHE_ENTRIES)
+      this.#retained.refund(this.#evictOldest() ?? 0);
+    if (!this.#retained.chargeEvicting(length, this.#evictOldest)) return bytes;
     this.#ranges.set(key, bytes);
-    this.#retainedBytes += length;
     return Buffer.from(bytes);
   }
 }
@@ -512,16 +519,15 @@ const machOClaims = async (
     const read = cursor.read(commands.subarray(cursor.nextOffset));
     if (!read.ok) break;
     const { command: cmd, offset, size } = read.value;
-    if (cmd === LC_SEGMENT_64 || cmd === LC_SEGMENT)
-      claims.push(
-        ...segmentClaims(
-          commands.subarray(offset, offset + size),
-          littleEndian,
-          cmd === LC_SEGMENT_64,
-          imageOffset,
-          Math.min(fileSize, imageOffset + imageLimit),
-        ),
-      );
+    if (cmd === LC.SEGMENT_64 || cmd === LC.SEGMENT)
+      for (const claim of segmentClaims(
+        commands.subarray(offset, offset + size),
+        littleEndian,
+        cmd === LC.SEGMENT_64,
+        imageOffset,
+        Math.min(fileSize, imageOffset + imageLimit),
+      ))
+        claims.push(claim);
   }
   return claims;
 };
@@ -587,7 +593,8 @@ const fatClaims = async (
   for (const slice of parsed.slices) {
     abortIfNeeded(signal);
     if (parsed.rangeIssues[slice.index] !== null) continue;
-    claims.push(...(await machOClaims(source, slice.offset, slice.size)));
+    for (const claim of await machOClaims(source, slice.offset, slice.size))
+      claims.push(claim);
   }
   return claims;
 };
