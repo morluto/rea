@@ -6,7 +6,7 @@ import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { adbArguments, runAdb, type AdbRunLimits } from "./AdbCommand.js";
-import type { AdbBinarySelection } from "./AdbConfiguration.js";
+import type { AdbCommandHost } from "./AdbProcess.js";
 import {
   parseAdbDevicesOutput,
   parseGetpropOutput,
@@ -25,7 +25,7 @@ const GETPROP_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 export interface AdbCommandContext {
   readonly operation: AdbRequest["operation"];
   readonly request: AdbRequest;
-  readonly selection: AdbBinarySelection;
+  readonly selection: AdbCommandHost;
   readonly client: AdbClientResult;
   readonly provider: AdbProviderIdentity;
   readonly signal: AbortSignal | undefined;

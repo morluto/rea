@@ -5,7 +5,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { execFileFailureCapturedOutput } from "../process/ExecFileOutput.js";
+import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { collectNumericIssues } from "./AdbNumericIssues.js";
 import {
   adbFilesystemErrorCode,
@@ -99,7 +99,7 @@ import {
   runtimeControlCapabilityError,
 } from "../domain/runtimeControlUnavailableError.js";
 import {
-  adbCommandOutputFailure,
+  adbExitedRunOf,
   adbArguments,
   runAdb,
   runAdbCapture,
@@ -108,12 +108,13 @@ import {
   probeAdbPathExistence,
   type AdbRunLimits,
 } from "./AdbCommand.js";
+import type { AdbCommandHost } from "./AdbProcess.js";
+import { startAdbServer } from "./AdbServer.js";
 import {
   AdbConfigurationFailure,
   adbConfigurationAvailability,
   inspectAdbClient,
   resolveAdbBinary,
-  type AdbBinarySelection,
   type AdbClientIdentity,
 } from "./AdbConfiguration.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -843,8 +844,12 @@ export class AdbProvider {
       ((rootOptions) => PrivateRuntimeRoot.create(rootOptions));
   }
 
-  private selection(signal?: AbortSignal): Promise<AdbBinarySelection> {
-    return resolveAdbBinary(this.environment, this.platform, signal);
+  /** The selected adb binary, with this provider retaining its commands' unfinished cleanup. */
+  private async selection(signal?: AbortSignal): Promise<AdbCommandHost> {
+    return {
+      ...(await resolveAdbBinary(this.environment, this.platform, signal)),
+      resources: this.#resources,
+    };
   }
 
   /** Probe the selected adb binary; never contacts devices or the server. */
@@ -1250,7 +1255,7 @@ export class AdbProvider {
     const signal = options?.signal;
     if (signal?.aborted === true)
       return err(cancelledBy(request.operation, signal));
-    let selection: AdbBinarySelection;
+    let selection: AdbCommandHost;
     let identity: AdbClientIdentity;
     try {
       selection = await this.selection(signal);
@@ -1279,6 +1284,16 @@ export class AdbProvider {
           { cause },
         ),
       );
+    }
+    // Device operations reach the shared adb server, which REA may start
+    // but never stops; a device command then never forks it.
+    if (request.operation !== "inspect_adb_client") {
+      const started = await startAdbServer(
+        request.operation,
+        selection,
+        signal,
+      );
+      if (!started.ok) return started;
     }
     const client = clientIdentityResult(selection, identity);
     const provider: AdbProviderIdentity = {
@@ -1815,7 +1830,7 @@ export class AdbProvider {
 
   private async pullPackage(
     operation: "pull_adb_package",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2206,7 +2221,7 @@ export class AdbProvider {
 
   private async pullFile(
     operation: "pull_adb_file",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2322,7 +2337,7 @@ export class AdbProvider {
 
   private async pushFile(
     operation: "push_adb_file",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2552,7 +2567,7 @@ export class AdbProvider {
 
   private async installPackage(
     operation: "install_adb_package",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2653,7 +2668,7 @@ export class AdbProvider {
 
   private async uninstallPackage(
     operation: "uninstall_adb_package",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
@@ -2720,7 +2735,7 @@ export class AdbProvider {
 
   private async startApp(
     operation: "start_adb_app",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
@@ -2776,7 +2791,7 @@ export class AdbProvider {
 
   private async startActivity(
     operation: "start_adb_activity",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2838,7 +2853,7 @@ export class AdbProvider {
 
   private async runAmStart(
     operation: "start_adb_app" | "start_adb_activity",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     serial: string,
@@ -2856,7 +2871,7 @@ export class AdbProvider {
     );
     let stdout: string;
     let stderr: string;
-    let capturedOutput: ReturnType<typeof execFileFailureCapturedOutput>;
+    let capturedOutput: AnalysisCapturedOutput;
     let verdict: ReturnType<typeof parseAmStartOutput>;
     if (started.ok) {
       stdout = started.value.stdout;
@@ -2864,21 +2879,13 @@ export class AdbProvider {
       capturedOutput = { stdout, stderr, truncated: false };
       verdict = parseAmStartOutput(stdout, stderr);
     } else {
-      const commandFailure = adbCommandOutputFailure(started.error);
+      const exited = adbExitedRunOf(started.error);
       // AOSP ActivityManagerShellCommand returns 1 for class-not-found and
       // emits its refusal report on stdout. Other exits remain command errors.
-      if (
-        commandFailure === undefined ||
-        commandFailure.code !== 1 ||
-        commandFailure.signal !== null ||
-        commandFailure.killed ||
-        commandFailure.outputTruncated ||
-        commandFailure.collectionFailure === true
-      )
-        return started;
-      stdout = commandFailure.stdout;
-      stderr = commandFailure.stderr;
-      capturedOutput = execFileFailureCapturedOutput(commandFailure);
+      if (exited === undefined || exited.exitCode !== 1) return started;
+      stdout = exited.stdout.toString("utf8");
+      stderr = exited.stderr;
+      capturedOutput = exited.capturedOutput;
       // Stderr carries adb transport diagnostics, not the Activity Manager
       // report, so it cannot establish a target refusal on this path.
       verdict = parseAmStartOutput(stdout);
@@ -2928,7 +2935,7 @@ export class AdbProvider {
 
   private async stopApp(
     operation: "stop_adb_app",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
@@ -2962,7 +2969,7 @@ export class AdbProvider {
 
   private async captureScreen(
     operation: "capture_adb_screen",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
@@ -3081,7 +3088,7 @@ export class AdbProvider {
 
   private async collectBugreport(
     operation: "collect_adb_bugreport",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
