@@ -9,7 +9,7 @@
 **পছন্দের কোনো ফিচার চোখে পড়েছে? সেটি কীভাবে কাজ করে, বাইনারি স্তর পর্যন্ত বুঝে নিন।**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -89,9 +89,9 @@ runtime ও REA entry script সরাসরি রেকর্ড করে। 
 পুনরুদ্ধারের বিস্তারিত নিচের setup গাইডে আছে।
 
 Setup সমর্থন করে Claude Code, Codex, Cursor, Gemini CLI, Grok Build এবং
-[অন্যান্য agent](../installation.md#supported-agents)। Provider configuration,
+[অন্যান্য agent](../getting-started/installation.md#supported-agents)। Provider configuration,
 ম্যানুয়াল MCP নিবন্ধন এবং Claude Code/Codex plugin ইনস্টলেশনের জন্য
-[ইনস্টলেশন ও setup](../installation.md) দেখুন।
+[ইনস্টলেশন ও setup](../getting-started/installation.md) দেখুন।
 
 Context-এর বাড়তি চাপ কমাতে MCP ডিফল্টভাবে compact input schema ব্যবহার করে। পুরো
 field নির্দেশনা ও nested validation-এর বিস্তারিত দরকার হলে আপনার MCP নিবন্ধনে
@@ -134,7 +134,7 @@ rea --help
 ```
 
 Native বিশ্লেষণের জন্য আগে একটি provider কনফিগার করুন। Native কমান্ড, provider
-বাছাই, snapshot এবং scripting-এর জন্য [CLI ও Evidence গাইড](../cli.md) দেখুন।
+বাছাই, snapshot এবং scripting-এর জন্য [CLI ও Evidence গাইড](../getting-started/cli.md) দেখুন।
 
 ### REA আপডেট করুন
 
@@ -192,8 +192,8 @@ REA-এর জন্য লাগবে Node.js 22.x (>=22.23.4), 24.x (>=24.22.
 | টার্গেট                   | REA কী ফেরত দেয়                                                                           | প্রয়োজনীয়তা ও গাইড                                                                                                            |
 | ----------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | ডেস্কটপ ইনস্টলেশন         | Runtime candidate, সহায়ক ফাইল, component marker ও পরবর্তী probe                              | বিল্ট-ইন সীমিত directory/header পরীক্ষা; [ডেস্কটপ অ্যাপ্লিকেশন](../desktop-applications.md)                                       |
-| Native বাইনারি            | Pseudocode, assembly, string, symbol, call ও reference                                    | Hopper, Ghidra, IDA বা Kuna; [native বিশ্লেষণ](../native-investigation.md)                                                   |
-| Offline ELF layout      | Section, segment, মূল symbol/relocation এবং static mitigation-এর সম্ভাব্য তালিকা                | Linux x64-এ caller-এর দেওয়া pwntools; [binary diagnostics](../binary-diagnostics.md)                                        |
+| Native বাইনারি            | Pseudocode, assembly, string, symbol, call ও reference                                    | Hopper, Ghidra, IDA বা Kuna; [native বিশ্লেষণ](../guides/native/native-investigation.md)                                                   |
+| Offline ELF layout      | Section, segment, মূল symbol/relocation এবং static mitigation-এর সম্ভাব্য তালিকা                | Linux x64-এ caller-এর দেওয়া pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                        |
 | Go বাইনারি                | Embedded compiler সংস্করণ, module, replacement ও build setting                             | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; Go ইনস্টল করার দরকার নেই                                                             |
 | GPU code object         | CUDA/HIP target, নির্বাচিত kernel-এর parameter ও resource এবং সংরক্ষিত PTX text              | বিল্ট-ইন static ELF/PE/fatbin/CUBIN/PTX পরীক্ষা; [GPU code object](../gpu-code-objects.md)                                    |
 | Model artifact          | GGUF / safetensors metadata, tensor ঘোষণা ও উদ্ভূত মোট মান                                    | বিল্ট-ইন header পরীক্ষা; ঐচ্ছিক পূর্ণ-ফাইল hash; [model ফাইল](../model-artifacts.md)                                               |
@@ -202,32 +202,34 @@ REA-এর জন্য লাগবে Node.js 22.x (>=22.23.4), 24.x (>=24.22.
 | Rust বাইনারি              | এমবেড করা cargo-auditable crate-এর নাম, সংস্করণ, উৎস ও dependency সম্পর্ক                      | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; [Rust বাইনারি](../rust-binaries.md)                                                 |
 | PE certificate          | Authenticode WIN_CERTIFICATE entry এবং PKCS#7 signer/X.509 পরিচয়ের field                  | বিল্ট-ইন static PE পরীক্ষা; [PE certificate](../pe-certificates.md)                                                           |
 | PE import               | Import ও delay-load DLL-এর নাম, ordinal, IAT RVA এবং pefile import hash                    | বিল্ট-ইন static PE পরীক্ষা; [PE import](../pe-imports.md)                                                                     |
+| Windows shortcut        | Shell Link target, argument, working dir, ExtraData এবং Tracker droid fact                 | বিল্ট-ইন static LNK পরীক্ষা; [Windows shortcut](../guides/native/windows-shortcut.md)                                         |
 | ELF note                | PT_NOTE/SHT_NOTE owner, type, GNU build-id ও ABI-tag field                                | বিল্ট-ইন static ELF পরীক্ষা; [ELF note](../elf-notes.md)                                                                      |
 | বাইনারি হার্ডেনিং           | ELF, PE ও Mach-O-এর PIE, NX, RELRO, CFG এবং সংশ্লিষ্ট header flag                           | বিল্ট-ইন static header inspection; [বাইনারি হার্ডেনিং](../binary-hardening.md)                                                  |
 | Apple IPS crash         | .ips metadata, thread, image, register এবং নথিভুক্ত crash শ্রেণি                             | বিল্ট-ইন static JSON পরীক্ষা; [Apple IPS](../apple-ips.md)                                                                    |
 | Linux kernel module     | .modinfo key, __versions CRC, this_module উপস্থিতি এবং signature trailer                   | বিল্ট-ইন static ELF পরীক্ষা; [kernel module](../kernel-modules.md)                                                            |
 | Erlang BEAM             | IFF chunk, atom, export, import, lambda এবং Code header                                   | বিল্ট-ইন static BEAM পরীক্ষা; [Erlang BEAM](../erlang-beam.md)                                                                |
 | WASM artifact           | Validation, section, হুবহু import/export WAT রূপ এবং decode করা WAT                           | Caller-এর দেওয়া WABT 1.0.42; `inspect_wasm_artifact`                                                                        |
-| EVM bytecode            | Dispatch selector, byte offset, অনুমিত argument ও mutability                               | Linux x64-এ local raw/hex carrier; [offline EVM গাইড](../evm-bytecode.md)                                                   |
+| EVM bytecode            | Dispatch selector, byte offset, অনুমিত argument ও mutability                               | Linux x64-এ local raw/hex carrier; [offline EVM গাইড](../guides/evm/evm-bytecode.md)                                                   |
 | SQLite ডেটাবেস           | Table, column, index, view, trigger এবং নির্বাচিত সাধারণ table-এর row                         | Local database/WAL snapshot; native SQLite সীমাসহ Node.js 24.x >=24.15 বা 26+                                                |
-| রেকর্ড করা Linux crash    | Raw note, রেকর্ড করা প্রতিটি thread-এর register/signal এবং ঐচ্ছিক mapping candidate           | Linux x64-এ caller-এর দেওয়া pwntools; ঐচ্ছিক GDB/pwndbg; [রেকর্ড করা crash](../recorded-crashes.md)                            |
-| JavaScript / Electron   | Module, import, source map, route, IPC এবং native add-on-এর সম্পর্ক                         | Node.js ও npm; Linux: procps-সামঞ্জস্যপূর্ণ `ps`; [অ্যাপ্লিকেশন বিশ্লেষণ](../javascript-application-workflows.md)                   |
-| ওয়েবসাইট                 | পেজের গঠন, script, network পর্যবেক্ষণ এবং অনুরোধ করা screenshot                               | একটি Chrome-ঘরানার ব্রাউজার; [ব্রাউজার বিশ্লেষণ](../browser-observation.md)                                                         |
-| সংরক্ষিত network capture | Request, response, উন্মুক্ত payload ও source location                                        | HAR বা Fiddler Everywhere SAZ; native mitmproxy capture-এর জন্য Linux-এ mitmdump; [capture গাইড](../web-network-captures.md)  |
-| .NET assembly           | Metadata, CIL instruction, ঘোষিত native dependency এবং build তুলনা                          | কিছু লাগে না (শুধু static); [managed-code গাইড](../managed-code-analysis.md)                                                     |
-| Android APK             | Manifest ঘোষণা, class, decompile করা method ও reference                                     | Linux/macOS/Windows x64-এ headless JADX ও পূর্ণ JDK; [Android গাইড](../android-analysis.md)                                   |
+| রেকর্ড করা Linux crash    | Raw note, রেকর্ড করা প্রতিটি thread-এর register/signal এবং ঐচ্ছিক mapping candidate           | Linux x64-এ caller-এর দেওয়া pwntools; ঐচ্ছিক GDB/pwndbg; [রেকর্ড করা crash](../guides/native/recorded-crashes.md)                            |
+| JavaScript / Electron   | Module, import, source map, route, IPC এবং native add-on-এর সম্পর্ক                         | Node.js ও npm; Linux: procps-সামঞ্জস্যপূর্ণ `ps`; [অ্যাপ্লিকেশন বিশ্লেষণ](../guides/javascript/javascript-application-workflows.md)                   |
+| ওয়েবসাইট                 | পেজের গঠন, script, network পর্যবেক্ষণ এবং অনুরোধ করা screenshot                               | একটি Chrome-ঘরানার ব্রাউজার; [ব্রাউজার বিশ্লেষণ](../guides/web/browser-observation.md)                                                         |
+| সংরক্ষিত network capture | Request, response, উন্মুক্ত payload ও source location                                        | HAR বা Fiddler Everywhere SAZ; native mitmproxy capture-এর জন্য Linux-এ mitmdump; [capture গাইড](../guides/web/web-network-captures.md)  |
+| .NET assembly           | Metadata, CIL instruction, ঘোষিত native dependency এবং build তুলনা                          | কিছু লাগে না (শুধু static); [managed-code গাইড](../guides/managed/managed-code-analysis.md)                                                     |
+| Android APK             | Manifest ঘোষণা, class, decompile করা method ও reference                                     | Linux/macOS/Windows x64-এ headless JADX ও পূর্ণ JDK; [Android গাইড](../guides/android/android-analysis.md)                                   |
 | APK signature           | v1/v2/v3/v3.1 signer, certificate fingerprint, key rotation এবং digest-এর অভ্যন্তরীণ সামঞ্জস্য | কিছু লাগে না (শুধু static); `inspect_apk_signature`                                                                             |
-| Android ডিভাইস           | ডিভাইস, package, process, log, dump, screen capture এবং APK/ফাইল আদান-প্রদান                   | Caller-এর দেওয়া adb (emulator বা হার্ডওয়্যার); [ADB গাইড](../adb-device-analysis.md)                                              |
-| JEB প্রজেক্ট              | Engine-চালিত project unit, artifact digest এবং type/method pseudo-code                     | REA_JEB_MCP_URL দিয়ে নির্বাচিত, caller-এর চালু করা একটি MCP-সার্ভিং JEB client; [JEB গাইড](../jeb-analysis.md)                     |
-| Android resource        | Decode করা manifest, string table, locale ও সংস্করণের তথ্য                                   | Caller-এর দেওয়া Apktool launcher; [resource গাইড](../apktool-resource-analysis.md)                                           |
-| Flutter অ্যাপ             | Dart snapshot hash, প্রতিটি ABI-এর library digest এবং engine build-এর উৎস                  | কিছু লাগে না (static APK parsing); [Flutter গাইড](../flutter-analysis.md)                                                      |
-| Firmware                | Region, extraction-এর ফলাফল এবং native বিশ্লেষণে হস্তান্তর                                     | Linux-এ Binwalk / Unblob; [firmware গাইড](../firmware-analysis.md)                                                          |
-| রেকর্ড করা packet         | নির্বাচিত field, পুনরাবৃত্ত value, filter এবং decode-as rule                                    | Linux: TShark 4.x + prlimit; [capture গাইড](../packet-captures.md)                                                          |
-| Packet সারাংশ             | Endpoint, DNS, TLS SNI, protocol বণ্টন এবং HTTP request                                    | Caller-এর দেওয়া tshark ও capinfos (Linux-এ যাচাই করা); [pcap গাইড](../pcap-analysis.md)                                         |
-| রেকর্ড করা logic signal   | Decoder annotation, sample range এবং diagnostics                                          | Linux: sigrok-cli 0.7.2 + prlimit; [signal রেকর্ডিং](../signal-recordings.md)                                               |
-| Package ও resource      | ফাইলের তালিকা, digest, plist, Apple bundle-এর গঠন এবং extract করা resource                    | [Artifact ও JavaScript গাইড](../javascript-artifact-reconstruction.md), [Apple অ্যাপ্লিকেশন](../apple-application-analysis.md) |
-| Process-এর আচরণ         | টার্মিনাল output, interaction, exit ও filesystem পর্যবেক্ষণ এবং run-এর তুলনা                     | Native PTY-সহ Linux/macOS; [process capture](../process-capture.md)                                                        |
+| Android ডিভাইস           | ডিভাইস, package, process, log, dump, screen capture এবং APK/ফাইল আদান-প্রদান                   | Caller-এর দেওয়া adb (emulator বা হার্ডওয়্যার); [ADB গাইড](../guides/android/adb-device-analysis.md)                                              |
+| JEB প্রজেক্ট              | Engine-চালিত project unit, artifact digest এবং type/method pseudo-code                     | REA_JEB_MCP_URL দিয়ে নির্বাচিত, caller-এর চালু করা একটি MCP-সার্ভিং JEB client; [JEB গাইড](../providers/jeb-analysis.md)                     |
+| Android resource        | Decode করা manifest, string table, locale ও সংস্করণের তথ্য                                   | Caller-এর দেওয়া Apktool launcher; [resource গাইড](../guides/android/apktool-resource-analysis.md)                                           |
+| Flutter অ্যাপ             | Dart snapshot hash, প্রতিটি ABI-এর library digest এবং engine build-এর উৎস                  | কিছু লাগে না (static APK parsing); [Flutter গাইড](../guides/android/flutter-analysis.md)                                                      |
+| Firmware                | Region, extraction-এর ফলাফল এবং native বিশ্লেষণে হস্তান্তর                                     | Linux-এ Binwalk / Unblob; [firmware গাইড](../guides/firmware/firmware-analysis.md)                                                          |
+| রেকর্ড করা packet         | নির্বাচিত field, পুনরাবৃত্ত value, filter এবং decode-as rule                                    | Linux: TShark 4.x + prlimit; [capture গাইড](../guides/data/packet-captures.md)                                                          |
+| Packet সারাংশ             | Endpoint, DNS, TLS SNI, protocol বণ্টন এবং HTTP request                                    | Caller-এর দেওয়া tshark ও capinfos (Linux-এ যাচাই করা); [pcap গাইড](../guides/data/pcap-analysis.md)                                         |
+| রেকর্ড করা logic signal   | Decoder annotation, sample range এবং diagnostics                                          | Linux: sigrok-cli 0.7.2 + prlimit; [signal রেকর্ডিং](../guides/signals/signal-recordings.md)                                               |
+| Package ও resource      | ফাইলের তালিকা, digest, plist, Apple bundle-এর গঠন এবং extract করা resource                    | [Artifact ও JavaScript গাইড](../guides/javascript/javascript-artifact-reconstruction.md), [Apple অ্যাপ্লিকেশন](../guides/apple/apple-application-analysis.md) |
+| Process-এর আচরণ         | টার্মিনাল output, interaction, exit ও filesystem পর্যবেক্ষণ এবং run-এর তুলনা                     | Native PTY-সহ Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                        |
 | PyInstaller executable  | CArchive member, Python সংস্করণ, entry script ও extract করা bytecode                        | কিছু লাগে না (শুধু static); [Python প্যাকেজ করা অ্যাপ্লিকেশন](../python-packaged-applications.md)                                     |
+| Deno compile বাইনারি      | Virtual file, entry point, recorded option, npm snapshot-এর দৈর্ঘ্য                          | কিছু লাগে না (শুধু static); [Deno compile executable](../deno-standalone.md)                                                 |
 
 Static JavaScript ও .NET পরীক্ষা অ্যাপ্লিকেশন না চালিয়েই দেওয়া ফাইলগুলো পড়ে।
 Runtime capture আপনার user permission নিয়ে নির্বাচিত টার্গেট চালায় বা তার সঙ্গে
@@ -241,16 +243,16 @@ Offline native-binary পরীক্ষার জন্য REA caller-এর �
 <a id="choosing-a-deep-analysis-provider"></a>
 
 Native format ও host সমর্থন provider ভেদে আলাদা। দেখুন
-[Hopper ও Ghidra setup](../installation.md#hopper),
-[IDA গাইড](../ida-provider.md) (ঐচ্ছিক native MCP bridge-সহ),
+[Hopper ও Ghidra setup](../getting-started/installation.md#hopper),
+[IDA গাইড](../providers/ida-provider.md) (ঐচ্ছিক native MCP bridge-সহ),
 [Kuna decompiler গাইড](../kuna-provider.md) এবং
-[পরীক্ষামূলক Windows Ghidra সমর্থন](../windows-ghidra-p0.md)।
-Ghidra [16-bit DOS বিশ্লেষণ](../ghidra-dos.md)-ও সমর্থন করে।
+[পরীক্ষামূলক Windows Ghidra সমর্থন](../providers/windows-ghidra-p0.md)।
+Ghidra [16-bit DOS বিশ্লেষণ](../providers/ghidra-dos.md)-ও সমর্থন করে।
 বড় বাইনারির জন্য `REA_GHIDRA_STARTUP_TIMEOUT_MS` বা `REA_HOPPER_STARTUP_TIMEOUT_MS`
 দিয়ে provider-এর startup deadline বাড়িয়ে দিন।
-Provider বাছাইয়ের জন্য [CLI গাইড](../cli.md#choose-a-provider) দেখুন।
+Provider বাছাইয়ের জন্য [CLI গাইড](../getting-started/cli.md#choose-a-provider) দেখুন।
 সর্বশেষ npm release-এর পরে যোগ হওয়া ফিচারের জন্য
-[release-এ প্রাপ্যতা](../installation.md#released-package-and-main) দেখে নিন।
+[release-এ প্রাপ্যতা](../getting-started/installation.md#released-package-and-main) দেখে নিন।
 
 ## শোকেস
 
@@ -333,14 +335,18 @@ REA একটি চালানোযোগ্য এনভায়রনম�
 [এনভায়রনমেন্ট রেফারেন্স](../agent-environments.md) ·
 [X-এ ডেমো দেখুন](https://x.com/reatools/status/2112574822584918075?s=20)
 
+REA Linux ডেস্কটপ অ্যাপের একটি এনভায়রনমেন্টও তৈরি করতে পারে, যা একটি এজেন্ট স্ক্রিনশট, মাউস ও কিবোর্ডের মাধ্যমে ব্যবহার করে। এক লাইনের অনুরোধ থেকে, যেমন "আমাকে একটি Gnote এনভায়রনমেন্ট তৈরি করুন যেখানে এজেন্ট শপিং লিস্ট নোটে অলিভ অয়েল যোগ করবে", আপনার এজেন্ট অ্যাপটি একটি লোকাল বিল্ড কম্পিউটারে ইনস্টল করে, টাস্ক লেখে, এনভায়রনমেন্ট export করে এবং একটি নতুন কম্পিউটারে টাস্কটি যাচাই করে। যে মেশিনটি এটি তৈরি করে তাতে amd64 বা arm64-এ Linux, Docker এবং গাইডে উল্লিখিত agentenv framework সংস্করণ লাগে।
+
+[ডেস্কটপ অ্যাপ এনভায়রনমেন্ট সেট আপ করুন](../desktop-build-computer.md)
+
 ## সাধারণ প্রশ্নোত্তর (FAQ)
 
 <details>
 <summary><strong>কোন কোন agent REA ব্যবহার করতে পারে?</strong></summary>
 
 Local MCP server সমর্থন করে এমন যেকোনো agent। Setup
-[সমর্থিত agent](../installation.md#supported-agents)-গুলো কনফিগার করে; অন্য client
-[ম্যানুয়াল MCP নিবন্ধন](../installation.md#mcp-registry) ব্যবহার করতে পারে।
+[সমর্থিত agent](../getting-started/installation.md#supported-agents)-গুলো কনফিগার করে; অন্য client
+[ম্যানুয়াল MCP নিবন্ধন](../getting-started/installation.md#mcp-registry) ব্যবহার করতে পারে।
 
 </details>
 
@@ -351,7 +357,7 @@ Local MCP server সমর্থন করে এমন যেকোনো agent
 ব্যবহৃত হয়। Static JavaScript ও .NET পরীক্ষা native analysis engine ছাড়াই কাজ
 করে। অনুমোদন পেলে setup Hopper ইনস্টল করতে পারে; Ghidra, IDA ও Kuna-র ক্ষেত্রে
 আপনার বিদ্যমান ইনস্টলেশন ব্যবহৃত হয়। Option ও সমর্থিত টার্গেটের জন্য
-[Provider setup](../installation.md#hopper) দেখুন।
+[Provider setup](../getting-started/installation.md#hopper) দেখুন।
 
 </details>
 
@@ -362,7 +368,7 @@ Local MCP server সমর্থন করে এমন যেকোনো agent
 dialog আপনাকে demo mode বেছে নিতে বা license সক্রিয় করতে বলতে পারে। প্রথম CLI/MCP
 কাজ বা স্বয়ংক্রিয় job-এর আগে একই user session-এ সেই prompt-টি সম্পন্ন করুন।
 প্রয়োজনে Hopper নিজে খুলুন। দেখুন
-[Hopper চালু করা ও সমস্যা সমাধান](../installation.md#launcher-paths-and-troubleshooting)।
+[Hopper চালু করা ও সমস্যা সমাধান](../getting-started/installation.md#launcher-paths-and-troubleshooting)।
 
 </details>
 
@@ -371,7 +377,7 @@ dialog আপনাকে demo mode বেছে নিতে বা license স
 
 Skill আপনার agent-কে অনুসন্ধানের নির্দেশনা দেয়। REA-এর MCP server নিবন্ধন করতে এবং
 মানানসই নির্দেশনা ইনস্টল করতে `npx rea-agents setup` ব্যবহার করুন, তারপর আপনার agent
-রিস্টার্ট করুন। দেখুন [শুধু skill ইনস্টলেশন](../installation.md#skill-only-installation)।
+রিস্টার্ট করুন। দেখুন [শুধু skill ইনস্টলেশন](../getting-started/installation.md#skill-only-installation)।
 
 </details>
 
@@ -420,12 +426,12 @@ Agent ব্যবহার করলে [setup রিফ্রেশ](#rea-আ�
 ওয়েবসাইটের [হাতে-কলমে গাইড](https://rea.tools/bn/guides/) দিয়ে শুরু করুন।
 সুনির্দিষ্ট option, পূর্বশর্ত ও result contract-এর জন্য:
 
-- [ইনস্টলেশন ও setup](../installation.md): agent নিবন্ধন, provider configuration, আপডেট ও uninstall।
-- [প্রস্তুতি যাচাই ও সমস্যা সমাধান](../installation.md#check-readiness-for-your-task): একটি agent বা analysis engine-এর সমস্যা নির্ণয়।
-- [CLI ও Evidence](../cli.md): কমান্ড, provider বাছাই, snapshot, import/export ও exit status।
-- [MCP contract](../mcp-contracts.md) ও [agent prompt](../mcp-prompts.md): টুলের ফলাফল, session ও নির্দেশিত অনুসন্ধান।
-- [টুল ক্যাটালগ](../mcp-contracts.md#generated-catalog): টুল, provider ও CLI কমান্ডের স্বয়ংক্রিয়ভাবে তৈরি তালিকা।
-- [Roadmap](../roadmap.md): পরিকল্পিত কাজ ও সক্ষমতার tracker।
+- [ইনস্টলেশন ও setup](../getting-started/installation.md): agent নিবন্ধন, provider configuration, আপডেট ও uninstall।
+- [প্রস্তুতি যাচাই ও সমস্যা সমাধান](../getting-started/installation.md#check-readiness-for-your-task): একটি agent বা analysis engine-এর সমস্যা নির্ণয়।
+- [CLI ও Evidence](../getting-started/cli.md): কমান্ড, provider বাছাই, snapshot, import/export ও exit status।
+- [MCP contract](../reference/mcp-contracts.md) ও [agent prompt](../getting-started/mcp-prompts.md): টুলের ফলাফল, session ও নির্দেশিত অনুসন্ধান।
+- [টুল ক্যাটালগ](../reference/mcp-contracts.md#generated-catalog): টুল, provider ও CLI কমান্ডের স্বয়ংক্রিয়ভাবে তৈরি তালিকা।
+- [Roadmap](../development/roadmap.md): পরিকল্পিত কাজ ও সক্ষমতার tracker।
 
 নিরাপত্তা-ত্রুটি (vulnerability) জানাতে [SECURITY.md](../../SECURITY.md) দেখুন।
 
@@ -460,8 +466,8 @@ REA-তে আপনার সাহায্য পেলে আমরা খ�
 [pull request পাঠান](https://github.com/morluto/rea/pulls)।
 
 Development setup ও check-এর জন্য [CONTRIBUTING.md](../../CONTRIBUTING.md), যাচাইয়ের ধাপের জন্য
-[testing](../testing.md) এবং নির্বাচিত layer ও dependency path-এর জন্য
-[architecture map](../architecture.mermaid) দেখুন।
+[testing](../development/testing.md) এবং নির্বাচিত layer ও dependency path-এর জন্য
+[architecture map](../architecture/architecture.mermaid) দেখুন।
 
 ## লাইসেন্স
 
