@@ -51,6 +51,7 @@ export interface PackageInfoFacts {
 const parseUtf8Xml = (
   bytes: Buffer,
   rootName: string,
+  rootElement: string,
 ): Result<Element, MacosPkgParseError> => {
   let text: string;
   try {
@@ -85,6 +86,14 @@ const parseUtf8Xml = (
         },
       ),
     );
+  if (root.tagName !== rootElement)
+    return err(
+      malformedInput(
+        MACOS_PKG_FORMAT,
+        `${rootName} XML root is not <${rootElement}>`,
+        { field: rootName },
+      ),
+    );
   return ok(root);
 };
 
@@ -116,7 +125,7 @@ const scriptLength = (parent: Element | undefined): number | null => {
 export const parseDistributionXml = (
   bytes: Buffer,
 ): Result<DistributionFacts, MacosPkgParseError> => {
-  const root = parseUtf8Xml(bytes, "Distribution");
+  const root = parseUtf8Xml(bytes, "Distribution", "installer-gui-script");
   if (!root.ok) return root;
   const installer = root.value;
   const title = childElement(installer, "title")?.textContent ?? null;
@@ -153,7 +162,7 @@ export const parseDistributionXml = (
 export const parsePackageInfoXml = (
   bytes: Buffer,
 ): Result<PackageInfoFacts, MacosPkgParseError> => {
-  const root = parseUtf8Xml(bytes, "PackageInfo");
+  const root = parseUtf8Xml(bytes, "PackageInfo", "pkg-info");
   if (!root.ok) return root;
   const info = root.value;
   const scripts = childElement(info, "scripts");

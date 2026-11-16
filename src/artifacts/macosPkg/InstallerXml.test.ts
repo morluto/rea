@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { parseDistributionXml } from "./InstallerXml.js";
+import { parseDistributionXml, parsePackageInfoXml } from "./InstallerXml.js";
 
 const distribution = (installKBytes: string): Buffer =>
   Buffer.from(
@@ -42,4 +42,19 @@ it("counts check script length in UTF-8 bytes", () => {
   if (!parsed.ok) throw new Error("Distribution fixture did not parse");
   expect(parsed.value.installationCheckScriptBytes).toBe(7);
   expect(parsed.value.volumeCheckScriptBytes).toBe(8);
+});
+
+it("refuses installer XML with an unrelated root element", () => {
+  const junk = Buffer.from(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<junk/>`,
+    "utf8",
+  );
+  const distribution = parseDistributionXml(junk);
+  expect(distribution.ok).toBe(false);
+  if (!distribution.ok)
+    expect(distribution.error.failure.detail).toContain("installer-gui-script");
+  const packageInfo = parsePackageInfoXml(junk);
+  expect(packageInfo.ok).toBe(false);
+  if (!packageInfo.ok)
+    expect(packageInfo.error.failure.detail).toContain("pkg-info");
 });
