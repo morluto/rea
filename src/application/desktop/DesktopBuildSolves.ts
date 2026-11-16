@@ -38,7 +38,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   runSolveHelper,
   SolveCleanupError,
@@ -122,7 +122,7 @@ const recordsSchema = z.looseObject({
       passes: z.int(),
       k: z.int(),
       band: z.enum(["in_band", "too_easy", "too_hard", "undecided"]),
-      usd: z.number(),
+      usd: z.number().nullable(),
     }),
   ),
 });

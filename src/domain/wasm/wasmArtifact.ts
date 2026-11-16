@@ -131,6 +131,7 @@ export const wasmArtifactSchema = z
     interface: wasmInterfaceSchema.exactOptional(),
     imports: z.array(z.string()),
     exports: z.array(z.string()),
+    // domain-vocabulary: the state of the WebAssembly name section.
     debug_name_metadata: z
       .enum(["unknown", "not-present", "complete", "uninterpretable"])
       .default("unknown"),

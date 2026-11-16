@@ -235,6 +235,7 @@ const artifactUnknownInput = (
   const { status } = comparison;
   if (status === "unchanged") return undefined;
   const sourceIds = [...new Set([left.evidence_id, right.evidence_id])];
+  // optional-fact-default: legacy absence names no side; content contradictions apply.
   const contradictingIds = comparison.integrity_mismatch_evidence_ids ?? [];
   const contentContradictions =
     status === "changed" && left.evidence_id !== right.evidence_id

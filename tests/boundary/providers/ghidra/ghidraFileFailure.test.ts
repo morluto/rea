@@ -1,9 +1,10 @@
 import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { classifyProviderFailure } from "../../../../src/providers/classifyProviderFailure.js";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { ghidraFileFailure } from "../../../../src/ghidra/GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "../../../../src/ghidra/GhidraFileArtifacts.js";
 import {
   ArtifactFileCleanupFailure,
   mapArtifactFileFailure,
@@ -127,9 +128,12 @@ it.each(["opaque", "errno", "authored"] as const)(
         kind === "authored"
           ? mapArtifactFileFailure(owned.failure, () => authored)
           : owned.failure;
-      const error = ghidraFileFailure(projected, "resolve_analysis_profile", {
-        path,
-      });
+      const error = classifyProviderFailure(
+        projected,
+        ghidraFileDialect("resolve_analysis_profile", {
+          path,
+        }),
+      );
       const plist = nativePlistFailure(projected, { path, origin: "selected" });
       const dispatch = appleDispatchMetadataFailure(projected, path);
       const errors = [error, plist, dispatch];

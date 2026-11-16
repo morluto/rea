@@ -44,7 +44,7 @@ export class NativeMachoSourceVerificationFailure extends ArtifactReaderFailure 
                 ? {}
                 : { cancellation: verificationCause.cancellation }),
             }
-          : {}),
+          : { integrityCheck: undefined }),
       },
       verificationCause instanceof ArtifactReaderFailure
         ? verificationCause.details

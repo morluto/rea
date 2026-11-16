@@ -15,10 +15,10 @@ import {
 } from "../process/ProviderProcess.js";
 import { SolveSandboxRoot } from "./SolveSandboxRoot.js";
 import {
-  AGENTENV_PROVIDER,
   agentEnvInterpreter,
   removeSandbox,
 } from "./AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const HELPER = fileURLToPath(

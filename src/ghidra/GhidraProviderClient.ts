@@ -170,6 +170,7 @@ import {
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
 import { invalidRegexPatternError } from "../process/RegexMatcher.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
@@ -202,9 +203,7 @@ interface GhidraExecutionMetadata {
 const referenceObservationRecord = (
   normalized: JsonValue,
 ): Readonly<Record<string, JsonValue>> | undefined =>
-  typeof normalized === "object" &&
-  normalized !== null &&
-  !Array.isArray(normalized)
+  isRecord(normalized)
     ? (normalized as Readonly<Record<string, JsonValue>>)
     : undefined;
 

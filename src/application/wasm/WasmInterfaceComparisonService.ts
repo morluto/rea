@@ -138,6 +138,7 @@ export const compareWasmInterfaces = async (
       ["left", left],
       ["right", right],
     ] as const) {
+      // optional-fact-default: an absent interface fails knownInventory, so every key is unknown.
       for (const entry of inspection.result.interface?.entries ?? []) {
         if (++work % 256 === 0) {
           await setImmediate();

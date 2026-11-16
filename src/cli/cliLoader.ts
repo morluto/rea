@@ -1,7 +1,4 @@
-import {
-  cliCompletionShell,
-  splitIncurBuiltinArguments,
-} from "../cliBuiltinArguments.js";
+import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
 import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "../recordedCliCommandRegistrations.js";
 import {
   CLI_COMMAND_REGISTRATIONS,
@@ -24,18 +21,18 @@ const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
 
 /**
  * The registrars the command these arguments run needs, or undefined when the
- * complete CLI must answer. A standalone `--version` needs none: Incur answers
+ * complete CLI must answer, as it does for shell completion, which has no
+ * global arguments. A standalone `--version` needs none: Incur answers
  * it from the CLI identity alone. Help, schemas, `--llms`, completions, other
  * Incur builtins, unknown names ("did you mean"), and a missing or unusable
  * recording all describe or search every command.
  */
 export const selectCliRegistrations = (
-  arguments_: readonly string[],
-  environment: Readonly<NodeJS.ProcessEnv>,
+  global: CliGlobalArguments | undefined,
   recorded: Readonly<Record<string, string>> | undefined,
 ): readonly CliCommandRegistrationId[] | undefined => {
-  if (cliCompletionShell(environment) !== undefined) return undefined;
-  const { command, flags } = splitIncurBuiltinArguments(arguments_);
+  if (global === undefined) return undefined;
+  const { command, flags } = global;
   if (command.length === 0 && flags.size === 1 && flags.has("--version"))
     return [];
   if (recorded === undefined) return undefined;
@@ -61,12 +58,11 @@ export interface CliRuntime {
  * none, and anything else loads the complete CLI.
  */
 export const loadCliRuntime = async (
-  arguments_: readonly string[],
+  global: CliGlobalArguments | undefined,
   environment: NodeJS.ProcessEnv,
 ): Promise<CliRuntime> => {
   const ids = selectCliRegistrations(
-    arguments_,
-    environment,
+    global,
     RECORDED_CLI_COMMAND_REGISTRATIONS,
   );
   if (ids === undefined) {

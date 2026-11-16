@@ -512,3 +512,83 @@ it("reports a deadline that elapses during final cleanup as a timeout", async ()
     vi.useRealTimers();
   }
 });
+
+it.each(["cancelled", "timeout"] as const)(
+  "reports a %s interruption during refused final cleanup with its retry owner",
+  async (interruption) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const controller = new AbortController();
+    const reason = { request: "abort during refused final cleanup" };
+    const fixture = ownedInput(null);
+    let denied = true;
+    const cleanupStarted = createDeferred<void>();
+    const releaseCleanup = createDeferred<void>();
+    fixture.cleanup.mockImplementation(async () => {
+      if (!denied) return { cleaned: true, signaled: false };
+      cleanupStarted.resolve();
+      await releaseCleanup.promise;
+      return { cleaned: false, reason: "process group still present" };
+    });
+    let pending: Promise<unknown> | undefined;
+    try {
+      pending = runOwnedCommand(
+        spawn,
+        { timeoutMs: 1_000, diagnosticBytes: 1024 },
+        {
+          signal: controller.signal,
+          launcher: async () => {
+            setImmediate(() => {
+              fixture.child.stdout.write("completed output");
+              fixture.child.complete();
+            });
+            return {
+              process: fixture.child,
+              ownership: fixture.ownership,
+              cleanup: fixture.cleanup,
+            };
+          },
+        },
+      ).catch((cause: unknown) => cause);
+      let started = false;
+      void cleanupStarted.promise.then(() => (started = true));
+      while (!started) await vi.advanceTimersByTimeAsync(10);
+      expect(performance.now()).toBeLessThan(1_000);
+      if (interruption === "cancelled") controller.abort(reason);
+      else await vi.advanceTimersByTimeAsync(1_000);
+      releaseCleanup.resolve();
+      const failure = await pending;
+      if (!(failure instanceof OwnedCommandFailure)) throw failure;
+      expect(failure).toMatchObject({
+        reason: interruption,
+        cleanupFailure: "process group still present",
+        snapshot: { exitCode: 0, stdout: { text: "completed output" } },
+      });
+      expect(failure.cancellation?.reason).toBe(
+        interruption === "cancelled" ? reason : undefined,
+      );
+      expect(failure.cleanupOwner?.launch.ownership).toBe(fixture.ownership);
+      denied = false;
+      await expect(failure.cleanupOwner?.stop()).resolves.toEqual({
+        status: "verified-cleanup",
+      });
+      expect(fixture.cleanup).toHaveBeenCalledTimes(2);
+    } finally {
+      denied = false;
+      releaseCleanup.resolve();
+      // Join the command even when an assertion failed before it settled;
+      // its deadline bounds the fake time this can take.
+      if (pending !== undefined) {
+        let settled = false;
+        const joined = pending.finally(() => {
+          settled = true;
+        });
+        for (let step = 0; !settled && step < 200; step += 1)
+          await vi.advanceTimersByTimeAsync(10);
+        const outcome = await joined;
+        if (outcome instanceof OwnedCommandFailure)
+          await outcome.cleanupOwner?.stop();
+      }
+      vi.useRealTimers();
+    }
+  },
+);

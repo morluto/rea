@@ -6,7 +6,6 @@ import {
 } from "../resources/index.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
-import { createHash } from "node:crypto";
 import {
   assertKunaProjectState,
   type KunaProjectFileStates,
@@ -60,6 +59,7 @@ import {
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Operation name every export and cache failure reports. */
 export const KUNA_EXPORT_OPERATION = "kuna:decompile-project";
@@ -391,10 +391,7 @@ export const exportKunaProject = async (
   }
   const complete = files as KunaExportFiles;
   const states = fileStates as KunaProjectFileStates;
-  if (
-    complete.inventory.sha256 !==
-    createHash("sha256").update(listed.snapshot.stdout.text).digest("hex")
-  )
+  if (complete.inventory.sha256 !== sha256Hex(listed.snapshot.stdout.text))
     return unusable("the retained inventory changed before export sealing");
   await assertKunaProjectState(request.output, complete, states, signal);
   const functions = await readKunaExportSource(

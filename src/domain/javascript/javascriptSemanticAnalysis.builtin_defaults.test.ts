@@ -885,3 +885,149 @@ it.each([
     expect(ir.configurationOperations).toEqual([]);
   },
 );
+
+// A directly invoked source function receives its arguments through its
+// parameters, whose effects are indexed like any other source effect. Each
+// row states why `fs.readFileSync` is or is not still the original method.
+it.each([
+  {
+    source: `(function(p){})(fs);`,
+    keys: ["kept"],
+    why: "the body never uses the argument",
+  },
+  {
+    source: `(function(p){ p.readFileSync = custom })({}, fs);`,
+    keys: ["kept"],
+    why: "no parameter binds the second argument and the body never reads arguments",
+  },
+  {
+    source: `(function(p, p){ p.readFileSync = custom })(fs, other);`,
+    keys: ["kept"],
+    why: "the later duplicate parameter binds the other argument",
+  },
+  {
+    source: `(function(p){ p.readFileSync = custom })(fs);`,
+    keys: [],
+    why: "a write through the parameter reaches the argument",
+  },
+  {
+    source: `(function(p){ var q = p; q.readFileSync = custom })(fs);`,
+    keys: [],
+    why: "a local alias of the parameter reaches the argument",
+  },
+  {
+    source: `(function(p){ later(() => { p.readFileSync = custom }) })(fs);`,
+    keys: [],
+    why: "a closure over the parameter reaches the argument",
+  },
+  {
+    source: `(function(p){ return p })(fs).readFileSync = custom;`,
+    keys: [],
+    why: "the returned parameter is the argument",
+  },
+  {
+    source: `(function(p){ patch(p) })(fs);`,
+    keys: [],
+    why: "the parameter escapes to unknown code",
+  },
+  {
+    source: `(function(p){ store.v = p })(fs);`,
+    keys: [],
+    why: "the parameter is stored in an unknown object",
+  },
+  {
+    source: `(function(p){ arguments[0].readFileSync = custom })(fs);`,
+    keys: [],
+    why: "the arguments object reaches the argument",
+  },
+  {
+    source: `(function(...r){ r[0].readFileSync = custom })(fs);`,
+    keys: [],
+    why: "a rest parameter is a new array holding the argument",
+  },
+  {
+    source: `(function(p){ eval(src) })(fs);`,
+    keys: [],
+    why: "direct eval may reach the parameter",
+  },
+  {
+    source: `const box = {fs}; (function(b){ b.fs.readFileSync = custom })(box);`,
+    keys: [],
+    why: "a write below the parameter reaches the argument's child",
+  },
+  {
+    source: `unknown(fs);`,
+    keys: [],
+    why: "an unknown callee still receives an escape",
+  },
+  {
+    source: `(function(get){ patch(get()) })(() => fs);`,
+    keys: [],
+    why: "a callable argument's result reaches the parameter's callers",
+  },
+  {
+    source: `(function(get){ get().readFileSync = custom })(() => fs);`,
+    keys: [],
+    why: "a write through a callable argument's result reaches its value",
+  },
+  {
+    source: `(function f(p){ patch(f["arguments"][0]) })(fs);`,
+    keys: [],
+    why: "a sloppy function's arguments property reaches the argument",
+  },
+  {
+    source: `(function f(p){ patch(f.arguments[0]) })(fs);`,
+    keys: [],
+    why: "a sloppy function's arguments property reaches the argument",
+  },
+  {
+    source: `function g(){ patch(g.caller.arguments[0]) } (function(p){ g() })(fs);`,
+    keys: [],
+    why: "a called sloppy function reaches its caller's arguments",
+  },
+  {
+    source: `function g(){ patch(g.caller) } (function(p){ "use strict"; g() })(fs);`,
+    keys: ["kept"],
+    why: "a strict function exposes no arguments property",
+  },
+  {
+    source: `try { (function(p){ throw p })(fs); } catch (e) { patch(e) }`,
+    keys: [],
+    why: "a value thrown out of the callee reaches its caller's handler",
+  },
+  {
+    source: `try { (function(){ throw fs })(); } catch (e) { patch(e) }`,
+    keys: [],
+    why: "a captured value thrown out of a function reaches the caller's handler",
+  },
+])(
+  "tracks direct invocation arguments through parameters: $source ($why)",
+  ({ source, keys }) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `const fs=require('fs'); ${source} fs.readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(keys);
+  },
+);
+
+it("treats a value thrown uncaught at the top level as reaching host handlers", () => {
+  // `process.on("uncaughtException", ...)` may change the thrown module
+  // before the timer callback reads it.
+  expect(
+    analyzeCommonJsSemanticFixture(
+      `const fs=require('fs'); setTimeout(() => fs.readFileSync('later')); throw fs;`,
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual([]);
+});
+
+it.each(["constructor", "toString"])(
+  "analyzes a module named like an Object.prototype key: %s",
+  (specifier) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `const m=require("${specifier}"); m.has("x");`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);

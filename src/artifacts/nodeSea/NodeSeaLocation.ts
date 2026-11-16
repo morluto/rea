@@ -8,7 +8,6 @@ import { readMachoSectionHeader } from "../../domain/apple/machoSectionHeader.js
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
 import {
   parsePeResources,
@@ -60,6 +59,7 @@ import {
   observeNodeSeaFuseMatches,
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -691,7 +691,7 @@ const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
       bytes,
       {
         path: "<admitted SEA carrier>",
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes: bytes.length,
       },
       {

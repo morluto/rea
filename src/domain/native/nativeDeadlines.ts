@@ -6,7 +6,8 @@ import {
 
 import type { AnalysisControlLimit } from "../analysisSettings.js";
 import {
-  fixedAllowanceRemediation,
+  fixedAllowanceOptions,
+  type FixedAllowance,
   type FixedAllowanceKind,
 } from "../fixedAllowanceRemediation.js";
 
@@ -100,12 +101,11 @@ export const nativeDeadlineRecovery = (input: {
   };
 };
 
-/** Fixed native allowance the agent can see, with the value and no override. */
+/** Fixed native allowance projected as `details.refusal`, with its value and unit. */
 export const fixedNativeAllowance = (
   allowance: string,
   kind: FixedAllowanceKind,
-  valueWithUnits: string,
-): { readonly retryable: false; readonly remediationAction: string } => ({
-  retryable: false,
-  remediationAction: `${fixedAllowanceRemediation(allowance, kind)} This release has no runtime override. The allowance is ${valueWithUnits}.`,
-});
+  limit: number,
+  unit: string,
+): { readonly retryable: false; readonly fixedAllowance: FixedAllowance } =>
+  fixedAllowanceOptions(allowance, kind, { limit, unit });

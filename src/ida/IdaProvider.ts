@@ -107,11 +107,6 @@ export class IdaProvider implements AnalysisProviderCandidate {
   capabilities(): readonly CapabilityDescriptor[] {
     const profiles = [
       ...idaCapabilities(
-        IDA_COMPATIBILITY_PROFILES.legacy,
-        false,
-        this.#regexLimitation(),
-      ),
-      ...idaCapabilities(
         IDA_COMPATIBILITY_PROFILES.native,
         true,
         this.#regexLimitation(),

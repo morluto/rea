@@ -63,6 +63,7 @@ import {
   type SourceMapLimits,
 } from "../domain/sourceMapLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -911,7 +912,7 @@ const readBoundedText = async (
     offset += chunk.byteLength;
   }
   const responseIdentity: ResponseIdentity = {
-    sha256: createHash("sha256").update(joined).digest("hex"),
+    sha256: sha256Hex(joined),
     bytes,
     representation: "fetch-response-body-bytes",
   };

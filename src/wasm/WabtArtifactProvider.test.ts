@@ -1,3 +1,4 @@
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 import { createHash } from "node:crypto";
 import { access, chmod, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -1851,7 +1852,7 @@ it("does not attribute wasm-objdump output to a wasm2wat launch failure", async 
     (input) => {
       const version = input.arguments[0] === "--version";
       if (!version && input.command.includes("wasm2wat"))
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+        throw spawnFailure("E2BIG", input.command);
       const script = version
         ? 'process.stdout.write("1.0.42\\n")'
         : input.command.includes("objdump")
@@ -1871,7 +1872,11 @@ it("does not attribute wasm-objdump output to a wasm2wat launch failure", async 
     candidate_paths: [],
   });
   if (result.ok) throw new Error("Expected the wasm2wat launch to fail");
-  expect(result.error.message).toContain("spawn E2BIG");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "transport",
+    reportedLimits: { spawn_error: "E2BIG" },
+  });
   expect(result.error.capturedOutput).toBeUndefined();
 });
 
