@@ -45,7 +45,14 @@ const jniReadFailure = (
 ): NonNullable<AndroidJniLibraryObservation["failure"]> => {
   const message = errorMessage(cause);
   if (!(cause instanceof ArtifactReaderFailure)) return { kind: "io", message };
-  if (cause.reason !== "integrity") return { kind: cause.reason, message };
+  // The library report has only a message, so a reader-named ceiling's
+  // narrowing (such as recompressing a Zstandard member) travels in it.
+  const narrowing = cause.fixedAllowance?.narrowing;
+  if (cause.reason !== "integrity")
+    return {
+      kind: cause.reason,
+      message: narrowing === undefined ? message : `${message} ${narrowing}`,
+    };
   if (cause.integrityCheck === undefined)
     throw invariantViolation(
       "An integrity reader failure reached the JNI inventory without its check.",
