@@ -8,7 +8,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../../../src/domain/analysisErrorCore.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import { ProviderAdapterError } from "../../../../src/domain/providerAdapterError.js";
 import { buildBinary, type PlistValue } from "plist";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";

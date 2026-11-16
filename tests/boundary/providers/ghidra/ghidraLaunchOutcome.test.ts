@@ -2,7 +2,7 @@ import { createTestArtifactResourceScope } from "../../../fixtures/artifactResou
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { open } from "node:fs/promises";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,

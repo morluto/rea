@@ -32,7 +32,7 @@ describe("native export stable filesystem boundary", () => {
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256 },
+        identity: { sha256 },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -131,7 +131,7 @@ describe("native export stable filesystem boundary", () => {
         operation: "inspect_native_exports",
         provider: { id: "rea-native-exports" },
         confidence: "observed",
-        subject: { local_path: path, format, digest: { sha256 } },
+        subject: { local_path: path, identity: { format, sha256 } },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -161,7 +161,7 @@ describe("native export text capacity", () => {
       const report = nativeExportsSchema.parse(evidence.normalized_result);
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       });
       expect(report).toMatchObject({
         exports: [expect.objectContaining({ name: "kept" })],

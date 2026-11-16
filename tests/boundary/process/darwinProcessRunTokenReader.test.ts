@@ -1674,7 +1674,7 @@ const waitForChildReadiness = async (
   const exit = once(child, "exit", { signal: listeners.signal });
   try {
     await awaitAcknowledgement(
-      message.then(() => undefined),
+      message,
       exit,
       "title-mutating child readiness",
       timeoutMs,

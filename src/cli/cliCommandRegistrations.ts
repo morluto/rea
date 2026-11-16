@@ -184,7 +184,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
       module.registerManagedCommands(
         context.cli,
         context.logger,
-        context.analysis.runProviderAnalysis,
+        context.analysis,
       ),
   ),
   firmware: plain(

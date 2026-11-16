@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { desktopLibraryPolicyInputSchema } from "../domain/desktop/libraryPolicy.js";
 import { desktopViewPolicyInputSchema } from "../domain/desktop/desktopViewPolicy.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -11,8 +12,10 @@ import type { DesktopStateReaders } from "../application/desktop/DesktopApplicat
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type { Evidence } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { err, ok } from "../domain/result.js";
@@ -20,7 +23,7 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { cliDecimalField } from "./options.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   DESKTOP_CAPTURE_DEFAULTS,
@@ -30,6 +33,7 @@ import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 import { writeCliProgressLine } from "./cliProgress.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** One coherent view policy; invalid JSON and unknown controls fail at admission. */
 const viewPolicyOption = z
@@ -228,8 +232,7 @@ const withStateReaders = async (
                 ? ArtifactReaderFailure.cleanupObservation(cause, [])
                 : {
                     resources: [],
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
+                    reason: errorMessage(cause),
                   };
             const failure = new ProviderCleanupError(
               "rea-desktop",
@@ -551,7 +554,7 @@ export const registerDesktopCaptureCommands = (
                       : absoluteCallerPath(options.packageFile),
                 },
                 {
-                  platform: process.platform,
+                  platform: HOST_PLATFORM.platform,
                   environment,
                   callerDirectory: process.cwd(),
                   nextRequest: () => requests.next(),

@@ -5,7 +5,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { withOwnedRegularFile } from "../../filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { ArtifactEmbeddedFormatProbes } from "../ArtifactEmbeddedFormatProbes.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
 import { classifyAndHashRootForInventory } from "../inventory/classify.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";

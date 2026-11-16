@@ -10,7 +10,7 @@ import {
   ELF_PT_INTERP,
   readElfDirectoryFromBuffer,
   readPeSectionDirectory,
-} from "./NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const readDirectory = (bytes: Buffer) => {
   const reader = readPeSectionDirectory(bytes.length);

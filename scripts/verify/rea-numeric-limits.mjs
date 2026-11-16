@@ -1042,7 +1042,7 @@ if (direct) {
   }
 
   const parameterOwners = [
-    "src/artifacts/ArtifactReaderLimits.ts",
+    "src/resources/ArtifactReaderLimits.ts",
     "src/domain/artifactReaderLimits.ts",
     "src/domain/webNetworkCapture.ts",
   ];

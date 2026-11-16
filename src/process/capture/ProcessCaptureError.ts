@@ -3,7 +3,7 @@ import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancell
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import {
   AnalysisCancelledError,
   cancelledBy,

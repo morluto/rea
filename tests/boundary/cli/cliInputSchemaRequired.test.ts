@@ -424,17 +424,6 @@ describe("ADB selector input schemas: package and activity", () => {
   it("preserves package and activity selector boundaries in parser and advertisement", async () => {
     const cli = createCli({});
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const descriptions: Record<string, string> = {
-      "pull-adb-package:package": "Installed package name",
-      "inspect-adb-package:package": "Package",
-      "uninstall-adb-package:package": "Installed package to uninstall",
-      "start-adb-app:package": "Installed package to start",
-      "stop-adb-app:package": "Package to force-stop",
-      "start-adb-activity:action": "Intent action to start",
-      "start-adb-activity:data-uri": "Intent data URI (-d)",
-      "start-adb-activity:component":
-        "Explicit component in package/activity form (-n)",
-    };
     const selections = [
       {
         commands: [
@@ -506,8 +495,14 @@ describe("ADB selector input schemas: package and activity", () => {
           throw new Error(`Missing ${command} ${selection.key}`);
         const advertised = await advertisedSchema(cli, command);
         const schema = advertised[selection.group];
+        // The CLI advertises each contract field's own description.
+        const contract = adbInputSchemas[
+          command.replaceAll("-", "_") as keyof typeof adbInputSchemas
+        ] as z.ZodObject;
         expect(schema?.properties[selection.key]).toMatchObject({
-          description: descriptions[`${command}:${selection.key}`],
+          description: (
+            contract.shape[selection.key.replaceAll("-", "_")] as z.ZodType
+          ).description,
         });
         expect(schema?.required?.includes(selection.key) ?? false).toBe(
           selection.group === "args",

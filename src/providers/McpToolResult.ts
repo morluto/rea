@@ -27,24 +27,19 @@ export const mcpTextBlocks = (
     block.type === "text" && block.text !== undefined ? [block.text] : [],
   );
 
-/**
- * What a tool's single text block carries. Each tool declares it; malformed
- * JSON is never reinterpreted as ordinary text.
- */
-export type McpTextReplyKind = "json" | "text";
-
-/** Text declared as JSON did not parse. */
+/** A text block that should carry JSON did not parse. */
 export interface McpMalformedJsonText {
   readonly reason: "malformed_json";
   readonly cause: unknown;
 }
 
-/** Decode one text block as its declared reply kind. */
-export const decodeMcpTextReply = (
+/**
+ * Decode one text block as JSON. Malformed JSON is never reinterpreted as
+ * ordinary text.
+ */
+export const decodeMcpJsonText = (
   text: string,
-  kind: McpTextReplyKind,
 ): Result<JsonValue, McpMalformedJsonText> => {
-  if (kind === "text") return ok(text);
   const parsed = safeParseJson(text);
   if (!parsed.ok) return err({ reason: "malformed_json", cause: parsed.cause });
   // A parsed JSON value must satisfy the same admission rules as structured

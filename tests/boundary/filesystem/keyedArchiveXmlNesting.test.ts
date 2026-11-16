@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import type { OpenStepPropertyListCode } from "../../../src/domain/propertyListOpenStep.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

@@ -7,7 +7,7 @@ import {
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
-import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import type { SafeOutputTree } from "../../resources/index.js";
 import type {
   DesktopAppExportPlan,
   SeedScrubReport,

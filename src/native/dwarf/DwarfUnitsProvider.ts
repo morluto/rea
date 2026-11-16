@@ -4,16 +4,16 @@ import {
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/StableArtifactFailure.js";
 import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+import type { StableArtifactSnapshot } from "../../resources/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -27,8 +27,8 @@ import {
   type InspectDwarfUnitsInput,
 } from "../../domain/native/dwarfUnits.js";
 import { err, ok } from "../../domain/result.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
-import { requireSelectedNativeImage } from "../metadata/MachoSliceSelection.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { parseDwarfCompileUnits } from "./DwarfUnitParser.js";
 import {
   DwarfSectionAllowanceFailure,

@@ -3,7 +3,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
@@ -75,7 +75,7 @@ it("advertises strict masked-byte arguments and bounded pages", () => {
 });
 
 describe("read_bytes contract", () => {
-  it("accepts lengths above the former arbitrary ceiling and rejects zero", () => {
+  it("accepts any positive read length and rejects zero", () => {
     const contract = OFFICIAL_TOOL_CONTRACTS.find(
       ({ name }) => name === "read_bytes",
     );

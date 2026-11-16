@@ -22,15 +22,15 @@ import {
   type ArtifactEntry,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOmission,
-} from "../../../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
+} from "../../../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "../../../../src/artifacts/NativeDmgArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../../src/artifacts/inventory/scanCanonical.js";
+import { DirectoryArtifactReader } from "../../../../src/resources/index.js";
 
 const createAttachedReader = async (
   path: string,

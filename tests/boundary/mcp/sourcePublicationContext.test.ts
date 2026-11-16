@@ -1,4 +1,8 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterAll, expect, it } from "vitest";
@@ -8,7 +12,7 @@ import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
@@ -32,7 +36,7 @@ it.each(
   async ({ mode, profile }) => {
     const id = { id: "fixture", name: "Fixture", version: "1" };
     const original = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       id,
       {
         operation: "health",
@@ -123,7 +127,7 @@ it.each(
           name: "inspect_address_context",
           arguments: { address: "0x100", document: "fixture" },
         },
-        { timeout: 120000, toolDefinition: tool },
+        { timeout: 120000, toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
@@ -171,7 +175,7 @@ it.each([false, true])(
   async (large) => {
     const provider = { id: "fixture", name: "Fixture", version: "1" };
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       provider,
       {
         operation: "health",
@@ -280,7 +284,7 @@ it.each([false, true])(
 it("keeps a smaller sibling recovery when a later completed observation exceeds delivery", async () => {
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     provider,
     {
       operation: "health",

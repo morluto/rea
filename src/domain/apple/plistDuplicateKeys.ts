@@ -1,3 +1,5 @@
+import { quotedExcerpt } from "../excerpt.js";
+
 /**
  * Keys a property list declares more than once within one dictionary.
  *
@@ -60,9 +62,7 @@ export const createPlistDuplicateKeyCollector =
 
 /** One key as shown in the limitation, marked when shortened. */
 const shownKey = (name: string): string =>
-  name.length <= SHOWN_KEY_LENGTH
-    ? JSON.stringify(name)
-    : `${JSON.stringify(name.slice(0, SHOWN_KEY_LENGTH))} (shortened from ${String(name.length)} characters)`;
+  quotedExcerpt(name, SHOWN_KEY_LENGTH);
 
 /** The decode limitation for repeated keys, or none when no key repeats. */
 export const plistDuplicateKeyLimitations = (

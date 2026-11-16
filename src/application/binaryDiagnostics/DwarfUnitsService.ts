@@ -1,7 +1,7 @@
 import { machoSliceFamily } from "../../domain/apple/machoTargetSelection.js";
 import { isAbsolute } from "node:path";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { DwarfUnitsPort } from "./DwarfUnitsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { DwarfUnitsPort } from "../../ports/binaryDiagnostics/DwarfUnitsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,

@@ -35,6 +35,7 @@
   },
   "type": "module",
   "imports": {
+    "#dist/*": "./dist/*",
     "#javascript-analysis-worker": "./dist/composition/javascriptAnalysisWorkerProcess.js",
     "#web-bundle-analysis-worker": "./dist/composition/webBundleAnalysisWorkerProcess.js"
   },
@@ -192,7 +193,7 @@
     "test:watch": "vitest --project domain --project services --project adapters --project composition --project conformance --project evaluation --changed",
     "pretest:watch:all": "npm run test:prepare",
     "test:watch:all": "vitest --changed",
-    "typecheck": "node scripts/run-typescript.mjs --noEmit",
+    "typecheck": "node scripts/run-typescript.mjs --noEmit && node scripts/run-typescript.mjs --noEmit -p tsconfig.scripts.json",
     "verify:test-temp-hygiene": "npm run test:prepare && node scripts/verify-test-temp-hygiene.mjs",
     "verify:hopper": "npm run verify:fixtures && npm run build:cached && node scripts/verify-real-hopper.mjs",
     "verify:hopper:callers": "npm run build:cached && node scripts/verify-real-hopper-callers.mjs",

@@ -12,19 +12,19 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   type ImageSection,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   decodeElfCompressedSection,
   decodeElfGnuZlibSection,
   type ElfCompressedSectionResult,
-} from "../metadata/ElfCompressedSection.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+} from "../../domain/native/elfCompressedSection.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
 import {
   readElfDirectoryFromBuffer,
   readPeSectionDirectory,
   type NativeSection,
   type NativeSectionDirectory,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const SHF_COMPRESSED = 0x800n;
 const ET_REL = 1;
