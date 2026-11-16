@@ -8,7 +8,7 @@ import {
 } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { rmSync } from "node:fs";
+import { rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,37 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+
+/**
+ * Remove a per-run helper root while the process exits. Nothing can repair or
+ * report this failure to a caller, and Node turns an exception raised from an
+ * exit listener into an uncaught error that changes the exit status, so the
+ * remaining root is named once on stderr instead.
+ */
+export const removeHelperRootAtExit = (
+  path: string,
+  report: (message: string) => void = (message) => writeSync(2, message),
+): void => {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch (cause: unknown) {
+    // Node cannot drain a queued stderr chunk from an exit listener, so the
+    // last report names the retained root with a synchronous write. A closed
+    // or full descriptor leaves nothing else this process can do.
+    try {
+      report(helperRootRetentionMessage(path, cause));
+    } catch {
+      // Exit is not the place to report a failed report.
+    }
+  }
+};
+
+/** The exit-time report for a helper root the process leaves behind. */
+export const helperRootRetentionMessage = (
+  path: string,
+  cause: unknown,
+): string =>
+  `REA could not remove the Darwin ownership helper root ${path} at exit: ${errorMessage(cause)}\n`;
 
 const responseSchema = z.strictObject({
   results: z.array(
@@ -507,7 +538,7 @@ export const createDarwinProcessRunTokenReader = (
   const activeCommands = new Set<Promise<string>>();
 
   const cleanupAtExit = () => {
-    if (root !== undefined) rmSync(root.path, { recursive: true, force: true });
+    if (root !== undefined) removeHelperRootAtExit(root.path);
   };
   const cleanupRoot = (target = root): Promise<void> => {
     if (target === undefined) return Promise.resolve();
