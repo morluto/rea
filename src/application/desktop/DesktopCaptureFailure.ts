@@ -16,7 +16,7 @@ import {
   DesktopSessionCleanupError,
   type UnresolvedCleanup,
 } from "../../desktop/DesktopApplicationSession.js";
-import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
 import { XpropUnavailableError } from "../../ports/DesktopApplicationSession.js";
 import type { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
@@ -28,7 +28,7 @@ import {
 
 /** The parts of the content store its cleanup uses. */
 type ContentOwner = Pick<
-  DesktopContentStore,
+  CaptureContentStore,
   "close" | "discard" | "directory"
 >;
 
