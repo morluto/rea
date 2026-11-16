@@ -4,6 +4,7 @@ import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCliShell } from "../../../src/cli/cliShell.js";
 import { createCliCompletions } from "../../../src/cli/completions.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
@@ -145,6 +146,23 @@ it("shares Bash registration across ordinary and protocol routes while retaining
     ).toBe(true);
     expect(script).toBe(direct);
   }
+});
+
+it("refuses a second shell without writing a completion script", async () => {
+  const cli = createCliShell({ selectedEnvironment: {}, registrations: [] });
+  let output = "";
+  let exitCode: number | undefined;
+  await cli.serve(["completions", "bash", "fish"], {
+    stdout: (text) => {
+      output += text;
+    },
+    exit: (code) => {
+      exitCode = code;
+    },
+  });
+  expect(exitCode).toBe(1);
+  expect(output).toContain("completions expects exactly one shell");
+  expect(output).not.toContain("_incur_complete_rea");
 });
 
 workspaceCliTest(
