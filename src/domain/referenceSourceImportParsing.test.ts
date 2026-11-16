@@ -57,3 +57,41 @@ it("keeps declaration-level imports when the member-mutation phase is refused", 
     ),
   ).toHaveLength(1);
 });
+
+it.each([
+  ["main.mjs", "commonjs", true],
+  ["main.js", "module", true],
+  ["main.cjs", "module", false],
+  ["main.js", "commonjs", false],
+  ["main.mts", "commonjs", true],
+  ["main.cts", "module", true],
+  ["main.ts", "commonjs", true],
+  ["main.tsx", "module", true],
+  ["main.TSX", "module", true],
+] as const)(
+  "retains the loader's BOM/hashbang semantics for %s (%s)",
+  (path, packageType, valid) => {
+    const esm =
+      path.endsWith(".mjs") ||
+      path.endsWith(".mts") ||
+      (!path.endsWith(".cjs") &&
+        !path.endsWith(".cts") &&
+        packageType === "module");
+    const statement = esm ? 'import "./dep.mjs";' : 'require("./dep.cjs");';
+    const parsed = parseReferenceSourceImports(
+      path,
+      Buffer.from(`\uFEFF#!/usr/bin/env node\n${statement}`),
+      path.endsWith("js") ? "JavaScript" : "TypeScript",
+      packageType,
+    );
+    if (valid) {
+      expect(parsed.parse_failures).toEqual([]);
+      expect(parsed.relationships).toMatchObject([
+        { to: esm ? "./dep.mjs" : "./dep.cjs", parse_state: "parsed" },
+      ]);
+    } else {
+      expect(parsed.parse_failures).toHaveLength(1);
+      expect(parsed.relationships).toEqual([]);
+    }
+  },
+);
