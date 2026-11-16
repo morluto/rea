@@ -54,7 +54,7 @@ const observe = async (
     const startReply = await client.callTool({
       name: "start_rizin_debug_session",
       arguments: {
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       },
     });

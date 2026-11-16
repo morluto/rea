@@ -445,7 +445,7 @@ const PATH_SCOPES = {
     "src/ports/binaryDiagnostics/**",
     "src/contracts/native/binaryDiagnosticsToolContracts.ts",
     "src/composition/binaryDiagnostics.ts",
-    "src/server/registerBinaryDiagnosticsTools.ts",
+    "src/server/serviceToolBindings.ts",
     "src/server/createServer.ts",
     "src/cli/binaryDiagnosticsCommands.ts",
     "src/cli.ts",

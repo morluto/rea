@@ -305,6 +305,7 @@ export const runPcapCommand = async (options: {
         recovery: fixedAllowanceOptions(
           "The packet-tool output capture allowance",
           "capture",
+          { limit: limits.maxOutputBytes, unit: "bytes" },
         ),
       },
       memoryLimitBytes: options.nativeBound?.memoryLimitBytes,

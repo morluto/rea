@@ -102,8 +102,9 @@ const limitRecovery = (
       };
     case "retained_text":
       return fixedAllowanceOptions(
-        `The ${String(MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)}-byte PE import retained-text allowance (this release has no runtime override; max_file_bytes, max_dlls and max_functions do not raise it)`,
+        "The PE import retained-text allowance (max_file_bytes, max_dlls and max_functions do not raise it)",
         "bytes",
+        { limit: MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES, unit: "bytes" },
       );
     case null:
       return fixedAllowanceOptions(

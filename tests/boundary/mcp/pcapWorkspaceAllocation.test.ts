@@ -230,6 +230,12 @@ it("still reports a capture over the snapshot budget as a file-size limit", asyn
     details: {
       resource: "file-size",
       reported_limits: { max_capture_bytes: 2 * 1024 ** 3 },
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "input",
+        limit: 2 * 1024 ** 3,
+        unit: "bytes",
+      },
     },
   });
   expect(

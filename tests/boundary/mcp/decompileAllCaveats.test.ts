@@ -169,9 +169,13 @@ describe("decompile_all MCP caveats", () => {
     expect(evidence.normalized_result).toMatchObject({
       counts: { written: 20, failed: 0 },
     });
-    // 40 address-specific caveats plus one oversized caveat: 8 kept and 33 counted, beside the workflow
-    // line and this target-less fixture's identity caveat.
-    expect(evidence.limitations).toHaveLength(11);
+    expect(evidence.subject.identity).toEqual({
+      kind: "unknown",
+      reason: "derived-from-linked-evidence",
+    });
+    // 40 address-specific caveats plus one oversized caveat: 8 kept and 33
+    // counted, beside the workflow line. Unknown identity is named above.
+    expect(evidence.limitations).toHaveLength(10);
     expect(evidence.limitations.at(-1)).toMatch(
       /^33 per-item provider limitation observations were omitted/u,
     );

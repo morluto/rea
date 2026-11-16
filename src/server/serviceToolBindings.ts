@@ -10,6 +10,7 @@ import {
   inspectAnalysisView,
   projectRetainedAnalysis,
   requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
 import { z } from "zod";
@@ -42,7 +43,10 @@ import type { FlutterBuildAnalysisService } from "../application/flutter/Flutter
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { GpuCodeObjectsService } from "../application/gpu/GpuCodeObjectsService.js";
 import type { Il2cppMetadataService } from "../application/il2cpp/Il2cppMetadataService.js";
-import { retainAnalysisResultSources } from "../application/investigation/recordEvidenceSources.js";
+import {
+  retainAnalysisResultSources,
+  recordEvidenceSources,
+} from "../application/investigation/recordEvidenceSources.js";
 import type { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import type { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import type { ModelArtifactService } from "../application/model/ModelArtifactService.js";
@@ -129,7 +133,24 @@ import {
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
 import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
-import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
+import {
+  optionalProviderUnavailable,
+  type OptionalProviderLoadFailure,
+} from "../ports/OptionalObservationProviders.js";
+import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
+import { browserScenarioSchema } from "../domain/browserScenario.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
+import { captureBrowserScenario } from "../application/BrowserScenarioCaptureService.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
+import {
+  listJavaScriptRuntimeTargets,
+  observeJavaScriptRuntime,
+} from "../application/javascript/JavaScriptRuntimeObservationService.js";
+import { accessGuidedWorkflows } from "../application/GuidedWorkflowAccess.js";
+import type { PromptContract } from "../contracts/promptContracts.js";
+import { matchNativeFunctions } from "../application/native/NativeFunctionMatchingService.js";
+import type { NativeMatchingAllowance } from "../config/nativeMatchingAllowance.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   analyzeWebBundle,
   captureWebScreenshot,
@@ -255,6 +276,24 @@ export interface CutterToolOptions {
 /** The browser observation provider, or why it failed to load. */
 export interface BrowserObservationToolOptions {
   readonly browser: BrowserObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** The session native matching reads, and its allowance for each accepted call. */
+export interface NativeFunctionMatchingToolOptions {
+  readonly session: BinarySessionPort;
+  readonly allowance: () => Result<NativeMatchingAllowance, ConfigurationError>;
+}
+
+/** The browser scenario provider, or why it failed to load. */
+export interface BrowserScenarioToolOptions {
+  readonly provider: BrowserScenarioCapturePort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** The JavaScript runtime observation provider, or why it failed to load. */
+export interface JavaScriptRuntimeToolOptions {
+  readonly runtime: JavaScriptRuntimeObservationPort | undefined;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
@@ -1577,6 +1616,125 @@ const SERVICE_TOOL_BINDINGS = {
       value: (input, { context }) => readSessionStatus(options, input, context),
     },
   })) satisfies Bind<SessionStatusToolOptions>,
+  // Native matching reads session-held Evidence and retains the sources it
+  // read; a summary retains the complete match behind it.
+  nativeFunctionMatching: (({ session, allowance }) => {
+    const evidenceById = session.evidenceForAnalysis.bind(session);
+    const recordEvidence: BinarySessionPort["recordEvidence"] = (evidence) =>
+      session.recordEvidence(evidence);
+    return {
+      match_native_functions: {
+        admission: "sdk",
+        run: async (input, options) => {
+          const representationAllowance = allowance();
+          if (!representationAllowance.ok) return representationAllowance;
+          const result = await matchNativeFunctions(
+            input,
+            {
+              ...options,
+              representationAllowance: representationAllowance.value,
+            },
+            evidenceById,
+          );
+          if (!result.ok) return result;
+          const recorded = recordEvidenceSources(
+            recordEvidence,
+            result.value.sources,
+          );
+          if (!recorded.ok) return recorded;
+          return result.value.detail === "summary"
+            ? summarizeRetainedAnalysis(result.value.evidence, {
+                evidenceById,
+                recordEvidence,
+              })
+            : ok(result.value.evidence);
+        },
+      },
+    };
+  }) satisfies Bind<NativeFunctionMatchingToolOptions>,
+  // Layout inspection validates its own request so a refusal names the
+  // field, and retains the complete Evidence behind a requested summary.
+  binaryLayout: ((service, retention) => {
+    const contract = toolContract("inspect_binary_layout");
+    const delivery = retainedSummaryDelivery(contract.name, retention);
+    return {
+      inspect_binary_layout: {
+        admission: "application",
+        run: async (rawInput, options) => {
+          const parsed = contract.inputSchema.safeParse(rawInput);
+          if (!parsed.success)
+            return err(
+              analysisInputErrorFromIssues(
+                contract.name,
+                parsed.error.issues,
+                rawInput,
+                { cause: parsed.error },
+              ),
+            );
+          const { detail, ...input } = parsed.data;
+          const parameters = { detail };
+          const ready = delivery.preflight(parameters);
+          if (!ready.ok) return ready;
+          const inspected = await service.inspect(input, options);
+          return inspected.ok
+            ? delivery.projectEvidence(parameters, inspected.value)
+            : inspected;
+        },
+      },
+    };
+  }) satisfies Bind<Pick<BinaryLayoutService, "inspect">>,
+  // The SDK admits the advertised structure; the scenario's own parser owns
+  // field-path diagnostics, shared with the CLI. A provider that failed to
+  // load is reported after the request is validated.
+  browserScenario: (({ provider, loadFailure }) => ({
+    capture_browser_scenario: {
+      admission: "sdk",
+      summary: async (input, options) => {
+        const scenario = browserScenarioSchema.safeParse(input);
+        if (!scenario.success)
+          return err(
+            analysisInputErrorFromIssues(
+              "capture_browser_scenario",
+              scenario.error.issues,
+              input,
+              { cause: scenario.error },
+            ),
+          );
+        return loadFailure === undefined
+          ? captureBrowserScenario(provider, scenario.data, options)
+          : err(
+              optionalProviderUnavailable(
+                loadFailure,
+                "capture_browser_scenario",
+              ),
+            );
+      },
+    },
+  })) satisfies Bind<BrowserScenarioToolOptions>,
+  // Passive Inspector tools stay registered when policy keeps the provider
+  // unavailable; every call then reports it before admission.
+  javascriptRuntime: (({ runtime, loadFailure }) => ({
+    list_javascript_runtime_targets: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) =>
+        listJavaScriptRuntimeTargets(runtime, input, options),
+    },
+    observe_javascript_runtime: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) =>
+        observeJavaScriptRuntime(runtime, input, options),
+    },
+  })) satisfies Bind<JavaScriptRuntimeToolOptions>,
+  // Provider-free access to the guided prompts this server advertises.
+  guidedWorkflows: ((prompts) => ({
+    guided_workflows: {
+      admission: "application",
+      value: async (input) =>
+        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+    },
+  })) satisfies Bind<readonly PromptContract[]>,
 } as const;
 
 type ServiceBindings = typeof SERVICE_TOOL_BINDINGS;
