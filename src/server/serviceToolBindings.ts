@@ -1,3 +1,6 @@
+import type { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
+import type { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
+import { appendStructuredRasterThumbnails } from "./indexThumbnailDelivery.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
@@ -431,6 +434,19 @@ type Bind<Service> = (
  * so a test exercises the same handler kind, admission and dependencies.
  */
 const SERVICE_TOOL_BINDINGS = {
+  rawRaster: ((service) => ({
+    inspect_raw_raster_candidates: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<RawRasterDiscoveryService>,
+  structuredRaster: ((service) => ({
+    inspect_structured_raster_candidates: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+      presentResult: appendStructuredRasterThumbnails,
+    },
+  })) satisfies Bind<StructuredRasterDiscoveryService>,
   byteEntropy: ((service) => ({
     inspect_byte_entropy: {
       admission: "sdk",

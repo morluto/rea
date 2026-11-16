@@ -1,5 +1,3 @@
-import { registerRawRasterDiscoveryTool } from "./registerRawRasterDiscoveryTool.js";
-import { registerStructuredRasterDiscoveryTool } from "./registerStructuredRasterDiscoveryTool.js";
 import {
   createCapabilityServices,
   type CapabilityServiceOptions,
@@ -390,25 +388,14 @@ export const createServer = (
         },
         { logger: toolLogger, recordEvidence, evidenceById },
       );
-      registerStructuredRasterDiscoveryTool(
-        server,
-        createStructuredRasterDiscoveryService(artifactResources),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
-      registerRawRasterDiscoveryTool(
-        server,
-        createRawRasterDiscoveryService(artifactResources),
-        toolLogger,
-        recordEvidence,
-        analysisAdmission,
-      );
       registerServiceTools(
         server,
         {
           binaryLayout,
           byteEntropy: createByteEntropyService(artifactResources),
+          rawRaster: createRawRasterDiscoveryService(artifactResources),
+          structuredRaster:
+            createStructuredRasterDiscoveryService(artifactResources),
           peResources,
           nativeExports,
           devicetree,

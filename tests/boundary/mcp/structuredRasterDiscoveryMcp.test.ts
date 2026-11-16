@@ -1,13 +1,21 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, onTestFinished } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { structuredRasterFixture } from "../../fixtures/structuredRaster.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+const contract = (() => {
+  const found = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
+    (item) => item.name === "inspect_structured_raster_candidates",
+  );
+  if (found === undefined)
+    throw new Error("Missing inspect_structured_raster_candidates contract");
+  return found;
+})();
 const validation = createMcpSchemaValidation();
 afterAll(() => validation.clear());
 mcpTest(
@@ -42,9 +50,8 @@ mcpTest(
     });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     expect(response.content.some((block) => block.type === "image")).toBe(true);
-    const evidence = toolContract(
-      "inspect_structured_raster_candidates",
-    ).outputSchema.parse(response.structuredContent);
+    const evidence = contract.outputSchema.parse(response.structuredContent);
+    expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
     expect(evidence.normalized_result.mapping.logicalBase).toBe(10000);
     expect(evidence.normalized_result.tables[0]?.offset).toBe(10000);
     expect(evidence.normalized_result.projection).toMatchObject({
