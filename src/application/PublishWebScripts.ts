@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -31,6 +30,7 @@ import {
 } from "../domain/webScriptExportPlan.js";
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
 import type { SelectedScriptCapture } from "../domain/webScriptCaptureAdapters.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const LIMITATIONS = [
   "Only script bytes retained in this capture are exported. Sources are not refetched or executed, and a response or Debugger source does not prove execution.",
@@ -112,7 +112,7 @@ export const publishWebScripts = async (
         ],
       });
       const bytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
-      const digest = createHash("sha256").update(bytes).digest("hex");
+      const digest = sha256Hex(bytes);
       result = webScriptExportResultSchema.parse({
         ...manifest,
         manifest: {

@@ -37,7 +37,7 @@ import {
 } from "./config/mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
-import { isRecord } from "./domain/isRecord.js";
+import { isRecord } from "./kernel/isRecord.js";
 import { resolveMcpOutputSchemaProfile } from "./contracts/mcpSchemaPresentation.js";
 import { errorMessage } from "./kernel/errorMessage.js";
 

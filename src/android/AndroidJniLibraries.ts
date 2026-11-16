@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
@@ -24,6 +23,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Bounds cover the live library buffer, completed scan work and retained JSON separately. */
@@ -116,9 +116,7 @@ export const readAndroidJniLibraries = async (input: {
             break;
           }
           const identity = {
-            library_id: `jni_library_${createHash("sha256")
-              .update(JSON.stringify([input.apkSha256, entry.adapterKey]))
-              .digest("hex")}`,
+            library_id: `jni_library_${sha256Hex(JSON.stringify([input.apkSha256, entry.adapterKey]))}`,
             source_index,
             source_key: entry.adapterKey,
             path: entry.path,
@@ -191,7 +189,7 @@ export const readAndroidJniLibraries = async (input: {
                   { integrityCheck: "declared-size" },
                 );
               throwIfJadxInterrupted(input.signal);
-              const sha256 = createHash("sha256").update(bytes).digest("hex");
+              const sha256 = sha256Hex(bytes);
               inProgress = {
                 ...identity,
                 sha256,

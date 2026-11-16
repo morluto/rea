@@ -12,7 +12,6 @@ import {
   adbInputFileError,
 } from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
@@ -161,6 +160,7 @@ import {
   type AdbCommandContext,
 } from "./AdbDeviceOperations.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const SHELL_TIMEOUT_MS = 30_000;
 const PACKAGE_LIST_TIMEOUT_MS = 60_000;
@@ -3052,9 +3052,7 @@ export class AdbProvider {
             ),
           );
         }
-        const sha256 = createHash("sha256")
-          .update(captured.value.stdout)
-          .digest("hex");
+        const sha256 = sha256Hex(captured.value.stdout);
         const completed = createAnalysisExecution(
           {
             client,

@@ -36,6 +36,7 @@ import {
   TARGET_CONTENT_RESULT_META,
   type ToolResultEncoding,
 } from "./toolResultEncoding.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
 export const mcpResponseOverflowProjection = (input: {
@@ -74,18 +75,8 @@ export const mcpResponseOverflowProjection = (input: {
  * Each projection owns a different next step when it exceeds one MCP frame.
  */
 const evidenceBundleProjection = (value: JsonValue): JsonValue | undefined => {
-  const payload =
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "result" in value
-      ? value.result
-      : value;
-  return typeof payload === "object" &&
-    payload !== null &&
-    !Array.isArray(payload)
-    ? payload.kind
-    : undefined;
+  const payload = isRecord(value) && "result" in value ? value.result : value;
+  return isRecord(payload) ? payload.kind : undefined;
 };
 
 /**
@@ -122,14 +113,8 @@ const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
  * `{ result }` envelope; a smaller limit only helps above one.
  */
 const unknownPageItems = (value: JsonValue): number => {
-  const page =
-    typeof value === "object" && value !== null && !Array.isArray(value)
-      ? value.result
-      : undefined;
-  return typeof page === "object" &&
-    page !== null &&
-    !Array.isArray(page) &&
-    Array.isArray(page.items)
+  const page = isRecord(value) ? value.result : undefined;
+  return isRecord(page) && Array.isArray(page.items)
     ? page.items.length
     : Number.POSITIVE_INFINITY;
 };

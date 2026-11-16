@@ -212,7 +212,7 @@ check(
   ],
 );
 
-// "Non-null object other than an array" has one owner: src/domain/isRecord.ts.
+// "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
 // A local predicate with that body, under any name, is a copy. The listed files
 // still hold one and may only be removed from the list; a listed file that no
 // longer matches fails so the list shrinks with the code.
@@ -230,7 +230,7 @@ const RECORD_PREDICATE_COPIES = [
   "src/pcap/PcapOutput.ts",
 ];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
-  if (path === "src/domain/isRecord.ts") return false;
+  if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
   return (
     named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
@@ -557,6 +557,24 @@ checkCounted(
   files,
   /createHash\(\s*"sha256"\s*\)\s*\.update\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)\s*\.digest\(\s*"hex"\s*\)/gu,
   ["src/kernel/sha256Hex.ts"],
+);
+
+// The isRecord predicate written inline in a condition is a copy of
+// src/kernel/isRecord.ts. Bodies of the named copies in RECORD_PREDICATE_COPIES
+// are counted by that list, not here.
+const inlineRecordCheck =
+  /typeof\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*===\s*["']object["']\s*&&\s*\1\s*!==\s*null\s*&&\s*!Array\.isArray\(\s*\1\s*\)/gu;
+checkCounted(
+  "inline non-array record check (use isRecord from src/kernel/isRecord)",
+  "inline-record-check",
+  files,
+  (content) =>
+    Math.max(
+      0,
+      (content.match(inlineRecordCheck)?.length ?? 0) -
+        recordPredicateCounts(content).bodies,
+    ),
+  ["src/kernel/isRecord.ts"],
 );
 
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes

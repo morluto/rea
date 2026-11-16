@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { Buffer } from "node:buffer";
@@ -12,6 +11,7 @@ import {
   guestFileAnswerCeiling,
   guestFileAnswerWorkingBytes,
 } from "./AgentEnvComputer.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import type {
   BuildControllerAnswer,
   ControlledComputer,
@@ -343,10 +343,7 @@ export const fetchHomeFolder = async (
     );
     for (const file of batch) {
       const content = files.get(file.path);
-      const sha256 =
-        content === undefined
-          ? undefined
-          : createHash("sha256").update(content).digest("hex");
+      const sha256 = content === undefined ? undefined : sha256Hex(content);
       if (
         !file.path.startsWith(`${folder}/`) ||
         content?.length !== file.size ||
