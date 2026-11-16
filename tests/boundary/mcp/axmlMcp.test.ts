@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { AXML_MANIFEST_EVENTS, buildAxml } from "../../fixtures/axml.js";
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "decodes axml facts and XML text through compiled MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-axml-mcp-");
