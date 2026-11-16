@@ -108,6 +108,7 @@ export {
   assertStableArtifactState,
   completedStableArtifact,
   readStableArtifact,
+  readStableArtifactRanges,
 } from "./readStableArtifact.js";
 export type {
   StableArtifactFileSystem,

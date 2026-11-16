@@ -1,30 +1,35 @@
 import { UNREAL_PAK_PROVIDER_IDENTITY } from "./UnrealPakProviderIdentity.js";
 import { setImmediate } from "node:timers/promises";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   ArtifactFileCleanupFailure,
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   ArtifactFileCancelled,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../resources/ArtifactFileOperation.js";
-import { readStableArtifactRanges } from "../resources/readStableArtifact.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
+  readStableArtifactRanges,
+  artifactFilePrimaryFacts,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import type { UnrealPakPort } from "../application/unreal/UnrealPakPort.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { UnrealPakPort } from "../ports/unreal/UnrealPakPort.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
+import type { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { createEvidence } from "../domain/evidence.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
+  fixedCeilingConstraint,
+  occupiedCapacityConstraint,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -39,7 +44,7 @@ import {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
   readUnrealPak,
-  UnrealPakFormatFailure,
+  unrealPakFailureFacts,
   type UnrealPakDecoded,
 } from "./UnrealPakFile.js";
 
@@ -71,142 +76,74 @@ const LIMITATIONS = [
   "Compression names come from the footer table (version 8+) or legacy flag values (Zlib, Gzip, Custom); they name methods, not verified codecs. The pak version is not attributed to an engine release.",
 ];
 
-const failureForPrimary = (
-  facts: ArtifactFilePrimaryFacts,
+/** Provider-owned refusals; shared file, cancellation and cleanup facts come from classifyProviderFailure. */
+const pakFailureDialect = (
   path: string,
   outputBytes: number,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (cause instanceof UnrealPakFormatFailure) {
-    if (cause.kind === "unsupported")
+): ProviderFailureDialect => ({
+  providerId: UNREAL_PAK_PROVIDER_IDENTITY.id,
+  operation: OPERATION,
+  recognise: (cause, details) => {
+    // The pak reads no budgeted input bytes; a reader limit is the reader's own ceiling.
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
+      return fixedCeilingConstraint(
+        OPERATION,
+        cause.boundary ?? "file-size",
+        cause.message,
+        { name: "The artifact reader's fixed read allowance", kind: "bytes" },
+        { ...details, cause },
+      );
+    const pak = unrealPakFailureFacts(cause);
+    if (pak === undefined) return undefined;
+    const { failure } = pak;
+    if (failure.kind === "unsupported")
       return new AnalysisUnsupportedTargetError(
         OPERATION,
         path,
-        cause.message,
-        { cause },
+        failure.message,
+        { ...details, cause: failure },
       );
-    // Path text is report text, so its limit is the output budget.
-    if (cause.reason === "paths-too-large")
-      return new AnalysisResourceConstraintError(
+    if (failure.failure.kind === "limit")
+      return parseLimitConstraint(
         OPERATION,
-        "transport",
-        cause.message,
+        // Path text is report text, so its limit is the output budget.
+        pak.reason === "paths-too-large" ? "transport" : "file-size",
+        failure as ParseFailureError<"limit">,
         {
-          maximum_output_bytes: outputBytes,
-          maximum_path_utf16_units: outputBytes,
-        },
-        { cause, ...reportAllowance(outputBytes) },
-      );
-    if (cause.kind === "resource")
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { maximum_region_bytes: REGION_BYTES, maximum_entries: ENTRIES },
-        {
-          cause,
-          ...(cause.reason === "too-many-entries"
-            ? fixedAllowanceOptions(
-                `The Unreal pak entry allowance of ${String(ENTRIES)} entries (this release has no runtime override)`,
-                "count",
-              )
-            : fixedAllowanceOptions(
-                `The Unreal pak index-region allowance of ${String(REGION_BYTES)} bytes (this release has no runtime override)`,
-                "bytes",
-              )),
+          ...details,
+          ...(pak.reason === "paths-too-large"
+            ? reportAllowance(outputBytes)
+            : pak.reason === "too-many-entries"
+              ? fixedAllowanceOptions(
+                  `The Unreal pak entry allowance of ${String(ENTRIES)} entries (this release has no runtime override)`,
+                  "count",
+                )
+              : fixedAllowanceOptions(
+                  `The Unreal pak index-region allowance of ${String(REGION_BYTES)} bytes (this release has no runtime override)`,
+                  "bytes",
+                )),
         },
       );
-    return new AnalysisInputError(OPERATION, { cause }, [
+    return new AnalysisInputError(OPERATION, { ...details, cause: failure }, [
       {
         path: ["path"],
         reason: "invalid_format",
-        message: `Selected artifact ${path} is corrupt: ${cause.message}`,
+        message: `Selected artifact ${path} is corrupt: ${failure.message}`,
       },
     ]);
-  }
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "limit"
-  )
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "file-size",
-      cause.message,
-      { maximum_input_bytes: Number.MAX_SAFE_INTEGER },
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "path"
-  )
-    return new AnalysisInputError(OPERATION, { cause }, [
-      { path: ["path"], reason: "invalid_format", message: cause.message },
-    ]);
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(UNREAL_PAK_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: cause instanceof Error ? cause.message : String(cause),
-    },
-  });
-};
-
-const failureFor = (
-  cause: unknown,
-  path: string,
-  outputBytes: number,
-): AnalysisError => {
-  const primary = failureForPrimary(
-    artifactFilePrimaryFacts(cause),
-    path,
-    outputBytes,
-  );
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
-    UNREAL_PAK_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
-  );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
-};
+  },
+  file: { path, description: "Unreal pak" },
+  diagnostics: { path },
+  unclassified: (cause, details) =>
+    new ProviderAdapterError(UNREAL_PAK_PROVIDER_IDENTITY.id, OPERATION, {
+      ...details,
+      cause,
+      diagnostics: {
+        path,
+        reason: errorMessage(cause),
+      },
+    }),
+});
 
 /** Path text and issues are report text, so all three share this allowance. */
 const reportAllowance = (maximumBytes: number) =>
@@ -216,12 +153,11 @@ const reportAllowance = (maximumBytes: number) =>
   );
 
 const outputLimit = (path: string, maximumBytes: number) =>
-  new AnalysisResourceConstraintError(
+  fixedCeilingConstraint(
     OPERATION,
     "transport",
     `Complete pak index for ${path} exceeds the inline output budget; no partial success is returned.`,
-    { maximum_output_bytes: maximumBytes },
-    reportAllowance(maximumBytes),
+    reportAllowance(maximumBytes).fixedAllowance,
   );
 
 type PakArtifact = UnrealPak["artifact"];
@@ -299,11 +235,11 @@ export class UnrealPakProvider implements UnrealPakPort {
   ): Promise<Result<UnrealPak, AnalysisError>> {
     if (this.#inspecting)
       return err(
-        new AnalysisResourceConstraintError(
+        occupiedCapacityConstraint(
           OPERATION,
-          "memory",
           "Only one Unreal pak inspection is admitted per reader.",
           { maximum_concurrent_inspections: 1 },
+          "Retry after the active Unreal pak inspection on this reader completes.",
         ),
       );
     this.#inspecting = true;
@@ -368,7 +304,28 @@ export class UnrealPakProvider implements UnrealPakPort {
       assertArtifactReadActive(options?.signal);
       return ok(parsed.data);
     } catch (cause: unknown) {
-      const failure = failureFor(cause, input.path, this.outputBytes);
+      // Classify the failure the file operation reports as primary; an
+      // unresolved descriptor cleanup is composed onto it afterwards.
+      const primary = artifactFilePrimaryFacts(cause);
+      const dialect = pakFailureDialect(input.path, this.outputBytes);
+      const classified =
+        primary.origin === "owned-or-classified"
+          ? classifyProviderFailure(primary.cause, dialect)
+          : dialect.unclassified(primary.cause, {});
+      const failure =
+        cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+          ? analysisErrorWithCleanupFailure(
+              classified,
+              new ProviderCleanupError(
+                UNREAL_PAK_PROVIDER_IDENTITY.id,
+                cause.cleanup.resources,
+                { reason: cause.cleanup.reason },
+                { operation: OPERATION, cause },
+              ),
+              OPERATION,
+            )
+          : classified;
+      if (failure !== classified) bindArtifactFileCleanup(cause, failure);
       if (artifact !== undefined && failure.partialObservation === undefined)
         failure.retainPartialObservation(pakSourceEvidence(artifact));
       return err(failure);

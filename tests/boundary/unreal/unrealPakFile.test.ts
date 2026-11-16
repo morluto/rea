@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   readUnrealPak,
-  UnrealPakFormatFailure,
+  unrealPakFailureFacts,
   type UnrealPakLimits,
   YIELD_EVERY,
 } from "../../../src/unreal/UnrealPakFile.js";
@@ -31,8 +31,8 @@ const failure = async (bytes: Buffer, limits: UnrealPakLimits = LIMITS) => {
   try {
     await read(bytes, limits);
   } catch (cause) {
-    if (cause instanceof UnrealPakFormatFailure)
-      return { reason: cause.reason, kind: cause.kind };
+    const facts = unrealPakFailureFacts(cause);
+    if (facts !== undefined) return { reason: facts.reason, kind: facts.kind };
     throw cause;
   }
   throw new Error("expected a pak failure");

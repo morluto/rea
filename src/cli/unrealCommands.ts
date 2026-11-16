@@ -1,55 +1,50 @@
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { z } from "incur";
-import { ok } from "../domain/result.js";
-import { withEvidenceCallerInputPath } from "../domain/evidence.js";
-import { localPathStringSchema } from "../domain/localPath.js";
-import { createUnrealPakService } from "../composition/unreal.js";
-import { cliCommandFor } from "../contracts/cliCommandNames.js";
-import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
-import type { CliInstance } from "./types.js";
-import { withCommandCancellation } from "./commandCancellation.js";
+
+import { createUnrealPakService } from "../composition/unreal.js";
+import { UNREAL_TOOL_CONTRACTS } from "../contracts/unreal/unrealToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
 import {
-  analysisEvidenceDeliveryOptions,
-  deliverCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
+  deliverWithService,
+  registerContractCommand,
+  type EvidenceInspectionService,
+} from "./contractCommand.js";
+import type { CliInstance } from "./types.js";
 
 /** CLI and MCP share inspection; one-shot summaries preserve a complete Evidence file. */
 export const registerUnrealCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  cli.command(cliCommandFor("inspect_unreal_pak"), {
-    description: "Inventory an Unreal Engine .pak footer and index entries",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Local Unreal Engine .pak file (version 1 to 12)",
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(UNREAL_TOOL_CONTRACTS, "inspect_unreal_pak"),
+    {
+      description: "Inventory an Unreal Engine .pak footer and index entries",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: {
+          description: "Local Unreal Engine .pak file (version 1 to 12)",
+        },
+      },
+    },
+    deliverWithService(createCompleteUnrealPakService, "unreal-pak"),
+  );
+};
+
+/** The CLI hashes and decodes the complete index; delivery selects the summary. */
+const createCompleteUnrealPakService = (): EvidenceInspectionService => {
+  const service = createUnrealPakService();
+  return {
+    inspect: (input, options) =>
+      service.inspect(
+        typeof input === "object" && input !== null
+          ? { ...input, detail: "complete" }
+          : input,
+        options,
       ),
-    }),
-    options: z.object(analysisEvidenceDeliveryOptions),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, cliCommandFor("inspect_unreal_pak"), async () => {
-          const service = createUnrealPakService();
-          return deliverCliAnalysisEvidence({
-            run: async () => {
-              const result = await service.inspect(
-                { path: absoluteCallerPath(args.path), detail: "complete" },
-                { signal },
-              );
-              // Evidence keeps the selection as typed; the service reads its absolute form.
-              return result.ok
-                ? ok(withEvidenceCallerInputPath(result.value, args.path))
-                : result;
-            },
-            service,
-            providerId: "unreal-pak",
-            operation: "inspect_unreal_pak",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          });
-        }),
-      ),
-  });
+    close: () => service.close(),
+  };
 };

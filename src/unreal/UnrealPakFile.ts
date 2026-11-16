@@ -1,3 +1,15 @@
+import {
+  ParseFailureError,
+  decodeLimit,
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
+
+const UTF8 = strictUtf8Decoder("preserve");
 import { createHash } from "node:crypto";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
@@ -29,23 +41,74 @@ export type UnrealPakFailureKind = keyof typeof UNREAL_PAK_FAILURE_REASONS;
 export type UnrealPakFailureReason =
   (typeof UNREAL_PAK_FAILURE_REASONS)[UnrealPakFailureKind][number];
 
-/** Distinguish inputs outside decoder coverage, damaged indexes and limits. */
-export class UnrealPakFormatFailure extends Error {
-  readonly kind: UnrealPakFailureKind;
-  constructor(
-    readonly reason: UnrealPakFailureReason,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(`${reason}: ${message}`, options);
-    this.name = "UnrealPakFormatFailure";
-    this.kind = (
-      Object.keys(UNREAL_PAK_FAILURE_REASONS) as UnrealPakFailureKind[]
-    ).find((kind) =>
+const UNREAL_PAK_FORMAT = "unreal-pak";
+
+/** The public detail key each decode budget is reported under. */
+const LIMIT_NAMES: Readonly<Record<UnrealPakFailureReason, string>> = {
+  ...(Object.fromEntries(
+    Object.values(UNREAL_PAK_FAILURE_REASONS)
+      .flat()
+      .map((reason) => [reason, ""]),
+  ) as Record<UnrealPakFailureReason, string>),
+  "region-too-large": "maximum_region_bytes",
+  "too-many-entries": "maximum_entries",
+  "paths-too-large": "maximum_path_utf16_units",
+};
+
+const failureKindOf = (reason: UnrealPakFailureReason): UnrealPakFailureKind =>
+  (Object.keys(UNREAL_PAK_FAILURE_REASONS) as UnrealPakFailureKind[]).find(
+    (kind) =>
       (UNREAL_PAK_FAILURE_REASONS[kind] as readonly string[]).includes(reason),
-    )!;
-  }
-}
+  )!;
+
+/**
+ * Distinguish inputs outside decoder coverage, damaged indexes and limits as
+ * one shared parse failure; the stable reason travels as its field.
+ */
+export const unrealPakFailure = (
+  reason: UnrealPakFailureReason,
+  message: string,
+  maximum?: number,
+):
+  | ParseFailureError<"unsupported">
+  | ParseFailureError<"limit">
+  | ParseFailureError<"malformed">
+  | ParseFailureError<"truncated"> => {
+  const detail = `${reason}: ${message}`;
+  const at = { field: reason };
+  const kind = failureKindOf(reason);
+  if (kind === "unsupported")
+    return unsupportedInput(UNREAL_PAK_FORMAT, detail, at);
+  if (kind === "resource")
+    return decodeLimit(
+      UNREAL_PAK_FORMAT,
+      detail,
+      { name: LIMIT_NAMES[reason], maximum: maximum ?? 0 },
+      at,
+    );
+  return reason === "truncated-record"
+    ? truncatedInput(UNREAL_PAK_FORMAT, detail, at)
+    : malformedInput(UNREAL_PAK_FORMAT, detail, at);
+};
+
+/** The pak reason and kind a parse failure carries, when it is a pak failure. */
+export const unrealPakFailureFacts = (
+  cause: unknown,
+):
+  | {
+      readonly reason: UnrealPakFailureReason;
+      readonly kind: UnrealPakFailureKind;
+      readonly failure: ParseFailureError;
+    }
+  | undefined => {
+  if (
+    !(cause instanceof ParseFailureError) ||
+    cause.failure.format !== UNREAL_PAK_FORMAT
+  )
+    return undefined;
+  const reason = cause.failure.field as UnrealPakFailureReason;
+  return { reason, kind: failureKindOf(reason), failure: cause };
+};
 
 /** Positioned reads over one stable file snapshot. */
 export interface UnrealPakSource {
@@ -153,15 +216,22 @@ class IssueSink implements IssueReporter {
   }
 }
 
+/** Little-endian numeric reads; Cursor bounds every read before it is made. */
+const littleEndian = (bytes: Buffer) =>
+  new BinaryReader(bytes, true, UNREAL_PAK_FORMAT);
+
 class Cursor {
   position = 0;
+  readonly #reader: BinaryReader;
   constructor(
     readonly bytes: Buffer,
     readonly label: string,
     /** File offset of bytes[0], so issues name file offsets. */
     readonly base: number,
     readonly sink: IssueReporter,
-  ) {}
+  ) {
+    this.#reader = littleEndian(bytes);
+  }
   /** File offset of the current position. */
   get at() {
     return this.base + this.position;
@@ -170,7 +240,7 @@ class Cursor {
   private take(length: number): number {
     const at = this.position;
     if (length < 0 || at + length > this.bytes.length)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "truncated-record",
         `${this.label} ends inside a record at byte ${at}`,
       );
@@ -181,13 +251,13 @@ class Cursor {
   skip = (length: number) => {
     this.take(length);
   };
-  u8 = () => this.bytes.readUInt8(this.take(1));
-  u32 = () => this.bytes.readUInt32LE(this.take(4));
-  i32 = () => this.bytes.readInt32LE(this.take(4));
+  u8 = () => this.bytes[this.take(1)]!;
+  u32 = () => this.#reader.u32(this.take(4));
+  i32 = () => this.u32() | 0;
   u64 = (): number => {
-    const value = this.bytes.readBigUInt64LE(this.take(8));
+    const value = this.#reader.word(this.take(8), 64);
     if (value > BigInt(Number.MAX_SAFE_INTEGER))
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "region-out-of-bounds",
         `${this.label} holds a 64-bit value beyond the safe integer range`,
       );
@@ -197,12 +267,12 @@ class Cursor {
     this.bytes.subarray(this.take(length), this.position).toString("hex");
   /** A u64 written as 16 hex digits, the way the value itself reads. */
   u64Hex = () =>
-    this.bytes.readBigUInt64LE(this.take(8)).toString(16).padStart(16, "0");
+    this.#reader.word(this.take(8), 64).toString(16).padStart(16, "0");
   /** A u32 that must be 0 or 1, as the version 10+ index region flags are. */
   bool32 = (what: string) => {
     const value = this.u32();
     if (value > 1)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "invalid-flag",
         `${this.label} ${what} is ${value}, not 0 or 1`,
       );
@@ -211,7 +281,7 @@ class Cursor {
   bool = (what: string) => {
     const value = this.u8();
     if (value > 1)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "invalid-flag",
         `${this.label} ${what} is ${value}, not 0 or 1`,
       );
@@ -224,26 +294,23 @@ class Cursor {
   utf8Name = (what: string): string => {
     const length = this.i32();
     if (length < 0)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "invalid-string",
         `${this.label} ${what} has negative length ${length}`,
       );
     const at = this.take(length);
     const raw = this.bytes.subarray(at, at + length);
     if (raw.includes(0))
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "invalid-string",
         `${this.label} ${what} at byte ${at} contains a NUL`,
       );
     try {
-      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        raw,
-      );
-    } catch (cause: unknown) {
-      throw new UnrealPakFormatFailure(
+      return UTF8.decode(raw);
+    } catch {
+      throw unrealPakFailure(
         "invalid-string",
         `${this.label} ${what} at byte ${at} is not valid UTF-8`,
-        { cause },
       );
     }
   };
@@ -259,9 +326,9 @@ class Cursor {
     const at = this.take(units * width);
     const raw = this.bytes.subarray(at, at + units * width);
     const terminator =
-      width === 1 ? raw[units - 1] : raw.readUInt16LE((units - 1) * 2);
+      width === 1 ? raw[units - 1] : littleEndian(raw).u16((units - 1) * 2);
     if (terminator !== 0)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "invalid-string",
         `${this.label} ${what} at byte ${at} is not NUL-terminated`,
       );
@@ -270,7 +337,7 @@ class Cursor {
       width === 1 ? body.toString("latin1") : body.toString("utf16le");
     // Only the terminator may be NUL; an inner one would truncate the path in UE.
     if (text.includes("\0"))
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "invalid-string",
         `${this.label} ${what} at byte ${at} contains a NUL before its terminator`,
       );
@@ -298,8 +365,9 @@ const readFooter = async (
       start +
       (layoutShape.keyGuid ? 16 : 0) +
       (layoutShape.encryptedFlag ? 1 : 0);
-    if (tail.readUInt32LE(magicAt) !== UNREAL_PAK_MAGIC) continue;
-    if (tail.readUInt32LE(magicAt + 4) !== layoutShape.version) continue;
+    const footerReader = littleEndian(tail);
+    if (footerReader.u32(magicAt) !== UNREAL_PAK_MAGIC) continue;
+    if (footerReader.u32(magicAt + 4) !== layoutShape.version) continue;
     // The footer has no redundant facts, so it reports nothing.
     const cursor = new Cursor(
       tail.subarray(start),
@@ -343,7 +411,7 @@ const readFooter = async (
       },
     };
   }
-  throw new UnrealPakFormatFailure(
+  throw unrealPakFailure(
     "unrecognized-footer",
     "no pak footer layout (versions 1 to 12) matches the end of the file",
   );
@@ -361,12 +429,13 @@ const checkRegion = (
   held: RegionBudget = { used: 0 },
 ) => {
   if (held.used + region.size > limits.regionBytes)
-    throw new UnrealPakFormatFailure(
+    throw unrealPakFailure(
       "region-too-large",
       `${label} is ${region.size} bytes; with ${held.used} index region bytes already read that exceeds the ${limits.regionBytes}-byte limit`,
+      limits.regionBytes,
     );
   if (region.offset + region.size > end)
-    throw new UnrealPakFormatFailure(
+    throw unrealPakFailure(
       "region-out-of-bounds",
       `${label} at ${region.offset} (+${region.size}) ends past byte ${end}`,
     );
@@ -403,9 +472,10 @@ const spendPath = (
 ) => {
   budget.used += length;
   if (budget.used > limits.pathChars)
-    throw new UnrealPakFormatFailure(
+    throw unrealPakFailure(
       "paths-too-large",
       `${label} builds more than ${limits.pathChars} path characters`,
+      limits.pathChars,
     );
 };
 
@@ -413,7 +483,7 @@ const spendPath = (
 const checkPlacement = (entries: readonly UnrealPakEntry[], end: number) => {
   for (const entry of entries)
     if (entry.offset + entry.size > end)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "entry-out-of-bounds",
         `${entry.path ?? entry.path_hash} at ${entry.offset} (+${entry.size}) ends past the data area at byte ${end}`,
       );
@@ -459,7 +529,7 @@ const readFullEntry = (
   if (footer.version >= 3 && method !== 0) {
     blocks = cursor.u32();
     if (blocks * 16 > cursor.bytes.length - cursor.position)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "truncated-record",
         `${cursor.label} entry declares ${blocks} compression blocks past its end`,
       );
@@ -506,7 +576,7 @@ const readEncodedEntry = (
   // One unencrypted block is implied; otherwise each block's size follows.
   if (blocks > 1 || (blocks === 1 && encrypted)) {
     if (blocks * 4 > cursor.bytes.length - cursor.position)
-      throw new UnrealPakFormatFailure(
+      throw unrealPakFailure(
         "truncated-record",
         `encoded entry declares ${blocks} compression blocks past its end`,
       );
@@ -535,9 +605,10 @@ const checkCountLimit = (
   label: string,
 ) => {
   if (count > limits.entries)
-    throw new UnrealPakFormatFailure(
+    throw unrealPakFailure(
       "too-many-entries",
       `${label} declares ${count} entries, above the ${limits.entries}-entry limit`,
+      limits.entries,
     );
 };
 
@@ -553,7 +624,7 @@ const checkEntryCount = (
 
 const finished = (cursor: Cursor) => {
   if (cursor.position !== cursor.bytes.length)
-    throw new UnrealPakFormatFailure(
+    throw unrealPakFailure(
       "index-trailing-bytes",
       `${cursor.label} has ${cursor.bytes.length - cursor.position} unread bytes`,
     );
@@ -563,7 +634,7 @@ const finished = (cursor: Cursor) => {
 const QUOTED_NAME = 256;
 const quoted = (name: string) =>
   name.length > QUOTED_NAME
-    ? `${name.slice(0, QUOTED_NAME)}... (${name.length} UTF-16 units)`
+    ? `${ellipsisExcerpt(name, QUOTED_NAME)} (${name.length} UTF-16 units)`
     : name;
 
 /**
@@ -646,7 +717,7 @@ export const readUnrealPak = async (
 ): Promise<UnrealPakDecoded> => {
   const { footer } = await readFooter(source);
   if (footer.frozen_index === true)
-    throw new UnrealPakFormatFailure(
+    throw unrealPakFailure(
       "frozen-index",
       "version 9 frozen indexes store a serialized memory image and are not decoded",
     );
@@ -723,7 +794,7 @@ export const readUnrealPak = async (
     : null;
   const encodedSize = index.u32();
   if (encodedSize > index.bytes.length - index.position)
-    throw new UnrealPakFormatFailure(
+    throw unrealPakFailure(
       "truncated-record",
       `index declares ${encodedSize} encoded entry bytes past its end`,
     );
@@ -783,7 +854,7 @@ export const readUnrealPak = async (
     let entry: UnrealPakEntry;
     if (reference >= 0) {
       if (!recordStarts.has(reference))
-        throw new UnrealPakFormatFailure(
+        throw unrealPakFailure(
           "entry-reference-out-of-range",
           `entry reference ${reference} is not the start of an encoded entry`,
         );
@@ -793,7 +864,7 @@ export const readUnrealPak = async (
     } else {
       const record = fullEntries[-reference - 1];
       if (record === undefined)
-        throw new UnrealPakFormatFailure(
+        throw unrealPakFailure(
           "entry-reference-out-of-range",
           `entry reference ${reference} names no non-encoded entry`,
         );

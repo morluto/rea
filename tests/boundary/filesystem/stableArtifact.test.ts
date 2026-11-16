@@ -1,3 +1,4 @@
+import { InternalInvariantError } from "../../../src/domain/internalInvariant.js";
 import {
   lstat,
   appendFile,
@@ -599,7 +600,7 @@ it("decodes ranges and hashes the whole file through one admitted descriptor", a
   expect(sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
   await expect(
     readStableArtifactRanges(path, (source) => source.read(10, 7)),
-  ).rejects.toBeInstanceOf(RangeError);
+  ).rejects.toBeInstanceOf(InternalInvariantError);
   const link = join(root, "link.bin");
   await symlink(path, link);
   await expect(

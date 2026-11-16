@@ -226,7 +226,6 @@ it("reports the path budget, not a file size, when path text exceeds it", async 
       expect(result.error).toMatchObject({
         resource: "transport",
         reportedLimits: {
-          maximum_output_bytes: 2048,
           maximum_path_utf16_units: 2048,
         },
       });

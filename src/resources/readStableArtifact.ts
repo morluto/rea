@@ -1,3 +1,4 @@
+import { invariantViolation } from "../domain/internalInvariant.js";
 import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
@@ -263,7 +264,7 @@ export const readStableArtifactRanges = async <T>(
         read: async (offset, length) => {
           assertArtifactReadActive(signal);
           if (offset < 0 || length < 0 || offset + length > size)
-            throw new RangeError(
+            throw invariantViolation(
               `Read of ${length} bytes at ${offset} is outside ${size} bytes`,
             );
           const buffer = Buffer.alloc(length);

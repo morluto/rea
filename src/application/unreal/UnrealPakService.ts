@@ -5,10 +5,10 @@ import {
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import type { UnrealPakPort } from "./UnrealPakPort.js";
+import type { UnrealPakPort } from "../../ports/unreal/UnrealPakPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
+  cancelledBy,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -58,9 +58,7 @@ export class UnrealPakService {
     retention: AnalysisViewRetention = NO_RETENTION,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const input = inspectUnrealPakInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -122,8 +120,7 @@ export class UnrealPakService {
     // Cancellation after a complete read keeps the decoded facts.
     if (options?.signal?.aborted)
       return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
+        cancelledBy(OPERATION, options.signal, {
           partialObservation: evidence,
         }),
       );
