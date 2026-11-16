@@ -878,7 +878,7 @@ describe("native UI trace boundaries", () => {
     });
   });
 
-  it("matches handlers after the dispatch inventory's former default limit", async () => {
+  it("matches a handler listed after 5,000 unrelated names", async () => {
     const names = Array.from({ length: 5_000 }, (_, index) => ({
       address: `0x${(index + 1).toString(16)}`,
       value: `unrelated_symbol_${index}`,

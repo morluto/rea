@@ -4,7 +4,7 @@ import {
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import {
   registerContractTools,
@@ -144,6 +144,53 @@ mcpTest(
   },
 );
 
+mcpTest(
+  "reads the analysis a query's admission grants, and refuses a query on a server that admits none",
+  async ({ mcp }) => {
+    const analysis = { kind: "fixture-analysis" } as never;
+    const received: unknown[] = [];
+    const bindings: ContractToolBindings = {
+      get_navigation_context: {
+        admission: "sdk",
+        query: async (_input, granted) => {
+          received.push(granted);
+          return ok({
+            document: "fixture",
+            address: "0x1000",
+            procedure: null,
+          });
+        },
+      },
+    };
+    expect(() =>
+      registerContractTools(evidenceServer(), bindings, {
+        logger: silentLogger,
+      }),
+    ).toThrow(/get_navigation_context/);
+
+    const admitted: string[] = [];
+    const server = evidenceServer();
+    registerContractTools(server, bindings, {
+      logger: silentLogger,
+      withAdmittedAnalysis: async (operationName, _signal, operation) => {
+        admitted.push(operationName);
+        return ok(await operation(analysis));
+      },
+    });
+    const client = await mcp.connect(server);
+    const reply = await client.callTool({
+      name: "get_navigation_context",
+      arguments: {},
+    });
+    expect(reply.isError ?? false, JSON.stringify(reply)).toBe(false);
+    expect(reply.structuredContent).toEqual({
+      result: { document: "fixture", address: "0x1000", procedure: null },
+    });
+    expect(admitted).toEqual(["get_navigation_context"]);
+    expect(received).toEqual([analysis]);
+  },
+);
+
 type Operation = () => Promise<never>;
 type DevicetreeBinding = NonNullable<
   ContractToolBindings["inspect_devicetree"]
@@ -190,5 +237,34 @@ mcpTest(
       summaryWithoutDetailRefused,
       deriveWithRunRefused,
     ]).toEqual([true, true, true, true]);
+  },
+);
+
+mcpTest(
+  "binds a provider operation only to the contract of the same name",
+  () => {
+    const mismatched: ContractToolBindings = {
+      xrefs: {
+        admission: "sdk",
+        // @ts-expect-error A provider binding runs only its own operation.
+        provider: { operation: "extract_artifact", activeTarget: undefined },
+      },
+    };
+    const notProvider: ContractToolBindings = {
+      inspect_pe_imports: {
+        admission: "sdk",
+        // @ts-expect-error A tool that is no provider operation binds no provider.
+        provider: { operation: "xrefs", activeTarget: undefined },
+      },
+    };
+    expect(() =>
+      registerContractTools(evidenceServer(), mismatched, {
+        logger: silentLogger,
+        withAdmittedAnalysis: async () => {
+          throw new Error("not called");
+        },
+      }),
+    ).toThrow("MCP tool xrefs binds provider operation extract_artifact");
+    expect(notProvider).toBeDefined();
   },
 );

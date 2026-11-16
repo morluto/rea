@@ -24,7 +24,10 @@ import {
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import { parseKernelModule } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
@@ -75,9 +78,6 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 }
 
-const TEXT_BUDGET =
-  "The kernel-module entry text and hash budget fixed by the admitted image length";
-
 const inputBudgetRemediation = (
   boundary: "file-size" | "capacity",
   input: InspectKernelModuleInput,
@@ -106,6 +106,7 @@ const kernelModuleFailurePrimary = (
         ...fixedAllowanceOptions(
           "The ELF structural decoding allowance",
           "parser",
+          binaryResourceCeiling(cause),
         ),
       },
     );
@@ -122,9 +123,8 @@ const kernelModuleFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
-      // Caller-selected read and entry budgets name the bound to raise.
-      // Entry text and hashes are bounded by the admitted image, so host
-      // memory cannot raise that ceiling.
+      // Caller-selected read and entry budgets name the bound to raise; a
+      // memory limit keeps only a ceiling its reader named.
       const textBudget = cause.boundary === "memory";
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -139,7 +139,12 @@ const kernelModuleFailurePrimary = (
           ...(cause.boundary === undefined
             ? {}
             : textBudget
-              ? fixedAllowanceOptions(TEXT_BUDGET, "parser")
+              ? cause.fixedAllowance === undefined
+                ? {}
+                : {
+                    retryable: false as const,
+                    fixedAllowance: cause.fixedAllowance,
+                  }
               : {
                   retryable: false as const,
                   remediationAction: inputBudgetRemediation(

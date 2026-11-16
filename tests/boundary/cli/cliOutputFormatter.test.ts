@@ -27,6 +27,54 @@ it.each([
   },
 );
 
+it.each<[string, unknown, "toon" | "json" | "yaml" | "jsonl", string]>([
+  ["no value as TOON", null, "toon", ""],
+  ["no value as JSON", undefined, "json", ""],
+  ["no value as YAML", null, "yaml", ""],
+  ["a scalar as TOON", 12, "toon", "12"],
+  ["text as TOON", "text", "toon", "text"],
+  [
+    "an object as TOON",
+    { a: 1, b: [1, 2], c: { d: "x" } },
+    "toon",
+    "a: 1\nb[2]: 1,2\nc:\n  d: x",
+  ],
+  [
+    "rows as TOON",
+    [
+      { id: 1, name: "a" },
+      { id: 2, name: "b" },
+    ],
+    "toon",
+    "[2]{id,name}:\n  1,a\n  2,b",
+  ],
+  ["JSON object text as JSON", '  {"a":1}  ', "json", '{\n  "a": 1\n}'],
+  ["JSON array text as JSON", "[1,2]", "json", "[\n  1,\n  2\n]"],
+  ["malformed JSON text as JSON", "{not json", "json", '"{not json"'],
+  ["plain text as JSON", "plain", "json", '"plain"'],
+  [
+    "nested BigInt values as JSON",
+    { big: 9007199254740993n, nested: [1n, { x: 2n }] },
+    "json",
+    '{\n  "big": "9007199254740993",\n  "nested": [\n    "1",\n    {\n      "x": "2"\n    }\n  ]\n}',
+  ],
+  [
+    "a BigInt value as JSON Lines",
+    { big: 9007199254740993n },
+    "jsonl",
+    '{"big":"9007199254740993"}',
+  ],
+  ["rows as JSON Lines", [{ a: 1 }, { a: 2 }], "jsonl", '{"a":1}\n{"a":2}'],
+  [
+    "an object as YAML",
+    { a: 1, b: [1, 2] },
+    "yaml",
+    "a: 1\nb:\n  - 1\n  - 2\n",
+  ],
+])("formats %s", (_name, value, format, expected) => {
+  expect(formatCliOutput(value, format)).toBe(expected);
+});
+
 const parseDelimited = (source: string, delimiter: string): string[][] => {
   const records: string[][] = [];
   let record: string[] = [];

@@ -87,6 +87,35 @@ it("counts the distinct full parent/report limitation union before bounding", ()
   }
 });
 
+it("bounds repeated call sites of a source unknown in every view while the parent keeps them all", () => {
+  const callSites = Array.from({ length: 12_000 }, (_, index) => ({
+    mechanism: "call:fetch",
+    location: { script_key: "app.js", line: index + 1, column: 0 },
+  }));
+  const unknown = {
+    dimension: "endpoints",
+    reason: "A browser request's URL argument is not a string literal.",
+    affected_script_keys: ["app.js"],
+    call_sites: callSites,
+  };
+  const parent = makeParent({ unknowns: [unknown] });
+  for (const selection of [
+    { kind: "summary" },
+    { kind: "web-bundle", collection: "endpoints", fields: ["value"] },
+  ]) {
+    const view = query(parent, selection);
+    const [projected] = (
+      view as {
+        source_unknowns: (typeof unknown & {
+          call_sites_omitted?: number;
+        })[];
+      }
+    ).source_unknowns;
+    expect(projected?.call_sites).toEqual(callSites.slice(0, 20));
+    expect(projected?.call_sites_omitted).toBe(callSites.length - 20);
+  }
+});
+
 it("retains distinct structured unknown scopes on filtered pages", () => {
   const unknowns = [
     {

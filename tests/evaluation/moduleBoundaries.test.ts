@@ -55,7 +55,7 @@ describe("binary production construction ownership", () => {
     ).toEqual([]);
   });
 
-  it("rejects the former runtime composition exception", () => {
+  it("rejects an application module that re-exports composition", () => {
     expect(
       inspectModuleBoundaries(
         "src/application/runtime.ts",
@@ -590,7 +590,7 @@ describe.each(["apple", "inventory", "extraction"])(
       ["../../application/Workflow.js", false],
       ["../../composition/android.js", false],
       ["../../cli.js", false],
-      ["../../server/registerEvidenceTools.js", false],
+      ["../../server/providerOperationToolHandler.js", false],
       ["../../main.ts", false],
       ["../../domain/apple/plistValue.js", true],
       ["../../domain/artifactInventorySnapshot.js", true],

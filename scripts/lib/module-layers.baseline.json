@@ -7,11 +7,8 @@
     "cli <-> cliOutput.ts",
     "main <-> server"
   ],
-  "crossProvider": {
-    "gpu -> artifacts": 1,
-    "model -> artifacts": 1
-  },
+  "crossProvider": {},
   "entry": {
-    "application -> desktop": 41
+    "application -> desktop": 14
   }
 }

@@ -27,6 +27,7 @@ import { functionDossierSchema } from "../../../src/domain/native/functionDossie
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const reference = (source: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -205,10 +206,13 @@ it("reports missing or wrong-kind records without recording a successful workflo
 });
 
 it("reports missing sources for a retained dossier with a large link set", async () => {
-  const client = new Client({
-    name: "large-evidence-links-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "large-evidence-links-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(
     new StdioClientTransport({

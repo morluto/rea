@@ -22,6 +22,7 @@ import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
+  classifyLaunchFailure,
   classifyProviderOutcome,
   type ProviderOutcomeContext,
 } from "../process/classifyProviderOutcome.js";
@@ -72,8 +73,13 @@ export interface ProviderFailureDialect {
     cause: unknown,
     details: AnalysisErrorOptions,
   ) => AnalysisError | undefined;
-  /** How this provider's owned commands report; absent when none ran. */
-  readonly command?: (outcome: ProviderOutcome) => ProviderOutcomeContext;
+  /**
+   * How this provider's owned commands report; absent when none ran. The
+   * dialect's `providerId` names the provider.
+   */
+  readonly command?: (
+    outcome: ProviderOutcome,
+  ) => Omit<ProviderOutcomeContext, "providerId">;
   /**
    * Report for a command whose cleanup failed, given its classified primary.
    * Without it the primary is composed with the unresolved resources.
@@ -176,9 +182,9 @@ const commandFailure = (
   cause: unknown,
   outcome: ProviderOutcome,
   dialect: ProviderFailureDialect,
-  command: (outcome: ProviderOutcome) => ProviderOutcomeContext,
+  command: NonNullable<ProviderFailureDialect["command"]>,
 ): AnalysisError => {
-  const context = command(outcome);
+  const context = { providerId: dialect.providerId, ...command(outcome) };
   if (!cleanupFailed(cause)) return classifyProviderOutcome(outcome, context);
   if (dialect.commandCleanup === undefined)
     return analysisErrorWithCleanupFailure(
@@ -264,10 +270,17 @@ export const classifyProviderFailure = (
 ): AnalysisError => {
   if (cause instanceof AnalysisError)
     return dialect.attribute?.(cause) ?? cause;
-  const outcome =
-    dialect.command === undefined ? undefined : providerOutcomeOf(cause);
+  const outcome = providerOutcomeOf(cause);
   if (outcome !== undefined && dialect.command !== undefined)
     return commandFailure(cause, outcome, dialect, dialect.command);
+  // A launcher's failure is classified by the shared owner even for a phase
+  // whose dialect describes no command reports.
+  if (outcome?.kind === "launch-failed")
+    return classifyLaunchFailure(outcome.failure, {
+      providerId: dialect.providerId,
+      operation: dialect.operation,
+      details: { cause },
+    });
   const { file } = dialect;
   const observation =
     file?.retainCompletedIdentity === true

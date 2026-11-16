@@ -1,12 +1,11 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { validateDebuggerStatusResponse } from "../../support/reverseDebuggerMcpTestHelpers.js";
@@ -15,6 +14,7 @@ import {
   createRizinTestManager,
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const test = it.skipIf(process.platform === "win32");
 
@@ -65,14 +65,11 @@ test.each([
         },
       },
     );
-    const server = new McpServer({ name: "rizin-stopped", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = rizinDebugMcpServer("rizin-stopped", manager);
+    const client = new Client(
+      { name: "rizin-stopped", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "rizin-stopped", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const call = (name: string, arguments_: Record<string, string>) =>
@@ -88,7 +85,7 @@ test.each([
       ).outputSchema.parse(
         (
           await call("start_rizin_debug_session", {
-            path: "fixture.bin",
+            path: "/tmp/fixture.bin",
             inferior_tty: await rizinTestInferiorTty(),
           })
         ).structuredContent,

@@ -40,6 +40,7 @@ import { z } from "zod";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../../src/domain/javascript/javascriptElectronMemberWrites.js";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
 import type { JavaScriptSemanticQueryInput } from "../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const execute = promisify(execFile);
 let cliSession: CliCommandSession | undefined;
@@ -58,10 +59,13 @@ const mcpTransport = new StdioClientTransport({
   stderr: "pipe",
 });
 mcpTransport.stderr?.on("data", () => undefined);
-const mcpClient = new Client({
-  name: "application-workflow-parity",
-  version: "1",
-});
+const mcpClient = new Client(
+  {
+    name: "application-workflow-parity",
+    version: "1",
+  },
+  { jsonSchemaValidator: createMcpSchemaValidation() },
+);
 let mcpConnection: Promise<void> | undefined;
 const connectedMcpClient = async (): Promise<Client> => {
   await (mcpConnection ??= mcpClient.connect(mcpTransport));

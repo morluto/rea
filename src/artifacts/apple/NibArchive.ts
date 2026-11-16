@@ -11,6 +11,7 @@ import {
   interfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
 
@@ -147,9 +148,7 @@ export const decodeNibArchive = (
   );
   for (const { value } of values.values()) {
     if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
+      isRecord(value) &&
       typeof value.$nib_object_ref === "number" &&
       value.$nib_object_ref >= objectCount
     )

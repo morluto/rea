@@ -18,7 +18,7 @@ import {
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
-import { classifyLaunchFailure } from "../dist/process/launchFailure.js";
+import { launcherFailureOf } from "../dist/process/launchFailure.js";
 
 // Compile every regular expression and schema the packaged server advertises,
 // in every schema profile, with the engines and validators clients and
@@ -80,11 +80,13 @@ const runHelper = async (
       }));
     }
   } catch (error) {
-    const refusal = classifyLaunchFailure(error);
-    if (refusal !== undefined)
+    // Only a launch refusal means the engine is not installed; a host
+    // capacity failure is a broken check.
+    const launch = launcherFailureOf(error);
+    if (launch?.kind === "missing" || launch?.kind === "not_executable")
       return engines.map((engine) => ({
         ...engine,
-        unavailable: `${command} could not start (${refusal.code})`,
+        unavailable: `${command} could not start (${launch.code})`,
       }));
     // A helper that started but failed is a broken check, not a missing
     // engine, so it fails even when engines are optional.

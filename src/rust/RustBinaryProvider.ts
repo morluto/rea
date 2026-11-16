@@ -375,6 +375,10 @@ const failureForPrimary = (
           : fixedAllowanceOptions(
               "This Rust dependency parser allowance",
               "parser",
+              {
+                limit: cause.constraint.reported_limits.maximum_bytes,
+                unit: "bytes",
+              },
             )),
       },
     );

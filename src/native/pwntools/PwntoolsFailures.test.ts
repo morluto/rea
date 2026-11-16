@@ -340,6 +340,31 @@ it.each(["ENOEXEC", "EACCES"])(
   },
 );
 
+it("keeps the launch owner's cause and facts on an unavailable selected Python", () => {
+  const launch = Object.assign(new Error("spawn /python EIO"), {
+    code: "EIO",
+    syscall: "spawn /python",
+    path: "/python",
+  });
+  const failure = pwntoolsDecoderFailure(
+    launch,
+    "decoder",
+    "/selected",
+    "/python",
+  );
+  expect(failure.cause).toBe(launch);
+  expect(failure.diagnostics).toMatchObject({
+    boundary: "provider-launch",
+    system_code: "EIO",
+    syscall: "spawn /python",
+    command: "/python",
+  });
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "provider_unavailable",
+    message: expect.stringContaining("EIO from spawn /python"),
+  });
+});
+
 it("does not read an errno from another syscall as a launch refusal", () => {
   const unrelated = Object.assign(new Error("open EACCES"), {
     code: "EACCES",

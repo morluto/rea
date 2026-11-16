@@ -397,24 +397,49 @@ it("rejects OS-invalid local inputs through the real advertised MCP contracts", 
       "capture_electron_scenario",
     ]),
   );
-  const relative = await call("extract_firmware", {
-    path: "/tmp/firmware.bin",
-    output_directory: "relative-output",
-  });
-  expect(parseMcpToolError(relative).error).toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "extract_firmware",
-      issues: [
-        expect.objectContaining({
-          path: ["output_directory"],
-          reason: "invalid_format",
-          expected: "regex",
-        }),
-      ],
-    },
-  });
 });
+
+// The MCP server's working directory is not the caller's, so a relative local
+// path would resolve against the wrong directory.
+it.each([
+  [
+    "extract_firmware",
+    { path: "/tmp/firmware.bin", output_directory: "relative-output" },
+    "output_directory",
+  ],
+  ["inspect_pcap_capture", { path: "capture.pcap" }, "path"],
+  [
+    "start_rizin_debug_session",
+    { path: "program", inferior_tty: "/dev/pts/7" },
+    "path",
+  ],
+  [
+    "start_rizin_debug_session",
+    { path: "/tmp/program", inferior_tty: "pts/7" },
+    "inferior_tty",
+  ],
+  ["start_gdb_session", { inferior_tty: "pts/7" }, "inferior_tty"],
+] as const)(
+  "refuses a relative local path for %s through the advertised MCP contract",
+  async (name, arguments_, field) => {
+    const { call } = await connectLocalToolsMcp();
+    expect(parseMcpToolError(await call(name, arguments_)).error).toMatchObject(
+      {
+        code: "invalid_request",
+        details: {
+          operation: name,
+          issues: [
+            expect.objectContaining({
+              path: [field],
+              reason: "invalid_format",
+              expected: "regex",
+            }),
+          ],
+        },
+      },
+    );
+  },
+);
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },

@@ -38,6 +38,7 @@ import type {
   CapabilityDescriptor,
 } from "../../../src/ports/AnalysisProvider.js";
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [
@@ -382,6 +383,7 @@ describe("live server identity over MCP", () => {
     const client = new Client(
       { name: "identity-test", version: "9" },
       {
+        jsonSchemaValidator: createMcpSchemaValidation(),
         capabilities: {
           elicitation: { form: {} },
         },
@@ -424,7 +426,10 @@ describe("live server identity over MCP", () => {
       { kind: "session", session },
       { environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" } },
     );
-    const client = new Client({ name: "compact-identity-test", version: "1" });
+    const client = new Client(
+      { name: "compact-identity-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -475,7 +480,10 @@ describe("active-target availability over MCP", () => {
       { kind: "session", session },
       { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
     );
-    const client = new Client({ name: "availability-test", version: "1" });
+    const client = new Client(
+      { name: "availability-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const directory = await createTestTempDirectory("rea-target-availability-");

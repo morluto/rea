@@ -1,5 +1,5 @@
 import { isUtf8 } from "node:buffer";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -57,6 +57,7 @@ import {
 } from "../domain/fridaCapturePolicy.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -455,7 +456,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         source.sourceKind === "inline"
           ? source.source
           : await readFile(source.path);
-      sourceSha256 = createHash("sha256").update(selectedSource).digest("hex");
+      sourceSha256 = sha256Hex(selectedSource);
       scriptSource =
         typeof selectedSource === "string"
           ? selectedSource
@@ -464,9 +465,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         sourceRepresentation = {
           encoding: "utf8",
           decoding: "replacement",
-          loadedSourceSha256: createHash("sha256")
-            .update(scriptSource)
-            .digest("hex"),
+          loadedSourceSha256: sha256Hex(scriptSource),
         };
     } catch (cause: unknown) {
       const sourcePath = source.sourceKind === "file" ? source.path : undefined;
@@ -1309,9 +1308,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     remote: FridaRemoteConnection,
   ): Promise<Device> {
     return this.#withRemoteLock(remote.address, async () => {
-      const optionsDigest = createHash("sha256")
-        .update(JSON.stringify(remoteOptions(remote)))
-        .digest("hex");
+      const optionsDigest = sha256Hex(JSON.stringify(remoteOptions(remote)));
       let reference = this.#remoteDevices.get(remote.address);
       if (reference !== undefined) {
         if (reference.optionsDigest !== optionsDigest)

@@ -1,5 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Parser, Schema, z } from "incur";
+import { Parser, Schema } from "incur";
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";

@@ -41,6 +41,7 @@ import {
 } from "../process/WindowsBatchCommand.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
+import { describeLaunchFailure } from "../process/launchFailure.js";
 import { pcapToolUnavailable } from "./PcapConfiguration.js";
 import {
   attributePcapLimitedExit,
@@ -107,10 +108,14 @@ export const runPcapCommand = async (options: {
     snapshot: ProviderProcessSnapshot,
   ): AnalysisCapturedOutput =>
     projectDiagnostic(capturedProviderOutput(snapshot));
-  /** A version probe that fails names the tool; a capture read names the file. */
+  /**
+   * A version probe that fails names the tool; a capture read names the file
+   * when the tool says it is not a capture. `unrecognised` reports the rest.
+   */
   const pcapToolFailure = (
     diagnostic: string,
     details: AnalysisErrorOptions,
+    unrecognised: (reason: string) => AnalysisError,
   ): AnalysisError => {
     if (options.inputPath === undefined)
       return pcapToolUnavailable(
@@ -129,10 +134,7 @@ export const runPcapCommand = async (options: {
         diagnostic,
         details,
       );
-    return new AnalysisProtocolError(
-      `Packet capture tool ${command} failed: ${diagnostic}`,
-      details,
-    );
+    return unrecognised(`Packet capture tool ${command} failed: ${diagnostic}`);
   };
   if (signal?.aborted) throw cancelledBy(operation, signal);
   const hostEnvironment = {
@@ -291,9 +293,14 @@ export const runPcapCommand = async (options: {
           `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
           details,
         );
-      throw pcapToolFailure(diagnostic, details);
+      throw pcapToolFailure(
+        diagnostic,
+        details,
+        (reason) => new AnalysisProtocolError(reason, details),
+      );
     }
     throw classifyProviderOutcome(outcome, {
+      providerId: "pcap",
       operation,
       capturedOutput: captureDiagnostic,
       details: cleanupDetails,
@@ -303,49 +310,55 @@ export const runPcapCommand = async (options: {
         recovery: fixedAllowanceOptions(
           "The packet-tool output capture allowance",
           "capture",
+          { limit: limits.maxOutputBytes, unit: "bytes" },
         ),
       },
       memoryLimitBytes: options.nativeBound?.memoryLimitBytes,
-      dialect: (failure, details) => {
-        if (
-          failure.kind === "launch-refused" &&
-          // Only a launcher naming the launched path identifies who refused.
-          failure.refusal.executable === launchedPath
-        ) {
-          if (selectedLimiter !== undefined) {
-            const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${failure.refusal.code}).`;
-            return new AnalysisCapabilityUnavailableError(
-              "pcap",
-              operation,
-              reason,
-              {
-                ...details,
-                userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
-                remediationAction: PCAP_LIMITER_REMEDIATION,
-              },
-            );
-          }
-          return pcapToolUnavailable(
-            operation,
-            failure.refusal.kind === "missing"
-              ? `Selected tool ${command} was not found (${failure.refusal.code})`
-              : `Selected tool ${command} exists but could not be executed (${failure.refusal.code})`,
+      launchUnavailable: (failure, details) => {
+        // Only a launcher naming the launched path identifies who failed.
+        if (failure.executable !== launchedPath) {
+          if (!commandAttempted)
+            return preparationFailure(outcome.message, details);
+          return new AnalysisProtocolError(
+            `The packet command could not start; the failing stage is unknown: ${outcome.message}`,
             details,
           );
         }
+        const code = describeLaunchFailure(failure);
+        if (selectedLimiter !== undefined) {
+          const reason = `Selected capture limiter ${selectedLimiter} could not be launched (${code}).`;
+          return new AnalysisCapabilityUnavailableError(
+            "pcap",
+            operation,
+            reason,
+            {
+              ...details,
+              userMessage: `${reason} ${PCAP_LIMITER_REMEDIATION}`,
+              remediationAction: PCAP_LIMITER_REMEDIATION,
+            },
+          );
+        }
+        return pcapToolUnavailable(
+          operation,
+          failure.kind === "missing"
+            ? `Selected tool ${command} was not found (${code})`
+            : failure.kind === "not_executable"
+              ? `Selected tool ${command} exists but could not be executed (${code})`
+              : `Selected tool ${command} could not be launched (${code})`,
+          details,
+        );
+      },
+      dialect: (failure, details, unclassified) => {
+        // The examined outcome carries the exit facts; `detail` names the stage.
+        const unrecognised = (reason: string) =>
+          unclassified({ diagnostics: { detail: reason } });
         const diagnostic =
           failure.output?.snapshot.stderr.text.trim() || failure.message;
         if (!commandAttempted) return preparationFailure(diagnostic, details);
-        if (failure.kind === "launch-refused")
-          return new AnalysisProtocolError(
-            `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
-            details,
-          );
         if (selectedLimiter !== undefined) {
           if (failure.kind !== "exited" || failure.output === undefined)
-            return new AnalysisProtocolError(
+            return unrecognised(
               `The bounded packet command failed before its exit was observed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
-              details,
             );
           const attributed = attributePcapLimitedExit(selectedLimiter, {
             exitCode: failure.exitCode,
@@ -375,7 +388,7 @@ export const runPcapCommand = async (options: {
             );
           // Otherwise prlimit started the tool; its exit and output are the tool's.
         }
-        return pcapToolFailure(diagnostic, details);
+        return pcapToolFailure(diagnostic, details, unrecognised);
       },
     });
   }

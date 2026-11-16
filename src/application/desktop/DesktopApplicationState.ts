@@ -71,6 +71,7 @@ import {
   DESKTOP_PROVIDER,
   desktopOperationFailure,
 } from "./DesktopCaptureRefusals.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "inspect_desktop_application_state";
 
@@ -435,9 +436,7 @@ const hasDconfGroups = (version: Version): boolean => {
   const view = version.view;
   return (
     version.format === "dconf" &&
-    typeof view === "object" &&
-    view !== null &&
-    !Array.isArray(view) &&
+    isRecord(view) &&
     typeof view.groups === "object" &&
     view.groups !== null &&
     Object.keys(view.groups).length > 0

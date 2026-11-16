@@ -5,6 +5,7 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const open: { client: Client; server: EvidenceMcpServer }[] = [];
 afterEach(async () => {
@@ -36,7 +37,10 @@ it("binds runtime settings through the shared table, outside analysis admission"
       },
     },
   );
-  const client = new Client({ name: "settings-client", version: "1" });
+  const client = new Client(
+    { name: "settings-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
