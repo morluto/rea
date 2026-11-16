@@ -247,6 +247,94 @@ export const requiredRuntimeLimitFailure = (
   return `${name} must join ANALYSIS_SETTINGS; numericLimitRegistry cannot classify it`;
 };
 
+const objectPropertyText = (obj, name) => {
+  if (!ts.isObjectLiteralExpression(obj)) return undefined;
+  for (const prop of obj.properties) {
+    if (
+      ts.isPropertyAssignment(prop) &&
+      (ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name)) &&
+      prop.name.text === name
+    )
+      return literalText(unwrapExpression(prop.initializer));
+  }
+  return undefined;
+};
+
+/**
+ * Read NUMERIC_LIMIT_REGISTRY entries from source. Property order and
+ * indentation do not matter; the TypeScript parser owns the shape.
+ */
+export const readNumericLimitRegistryEntries = (source) => {
+  const sourceFile = ts.createSourceFile(
+    "numericLimitRegistry.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const entries = [];
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "NUMERIC_LIMIT_REGISTRY"
+    ) {
+      const array = unwrapExpression(node.initializer);
+      if (ts.isArrayLiteralExpression(array)) {
+        for (const element of array.elements) {
+          const obj = unwrapExpression(element);
+          const name = objectPropertyText(obj, "name");
+          if (name === undefined) continue;
+          entries.push({
+            name,
+            updateMode: objectPropertyText(obj, "update_mode"),
+            policy: objectPropertyText(obj, "policy"),
+            read: objectPropertyText(obj, "read"),
+            reason: objectPropertyText(obj, "reason"),
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return entries;
+};
+
+/**
+ * Read every ANALYSIS_SETTINGS entry's updateMode. Indentation does not
+ * matter; the TypeScript parser owns the shape.
+ */
+export const readAnalysisSettingUpdateModes = (source) => {
+  const sourceFile = ts.createSourceFile(
+    "analysisSettingDefinitions.ts",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const modes = [];
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "ANALYSIS_SETTINGS"
+    ) {
+      const obj = unwrapExpression(node.initializer);
+      if (ts.isObjectLiteralExpression(obj)) {
+        for (const prop of obj.properties) {
+          if (!ts.isPropertyAssignment(prop)) continue;
+          const body = unwrapExpression(prop.initializer);
+          modes.push(objectPropertyText(body, "updateMode"));
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return modes;
+};
+
 const namesIn = (source, pattern) =>
   new Set([...source.matchAll(pattern)].map((match) => match[1]));
 
@@ -262,17 +350,12 @@ if (direct) {
   const declaredNames = [
     ...registry.matchAll(/name:\s*"(REA_[A-Z0-9_]+)"/gu),
   ].map((match) => match[1]);
-  const entries = [
-    ...registry.matchAll(
-      /name:\s*"(REA_[A-Z0-9_]+)"\s*,\s*update_mode:\s*"(runtime|restart)"\s*,\s*policy:\s*"(restart-only|per-call)"\s*,\s*read:\s*"(startup|per-call)"\s*,\s*reason:\s*"((?:\\.|[^"\\])*)"/gu,
-    ),
-  ];
   const listed = new Map();
-  for (const match of entries) {
-    const [, name, updateMode, policy, read, reason] = match;
+  for (const entry of readNumericLimitRegistryEntries(registry)) {
+    const { name, updateMode, policy, read, reason } = entry;
     if (listed.has(name)) failures.push(`${name} is listed twice`);
     listed.set(name, { updateMode, policy, read, reason });
-    if (reason.trim().length < 40)
+    if (reason === undefined || reason.trim().length < 40)
       failures.push(`${name} needs a reason that states why`);
     if (updateMode !== "restart")
       failures.push(
@@ -291,13 +374,11 @@ if (direct) {
     if (!listed.has(name))
       failures.push(`${name} is registered without update_mode`);
   }
-  const settingBodies = [
-    ...definitions.matchAll(/\n {2}"[^"]+": \{([\s\S]*?)\n {2}\},/gu),
-  ];
-  if (settingBodies.length === 0)
+  const settingModes = readAnalysisSettingUpdateModes(definitions);
+  if (settingModes.length === 0)
     failures.push("ANALYSIS_SETTINGS did not parse into setting bodies");
-  for (const [, body] of settingBodies) {
-    if (!/updateMode:\s*"(?:runtime|restart)"/u.test(body))
+  for (const mode of settingModes) {
+    if (mode !== "runtime" && mode !== "restart")
       failures.push("an analysis setting is missing updateMode");
   }
 

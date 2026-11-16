@@ -148,21 +148,37 @@ export const retainLiteralCandidatesWithinResultBudget = <
     { ...facts, inferences: [] },
     resultBudgetBytes,
   );
+  // Fast path: only literals are ever dropped for the budget. With no literal
+  // candidate there is nothing to fit and no omission record to produce.
+  if (!measured.some((slot) => slot.literal)) {
+    return {
+      inferences: [...inferences],
+      admittedCount: 0,
+      omittedByCount,
+      omittedByCountExact,
+      omittedByResultBudget: 0,
+    };
+  }
   const selected: typeof measured = [];
+  // Running totals keep the pass linear instead of recounting every selected
+  // record on each append/removal (which made result counting quadratic).
   let payload = 0;
+  let admittedCount = 0;
   let byteDropped = 0;
-  const recount = (): void => {
-    payload = selected.reduce(
-      (sum, slot, index) => sum + slot.bytes + (index === 0 ? 0 : 1),
-      0,
-    );
+  const append = (slot: (typeof measured)[number]): void => {
+    selected.push(slot);
+    payload += slot.bytes + (selected.length > 1 ? 1 : 0);
+    if (slot.literal) admittedCount += 1;
   };
-  const admitted = (): number =>
-    selected.reduce((count, slot) => count + (slot.literal ? 1 : 0), 0);
+  const removeAt = (index: number): void => {
+    const [removed] = selected.splice(index, 1);
+    payload -= removed.bytes + (selected.length > 0 ? 1 : 0);
+    if (removed.literal) admittedCount -= 1;
+  };
   const metadataBytes = (): number => {
     const limit = webBundleEndpointLiteralLimit(
       admission,
-      admitted(),
+      admittedCount,
       omittedByCount,
       byteDropped,
       omittedByCountExact,
@@ -178,21 +194,18 @@ export const retainLiteralCandidatesWithinResultBudget = <
   const dropLastLiteral = (): boolean => {
     const index = selected.findLastIndex((slot) => slot.literal);
     if (index < 0) return false;
-    selected.splice(index, 1);
+    removeAt(index);
     byteDropped += 1;
-    recount();
     return true;
   };
   for (const slot of measured) {
-    selected.push(slot);
-    recount();
+    append(slot);
     if (!slot.literal) {
       while (estimated() > resultBudgetBytes && dropLastLiteral());
       continue;
     }
     if (estimated() > resultBudgetBytes) {
-      selected.pop();
-      recount();
+      removeAt(selected.length - 1);
       byteDropped += 1;
       while (estimated() > resultBudgetBytes && dropLastLiteral());
     }
@@ -203,7 +216,7 @@ export const retainLiteralCandidatesWithinResultBudget = <
   while (checks <= selected.length) {
     const limit = webBundleEndpointLiteralLimit(
       admission,
-      admitted(),
+      admittedCount,
       omittedByCount,
       byteDropped,
       omittedByCountExact,
@@ -221,7 +234,7 @@ export const retainLiteralCandidatesWithinResultBudget = <
   }
   return {
     inferences: selected.map((slot) => slot.item),
-    admittedCount: admitted(),
+    admittedCount,
     omittedByCount,
     omittedByCountExact,
     omittedByResultBudget: byteDropped,

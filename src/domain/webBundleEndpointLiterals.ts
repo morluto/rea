@@ -26,6 +26,11 @@ export const webBundleEndpointLiteral = (
   const value = stringValue(node);
   if (value === undefined || /[\s\u0000-\u001f\u007f]/u.test(value))
     return undefined;
+  // A backslash can encode a cross-origin reference in a browser
+  // (`/\user:pass@host/path`), which would expose URL authentication in
+  // `endpoint_candidate.value`. Reject any backslash outright: a transport
+  // path or URL literal has none.
+  if (value.includes("\\")) return undefined;
   if (/^\/(?![/?#])[^/?#]+/u.test(value))
     return { value, detector: "literal:path-shaped" };
   if (/^(?:https?|wss?):\/\//iu.test(value) && URL.parse(value) !== null)

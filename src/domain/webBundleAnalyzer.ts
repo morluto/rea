@@ -110,13 +110,19 @@ const reservedRouteFactBytes = (
   resultBudgetBytes: number,
 ): number => {
   if (routeFacts === null) return 0;
-  const countLimit = webBundleEndpointLiteralLimit(
-    admission,
-    0,
-    omittedByCount,
-    0,
-    omittedByCountExact,
-  );
+  const hasLiterals = inferences.some((item) => isLiteralEndpointCandidate(item));
+  const countLimit = hasLiterals
+    ? webBundleEndpointLiteralLimit(
+        admission,
+        0,
+        omittedByCount,
+        // Reserve room for the omission record even when the count ceiling
+        // omits nothing yet: dropping a literal for the result budget adds
+        // endpoint_literal_candidates, which must not displace checked routes.
+        1,
+        omittedByCountExact,
+      )
+    : undefined;
   const base = {
     ...(stableFacts as object),
     inferences: inferences.filter((item) => !isLiteralEndpointCandidate(item)),

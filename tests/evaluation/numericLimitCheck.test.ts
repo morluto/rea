@@ -3,6 +3,8 @@ import {
   NUMERIC_LIMIT_DECLARATION,
   discoverNumericLimitUses,
   isNumericLimit,
+  readAnalysisSettingUpdateModes,
+  readNumericLimitRegistryEntries,
   requiredRuntimeLimitFailure,
 } from "../../scripts/verify/rea-numeric-limits.mjs";
 
@@ -175,4 +177,39 @@ it("keeps an exact template used as an environment key", () => {
     },
   ]);
   expect(discovered.get(name)).toBe("src/config/newLimit.ts");
+});
+
+it("reads registry entries regardless of property order", () => {
+  const entries = readNumericLimitRegistryEntries(`
+export const NUMERIC_LIMIT_REGISTRY = [
+  {
+    name: "REA_REORDERED_MAX_BYTES",
+    policy: "per-call",
+    update_mode: "restart",
+    read: "per-call",
+    reason: "A reason long enough to explain why this limit is registered here.",
+  },
+];`);
+  expect(entries).toEqual([
+    {
+      name: "REA_REORDERED_MAX_BYTES",
+      updateMode: "restart",
+      policy: "per-call",
+      read: "per-call",
+      reason: "A reason long enough to explain why this limit is registered here.",
+    },
+  ]);
+});
+
+it("reads analysis settings regardless of indentation", () => {
+  const modes = readAnalysisSettingUpdateModes(`
+export const ANALYSIS_SETTINGS = {
+    first: {
+        updateMode: "runtime",
+    },
+  second: {
+      updateMode: "restart",
+  },
+};`);
+  expect(modes).toEqual(["runtime", "restart"]);
 });
