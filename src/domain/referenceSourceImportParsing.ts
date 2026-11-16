@@ -7,6 +7,7 @@ import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.
 import { readExactJavaScriptLiteral } from "./javascript/javascriptAstValues.js";
 import {
   parseRecoveredJavaScript,
+  JavaScriptLoaderSyntaxError,
   parserPluginsForPath,
   type JavaScriptPackageType,
 } from "./javascript/javascriptSourceParser.js";
@@ -252,7 +253,7 @@ const parseWithBabel = (
   packageType: JavaScriptPackageType | undefined,
 ): {
   ast: File | undefined;
-  reasons: readonly string[];
+  reasons: readonly Pick<ReferenceSourceParseFailure, "parser" | "reason">[];
   moduleOnlyErrors: readonly string[];
 } => {
   // The shared parser owns filename precedence and observed package context.
@@ -272,13 +273,24 @@ const parseWithBabel = (
     );
     return {
       ast,
-      reasons: ast.errors.map((error) => error.message),
+      reasons: ast.errors.map((error) => ({
+        parser:
+          error instanceof JavaScriptLoaderSyntaxError
+            ? "rea-node-loader"
+            : "babel",
+        reason: error.message,
+      })),
       moduleOnlyErrors,
     };
   } catch (cause: unknown) {
     return {
       ast: undefined,
-      reasons: [cause instanceof Error ? cause.message : "Parse failed"],
+      reasons: [
+        {
+          parser: "babel",
+          reason: cause instanceof Error ? cause.message : "Parse failed",
+        },
+      ],
       moduleOnlyErrors: [],
     };
   }
@@ -347,8 +359,7 @@ export const parseReferenceSourceImports = (
         ];
   const parseFailures = reasons.map((reason) => ({
     path,
-    parser: "babel",
-    reason,
+    ...reason,
   }));
 
   if (ast === undefined) {

@@ -23,9 +23,112 @@ import { referenceSourceRequireCalls } from "../referenceSourceRequireBindings.j
 
 import {
   javaScriptRuntimeContext,
+  parseJavaScriptSource,
   parseRecoveredJavaScript,
   parserPluginsForPath,
 } from "./javascriptSourceParser.js";
+
+it.each([
+  ["main.js", "commonjs", "void new.target; return;", false],
+  ["main.js", "unspecified", "void new.target; return;", false],
+  ["main.js", "module", "return;", true],
+  ["main.mjs", "commonjs", "return;", true],
+  ["main.js", "unspecified", "export const marker=1; return;", true],
+  ["main.ts", "commonjs", "return;", true],
+  ["main.cts", "module", "void new.target;", true],
+  ["main.d.cts", "commonjs", "return;", true],
+  ["main.ts", "commonjs", "var await = 1;", false],
+  ["main.cts", "module", "var await = 1;", false],
+] as const)(
+  "selects loader grammar before interpreting %s (%s): %s",
+  (path, packageType, source, invalid) => {
+    const application = parseJavaScriptSource(source, path, packageType);
+    const reference = parseRecoveredJavaScript(
+      source,
+      path,
+      {
+        plugins: parserPluginsForPath(path),
+        allowReturnOutsideFunction: true,
+      },
+      packageType,
+    ).file;
+    expect(application).not.toBeNull();
+    expect((application?.errors.length ?? 0) > 0).toBe(invalid);
+    expect(reference.errors.length > 0).toBe(invalid);
+  },
+);
+
+it.each([
+  ["const module=1;", "module"],
+  ["let require;", "require"],
+  ["class __filename {}", "__filename"],
+  ["const {value: exports}={value: 1};", "exports"],
+  ["const [__dirname]=['x'];", "__dirname"],
+] as const)(
+  "distinguishes a detected module from wrapper collision: %s",
+  (declaration, name) => {
+    const prefix = "void '😀'; ";
+    const source = `const face='😀';\r\n${prefix}${declaration}`;
+    for (const context of ["unspecified", "commonjs"] as const) {
+      const application = parseJavaScriptSource(source, "entry.js", context);
+      const reference = parseRecoveredJavaScript(
+        source,
+        "entry.js",
+        {
+          plugins: parserPluginsForPath("entry.js"),
+          allowReturnOutsideFunction: true,
+        },
+        context,
+      ).file;
+      if (application === null) throw new Error("Expected recovered source");
+      for (const file of [application, reference]) {
+        expect(javaScriptRuntimeContext(file.program)).toBe(
+          context === "unspecified" ? "module" : "commonjs",
+        );
+        if (context === "unspecified") expect(file.errors).toEqual([]);
+        else
+          expect(file.errors).toEqual([
+            expect.objectContaining({
+              reasonCode: "CommonJsWrapperLexicalDeclaration",
+              pos: source.lastIndexOf(name),
+              loc: expect.objectContaining({
+                line: 2,
+                column: prefix.length + declaration.lastIndexOf(name),
+              }),
+            }),
+          ]);
+      }
+    }
+  },
+);
+
+it.each([
+  "var module;",
+  "function module(){}",
+  "{let module;}",
+  "for(let module of []) {}",
+  "const value=function(module){};",
+  "class Value { module=1; }",
+])(
+  "keeps wrapper-compatible bindings in the CommonJS script: %s",
+  (declaration) => {
+    const source = `${declaration} void new.target; return;`;
+    const application = parseJavaScriptSource(
+      source,
+      "entry.js",
+      "unspecified",
+    );
+    const reference = parseRecoveredJavaScript(
+      source,
+      "entry.js",
+      { plugins: parserPluginsForPath("entry.js") },
+      "unspecified",
+    ).file;
+    expect(application?.errors).toEqual([]);
+    expect(reference.errors).toEqual([]);
+    expect(javaScriptRuntimeContext(reference.program)).toBe("commonjs");
+  },
+);
 
 it("does not treat suffix-only dotfiles as JSON or native addon loaders", () => {
   expect(isJsonModuleTarget(".json", "json")).toBe(false);
