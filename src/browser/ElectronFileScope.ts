@@ -15,8 +15,10 @@ import {
   withArtifactFileHandle,
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
 } from "../resources/index.js";
-import { asarNodeSchema } from "../artifacts/AsarNode.js";
+import { asarNodeSchema } from "../domain/asarNode.js";
 import {
   regularFileState,
   sameRegularFileState,
@@ -24,15 +26,11 @@ import {
 } from "../filesystem/RegularFile.js";
 
 import {
-  admitAsarHeader,
-  asarHeaderAdmissionFailure,
-} from "../artifacts/AsarHeader.js";
-import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"

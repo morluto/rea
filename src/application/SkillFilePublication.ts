@@ -7,6 +7,7 @@ import { fileHandleMatchesBytes } from "../filesystem/fileHandleMatchesBytes.js"
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The read owner's byte-exact original and selected identity. */
 export interface SkillFileSnapshot {
@@ -48,7 +49,7 @@ export class SkillFilePreparationFailure extends Error {
     readonly cleanupCause: unknown,
   ) {
     super(
-      `Skill staging cleanup failed for ${publication.path}: ${primary instanceof Error ? primary.message : String(primary)}; cleanup: ${cleanupCause instanceof Error ? cleanupCause.message : String(cleanupCause)}`,
+      `Skill staging cleanup failed for ${publication.path}: ${errorMessage(primary)}; cleanup: ${errorMessage(cleanupCause)}`,
       {
         cause: new AggregateError([primary, cleanupCause]),
       },

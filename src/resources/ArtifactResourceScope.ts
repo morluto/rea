@@ -5,12 +5,16 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import type { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 
-import type { ArtifactReader } from "./ArtifactReader.js";
+import type {
+  ArtifactReader,
+  ArtifactReaderFailureOptions,
+} from "./ArtifactReader.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
 } from "./ArtifactReader.js";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Capabilities the scope needs from an output tree and a private runtime
@@ -88,7 +92,7 @@ export class ArtifactResourceRetryFailure extends ArtifactReaderFailure {
       readonly lease: AnalysisCleanupLease;
     }[],
     message: string,
-    options: ConstructorParameters<typeof ArtifactReaderFailure>[2],
+    options?: ArtifactReaderFailureOptions,
   ) {
     super("unavailable", message, options);
     this.failedOwners = failures.map(({ owner }) => owner);
@@ -275,11 +279,7 @@ export class ArtifactResourceScope {
     return err(
       new AggregateError(
         failures,
-        failures
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        failures.map((cause) => errorMessage(cause)).join("; "),
       ),
     );
   }

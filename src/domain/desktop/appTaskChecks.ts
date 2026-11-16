@@ -22,7 +22,7 @@ import {
   zipEntryAt,
   zipLeavesOutAt,
 } from "./zipView.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {

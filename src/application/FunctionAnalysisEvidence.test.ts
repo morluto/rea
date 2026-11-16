@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
@@ -64,7 +65,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
       sha256: "b".repeat(64),
     };
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       provider,
       {
         operation: "health",
@@ -119,7 +120,8 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
         kind: "address",
         address: "0x401000",
       });
-      if (binding === "no-subject") expect(evidence.subject).toBeNull();
+      if (binding === "no-subject")
+        expect(evidence.subject.identity.kind).toBe("unknown");
       else
         expect(evidence.subject?.local_path).toBe(
           binding === "selected-target" ? target.path : subject.path,
@@ -169,7 +171,7 @@ it.each(["provider-failure", "invalid-dossier"] as const)(
 );
 
 it("retains malformed dossier facts and source links through public error projection", async () => {
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "health",
     parameters: {},
     result: "retained source",
@@ -197,7 +199,7 @@ it("retains malformed dossier facts and source links through public error projec
   const retained = parseEvidence(projected.details?.partial_observation);
   expect(retained.normalized_result).toEqual(malformed);
   expect(retained.raw_result).toEqual({ text: "original provider output" });
-  expect(retained.subject).toBeNull();
+  expect(retained.subject.identity.kind).toBe("unknown");
   expect(retained.evidence_links).toEqual([source.evidence_id]);
   expect(retained.locations).toEqual([
     { kind: "address", address: "0x401000" },

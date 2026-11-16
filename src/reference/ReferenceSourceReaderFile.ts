@@ -22,10 +22,8 @@ import {
   sameFile,
   validateDirectory,
 } from "./ReferenceSourceReaderValidate.js";
-import type {
-  ReferenceSourceEntry,
-  StableFileRequest,
-} from "./ReferenceSourceReaderTypes.js";
+import type { ReferenceSourceEntry } from "./ReferenceSourceReaderTypes.js";
+import type { StableFileRequest } from "./ReferenceSourceReaderTraversal.js";
 
 const READ_CHUNK_BYTES = 64 * 1024;
 

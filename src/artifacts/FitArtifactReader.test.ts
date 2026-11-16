@@ -545,7 +545,9 @@ it("preserves a final validation failure when cancellation overlaps it", async (
   );
   const controller = new AbortController();
   const finalValidation = phaseGate();
-  const failure = new ArtifactReaderFailure("integrity", "carrier changed");
+  const failure = new ArtifactReaderFailure("integrity", "carrier changed", {
+    integrityCheck: "container-identity",
+  });
   const read = ArtifactFileSource.prototype.read;
   const readChunks = fileChunks.readFileHandleChunks;
   let owner: ArtifactFileSource | undefined;

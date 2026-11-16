@@ -10,8 +10,10 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   ArtifactResourceScope,
+  DirectoryArtifactReader,
+  DirectoryArtifactEntryAccessDenied,
+  translateArtifactFailure,
 } from "../../resources/index.js";
-import { createHash } from "node:crypto";
 import {
   decodeLimit,
   isHostLimitFailure,
@@ -50,12 +52,7 @@ import {
   keyedArchiveResultSchema,
   projectKeyedArchive,
 } from "../../domain/apple/keyedArchive.js";
-import {
-  DirectoryArtifactReader,
-  DirectoryArtifactEntryAccessDenied,
-} from "../DirectoryArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 
@@ -65,6 +62,8 @@ import {
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
 import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
 /** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
@@ -425,7 +424,7 @@ const readSelectedKeyedArchive = async (
   const bytes = Buffer.concat(chunks, size);
   return decodeSelectedArchive(bytes, {
     targetSha256: input.targetSha256,
-    archiveSha256: createHash("sha256").update(bytes).digest("hex"),
+    archiveSha256: sha256Hex(bytes),
     resourceRoot: input.resourceRoot,
     parameters: selected,
     platform: input.platform,
@@ -490,7 +489,7 @@ const decodeSelectedArchive = (
         isHostLimitFailure(cause)
         ? "limit"
         : "format",
-      `Cannot decode selected Foundation keyed archive: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Cannot decode selected Foundation keyed archive: ${errorMessage(cause)}`,
       { cause },
     );
   }

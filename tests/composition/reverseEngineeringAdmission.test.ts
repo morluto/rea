@@ -1,3 +1,4 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,6 @@ import { expect, it } from "vitest";
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import {
   ownedFailure,
-  ownedLaunchRefusal,
   ownedOutput,
 } from "../support/reverseEngineeringCompositionFixtures.js";
 
@@ -34,8 +34,7 @@ it.each([
     const service = new TestReverseEngineeringService({
       runOwned: async (spawn) => {
         calls += 1;
-        if (mode === "failure")
-          throw ownedLaunchRefusal("ENOENT", spawn.command);
+        if (mode === "failure") throw spawnFailure("ENOENT", spawn.command);
         if (mode === "timeout") throw ownedFailure("timeout", null);
         await gate;
         return ownedOutput();
@@ -273,7 +272,7 @@ it.each([
     const controller = new AbortController();
     const failure =
       code === "EACCES"
-        ? ownedLaunchRefusal(code, "objdump")
+        ? spawnFailure(code, "objdump")
         : ownedFailure(
             code,
             captured

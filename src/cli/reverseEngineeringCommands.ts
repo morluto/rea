@@ -10,7 +10,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { evidenceSchema, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { ok } from "../domain/result.js";
@@ -46,6 +47,8 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
@@ -74,14 +77,12 @@ const cleanupOnlyCompleteEvidence = (
     error.partialObservation === undefined
   )
     return undefined;
-  const parsed = evidenceSchema.safeParse(error.partialObservation);
-  if (!parsed.success) return undefined;
-  const normalized = parsed.data.normalized_result;
-  return typeof normalized === "object" &&
-    normalized !== null &&
-    !Array.isArray(normalized) &&
-    normalized.completion_status !== "unknown"
-    ? parsed.data
+  // Only authenticated Evidence is recovered; otherwise the error stands.
+  const parsed = recognizeEvidence(error.partialObservation);
+  if (!parsed.ok || parsed.value === undefined) return undefined;
+  const normalized = parsed.value.normalized_result;
+  return isRecord(normalized) && normalized.completion_status !== "unknown"
+    ? parsed.value
     : undefined;
 };
 
@@ -117,13 +118,9 @@ const closeDebuggerCommandSession = async (
         reason:
           cause instanceof AggregateError
             ? cause.errors
-                .map((error: unknown) =>
-                  error instanceof Error ? error.message : String(error),
-                )
+                .map((error: unknown) => errorMessage(error))
                 .join("; ")
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
+            : errorMessage(cause),
         ...retainedDebuggerDiagnostics(cause),
       },
       {

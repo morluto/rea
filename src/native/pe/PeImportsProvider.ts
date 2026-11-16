@@ -11,7 +11,10 @@ import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  type FixedCeilingFacts,
+} from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_IMPORT_DLLS,
   MAX_INSPECT_PE_IMPORT_FILE_BYTES,
@@ -91,6 +94,7 @@ const functionRemediation = (input: InspectPeImportsInput): string =>
 const limitRecovery = (
   limit: PeImportLimit | null,
   input: InspectPeImportsInput,
+  ceiling: FixedCeilingFacts,
 ): ResourceConstraintRecovery => {
   switch (limit) {
     case "dlls":
@@ -102,13 +106,15 @@ const limitRecovery = (
       };
     case "retained_text":
       return fixedAllowanceOptions(
-        `The ${String(MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES)}-byte PE import retained-text allowance (this release has no runtime override; max_file_bytes, max_dlls and max_functions do not raise it)`,
+        "The PE import retained-text allowance (max_file_bytes, max_dlls and max_functions do not raise it)",
         "bytes",
+        { limit: MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES, unit: "bytes" },
       );
     case null:
       return fixedAllowanceOptions(
         "The PE structural decoding allowance",
         "parser",
+        ceiling,
       );
   }
 };
@@ -130,7 +136,7 @@ const peImportsFailure = (
           MAX_INSPECT_PE_IMPORT_FILE_BYTES,
         ),
       limits: PE_IMPORT_LIMITS,
-      limitRecovery: (limit) => limitRecovery(limit, input),
+      limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
     },
     snapshot,
   );

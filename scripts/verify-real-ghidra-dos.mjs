@@ -604,7 +604,7 @@ async function evidenceCall(name, arguments_) {
     { timeout: 240000 },
   );
   const evidence = parseEvidence(requireMcpOutput(result, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);
   return evidence;
@@ -625,7 +625,7 @@ async function cliEvidence(command, procedure, options = []) {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(stdout));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);
   assert.equal(digest(await readFile(targetPath)), sha256);

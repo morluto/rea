@@ -8,7 +8,6 @@ import { buildBinary } from "plist";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { InterfaceBuilderDecodeBudget } from "../../../src/artifacts/apple/InterfaceBuilderDecodeBudget.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
@@ -26,6 +25,7 @@ import {
   invalidInterfaceBuilderEncodings,
 } from "../../fixtures/interfaceBuilderEncoding.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const compile = async (
   command: string,
@@ -784,6 +784,10 @@ describe("bounded Interface Builder archive decoding", () => {
       const failure = new ArtifactReaderFailure(
         reason,
         "source acquisition failed",
+        {
+          integrityCheck:
+            reason === "integrity" ? "container-identity" : undefined,
+        },
       );
       const open = vi
         .spyOn(DirectoryArtifactReader.prototype, "open")

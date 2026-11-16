@@ -62,6 +62,8 @@ import {
   sourceMapLimitRecovery,
   type SourceMapLimits,
 } from "../domain/sourceMapLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -375,11 +377,11 @@ class SourceMapResponseCleanup extends Error {
         : new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
             cause,
             cleanup,
-            userMessage: cause instanceof Error ? cause.message : String(cause),
+            userMessage: errorMessage(cause),
           });
     this.#released.bind(this.failure.bindCleanupResourceOwner(this));
     const failed = (cause: unknown): void => {
-      reason = `Source-map response cancellation failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+      reason = `Source-map response cancellation failed: ${errorMessage(cause)}`;
       this.failure.retainSecondaryFailure(
         new ProviderCleanupError(
           "rea-cdp-browser",
@@ -910,7 +912,7 @@ const readBoundedText = async (
     offset += chunk.byteLength;
   }
   const responseIdentity: ResponseIdentity = {
-    sha256: createHash("sha256").update(joined).digest("hex"),
+    sha256: sha256Hex(joined),
     bytes,
     representation: "fetch-response-body-bytes",
   };

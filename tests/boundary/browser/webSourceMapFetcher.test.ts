@@ -1675,7 +1675,7 @@ describe("web source-map collection", () => {
     expect(result.items).toHaveLength(requests.length);
   });
 
-  it("includes source-map text above the former per-map byte budget", async () => {
+  it("includes source-map text above 8 MiB", async () => {
     const content = "x".repeat(8 * 1_024 * 1_024 + 1);
     const map = JSON.stringify({
       version: 3,

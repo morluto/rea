@@ -7,6 +7,7 @@ import { idaRegistrationTimeoutGuidance } from "./IdaConfiguration.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { busyHealthSchema } from "./IdaProtocolValues.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Pause between health reads while a freshly opened worker reports itself busy. */
 const BUSY_HEALTH_RETRY_MS = 100;
@@ -28,10 +29,7 @@ const busyToolName = (tool: string | undefined): string =>
   tool !== undefined && BUSY_TOOL_NAME.test(tool) ? tool : "unknown";
 
 const isBusyStatus = (raw: JsonValue): boolean =>
-  typeof raw === "object" &&
-  raw !== null &&
-  !Array.isArray(raw) &&
-  raw["status"] === "busy";
+  isRecord(raw) && raw["status"] === "busy";
 
 interface LastBusyHealth {
   readonly raw: JsonValue;

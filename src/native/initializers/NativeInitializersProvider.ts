@@ -31,11 +31,13 @@ import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProvider
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
 import { ElfPointerRelocationFailure } from "../../domain/native/elfPointerRelocations.js";
 import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
 import { readMachoInitializers } from "./MachoInitializers.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_initializers";
 
@@ -209,6 +211,10 @@ const failurePrimary = (
         ...fixedAllowanceOptions(
           "The native initializer structural allowance",
           "parser",
+          {
+            limit: cause.failure.limit.maximum,
+            ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+          },
         ),
       },
     );
@@ -223,6 +229,7 @@ const failurePrimary = (
         ...fixedAllowanceOptions(
           "The native initializer structural allowance",
           "parser",
+          binaryResourceCeiling(cause),
         ),
       },
     );
@@ -261,7 +268,7 @@ const failurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

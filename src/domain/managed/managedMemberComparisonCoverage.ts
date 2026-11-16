@@ -131,8 +131,18 @@ export type ManagedComparisonScope = ReturnType<typeof managedComparisonScope>;
 const resourceLimits = (
   result: ManagedMemberInspection,
 ): NonNullable<ManagedMemberComparisonResult["left"]["resource_limits"]> =>
-  result.coverage.issues.flatMap(({ code, scope, detail, offset }) =>
-    code === "resource-limit" ? [{ code, scope, detail, offset }] : [],
+  result.coverage.issues.flatMap(({ code, scope, detail, offset, limit }) =>
+    code === "resource-limit"
+      ? [
+          {
+            code,
+            scope,
+            detail,
+            offset,
+            ...(limit === undefined ? {} : { limit }),
+          },
+        ]
+      : [],
   );
 
 export const sideManifest = (
@@ -268,7 +278,9 @@ export const comparisonLimitations = (
       "At least one managed member observation did not examine ExportedType rows; its exported and forwarded types are unknown.",
     );
   if (
+    // optional-fact-default: null rows are reported as unknown by the limitation above.
     (left.exported_types?.length ?? 0) > 0 ||
+    // optional-fact-default: null rows are reported as unknown by the limitation above.
     (right.exported_types?.length ?? 0) > 0
   )
     limitations.push(

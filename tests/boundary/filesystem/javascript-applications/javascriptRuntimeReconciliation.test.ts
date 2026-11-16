@@ -8,7 +8,10 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { createElectronActiveEvidence } from "../../../../src/application/javascript/ElectronActiveEvidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
-import { createEvidence } from "../../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../../../src/domain/evidence.js";
 import { mappedRuntimePaths } from "../../../../src/domain/javascript/javascriptRuntimeStaticCandidates.js";
 import { projectRuntimeCaptures } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
 import { parseRuntimeCapture } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
@@ -62,14 +65,18 @@ it.each([
     const root = await applicationFixture();
     const application = await analyzeFixture(root);
     const runtime = electronRuntimeEvidence(root, SOURCE);
-    const invalidRuntime = createEvidence(undefined, runtime.provider, {
-      predicateType: runtime.predicate_type,
-      operation: runtime.operation,
-      parameters: { ...runtime.parameters, [parameter]: value },
-      result: runtime.normalized_result,
-      confidence: runtime.confidence,
-      authority: runtime.authority,
-    });
+    const invalidRuntime = createEvidence(
+      evidenceSubjectInput(runtime.subject),
+      runtime.provider,
+      {
+        predicateType: runtime.predicate_type,
+        operation: runtime.operation,
+        parameters: { ...runtime.parameters, [parameter]: value },
+        result: runtime.normalized_result,
+        confidence: runtime.confidence,
+        authority: runtime.authority,
+      },
+    );
 
     const result = reconcileJavaScriptRuntimeEvidence({
       static_layers: [{ role: "application", analysis: application }],
@@ -369,35 +376,39 @@ it("preserves unknown Electron frame provenance without linking it to an authori
   const inspection = electronPageInspectionSchema.parse(
     recorded.normalized_result,
   );
-  const evidence = createEvidence(undefined, recorded.provider, {
-    predicateType: recorded.predicate_type,
-    operation: recorded.operation,
-    parameters: recorded.parameters,
-    confidence: recorded.confidence,
-    authority: recorded.authority,
-    result: {
-      ...inspection,
-      completeness: {
-        ...inspection.completeness,
-        status: "attach_limited",
-        conditions: ["attach_limited"],
-        attach_limited_sections: ["scripts"],
-      },
-      scripts: {
-        ...inspection.scripts,
-        items: inspection.scripts.items.map((script) => ({
-          ...script,
-          frame_scope: "unknown",
-          has_source_url: true,
-          reported_url: "file:///reported-label.js",
-          frame_claims: {
-            script_event_frame_id: "declared-frame",
-            execution_context_frame_id: "context-frame",
-          },
-        })),
+  const evidence = createEvidence(
+    evidenceSubjectInput(recorded.subject),
+    recorded.provider,
+    {
+      predicateType: recorded.predicate_type,
+      operation: recorded.operation,
+      parameters: recorded.parameters,
+      confidence: recorded.confidence,
+      authority: recorded.authority,
+      result: {
+        ...inspection,
+        completeness: {
+          ...inspection.completeness,
+          status: "attach_limited",
+          conditions: ["attach_limited"],
+          attach_limited_sections: ["scripts"],
+        },
+        scripts: {
+          ...inspection.scripts,
+          items: inspection.scripts.items.map((script) => ({
+            ...script,
+            frame_scope: "unknown",
+            has_source_url: true,
+            reported_url: "file:///reported-label.js",
+            frame_claims: {
+              script_event_frame_id: "declared-frame",
+              execution_context_frame_id: "context-frame",
+            },
+          })),
+        },
       },
     },
-  });
+  );
   const captures = [parseRuntimeCapture(evidence, ["runtime_observations", 0])];
   expect(captures[0]?.scriptsCompleteWithinScope).toBe(false);
   const projected = projectRuntimeCaptures(captures);
@@ -529,14 +540,18 @@ it("refuses active Electron Evidence without its admitted execution paths", asyn
     input,
   );
   const { resolved_paths: _resolved, ...parameters } = runtime.parameters;
-  const withoutPaths = createEvidence(undefined, runtime.provider, {
-    predicateType: runtime.predicate_type,
-    operation: runtime.operation,
-    parameters,
-    result: runtime.normalized_result,
-    confidence: runtime.confidence,
-    authority: runtime.authority,
-  });
+  const withoutPaths = createEvidence(
+    evidenceSubjectInput(runtime.subject),
+    runtime.provider,
+    {
+      predicateType: runtime.predicate_type,
+      operation: runtime.operation,
+      parameters,
+      result: runtime.normalized_result,
+      confidence: runtime.confidence,
+      authority: runtime.authority,
+    },
+  );
 
   expect(
     reconcileJavaScriptRuntimeEvidence({
@@ -706,14 +721,18 @@ const sourceFreeRuntime = (runtimeRoot: string, scriptFile: string) => {
   );
   for (const script of observation.scripts.items)
     script.source = { included: false, reason: "not-requested" };
-  return createEvidence(undefined, runtime.provider, {
-    operation: runtime.operation,
-    predicateType: runtime.predicate_type,
-    parameters: runtime.parameters,
-    result: observation,
-    confidence: runtime.confidence,
-    authority: runtime.authority,
-  });
+  return createEvidence(
+    evidenceSubjectInput(runtime.subject),
+    runtime.provider,
+    {
+      operation: runtime.operation,
+      predicateType: runtime.predicate_type,
+      parameters: runtime.parameters,
+      result: observation,
+      confidence: runtime.confidence,
+      authority: runtime.authority,
+    },
+  );
 };
 
 const reconcileScriptLocation = (
@@ -944,14 +963,18 @@ const rendererCapture = (runtimeRoot: string, filePath: string) => {
   );
   observation.target.file_path = filePath;
   for (const frame of observation.frames) frame.file_path = filePath;
-  return createEvidence(undefined, runtime.provider, {
-    operation: runtime.operation,
-    predicateType: runtime.predicate_type,
-    parameters: runtime.parameters,
-    result: observation,
-    confidence: runtime.confidence,
-    authority: runtime.authority,
-  });
+  return createEvidence(
+    evidenceSubjectInput(runtime.subject),
+    runtime.provider,
+    {
+      operation: runtime.operation,
+      predicateType: runtime.predicate_type,
+      parameters: runtime.parameters,
+      result: observation,
+      confidence: runtime.confidence,
+      authority: runtime.authority,
+    },
+  );
 };
 
 it.skipIf(process.platform === "win32")(
