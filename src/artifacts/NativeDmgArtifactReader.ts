@@ -161,7 +161,10 @@ const createSystemHost = (
           },
           {
             timeoutMs: options?.timeoutMs ?? null,
-            diagnosticBytes: HDIUTIL_OUTPUT_BYTES,
+            diagnosticBytes: {
+              stdout: HDIUTIL_OUTPUT_BYTES,
+              stderr: HDIUTIL_OUTPUT_BYTES,
+            },
             acceptNonZeroExit: true,
             termination: HDIUTIL_TERMINATION,
           },
@@ -793,7 +796,9 @@ const existingImagePathListed = async (
 /**
  * The facts an interrupted or failed owned command reports, in the shape the
  * hdiutil classification reads: a deadline is ETIMEDOUT, and the stop signal
- * and retained output come from the command's snapshot.
+ * and retained output come from the command's snapshot. A command that exited
+ * on its own with complete output keeps its exit status even when its cleanup
+ * failed afterwards, so a verify exit is still classified from its diagnostics.
  */
 const commandFailureFacts = (cause: unknown): unknown => {
   if (!(cause instanceof OwnedCommandFailure)) return cause;
@@ -801,7 +806,15 @@ const commandFailureFacts = (cause: unknown): unknown => {
     cause.snapshot === null
       ? undefined
       : capturedProviderOutput(cause.snapshot);
+  const exitCode =
+    cause.reason === "process" &&
+    output !== undefined &&
+    !output.truncated &&
+    typeof output.exit_code === "number"
+      ? output.exit_code
+      : undefined;
   return {
+    ...(exitCode === undefined ? {} : { exitCode }),
     code:
       cause.reason === "timeout"
         ? "ETIMEDOUT"
@@ -843,6 +856,7 @@ const runChecked = async (
         { cause, cancellation: cause.cancellation },
       );
     const facts = commandFailureFacts(cause);
+    const exitCode = processExitCode(facts);
     throw new NativeDmgCommandFailure(
       classifyCommandFailure(facts, arguments_[0]),
       `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
@@ -850,7 +864,11 @@ const runChecked = async (
         arguments_,
       )}`,
       stdout,
-      { cause, processNotStarted: launcherFailureOf(cause) !== undefined },
+      {
+        cause,
+        processNotStarted: launcherFailureOf(cause) !== undefined,
+        ...(exitCode === undefined ? {} : { exitCode }),
+      },
     );
   }
   if (result.exitCode !== 0) {

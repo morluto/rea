@@ -1,4 +1,4 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
@@ -116,7 +116,6 @@ it.skipIf(process.platform !== "darwin").each([false, true])(
       controller.abort(reason);
       await result;
       await reader.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -156,7 +155,6 @@ it.skipIf(process.platform !== "darwin")(
     } finally {
       state.cleanupAllowed = true;
       await reader.close().catch(() => undefined);
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

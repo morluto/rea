@@ -222,3 +222,43 @@ it("reports an hdiutil retained while the reader closes, after its own cleanup c
   await reader.close();
   expect(closes).toBe(4);
 });
+
+it("classifies a verify exit from its diagnostics when the command's cleanup then failed", async () => {
+  const stderr = "hdiutil: verify failed - image not recognized";
+  const exited = new OwnedCommandFailure(
+    "process",
+    "Command cleanup failed.",
+    {
+      stdout: { text: "", bytes: 0, observedBytes: 0 },
+      stderr: {
+        text: stderr,
+        bytes: stderr.length,
+        observedBytes: stderr.length,
+      },
+      exitCode: 1,
+      signal: null,
+    },
+    "process group still present",
+  );
+  const host: NativeDmgHost = {
+    run: async () => {
+      throw exited;
+    },
+    close: async () => {},
+  };
+  const reader = new NativeDmgArtifactReader("/fixture/image.dmg", {}, host);
+  try {
+    const failure = await (async () => {
+      for await (const _entry of reader.entries()) {
+        /* consume */
+      }
+    })().catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      reason: "format",
+      exitCode: 1,
+      cause: exited,
+    });
+  } finally {
+    await reader.close();
+  }
+});
