@@ -5,7 +5,7 @@ import type {
   BinaryContainer,
   ImageSection,
   LoadRegion,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { createGoRodataStringFixture } from "../../tests/fixtures/go/rodataStringImage.js";
 import { readGoBinaryImage } from "./GoBinaryImage.js";
 import { recoverGoStringLiterals } from "./GoStringLiterals.js";
@@ -548,11 +548,29 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
     sections,
   };
 
-  const started = performance.now();
-  const recovered = recoverGoStringLiterals(bytes, container);
-  const elapsedMs = performance.now() - started;
-
-  expect(elapsedMs).toBeLessThan(500);
+  // Indexing reads each mapping, load region and section once or twice
+  // (100,000 reads here); a per-lookup scan reads 25,000 regions per lookup.
+  let tableReads = 0;
+  const budget = 8 * count;
+  const counted = <T extends object>(table: readonly T[]): readonly T[] =>
+    new Proxy(table, {
+      get(target, property, receiver) {
+        if (
+          typeof property === "string" &&
+          /^\d+$/u.test(property) &&
+          ++tableReads > budget
+        )
+          throw new Error("Container table read budget exceeded");
+        return Reflect.get(target, property, receiver) as unknown;
+      },
+    });
+  const recovered = recoverGoStringLiterals(bytes, {
+    ...container,
+    mappings: counted(mappings),
+    load_regions: counted(loadRegions),
+    sections: counted(sections),
+  } as BinaryContainer);
+  expect(tableReads).toBeLessThanOrEqual(budget);
   expect(recovered.items).toEqual([
     {
       value: literal,

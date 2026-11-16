@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import type { NugetAsset, NugetPackage } from "../nugetPackage/nugetPackage.js";
 import {
-  analysisViewRequestSchema,
   projectAnalysisView,
-  type AnalysisViewParent,
 } from "./analysisView.js";
 
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 const artifact = {
   path: "/artifacts/Example.1.0.0.nupkg",
   sha256: "0".repeat(64),
@@ -81,8 +81,7 @@ const parent = (): AnalysisViewParent => ({
   normalizedResult: freezeJsonSnapshot(report()),
   sealedResult: true,
   provider: { id: "rea-nuget-package", name: "Fixture", version: "1" },
-  artifact: null,
-  subject: null,
+  artifact: { path: artifact.path, sha256: artifact.sha256 },
   parameters: { path: artifact.path },
   limitations: ["Package metadata is publisher-provided."],
 });

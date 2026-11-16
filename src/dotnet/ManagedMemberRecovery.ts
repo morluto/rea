@@ -2,7 +2,7 @@ import {
   admitManagedProjection,
   ManagedRepresentationFailure,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,

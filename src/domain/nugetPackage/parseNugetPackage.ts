@@ -341,7 +341,8 @@ const nuspecOf = (
   if (!parsed.ok) {
     budget.add(
       member.path,
-      parsed.error.reason === "doctype"
+      parsed.error.kind === "unsupported" &&
+      parsed.error.failure.field === "doctype"
         ? "unsupported-nuspec-doctype"
         : "invalid-nuspec",
       parsed.error.message,

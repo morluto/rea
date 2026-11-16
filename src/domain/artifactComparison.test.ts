@@ -1,9 +1,9 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import {
-  compareArtifacts,
-  FORMAT_DECLARATION_UNKNOWN_LIMITATION,
-} from "./artifactComparison.js";
+import { compareArtifacts } from "./artifactComparison.js";
+import { readComparisonResult } from "./comparisonEvidenceResult.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -684,7 +684,11 @@ it.each([
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
   });
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
 });
 
 it("does not compare ESP signature block metadata", () => {
@@ -815,7 +819,11 @@ it("compares a node-less record's occurrence fields but not its limitations", ()
       dimensions: ["metadata", "availability"],
     }),
   ]);
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
   // A record's `executable` marking is a declared field like `encrypted`.
   expect(
     compareArtifacts(
@@ -859,5 +867,29 @@ it("compares a node-less record's recorded ASAR storage", () => {
   ).toMatchObject({
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
+  });
+});
+
+it("names the constraint an unchanged comparison with changes violates", () => {
+  const changed = compareArtifacts(
+    ARTIFACT_COMPARISON_EXAMPLE.left,
+    ARTIFACT_COMPARISON_EXAMPLE.right,
+  );
+  const read = readComparisonResult(
+    createEvidence(
+      unknownTarget("not-observed"),
+      ARTIFACT_COMPARISON_EXAMPLE.left.provider,
+      {
+        operation: "compare_artifacts",
+        parameters: {},
+        result: { ...changed, status: "unchanged" },
+      },
+    ),
+    "compare_artifacts",
+  );
+  if (read.ok) throw new Error("Expected the comparison to be refused");
+  expect(projectAnalysisError(read.error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { constraint: "unchanged-has-no-changes" },
   });
 });

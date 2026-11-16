@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { V8CodeCachePort } from "./V8CodeCachePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { V8CodeCachePort } from "../../ports/v8CodeCache/V8CodeCachePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

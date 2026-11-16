@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea inspect-byte-entropy --tok
+exit: 0
+--- stdout
+--token-limit<0x0b>--token-offset<0x0b>--token-count<end>
+--- stderr
+<end>

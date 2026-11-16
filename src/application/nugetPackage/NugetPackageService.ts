@@ -3,18 +3,18 @@ import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactFileSource } from "../../artifacts/ArtifactFileSource.js";
+} from "../../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { ArtifactFileSource } from "../../resources/ArtifactFileSource.js";
 import { hashReadableToCompletion } from "../../artifacts/ArtifactHash.js";
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
+import { ZipArtifactReader } from "../../resources/ZipArtifactReader.js";
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/StableArtifactFailure.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -326,6 +326,7 @@ export const inspectNugetPackageEvidence = async (
           throw new ArtifactReaderFailure(
             "integrity",
             `NuGet package changed during hashing: ${input.path}`,
+            { integrityCheck: "container-identity" },
           );
         artifact = {
           path: input.path,

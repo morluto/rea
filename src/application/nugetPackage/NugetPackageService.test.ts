@@ -1,4 +1,4 @@
-import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
+import { ZipArtifactReader } from "../../resources/ZipArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { NugetPackage } from "../../domain/nugetPackage/nugetPackage.js";
 import { inspectNugetPackageEvidence } from "./NugetPackageService.js";

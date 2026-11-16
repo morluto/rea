@@ -1,8 +1,23 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 import { verifyCompleteToolCatalog } from "../../../scripts/lib/verify-package-core.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+
+it("verifies the output profile selected for the packaged server", async () => {
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
+    },
+  });
+  try {
+    const names = await verifyCompleteToolCatalog(harness.client);
+    expect(names).toContain("binary_session");
+  } finally {
+    await harness.close();
+  }
+});
 
 it("verifies canonical names, converted schemas and session metadata together", async () => {
   const harness = await createApplicationMcpHarness();
@@ -26,7 +41,7 @@ it("verifies canonical names, converted schemas and session metadata together", 
         name: "binary_session",
         arguments: {},
       },
-      { toolDefinition: sessionDefinition },
+      { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
     );
     const forwarded: unknown[][] = [];
     const client = {
@@ -155,6 +170,38 @@ it("verifies canonical names, converted schemas and session metadata together", 
         }),
       }),
     ).resolves.toEqual(canonical);
+  } finally {
+    await harness.close();
+  }
+});
+
+it("refuses a packaged catalog with a pattern outside the portable dialect", async () => {
+  const harness = await createApplicationMcpHarness();
+  try {
+    const listed = await harness.client.listTools();
+    const [first, ...rest] = listed.tools;
+    if (first === undefined) throw new Error("Expected canonical tools");
+    // RE2 and Rust refuse look-around, and one refused pattern makes some
+    // clients reject every tool. The check runs before any tool call.
+    for (const kind of ["inputSchema", "outputSchema"] as const) {
+      const lookAround = {
+        ...first,
+        [kind]: {
+          type: "object" as const,
+          properties: { name: { type: "string", pattern: "^(?!con$)[a-z]+$" } },
+        },
+      };
+      await expect(
+        verifyCompleteToolCatalog({
+          listTools: async () => ({ ...listed, tools: [lookAround, ...rest] }),
+          callTool: async () => {
+            throw new Error("The dialect check must refuse before any call");
+          },
+        }),
+      ).rejects.toThrow(
+        `${kind === "inputSchema" ? "input" : "output"} pattern look-around: 1 > 0`,
+      );
+    }
   } finally {
     await harness.close();
   }

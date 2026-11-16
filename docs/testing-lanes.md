@@ -386,7 +386,7 @@ or upgrade Java, Ghidra, .NET or native toolchains. See
 `npm run verify:ida -- --target /absolute/path/to/program --procedure main`
 uses the existing `REA_IDA_MCP_CONFIG` registration. It installs no engine,
 Python package, or compiler. The target must already be open in the GUI for
-the legacy or native attached profile; the database-supervisor headless profile opens
+the native attached profile; the database-supervisor headless profile opens
 a digest-verified private copy. A caller-supplied fixture keeps prerequisites
 limited to the selected engine and host. `tests/conformance/ida/inventory.c`
 provides an optional small native fixture source with exported
@@ -410,7 +410,7 @@ Adapter and composition tests cover producer parsing, pagination, canonical
 entries, external callees, target switches, cancellation draining, snapshot
 replay exclusion, ownership failures, and incomplete cleanup. They do not
 establish real IDA operation. The initial real workflows cover legacy upstream
-1.4.0 on a Windows GUI and the modern supervisor at upstream commit
+1.4.0 on a Windows GUI (a profile REA has since removed) and the modern supervisor at upstream commit
 `c133c3853faa111a9b00ee615c013b720d0c4acd` with Windows x64 IDA 9.3, and the
 headless profile on macOS arm64 with IDA Professional 9.1 (build 9.1.250226)
 at the same upstream commit, using `tests/conformance/ida/inventory.c` built
@@ -423,7 +423,7 @@ other engine versions and architectures remain unverified; see the
 
 Native IDA MCP verification uses `"protocol": "native"` with an already-running native plugin and requires `--second-procedure other_function --second-marker unique_second_body_text` to exercise GUI function switching and a return to the first function. These options remain optional for other profiles. The literal marker must appear in the second function's pseudocode and be absent from the first. Native cloud/widget failures are reported without hidden retries.
 
-The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](providers/ida-provider.md#optional-native-ida-mcp-bridge).
+The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](providers/ida-provider.md#native-ida-mcp-bridge).
 
 ## Kuna lane
 
@@ -549,6 +549,26 @@ does not call CLI `search-bytes`, and does not page an overlay search across a
 snapshot reopen. AArch64 remains covered by deterministic tests rather than this
 real-provider lane. See [raw binary analysis](providers/raw-binary.md).
 
+`npm run verify:ghidra:loader-relocation` runs
+`tests/conformance/ghidra/ReaLoaderRelocationProbe.java` inside a real Linux
+Ghidra ELF import. The source-owned PIE fixture reads a `const` object from a
+provider library, which the linker copies into `.data.rel.ro` with a copy
+relocation that Ghidra imports as unapplied, the shape of #4177. The probe
+requires that relocation and the reader's read reference to it, a non-writable
+file-backed block, and the bridge's volatile marking and limitation. Source
+`FileBytes` and block permissions must be unchanged. Applied GOT relocations
+must stay non-volatile, and a full-RELRO `-fno-plt` GOT caller must decompile
+identically before and after protection. Ghidra 12.1.4 already shows this
+x86-64 read by name without protection, so the report records whether the
+baseline folded the file-backed zero and compares before and after only when it
+did. The decompiler effect on the original MIPS case was observed on the
+reporter's binary, not in this lane. The lane never executes the fixture and
+needs Ghidra/JDK with the native decompiler and a Linux C compiler. The
+change-selected [Ghidra bridge CI lane](https://github.com/morluto/rea/blob/main/.github/workflows/ghidra-bridge-sources.yml)
+runs it with its checksum-verified Ghidra distribution. Read-only sessions
+(Windows P0 and caller-owned existing projects) record the same limitation but
+do not mark blocks volatile; no real-provider lane covers them.
+
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
 compiler). It builds
@@ -611,30 +631,13 @@ generated-document validation, including the small onboarding example consistenc
 suite, without the source-test shards or native package
 lanes. Classification compares the PR head with its merge base, so later
 base-branch changes do not expand that scope. Static and portable-test aggregate jobs
-remain present and fail if classification fails. Every code change retains the
-complete portable Linux suite; individual test files are not selected by
-imports or filenames.
+remain present and fail if classification fails.
 
-Ordinary PRs also produce an **observational** test-selection plan. The candidate
-leaf-adapter ownership table lives in `scripts/ci/test-selection.mjs`, separately
-from provider-job scopes. It proposes keeping affected owners plus every unowned
-test, including all CLI/MCP, acceptance, composition, conformance, and process
-tests. Shared inputs, unknown paths, missing owner tests, and removed tests fall
-back to the complete inventory. Renames account for both paths. Main, scheduled,
-manual, and `ci:full` runs always propose the full suite.
-
-The source group and every built shard together still execute the complete suite. The existing report merge
-compares the proposal with actual module outcomes and retains
-`.cache/ci-test-selection/report.json` in `test-results`, including selected and
-omitted paths, changed input paths, missed failures, unobserved files, scheduling weights, PR head and
-executed merge SHA. This adds no test reruns or runner jobs. Missing, duplicate,
-skipped, interrupted, or unhandled results cannot establish a complete comparison;
-even a complete passing comparison is not proof of ownership completeness.
-Before enabling omissions, review representative full-run comparisons and
-cross-owner consumers, including failures, and measure completed CI feedback and
-runner demand. There is no automatic promotion or switch to skip tests. The
-initial proposal measures only leaf producer-test omissions; it does not promise
-the savings of a broader affected-test planner.
+Pull requests with code changes run only the portable tests the change
+affects; main pushes, scheduled and manual runs, release qualification and
+`ci:full` run the complete suite. See
+[pull-request test selection](development/testing.md#pull-request-test-selection)
+for the selection rules, fallbacks and gate.
 
 `scripts/ci/plan.mjs` selects lanes using the ownership table in
 `scripts/ci/scopes.mjs`. Each lane record owns its path and test selection
@@ -719,13 +722,14 @@ push: changes from failed or cancelled intermediate runs remain in scope.
 Missing, untrusted, or non-ancestor history selects the fast Linux x64
 baseline: portable checks and the Linux runtime lane. The lookup is
 bounded to the last 100 successful push runs; lookup failures broaden selection.
-Every code change still selects the source group and all eight fast built shards, without coverage
+Pull requests run their selected tests, or the complete suite when selection
+falls back; main pushes run the source group and every fast built shard, without coverage
 instrumentation in this fast tier. Ordinary PR matrices cancel remaining
-shards after the first failure; passing PRs execute the complete suite. Main,
+shards after the first failure. Main,
 `ci:full`, scheduled, manual, and release qualification retain every shard's
 results after a failure. Available failed-shard reports remain diagnostic only:
 failed, cancelled, skipped, or missing selected shards cannot pass the gate or
-publish successful timing history. This deliberately avoids relying on an
+publish successful timing history. Complete-suite runs do not rely on an
 import graph for generated files, filesystem inputs, subprocesses, or bridges.
 The portable report rejects an entirely skipped module inventory and lists
 fully skipped modules in its summary. A mixed passed/skipped inventory is
@@ -842,30 +846,16 @@ branches are not producers. A tier with no qualifying artifact leaves history
 unset, and Vitest uses its own assignment. A later schedule that reuses
 qualification without uploading timings leaves the previous artifact in place.
 
-On 2026-10-21 the newest full history was run
-`39545047294`, recorded before compiled-CLI session reuse. Fast run
-`39552964873` packed its eight built shards from that history, and those shard
-jobs executed for 319–591 seconds. Replaying that run's file durations through
-the sequencer's two-worker schedule balances every shard at about 404 seconds
-of file time. The same replay with the stale history weights leaves the slowest
-shard near 547 seconds and the fastest near 293. That spread is file-schedule
-time, not runner queue, which is why each tier keeps its own history.
-CI assigns discovered files by historical duration, with a deterministic
-fallback weight for new files, rather than dividing only by file count.
-Each file keeps its full duration on one worker. Extra workers overlap other
-files in the same sequence group, and `process-boundary` runs after that
-group. History published before the competing-loader split still names only
-`javascriptLiteralPercentPaths.test.ts`. Until an artifact records
-`javascriptLiteralLoaderOwnership.test.ts`, the sequencer assigns that
-recorded duration by the pre-split case counts: 54/192 stays with the
-percent-path file and 138/192 goes to the consolidated loader file. History
-that names the retired Early, Middle, and Late shards sums those durations
-onto the consolidated file instead, and scales a partial set as three equal
-shares. That weight is the old dual-surface cost. The demoted file runs every
-loader once through the shared stdio MCP session, so the first schedule
-overestimates it. Every discovered file still belongs to exactly one shard;
+Each tier keeps its own history because stale weights from another tier, or
+from before a large test change, unbalance the shards.
+CI assigns discovered files by historical duration rather than dividing only
+by file count. A file with no recorded duration, such as a newly added or
+renamed test, is weighted at the median recorded duration until a published
+artifact records it. Each file keeps its full duration on one worker. Extra
+workers overlap other files in the same sequence group, and `process-boundary`
+runs after that group. Every discovered file still belongs to exactly one shard;
 worker limits and project ordering remain unchanged. Fast qualification keeps
-eight built shards without coverage. The merge job rejects successful reports
+twelve built shards without coverage. The merge job rejects successful reports
 with missing, unexpected, or duplicate portable files. Coverage instrumentation
 and aggregate thresholds remain enforced in full qualification.
 Missing or unusable history falls back to Vitest's default assignment. Only
@@ -923,10 +913,6 @@ prefix still has a seed.
 Main warms the new cache namespace after merge; a cold cache falls back to the
 normal install. This prevents each PR from saving another branch-scoped copy of
 the same download cache. It does not remove runner assignment waits.
-
-Portable owner-based test selection remains observational. Its reports compare
-proposed omissions with the full run; incomplete or skipped observations do not
-establish that fewer tests would preserve regression detection.
 
 The automatic browser, binary-layout, EVM, JavaScript-recovery, packet-capture,
 signal-recording, recorded-crash, web and environment-bundle provider lanes download
@@ -1030,7 +1016,7 @@ runs `observe-native-calls` through the CLI and stdio MCP. It checks:
 
 ### Firmware adapters
 
-Linux-owned provider launches require a procps-compatible `ps` on REA's `PATH`
+Linux-owned provider launches require a procps-compatible system `ps`
 so ownership can be inspected before launching a child. A missing or incompatible
 command fails with an actionable capability error before the launch.
 

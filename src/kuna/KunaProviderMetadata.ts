@@ -1,4 +1,4 @@
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 
 /** Static identity; the observed Kuna release is reported in each analysis profile. */

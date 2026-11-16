@@ -25,6 +25,7 @@ import {
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const indexSchema = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
@@ -146,10 +147,10 @@ export const projectGoBinaryView = (
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
+    subject.sha256 !== report.artifact.sha256 ||
     subject.format !== metadataReportSubjectFormat(report) ||
     subject.architecture !==
       (binaryMetadataArchitecture(report.architecture) ?? null)
@@ -271,7 +272,7 @@ export const projectGoBinaryView = (
               string_literals: stringSummary,
             }),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   const indices =

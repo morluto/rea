@@ -1,9 +1,9 @@
-import * as inventoryProducer from "./ManagedMetadataInventory.js";
+import * as inventoryProducer from "../domain/managed/managedMetadataInventory.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import {
   buildManagedPeFixture,

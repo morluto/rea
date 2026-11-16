@@ -1,3 +1,4 @@
+import { Budget } from "../../domain/budget.js";
 import { setImmediate } from "node:timers/promises";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -13,7 +14,7 @@ import {
 export class NativeMatchingAdmission {
   readonly #maximum: number;
   readonly #source: NativeMatchingAllowance["source"];
-  #remaining: number;
+  readonly #bytes: Budget;
   #work = 0;
   readonly #seen = new WeakSet<object>();
   constructor(
@@ -25,29 +26,10 @@ export class NativeMatchingAdmission {
     // budget this request actually ran under.
     this.#maximum = allowance.maximumBytes;
     this.#source = allowance.source;
-    this.#remaining = this.#maximum;
+    this.#bytes = new Budget(this.#maximum);
   }
   readonly checkpoint = async (bytes = 0): Promise<void> => {
-    this.#remaining -= bytes;
-    if (this.#remaining < 0)
-      throw new AnalysisResourceConstraintError(
-        this.operation,
-        "capacity",
-        `Native function matching exceeds its ${nativeMatchingByteAllowance(this.#maximum)} representation allowance (native.matching_representation_bytes).`,
-        { maximum_bytes: this.#maximum },
-        {
-          retryable: false,
-          remediationAction: nativeMatchingAllowanceRecovery({
-            maximumBytes: this.#maximum,
-            source: this.#source,
-          }),
-          limit: analysisSettingLimit(
-            "native.matching_representation_bytes",
-            this.#maximum,
-            this.#source,
-          ),
-        },
-      );
+    this.#bytes.charge(bytes, () => this.#exhausted());
     this.signal?.throwIfAborted();
     if (++this.#work % 256 === 0)
       await setImmediate(
@@ -55,6 +37,26 @@ export class NativeMatchingAdmission {
         this.signal === undefined ? {} : { signal: this.signal },
       );
   };
+  #exhausted(): AnalysisResourceConstraintError {
+    return new AnalysisResourceConstraintError(
+      this.operation,
+      "capacity",
+      `Native function matching exceeds its ${nativeMatchingByteAllowance(this.#maximum)} representation allowance (native.matching_representation_bytes).`,
+      { maximum_bytes: this.#maximum },
+      {
+        retryable: false,
+        remediationAction: nativeMatchingAllowanceRecovery({
+          maximumBytes: this.#maximum,
+          source: this.#source,
+        }),
+        limit: analysisSettingLimit(
+          "native.matching_representation_bytes",
+          this.#maximum,
+          this.#source,
+        ),
+      },
+    );
+  }
   /**
    * Charge a borrowed record's envelope, which matching copies into its
    * limitations, digests and links. Its result payloads stay resident: the

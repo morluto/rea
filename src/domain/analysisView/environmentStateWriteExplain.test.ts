@@ -74,6 +74,27 @@ const updated = (
   ...context,
 });
 
+/**
+ * The body behind a counting proxy: each member read counts, and a read past
+ * `budget` fails at once, so searching the body again per field cannot finish.
+ */
+const countedBody = (
+  body: JsonObject,
+  reads: { count: number; readonly budget: number },
+): JsonObject => {
+  const wrap = (value: JsonValue): JsonValue =>
+    typeof value === "object" && value !== null
+      ? (new Proxy(value, {
+          get(target, key, receiver) {
+            if (typeof key === "string" && ++reads.count > reads.budget)
+              throw new Error("Request body read budget exceeded");
+            return wrap(Reflect.get(target, key, receiver) as JsonValue);
+          },
+        }) as JsonValue)
+      : value;
+  return wrap(body) as JsonObject;
+};
+
 const ruleFor = (
   rules: readonly FieldRule[],
   field: string,
@@ -922,66 +943,66 @@ it.each<[string, string, boolean]>([
   expect(prefixRelated(right, left)).toBe(related);
 });
 
-it(
-  "explains many copied and slugged fields of a wide body without searching it again for each",
-  { timeout: 5_000 },
-  () => {
-    const n = 8_000;
-    const value = (index: number) => `value-${String(index).padStart(6, "0")}`;
-    const nested = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `g${String(index)}`,
-        { s: value(index) },
-      ]),
-    );
-    const copies = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `c${String(index)}`,
-        value(index),
-      ]),
-    );
-    const copied = explainCreate(created({ id: 1, ...copies }, nested));
-    expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
-      field: `c${String(n - 1)}`,
-      rule: "copy",
-      from: `/g${String(n - 1)}/s`,
-    });
-    // Strings no member slugs to, in a body of many members, each tried as a slug.
-    const flat = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `m${String(index)}`,
-        `Member ${String(index)}`,
-      ]),
-    );
-    const others = Object.fromEntries(
-      Array.from({ length: n }, (_, index) => [
-        `o${String(index)}`,
-        `x${String(index)}`,
-      ]),
-    );
-    const slugged = explainCreate(
-      created({ id: 1, ...others, s: "member-7" }, flat),
-    );
-    expect(ruleFor(slugged.rules, "s")).toEqual({
-      field: "s",
-      rule: "slug",
-      from: "m7",
-    });
-  },
-);
+it("explains many copied and slugged fields of a wide body without searching it again for each", () => {
+  const n = 8_000;
+  const value = (index: number) => `value-${String(index).padStart(6, "0")}`;
+  const nested = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `g${String(index)}`,
+      { s: value(index) },
+    ]),
+  );
+  const copies = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `c${String(index)}`,
+      value(index),
+    ]),
+  );
+  // Indexing reads each member a few times (72,000 and 64,001 reads here);
+  // searching the body again for each field reads all of it per field.
+  const reads = { count: 0, budget: 8 * 2 * n };
+  const copied = explainCreate(
+    created({ id: 1, ...copies }, countedBody(nested, reads)),
+  );
+  expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
+    field: `c${String(n - 1)}`,
+    rule: "copy",
+    from: `/g${String(n - 1)}/s`,
+  });
+  // Strings no member slugs to, in a body of many members, each tried as a slug.
+  const flat = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `m${String(index)}`,
+      `Member ${String(index)}`,
+    ]),
+  );
+  const others = Object.fromEntries(
+    Array.from({ length: n }, (_, index) => [
+      `o${String(index)}`,
+      `x${String(index)}`,
+    ]),
+  );
+  reads.count = 0;
+  const slugged = explainCreate(
+    created({ id: 1, ...others, s: "member-7" }, countedBody(flat, reads)),
+  );
+  expect(ruleFor(slugged.rules, "s")).toEqual({
+    field: "s",
+    rule: "slug",
+    from: "m7",
+  });
+});
 
-it(
-  "searches a wide request body for a copied value in linear time",
-  { timeout: 5_000 },
-  () => {
-    // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
-    const wide = Array.from({ length: 500_000 }, () => 0);
-    const result = explainCreate(
-      created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
-    );
-    expect(ruleFor(result.rules, "note")).toBeUndefined();
-  },
-);
+it("searches a wide request body for a copied value in linear time", () => {
+  // Shifting each value off the queue makes the search quadratic: about 18 s
+  // for 500,000 zeros and about a minute for this body, past the test's
+  // deadline, which is the guard. The linear walk takes well under a second.
+  const wide = Array.from({ length: 1_000_000 }, () => 0);
+  const result = explainCreate(
+    created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
+  );
+  expect(ruleFor(result.rules, "note")).toBeUndefined();
+});
 
 const ID = (n: number): string =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;

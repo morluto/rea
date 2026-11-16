@@ -133,7 +133,7 @@ export const projectNugetPackageView = (
       ),
       source_coverage: report.source_coverage,
     },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: [...parent.limitations].sort(),
     unknowns:
       report.source_coverage.status === "partial"

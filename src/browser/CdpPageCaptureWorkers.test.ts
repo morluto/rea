@@ -6,6 +6,7 @@ import type { CdpConnection } from "./CdpConnection.js";
 import type { CdpEndpointTarget } from "./CdpEndpoint.js";
 import { captureWorkers } from "./CdpPageCaptureWorkers.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 
 const origin = "http://127.0.0.1:43127";
 
@@ -18,9 +19,7 @@ const capture = async (inventory: unknown, frameIds = new Set<string>()) => {
   const events = new CdpCaptureEvents(input, new Set([origin]));
   const context = {
     connection: {
-      async send() {
-        return inventory;
-      },
+      send: fakeCdpSend(() => inventory),
     } as unknown as CdpConnection,
     sessionId: undefined,
     target: {

@@ -91,5 +91,4 @@ export function writePrCiHealthReport(
   outputDirectory?: string,
 ): Promise<{ jsonPath: string; markdownPath: string }>;
 
-export function renderMarkdownSummary(report: PrCiHealthReport): string;
 import type { GitHubApiRequest } from "./github-api.mjs";

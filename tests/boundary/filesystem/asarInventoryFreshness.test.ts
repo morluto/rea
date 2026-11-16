@@ -6,12 +6,12 @@ import { buffer } from "node:stream/consumers";
 import { createPackage, listPackage, uncache } from "@electron/asar";
 import { describe, expect, it, onTestFinished } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const CONTENT = "module.exports = 42;\n";
 
@@ -252,7 +252,7 @@ describe("ASAR captured-byte identity", () => {
         ),
       ).rejects.toMatchObject({
         reason: "integrity",
-        message: expect.stringContaining("changed before interpretation"),
+        integrityCheck: "container-identity",
       });
     } finally {
       await resourceScope.close();
@@ -418,6 +418,54 @@ describe("ASAR reader lifecycle", () => {
       expect(listPackage(fixture.archive, { isPack: false })).toEqual([
         `${sep}new.js`,
       ]);
+    } finally {
+      await entries.return?.();
+      await reader.close();
+      uncache(fixture.archive);
+    }
+  });
+
+  it("refuses an entry inventoried before close as not produced by the reader", async () => {
+    const fixture = await archiveFixture();
+    const reader = new AsarArtifactReader(fixture.archive);
+    try {
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      const [entry] = entries;
+      if (entry === undefined) throw new Error("Expected an ASAR file entry");
+      await reader.close();
+      await expect(reader.open(entry)).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
+        reason: "integrity",
+        integrityCheck: "foreign-entry",
+      });
+    } finally {
+      await reader.close();
+      uncache(fixture.archive);
+    }
+  });
+
+  it("reports a close queued behind container preparation as closed", async () => {
+    const fixture = await archiveFixture();
+    const reader = new AsarArtifactReader(fixture.archive);
+    const entries = reader.entries()[Symbol.asyncIterator]();
+    try {
+      const first = entries.next();
+      const closing = reader.close();
+      await expect(first).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
+        reason: "unavailable",
+        integrityCheck: undefined,
+      });
+      await closing;
+      const container = reader.openContainer();
+      const closingContainer = reader.close();
+      await expect(container).rejects.toMatchObject({
+        name: "ArtifactReaderFailure",
+        reason: "unavailable",
+        integrityCheck: undefined,
+      });
+      await closingContainer;
     } finally {
       await entries.return?.();
       await reader.close();

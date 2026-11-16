@@ -18,17 +18,24 @@ import {
   readConfigurationFile,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
+import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
 import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
-import { readRegularFileTextSnapshot } from "./RegularFileRead.js";
+import { readRegularFileTextSnapshot } from "../process/RegularFileRead.js";
 
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "ENOENT";
 
+/**
+ * Merge REA's entry into one selected client document. `platform` is the host
+ * the catalog resolved the client for; it decides the document's environment
+ * name rules.
+ */
 export const prepareRegistration = async (
   path: string,
   client: McpRegistrationClient,
   launcher: ClientRegistrationCommand,
+  platform: NodeJS.Platform,
 ) => {
   const snapshot = await readRegularFileTextSnapshot(path, {
     symlinks: "reject",
@@ -52,6 +59,7 @@ export const prepareRegistration = async (
   const targetIndex = paths.lastIndexOf(client.configPath);
   const inherited = mergeClientConfigurationDocuments(
     layers.slice(0, targetIndex),
+    platform,
   );
   const desired = replaceClientRegistrationLauncher(
     { dialect: parsed.dialect, profile: client.registrationProfile },
@@ -62,12 +70,28 @@ export const prepareRegistration = async (
       : effectiveClientServer(inherited, PRODUCT_IDENTITY.mcpServerKey),
   );
   if (!desired.ok) throw desired.error;
+  // The client's own settings policy can exclude or override this entry.
+  if (client.setupClient !== undefined) {
+    const policy = await readClientPolicyBlock(
+      client.setupClient,
+      parsed,
+      desired.value,
+    );
+    if (!policy.ok)
+      throw (
+        policy.error.cleanupFailure ??
+        new ConfigurationError(policy.error.detail)
+      );
+    if (policy.value !== undefined)
+      throw new ConfigurationError(`${policy.value} No settings were written.`);
+  }
   const updated = withClientServers(
     parsed,
     {
       ...parsed.servers,
       [PRODUCT_IDENTITY.mcpServerKey]: desired.value,
     },
+    platform,
     PRODUCT_IDENTITY.mcpServerKey,
   );
   const legacy = legacyClientServerPath(parsed, PRODUCT_IDENTITY.mcpServerKey);
@@ -91,11 +115,12 @@ export const prepareRegistration = async (
   const candidateLayers = layers.map((document, index) =>
     paths[index] === client.configPath ? candidate : document,
   );
-  assertEffectiveLauncher(client, candidateLayers, launcher);
+  assertEffectiveLauncher(client, candidateLayers, launcher, platform);
   return {
     path,
     client,
     launcher,
+    platform,
     snapshot,
     original,
     parsed,
@@ -145,8 +170,9 @@ const assertEffectiveLauncher = (
   client: McpRegistrationClient,
   layers: readonly ClientConfigurationDocument[],
   launcher: ClientRegistrationCommand,
+  platform: NodeJS.Platform,
 ): void => {
-  const effective = mergeClientConfigurationDocuments(layers);
+  const effective = mergeClientConfigurationDocuments(layers, platform);
   const admitted = admitClientStdioConnection(
     effective === undefined
       ? undefined
@@ -182,7 +208,7 @@ export const verifyEffectiveRegistration = async (
   prepared: Awaited<ReturnType<typeof prepareRegistration>>,
   targetText: string,
 ): Promise<void> => {
-  const { client, launcher } = prepared;
+  const { client, launcher, platform } = prepared;
   assertEffectiveLauncher(
     client,
     await readRegistrationLayers(
@@ -190,5 +216,6 @@ export const verifyEffectiveRegistration = async (
       parseClientConfiguration(targetText, client.format),
     ),
     launcher,
+    platform,
   );
 };

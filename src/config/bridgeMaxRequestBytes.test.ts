@@ -12,11 +12,13 @@ import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSna
 import {
   BRIDGE_MAX_REQUEST_BYTES_SETTING,
   DEFAULT_BRIDGE_MAX_REQUEST,
+  parseBridgeMaxRequestBytes,
+} from "./bridgeMaxRequestBytes.js";
+import {
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
   MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  parseBridgeMaxRequestBytes,
-} from "./bridgeMaxRequestBytes.js";
+} from "../domain/analysisResourceLimits.js";
 
 const configured = (maximumBytes: number) =>
   ({ maximumBytes, source: "setting" }) as const;

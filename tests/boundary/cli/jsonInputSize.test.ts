@@ -57,7 +57,7 @@ cliTest(
 
 cliTest(
   "traces valid Evidence beyond the whole-document string limit",
-  async ({ cli, processes }) => {
+  async ({ cli }) => {
     const root = await createTestTempDirectory("rea-json-streamed-evidence-");
     const source = join(root, "application");
     await mkdir(source);
