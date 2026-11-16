@@ -2,7 +2,6 @@ import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
 
 import {
   adaptCliOutputArgumentsForIncur,
-  declaredSensitiveValues,
   parseCliGlobalArguments,
   type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
@@ -11,7 +10,9 @@ import {
   renderCliDocument,
   type CliOutputFormat,
 } from "../cliOutput.js";
-import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
+import { renderFailure } from "./outputEnvelope.js";
+import { suggestCommand } from "./commandSuggestion.js";
+import { unknownCommandReply } from "./unknownCommandReply.js";
 import type { CliInstance } from "./types.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
@@ -38,13 +39,11 @@ const PRECEDING_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--mcp",
 ]);
 
-// zsh expands a word that starts with `=` to an executable path.
-const PLAIN_SHELL_WORD = /^(?!=)[\w./+=:,-]+$/u;
-
 /**
  * Incur 0.6.1 rejects an unknown `mcp` subcommand in TOON regardless of the
- * selected format. Report the same envelope in the explicitly selected format;
- * without one, Incur's TOON or human rendering is already the selected output.
+ * selected format. Report the same document in the explicitly selected format,
+ * or preserve the default TOON/human presentation. Both paths honor explicit
+ * sensitive-value declarations before rendering.
  * The caller's arguments are read before REA adapts output flags for Incur,
  * so the suggested command keeps the caller's selection.
  */
@@ -53,7 +52,8 @@ export const reportUnknownMcpSubcommand = (
   global: CliGlobalArguments,
   options: ServeOptions,
 ): boolean => {
-  const { arguments: arguments_, command, commandIndices } = global;
+  const started = performance.now();
+  const { arguments: arguments_, command } = global;
   const [entry, subcommand] = command;
   // Incur receives JSON for REA's delimited formats and no `--columns`.
   const incur = parseCliGlobalArguments(
@@ -79,51 +79,49 @@ export const reportUnknownMcpSubcommand = (
     return false;
   const output = readCliOutputArguments(incur);
   // Invalid output controls keep Incur's own parse diagnostic.
-  if (!output.formatExplicit || !output.validation.ok) return false;
-  const sensitive = declaredSensitiveValues(command);
-  const text = (value: string): string => redactExplicitText(value, sensitive);
-  const suggestion = [...MCP_SUBCOMMANDS.keys()].find((candidate) =>
-    candidate.startsWith(subcommand.toLowerCase()),
-  );
-  const corrected = arguments_.map((token, index) =>
-    index === commandIndices[1] ? suggestion : token,
-  );
-  // Joined tokens replay only when each one is a plain word in every shell;
-  // quoting is shell-specific, and a redacted value cannot be replayed.
-  const replayable =
-    suggestion !== undefined &&
-    corrected.every(
-      (token) =>
-        token !== undefined &&
-        PLAIN_SHELL_WORD.test(token) &&
-        text(token) === token,
-    );
-  const commands = [
-    ...(replayable ? [{ command: `${name} ${corrected.join(" ")}` }] : []),
-    {
-      command: text(`${name} mcp --help`),
-      description: text("see all available commands"),
-    },
-  ];
-  const document = {
-    code: "COMMAND_NOT_FOUND",
-    message: text(
-      `'${subcommand}' is not a command for '${name} mcp'.${suggestion === undefined ? "" : ` Did you mean '${suggestion}'?`}`,
-    ),
-    cta: {
-      description: text(
-        commands.length === 1 ? "Suggested command:" : "Suggested commands:",
-      ),
-      commands,
-    },
-  };
+  if (!output.validation.ok) return false;
+  // Preserve the existing explicit-format prefix policy and the default
+  // dispatcher's edit-distance ranking while moving both replies to one owner.
+  const suggestion = output.formatExplicit
+    ? [...MCP_SUBCOMMANDS.keys()].find((candidate) =>
+        candidate.startsWith(subcommand.toLowerCase()),
+      )
+    : suggestCommand(subcommand, MCP_SUBCOMMANDS.keys());
+  const {
+    command: displayCommand,
+    cta,
+    failure,
+  } = unknownCommandReply({
+    name,
+    scope: ["mcp"],
+    global,
+    commandIndex: 1,
+    suggestion,
+  });
   (options.stdout ?? ((value: string) => process.stdout.write(value)))(
     // REA's document renderer owns JSON layout and Markdown escaping.
-    renderCliDocument(
-      document,
-      output.format as CliOutputFormat,
-      process.stdout.isTTY === true,
-    ),
+    output.formatExplicit
+      ? renderCliDocument(
+          { ...failure, cta },
+          output.format as CliOutputFormat,
+          process.stdout.isTTY === true,
+        )
+      : renderFailure(
+          failure,
+          {
+            command: displayCommand,
+            duration: `${Math.round(performance.now() - started)}ms`,
+          },
+          cta,
+          {
+            format: "toon",
+            human: process.stdout.isTTY === true,
+            fullOutput: false,
+            tokenCount: false,
+            tokenLimit: undefined,
+            tokenOffset: undefined,
+          },
+        ),
   );
   (options.exit ?? ((code: number) => process.exit(code)))(1);
   return true;

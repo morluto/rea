@@ -148,10 +148,13 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   // Discovery reads the arguments the dispatcher would, after result output
   // has adapted them, so its documents are counted and buffered alike.
   const dispatch = cli.serve.bind(cli);
+  const updateEnvironment = {
+    variables: environment,
+    platform: HOST_PLATFORM.platform,
+  };
   cli.serve = (arguments_ = process.argv.slice(2), serveOptions) =>
-    serveDiscovery(cli, arguments_, serveOptions ?? {})
-      ? Promise.resolve()
-      : dispatch(arguments_, serveOptions);
+    serveDiscovery(cli, arguments_, serveOptions ?? {}, updateEnvironment) ??
+    dispatch(arguments_, serveOptions);
   if (options.resultOutput !== undefined)
     streamCliCommandResults(cli, options.resultOutput);
   const serveStrict = validateCliArguments(cli);
