@@ -243,3 +243,23 @@ it("distinguishes exhausted pages from unmatched queries without loading tools",
     next_step: expect.stringContaining("Call the returned tool"),
   });
 });
+
+it("ranks multi-keyword queries by relevance instead of requiring every word to match (#11707)", async () => {
+  const f = await connect();
+  // "alpha_sqlite" matches both "alpha" and "sqlite" (2 words)
+  // "beta_sqlite" matches "sqlite" in name (1 word, 1 name match)
+  // "binary_session" matches "sqlite" in description (1 word, 0 name matches)
+  // "nonexistent_attribute" matches 0 words
+  const result = await f.discover({
+    query: "alpha sqlite nonexistent_attribute",
+    limit: 10,
+  });
+  expect(result.structuredContent).toMatchObject({
+    total_matches: 3,
+    tools: [
+      { name: "alpha_sqlite" },
+      { name: "beta_sqlite" },
+      { name: "binary_session" },
+    ],
+  });
+});

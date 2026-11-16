@@ -14,6 +14,28 @@ import {
   type CatalogIdentity,
 } from "../contracts/catalog/catalogDiscovery.js";
 
+const rankCatalogMatches = (
+  tools: ReadonlyMap<string, { search: string }>,
+  words: readonly string[],
+): readonly string[] => {
+  if (words.length === 0)
+    return [...tools.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return [...tools]
+    .filter(([, tool]) => words.some((word) => tool.search.includes(word)))
+    .map(([name, tool]) => ({
+      name,
+      searchMatches: words.filter((word) => tool.search.includes(word)).length,
+      nameMatches: words.filter((word) => name.includes(word)).length,
+    }))
+    .sort(
+      (left, right) =>
+        right.searchMatches - left.searchMatches ||
+        right.nameMatches - left.nameMatches ||
+        (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
+    )
+    .map(({ name }) => name);
+};
+
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
   readonly identity: CatalogIdentity;
@@ -84,19 +106,7 @@ export class ProgressiveToolCatalog {
       .toLowerCase()
       .split(/\s+/u)
       .filter(Boolean);
-    const matches =
-      names ??
-      [...this.tools]
-        .filter(([, tool]) => words.every((word) => tool.search.includes(word)))
-        .map(([name]) => name)
-        .sort((left, right) => {
-          const score = (name: string) =>
-            words.filter((word) => name.includes(word)).length;
-          return (
-            score(right) - score(left) ||
-            (left < right ? -1 : left > right ? 1 : 0)
-          );
-        });
+    const matches = names ?? rankCatalogMatches(this.tools, words);
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
     const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
