@@ -1,27 +1,19 @@
 import {
-  projectSelectedArtifactFileFailure,
-  projectStableArtifactFailure,
-  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
+  completedStableArtifactObservation,
   ArtifactResourceScope,
 } from "../resources/index.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import type { CanonicalizePort } from "../ports/canonicalize/CanonicalizePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import {
-  AnalysisArtifactChangedError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   CANONICALIZE_SAMPLE_UNITS,
   MAX_CANONICALIZE_FILE_BYTES,
@@ -92,7 +84,22 @@ export class CanonicalizeProvider implements CanonicalizePort {
         });
       });
     } catch (cause) {
-      return err(canonicalizeFailure(cause, input, snapshot));
+      const failure = classifyProviderFailure(
+        cause,
+        canonicalizeFailureDialect(input),
+      );
+      // A parse failure after a completed read (e.g. a malformed ASAR header)
+      // carries no read identity in its cause, so retain the snapshot's.
+      if (failure.partialObservation === undefined && snapshot !== undefined) {
+        const observation = completedStableArtifactObservation(
+          cause,
+          input.path,
+          snapshot,
+        );
+        if (observation !== undefined)
+          failure.retainPartialObservation(observation);
+      }
+      return err(failure);
     }
   }
 
@@ -123,89 +130,40 @@ const inputBudgetRemediation = (input: CanonicalizeArtifactInput): string =>
     ? `The artifact exceeds the ${String(MAX_CANONICALIZE_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
-const canonicalizeFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
+/**
+ * Supply what only this pass owns, so the shared classifier makes every
+ * read decision once: integrity, cancellation and path/format failures go
+ * through the stable-artifact projections, leaving the file-size budget and
+ * the unrecognised-cause fallback here.
+ */
+const canonicalizeFailureDialect = (
   input: CanonicalizeArtifactInput,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return cancelledBy(
-      OPERATION,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
+): ProviderFailureDialect => ({
+  providerId: CANONICALIZE_PROVIDER.id,
+  operation: OPERATION,
+  file: {
+    path: input.path,
+    description: "artifact",
+    fileSize: (cause, details) =>
+      new AnalysisResourceConstraintError(
         OPERATION,
         cause.boundary ?? "file-size",
         cause.message,
         { max_file_bytes: input.max_file_bytes },
         {
-          cause,
+          ...details,
           retryable: false,
           remediationAction: inputBudgetRemediation(input),
         },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "artifact",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error ? cause.message : "Canonicalization failed.",
-    { cause },
-  );
-};
-
-const canonicalizeFailure = (
-  cause: unknown,
-  input: CanonicalizeArtifactInput,
-  snapshot?: StableArtifactSnapshot,
-) => {
-  const primary = canonicalizeFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
-  );
-  return projectStableArtifactFailure(
-    cause,
-    primary,
-    input.path,
-    CANONICALIZE_PROVIDER.id,
-    OPERATION,
-    snapshot,
-  );
-};
+      ),
+    retainCompletedIdentity: true,
+  },
+  unclassified: (cause, details) =>
+    new ArtifactOperationError(
+      OPERATION,
+      cause instanceof ArtifactReaderFailure ? cause.reason : "io",
+      undefined,
+      cause instanceof Error ? cause.message : "Canonicalization failed.",
+      { ...details, cause },
+    ),
+});
