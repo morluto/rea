@@ -12,6 +12,7 @@ import {
   CLI_OUTPUT_FORMATS,
   readCliOutputArguments,
   renderCliDocument,
+  renderCliOutputArgumentError,
   type CliOutputFormat,
 } from "../cliOutput.js";
 import { formatCliOutput } from "./cliOutputFormatter.js";
@@ -227,7 +228,9 @@ const llmsAnswer = (
   global: CliGlobalArguments,
   full: boolean,
 ): DiscoveryAnswer => {
-  const { format, formatExplicit } = readCliOutputArguments(global);
+  const { format, formatExplicit, validation } = readCliOutputArguments(global);
+  if (!validation.ok)
+    return renderedAnswer(renderCliOutputArgumentError(validation), 1);
   const scoped = cliCommands(cli).find(
     ({ name }) => name === global.command[0],
   );
@@ -269,7 +272,9 @@ const schemaAnswer = (
     });
     return answer(`Error: ${failure.message}`, 1);
   }
-  const { format, formatExplicit } = readCliOutputArguments(global);
+  const { format, formatExplicit, validation } = readCliOutputArguments(global);
+  if (!validation.ok)
+    return renderedAnswer(renderCliOutputArgumentError(validation), 1);
   return documentAnswer(
     commandSchemaDocument(entry, CLI_CUSTOM_GLOBAL_OPTIONS),
     formatExplicit ? format : "toon",
