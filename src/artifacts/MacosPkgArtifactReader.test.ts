@@ -360,9 +360,31 @@ it("refuses a gzip member whose decoded size disagrees with the TOC", async () =
       }),
     ]);
     expect(entries.map((entry) => entry.path)).toContain("PackageInfo");
+    await expect(
+      reader.open(entries.find((entry) => entry.path === "PackageInfo")!),
+    ).rejects.toMatchObject({ reason: "unavailable" });
   } finally {
     await reader.close();
   }
+});
+
+it("keeps a size-mismatched member unavailable through shared inspection", async () => {
+  const path = await writePkg(
+    "size-mismatch-inventory.pkg",
+    buildExtractedSizeMismatchGzipPackage(),
+  );
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(inventory.coverage.status).toBe("unknown");
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === ".")
+      ?.format_metadata,
+  ).toMatchObject({
+    kind: "macos-pkg",
+    refusals: [expect.objectContaining({ code: "extracted-size-mismatch" })],
+  });
+  expect(
+    inventory.occurrences.find((row) => row.logical_path === "PackageInfo"),
+  ).toMatchObject({ hash_status: "unavailable" });
 });
 
 it("fails open() of an oversize gzip member with a limit error without inflating", async () => {

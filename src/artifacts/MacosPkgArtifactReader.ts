@@ -180,6 +180,8 @@ export class MacosPkgArtifactReader implements ArtifactReader {
   readonly format = "pkg" as const;
   readonly #scope = new ArtifactResourceScope();
   readonly #entries = new Map<string, StoredEntry>();
+  /** Members whose stored bytes failed decoding during preparation. */
+  readonly #refusedContent = new Map<string, string>();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
   readonly #preparation = new ArtifactPreparation();
@@ -261,6 +263,11 @@ export class MacosPkgArtifactReader implements ArtifactReader {
           "unavailable",
           `Installer package directory has no file contents: ${stored.path}`,
         );
+      const refused = this.#refusedContent.get(stored.adapterKey);
+      if (refused !== undefined)
+        throw new ArtifactEntryContentUnavailable(refused, refused, {
+          traversal: { status: "unknown", limitations: [refused] },
+        });
       const { handle } = await this.#source.read(signal);
       this.#assertOpen(signal);
       const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
@@ -337,6 +344,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
+    this.#refusedContent.clear();
   }
 
   provenance(): readonly [] {
@@ -874,20 +882,20 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       entry.path,
     );
     if (!decoded.ok) {
-      metadata.refusals.push(refusalFromParse(decoded.error, entry.path));
+      const refusal = refusalFromParse(decoded.error, entry.path);
+      metadata.refusals.push(refusal);
+      // A metadata allowance refusal leaves open() to its own expansion budget.
+      if (decoded.error.kind !== "limit")
+        this.#refusedContent.set(entry.adapterKey, refusal.message);
       return undefined;
     }
     if (declared !== null && declared !== decoded.value.length) {
-      metadata.refusals.push(
-        refusalFromParse(
-          extractedSizeMismatchError(
-            entry.path,
-            declared,
-            decoded.value.length,
-          ),
-          entry.path,
-        ),
+      const refusal = refusalFromParse(
+        extractedSizeMismatchError(entry.path, declared, decoded.value.length),
+        entry.path,
       );
+      metadata.refusals.push(refusal);
+      this.#refusedContent.set(entry.adapterKey, refusal.message);
       return undefined;
     }
     return decoded.value;
