@@ -243,6 +243,13 @@ export const registerReverseEngineeringCommands = (
         .describe("One unrestricted GDB console command."),
     }),
     options: z.object({
+      executable: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Initial local file to hash and load without running it; command Evidence retains this initial selection.",
+        ),
       inferiorTty: z
         .string()
         .min(1)
@@ -281,6 +288,9 @@ export const registerReverseEngineeringCommands = (
             run: async () => {
               const started = await manager.start(signal, {
                 inferiorTty: options.inferiorTty,
+                ...(options.executable === undefined
+                  ? {}
+                  : { executable: options.executable }),
               });
               if (!started.ok) return started;
               sessionId = started.value.session_id;

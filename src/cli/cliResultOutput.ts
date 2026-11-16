@@ -5,7 +5,6 @@ import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import type { ParsedCliOutputArguments } from "../cliOutput.js";
-import { parseCliGlobalArguments } from "../cliBuiltinArguments.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
@@ -32,13 +31,9 @@ import {
 import {
   cliEvidencePublicationReceipt,
   retainCliPublicationOnError,
-  withCliEvidencePublication,
 } from "./cliEvidencePublication.js";
-import {
-  cliResultControls,
-  withCliResultControls,
-  type CliResultControls,
-} from "./cliResultControls.js";
+import type { CliResultControls } from "./cliResultControls.js";
+import { formatCliCallToAction, type CallToAction } from "./outputEnvelope.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import type { OutputFilterPath } from "./outputFilter.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
@@ -49,20 +44,13 @@ import {
   writeOutputParts,
   writeOutputText,
 } from "./jsonOutput.js";
-import type { CliInstance } from "./types.js";
-import {
-  visitRegisteredCommands,
-  type RegisteredCommand,
-} from "./visitRegisteredCommands.js";
-
 /** Result metadata supplied by the command that actually ran. */
 export interface CliResultOutputMetadata {
   readonly command: string;
   readonly duration: string;
-  readonly format: string;
+  /** Terminal update notice; selected views and owned envelopes omit it. */
+  readonly cta?: CallToAction | undefined;
   readonly renderOutput?: boolean;
-  /** Render commands that do not have an Incur output fallback. */
-  readonly forceOutput?: boolean;
   /** The producer owns a failure document whose complete facts must survive filtering. */
   readonly failure?: boolean;
   /**
@@ -78,6 +66,7 @@ export interface CliResultOutputMetadata {
 const resultMeta = (metadata: CliResultOutputMetadata) => ({
   command: metadata.command,
   duration: metadata.duration,
+  ...(metadata.cta === undefined ? {} : { cta: metadata.cta }),
   ...(metadata.cliControls === undefined
     ? {}
     : { cli_controls: { ...metadata.cliControls } }),
@@ -90,81 +79,14 @@ export interface CliResultOutput {
   readonly error: AnalysisErrorProjection | undefined;
   /** Start another completed invocation on a reusable command registry. */
   begin(options: ParsedCliOutputArguments): void;
-  /** Preserve caller output controls while adapting SDK builtin flags. */
-  sdkArguments(args: readonly string[]): string[];
-  /** SDK generators retain their own streaming event protocol. */
-  delegateStreaming(): void;
-  /** Retain one-shot SDK output until the SDK supplies its authoritative status. */
-  captureSdkOutput(text: string): boolean;
-  finishSdkOutput(exitCode: number): Promise<void>;
+  /** Wait for all queued destination writes before its process owner exits. */
+  finish(): Promise<void>;
   write(value: unknown, metadata: CliResultOutputMetadata): Promise<boolean>;
-  /** Recover only before any delegated stdout has been written. */
+  /** Recover only before any stdout has been written. */
   recoverFormattingFailure(cause: unknown): Promise<boolean>;
 }
 
-/** Install formatting once, after registration, for every ordinary CLI result. */
-export const streamCliCommandResults = (
-  cli: CliInstance,
-  output: CliResultOutput,
-): void => {
-  visitRegisteredCommands(cli, (command, path, inheritedPolicy) =>
-    wrapCommand(command, path, output, inheritedPolicy),
-  );
-  const serve = cli.serve.bind(cli);
-  cli.serve = (args = process.argv.slice(2), serveOptions) =>
-    serve(output.sdkArguments(args), serveOptions);
-};
-
-const wrapCommand = (
-  command: Pick<RegisteredCommand, "run">,
-  name: string,
-  output: CliResultOutput,
-  inheritedPolicy?: "all" | "agent-only",
-): void => {
-  const run = command.run;
-  command.run = (context) =>
-    withCliEvidencePublication(() =>
-      withCliResultControls(() => {
-        const started = performance.now();
-        const result: unknown = run(context);
-        // Generator results and Incur's sentinel responses retain their own protocol.
-        if (
-          typeof result === "object" &&
-          result !== null &&
-          Symbol.asyncIterator in result
-        ) {
-          output.delegateStreaming();
-          return result;
-        }
-        return Promise.resolve(result).then(async (value: unknown) => {
-          if (
-            typeof value === "object" &&
-            value !== null &&
-            Symbol.for("incur.sentinel") in value
-          )
-            return value;
-          if (
-            !(await output.write(value, {
-              command: name,
-              format: context.format,
-              renderOutput: context.agent || inheritedPolicy !== "agent-only",
-              duration: `${Math.round(performance.now() - started)}ms`,
-              collectCliControls: cliResultControls,
-            }))
-          )
-            return value;
-          if (output.error !== undefined)
-            return context.error({
-              code: output.error.code,
-              message: output.error.message,
-            });
-          return undefined;
-        });
-      }),
-    );
-};
-
-/** Preserve Incur output controls and stream JSON while framing failures. */
+/** Own result presentation, streaming writes and formatting recovery. */
 export const createCliResultOutput = (
   initialOptions: ParsedCliOutputArguments,
   destination: Writable,
@@ -182,10 +104,6 @@ export const createCliResultOutput = (
   let handled = false;
   let failed = false;
   let error: AnalysisErrorProjection | undefined;
-  let streaming = false;
-  let sdkDocumentControls = false;
-  const sdkParts: string[] = [];
-  let sdkCompletion: Promise<void> | undefined;
   let completed:
     | {
         readonly metadata: CliResultOutputMetadata;
@@ -262,23 +180,57 @@ export const createCliResultOutput = (
     metadata: CliResultOutputMetadata,
   ): Promise<boolean> => {
     completed = undefined;
-    if (
-      metadata.format !== format &&
-      !((format === "csv" || format === "tsv") && metadata.format === "json")
-    )
-      return false;
     // Only the full-output envelope shows the result's control flags, so the
     // result is read for them only then.
     const cliControls = options.fullOutput
       ? metadata.collectCliControls?.()
       : undefined;
+    const selectedMetadata =
+      cliControls === undefined ? metadata : { ...metadata, cliControls };
+    const filterPaths = options.filterPaths?.ok
+      ? options.filterPaths.value
+      : undefined;
+    const operationFailure = metadata.failure
+      ? value
+      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
+        ? cliOperationFailurePayload(value)
+        : undefined;
+    // These presentations own complete documents. A terminal notice must not
+    // become part of their selected view, retained envelope or token count.
+    const ownsDocument =
+      operationFailure !== undefined ||
+      (filterPaths !== undefined && filterPaths.length > 0) ||
+      (options.tokenWindow && !options.tokenCount) ||
+      (options.fullOutput &&
+        (options.tokenCount || selectedMetadata.cliControls !== undefined));
+    const presentedMetadata =
+      ownsDocument && selectedMetadata.cta !== undefined
+        ? { ...selectedMetadata, cta: undefined }
+        : selectedMetadata;
     try {
-      return await writeResult(
+      const written = await writeResult(
         value,
-        cliControls === undefined ? metadata : { ...metadata, cliControls },
+        presentedMetadata,
+        operationFailure,
       );
+      if (
+        metadata.cta !== undefined &&
+        (!written || !ownsDocument) &&
+        error === undefined &&
+        !options.fullOutput &&
+        !options.tokenCount
+      ) {
+        handled = true;
+        await writeOutputText(
+          destination,
+          `${formatCliCallToAction(metadata.cta)}\n`,
+        );
+        return true;
+      }
+      return written;
     } catch (cause: unknown) {
       if (await recoverFormattingFailure(cause)) return true;
+      if (handled) failed = true;
       throw cause;
     }
   };
@@ -299,149 +251,9 @@ export const createCliResultOutput = (
       failed = false;
       error = undefined;
       completed = undefined;
-      streaming = false;
-      sdkDocumentControls = false;
-      sdkParts.length = 0;
-      sdkCompletion = undefined;
     },
-    sdkArguments(args) {
-      const split = parseCliGlobalArguments(args);
-      const normalized = split.arguments;
-      const values = new Set(split.outputValues.map(({ index }) => index));
-      const hasFlag = (flag: string) =>
-        normalized.some((token, index) => token === flag && !values.has(index));
-      // Incur emits these documents outside command result handlers. Manifest
-      // flags precede help; schema follows help and version in its dispatcher.
-      sdkDocumentControls =
-        (options.tokenCount || options.tokenWindow) &&
-        (hasFlag("--llms") ||
-          hasFlag("--llms-full") ||
-          (hasFlag("--schema") &&
-            !["completions", "mcp", "skills"].includes(
-              split.command[0] ?? "",
-            ) &&
-            !hasFlag("--help") &&
-            !hasFlag("-h") &&
-            !hasFlag("--version")));
-      // The caller's parsed controls remain authoritative: the CLI may adapt
-      // CSV/TSV to JSON for Incur without changing the requested presentation.
-      if (format !== "jsonl" || !options.tokenCount) return [...normalized];
-      // Incur counts errors before REA can retain their diagnostic payload.
-      // Preserve operands using the shared builtin consumption rules.
-      return normalized.filter(
-        (token, index) => token !== "--token-count" || values.has(index),
-      );
-    },
-    delegateStreaming() {
-      streaming = true;
-    },
-    captureSdkOutput(text) {
-      // JSONL always buffers for framing. Piped/redirected JSON also buffers so
-      // Incur's always-indented Formatter output can be rewritten compactly.
-      // Terminal JSON stays with Incur, which already matches the indent contract.
-      // sdkDocumentControls also buffers one-shot SDK documents for token windows.
-      const captureJson = format === "json" && !isTerminalOutput(destination);
-      if (
-        (format !== "jsonl" && !sdkDocumentControls && !captureJson) ||
-        streaming ||
-        handled
-      )
-        return false;
-      // Incur already materializes one-shot documents. Retain references only;
-      // generator events bypass this buffer and remain incremental.
-      if (text.length > 0) sdkParts.push(text);
-      return true;
-    },
-    finishSdkOutput(exitCode) {
-      return (sdkCompletion ??= (async () => {
-        const parts = sdkParts.splice(0);
-        try {
-          if (parts.length === 0) {
-            // SDK writes outside the JSONL buffer still share this destination.
-            // A write callback runs after earlier queued writes have completed,
-            // so the launcher's explicit exit cannot discard a pending pipe tail.
-            await writeOutputText(destination, "");
-            return;
-          }
-          if (format === "json") {
-            const text = parts.join("");
-            let result: unknown;
-            try {
-              result = JSON.parse(text);
-            } catch {
-              // Preserve non-JSON SDK output (e.g. completion hooks). Token-count
-              // only for SDK documents that opted into sdkDocumentControls.
-              if (exitCode === 0 && options.tokenCount && sdkDocumentControls) {
-                await writeOutputText(
-                  destination,
-                  `${estimateTokenCount(text)}\n`,
-                );
-                return;
-              }
-              await writeOutputText(destination, text);
-              return;
-            }
-            // Compact rewrite must not skip token controls for SDK documents
-            // (`--llms` / `--schema` with --token-count on a pipe).
-            if (exitCode === 0 && options.tokenCount) {
-              const compact = [...jsonOutputParts(result, "json", false)].join(
-                "",
-              );
-              await writeOutputText(
-                destination,
-                `${estimateTokenCount(compact)}\n`,
-              );
-              return;
-            }
-            await writeJsonOutput(result, destination, "json");
-            return;
-          }
-          if (exitCode === 0) {
-            if (options.tokenCount)
-              await writeOutputText(
-                destination,
-                `${estimateTokenCount(parts.join(""))}\n`,
-              );
-            else if (sdkDocumentControls && options.tokenWindow) {
-              const text = parts.join("");
-              const window = sliceTextByTokenWindow(
-                text,
-                options.tokenOffset ?? 0,
-                options.tokenLimit,
-              );
-              await writeOutputText(
-                destination,
-                window.truncated
-                  ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]\n`
-                  : text,
-              );
-            } else
-              for (const part of parts)
-                await writeOutputText(destination, part);
-          } else {
-            const text = parts.join("");
-            if (format !== "jsonl") {
-              await writeOutputText(destination, text);
-              return;
-            }
-            let result: unknown = text;
-            try {
-              result = JSON.parse(text);
-            } catch {
-              /* Preserve non-JSON SDK diagnostics verbatim. */
-            }
-            await writeJsonOutput(
-              jsonLinesErrorRecord(result),
-              destination,
-              "jsonl",
-            );
-          }
-        } catch (cause: unknown) {
-          handled = true;
-          failed = true;
-          throw cause;
-        }
-      })());
+    finish() {
+      return writeOutputText(destination, "");
     },
     write,
     recoverFormattingFailure,
@@ -450,6 +262,7 @@ export const createCliResultOutput = (
   async function writeResult(
     value: unknown,
     metadata: CliResultOutputMetadata,
+    operationFailure: unknown,
   ): Promise<boolean> {
     completed = {
       metadata,
@@ -459,17 +272,21 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
-    const operationFailure = metadata.failure
-      ? value
-      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
-        ? cliOperationFailurePayload(value)
-        : undefined;
     const failure = options.fullOutput ? operationFailure : undefined;
     const ownsFilteredOutput =
       operationFailure === undefined &&
       filterPaths !== undefined &&
       filterPaths.length > 0;
-    // Incur owns suppressed human presentation, but a filter must never erase
+    if (
+      (format === "toon" || format === "yaml") &&
+      value == null &&
+      !options.fullOutput &&
+      !options.tokenCount &&
+      !options.tokenWindow &&
+      !ownsFilteredOutput
+    )
+      return false;
+    // Suppressed human presentation must never erase
     // the typed failure that this boundary already owns.
     if (
       operationFailure === undefined &&
@@ -651,33 +468,12 @@ export const createCliResultOutput = (
       Array.isArray(selected)
         ? normalizeJsonArrayValues(selected)
         : selected;
-    // A full-output envelope that shows the result's control flags is written
-    // here in every format; Incur's envelope cannot carry them.
-    const ownsControlEnvelope =
-      options.fullOutput && metadata.cliControls !== undefined;
     const ownsSuccessfulTokenWindow =
       operationFailure === undefined &&
       options.tokenWindow &&
       !options.tokenCount &&
       format !== "json" &&
       format !== "jsonl";
-    // Delegate other human formats to Incur. Markdown stays here so admission
-    // and emitted table text use the same safe formatter. A full-output token
-    // count stays here too: Incur counts only the selected data, so delegating
-    // it would report the bare result instead of the emitted envelope.
-    if (
-      !metadata.forceOutput &&
-      format !== "md" &&
-      format !== "json" &&
-      format !== "jsonl" &&
-      operationFailure === undefined &&
-      !ownsFilteredOutput &&
-      !ownsSuccessfulTokenWindow &&
-      !(options.tokenCount && options.fullOutput) &&
-      // Incur's own envelope cannot carry the result's control flags.
-      !ownsControlEnvelope
-    )
-      return false;
     if (format === "jsonl") {
       handled = true;
       try {
@@ -727,9 +523,9 @@ export const createCliResultOutput = (
         ? {}
         : filtered;
     if (options.tokenCount) {
-      // Incur/tokenx materialize JSON. Measure its UTF-16 expansion before
+      // Token counting materializes JSON. Measure its UTF-16 expansion before
       // allowing that allocation, independently of UTF-8 bytes. Other formats
-      // retain Incur's materializing behavior.
+      // require a complete formatted string.
       const tokenValue = document;
       let characters = 0;
       if (
@@ -801,7 +597,7 @@ export const createCliResultOutput = (
         options.tokenOffset ?? 0,
         options.tokenLimit,
       );
-      // Keep Incur's empty human/agent presentation semantics. Nonempty text
+      // Keep the established empty human/agent presentation. Nonempty text
       // already belongs to this formatter, even when the whole result fits.
       if (!window.truncated && !options.fullOutput && formatted === "")
         return false;
@@ -842,16 +638,9 @@ export const createCliResultOutput = (
       }
       return true;
     }
-    // Once writing starts, a failed destination must not receive a second
-    // document from Incur's error formatter.
+    // Once writing starts, a failed destination must not receive another document.
     const formattedText =
-      format === "md" ||
-      ((metadata.forceOutput === true || ownsControlEnvelope) &&
-        format !== "json") ||
-      ((operationFailure !== undefined || ownsFilteredOutput) &&
-        format !== "json")
-        ? formatCliOutput(document, format)
-        : undefined;
+      format === "json" ? undefined : formatCliOutput(document, format);
     if (
       format === "md" &&
       formattedText === "" &&
@@ -863,8 +652,7 @@ export const createCliResultOutput = (
     handled = true;
     try {
       if (formattedText !== undefined) {
-        // Incur's error sentinel only carries code/message/retryable. Render
-        // the owned projection or caller-visible failure at this boundary.
+        // Retain the complete owned projection at the output boundary.
         await writeOutputText(destination, `${formattedText}\n`);
       } else {
         await writeJsonOutput(
@@ -1004,7 +792,7 @@ const delimitedMetadata = (
   };
 };
 
-/** Apply Incur's parsed path grammar while merging sibling array selections. */
+/** Apply the parsed output path grammar while merging sibling array selections. */
 type FilterProjection = Result<unknown, string>;
 
 const applyCliOutputFilter = (
@@ -1019,7 +807,7 @@ const applyCliOutputFilter = (
         paths.flatMap((path) => {
           const first = path[0];
           if (first === undefined || "start" in first) return [path];
-          // Root keys retain Incur's implicit per-record traversal, including
+          // Root keys retain implicit per-record traversal, including
           // numeric keys. Only nested array keys address array positions.
           return expandImplicitArrayPath(value, path);
         }),
