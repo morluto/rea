@@ -11,7 +11,10 @@ import { snapshotEnvironment } from "./snapshotEnvironment.js";
 export interface PathSearchCandidate {
   /** The absolute file the launch would execute from this entry. */
   readonly path: string;
-  /** An empty or relative PATH entry, which depends on the working directory. */
+  /**
+   * An empty or relative PATH entry, or on Windows a rooted entry without a
+   * drive (`\tools`), which depends on the working directory or its drive.
+   */
   readonly relativeEntry: boolean;
 }
 
@@ -122,9 +125,10 @@ export interface WindowsPathSearchFailure {
  * The files Windows' PATH/PATHEXT search tries for commands, in order: a
  * path-qualified command (`C:\Python\python`, `.venv\Scripts\python`) only at
  * its own location, resolved against `cwd`, and never on PATH; then for each
- * PATH entry (relative ones resolve against `cwd`, or against this process's
- * directory, read only when such an entry is reached and skipped once
- * removed), each bare command with every PATHEXT extension,
+ * PATH entry (relative ones, including a rooted entry without a drive such as
+ * `\tools`, resolve against `cwd`, or against this process's directory, read
+ * only when such an entry is reached and skipped once removed; they are
+ * marked `relativeEntry`), each bare command with every PATHEXT extension,
  * or as written when it already names an extension. Only `.com` and `.exe`
  * images are searched unless `allowBatch`; a `.bat` or `.cmd` launcher must
  * then be started through src/process/WindowsBatchCommand. An invalid

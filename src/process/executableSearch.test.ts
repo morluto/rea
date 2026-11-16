@@ -146,6 +146,14 @@ describe("windowsPathCandidates", () => {
     expect(
       paths("\\bin\\tool", { PATHEXT: ".EXE" }, { cwd: "Z:\\work" }),
     ).toEqual(["Z:\\bin\\tool.EXE"]);
+    // A UNC working directory roots it at the share, as Win32 does.
+    expect(
+      paths(
+        "\\bin\\tool",
+        { PATHEXT: ".EXE" },
+        { cwd: "\\\\server\\share\\work" },
+      ),
+    ).toEqual(["\\\\server\\share\\bin\\tool.EXE"]);
   });
 
   it("marks a PATH entry without a drive as relative to the working drive", () => {
