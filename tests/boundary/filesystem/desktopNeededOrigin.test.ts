@@ -789,3 +789,63 @@ it
     expect(queried).toContain(alternate);
   },
 );
+
+it.skipIf(process.platform === "win32").each([
+  { reverse: false, physicalOwned: false },
+  { reverse: true, physicalOwned: false },
+  { reverse: false, physicalOwned: true },
+  { reverse: true, physicalOwned: true },
+])(
+  "retains distinct ownership spellings of one selected leaf: %j",
+  async ({ reverse, physicalOwned }) => {
+    const root = await createTestTempDirectory("rea-needed-leaf-spellings-");
+    const executable = join(root, "bin", "app");
+    const release = join(root, "release");
+    const current = join(root, "current");
+    await mkdir(join(root, "bin"));
+    await mkdir(join(release, "sub"), { recursive: true });
+    await symlink("release", current);
+    const physical = join(release, "libchoice.so");
+    const alias = `${current}/libchoice.so`;
+    const declarations = [`${current}/sub/../libchoice.so`, alias];
+    if (reverse) declarations.reverse();
+    await writeFile(executable, elfImage({ needed: declarations }));
+    await writeFile(physical, elfImage({}));
+    const queried: string[] = [];
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .flatMap((path) => {
+              const owner =
+                path === alias
+                  ? "alias-owner"
+                  : path === current
+                    ? "route-owner"
+                    : physicalOwned && path === physical
+                      ? "physical-owner"
+                      : undefined;
+              return owner === undefined ? [] : [`${owner}: ${path}`];
+            })
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: physicalOwned
+        ? ["alias-owner", "physical-owner", "route-owner"]
+        : ["alias-owner", "route-owner"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+    expect(queried).toContain(alias);
+    expect(queried).toContain(physical);
+  },
+);

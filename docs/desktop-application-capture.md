@@ -286,7 +286,10 @@ deduplication; the same spelling in two libraries can name two different files.
 Lookup paths retain directory symlinks and subsequent `..` components until the
 filesystem resolves them. The selected leaf name and its physical target are
 queried for package ownership, keeping the original alias-qualified lookup
-filename separate from canonical identity and trying its owner first.
+filename separate from canonical identity and trying its owner first. Distinct
+ownership spellings participate in request identity even when they select the
+same leaf. All observed owners of that leaf are retained; an unowned query
+spelling does not create a warning when another spelling identifies its owner.
 Distinct required links are retained even when they reach one physical object;
 that object's dependencies are walked once through its first load path, which
 supplies its own `$ORIGIN`. Intermediate file and directory symlink entries

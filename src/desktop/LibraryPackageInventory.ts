@@ -26,6 +26,7 @@ import {
   parseDpkgOwners,
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
@@ -229,6 +230,51 @@ const incompleteReason = (
   return reasons.length === 0 ? undefined : reasons.join("; ");
 };
 
+interface LibraryOwnershipLookup {
+  readonly kind: "leaf" | "alias";
+  readonly path: string;
+  readonly candidates: readonly string[];
+}
+
+/** Reconcile equivalent query spellings without merging links with their targets. */
+const libraryOwnership = (
+  located: readonly LibraryOwnershipLookup[],
+  knownOwners: ReadonlyMap<string, readonly string[]>,
+) => {
+  const names: string[] = [];
+  // Distinct query spellings can address the same leaf entry. Keep every
+  // observed owner, but do not report that entry unowned if another spelling
+  // identifies it. Intermediate links remain independent of their targets.
+  const dispositions = new Map<
+    string,
+    { path: string; owned: boolean; unknown: boolean }
+  >();
+  for (const library of located) {
+    const key = compositeKey([library.kind, library.path]);
+    let disposition = dispositions.get(key);
+    if (disposition === undefined) {
+      disposition = { path: library.path, owned: false, unknown: false };
+      dispositions.set(key, disposition);
+    }
+    const found = library.candidates
+      .map((candidate) => knownOwners.get(candidate))
+      .find((owner) => owner !== undefined && owner.length > 0);
+    if (found !== undefined) {
+      names.push(...found);
+      disposition.owned = true;
+    } else if (
+      !library.candidates.every((candidate) => knownOwners.has(candidate))
+    )
+      disposition.unknown = true;
+  }
+  const unowned = [...dispositions.values()].filter(({ owned }) => !owned);
+  const unpackaged = unowned
+    .filter(({ unknown }) => !unknown)
+    .map(({ path }) => path);
+  const unresolved = unowned.some(({ unknown }) => unknown);
+  return { names, unpackaged, unresolved };
+};
+
 /**
  * The packages owning the shared libraries an executable loads, from its
  * DT_NEEDED closure resolved through RUNPATH, RPATH and `ldconfig -p`, with
@@ -287,17 +333,23 @@ export const inspectLibraryPackages = async (
     },
     policy.libraries,
   );
-  const located = [
-    ...closure.libraries.map(({ path, resolvedPath, ownershipPath }) => ({
-      path,
-      candidates: ownershipCandidates([ownershipPath, path, resolvedPath]),
-    })),
+  const located: LibraryOwnershipLookup[] = [
+    ...closure.libraries.map<LibraryOwnershipLookup>(
+      ({ path, resolvedPath, ownershipPath }) => ({
+        kind: "leaf",
+        path,
+        candidates: ownershipCandidates([ownershipPath, path, resolvedPath]),
+      }),
+    ),
     // An intermediate lookup alias is its own required entry. Ownership of
     // its physical target cannot establish who supplies that link.
-    ...closure.requiredAliases.map(({ path, ownershipPath }) => ({
-      path,
-      candidates: ownershipCandidates([ownershipPath, path]),
-    })),
+    ...closure.requiredAliases.map<LibraryOwnershipLookup>(
+      ({ path, ownershipPath }) => ({
+        kind: "alias",
+        path,
+        candidates: ownershipCandidates([ownershipPath, path]),
+      }),
+    ),
   ];
   const owners = await packageOwners(
     located.flatMap((library) => library.candidates),
@@ -305,20 +357,11 @@ export const inspectLibraryPackages = async (
     signal,
   );
   const knownOwners = owners.ok ? owners.value : owners.error.owners;
-  const names: string[] = [];
-  const unpackaged: string[] = [];
-  let ownershipUnresolved = false;
-  for (const library of located) {
-    const found = library.candidates
-      .map((candidate) => knownOwners.get(candidate))
-      .find((owner) => owner !== undefined && owner.length > 0);
-    if (found !== undefined) names.push(...found);
-    else if (
-      library.candidates.every((candidate) => knownOwners.has(candidate))
-    )
-      unpackaged.push(library.path);
-    else ownershipUnresolved = true;
-  }
+  const {
+    names,
+    unpackaged,
+    unresolved: ownershipUnresolved,
+  } = libraryOwnership(located, knownOwners);
   const reason = [
     incompleteReason(closure, policy),
     owners.ok || !ownershipUnresolved ? undefined : owners.error.reason,

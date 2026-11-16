@@ -249,6 +249,7 @@ export const libraryClosure = async (
         : compositeKey([
             "lookup",
             request,
+            directPath?.ownershipPath ?? request,
             ...(directPath?.requiredAliases.flatMap((alias) => [
               alias.path,
               alias.ownershipPath,
