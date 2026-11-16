@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 
@@ -21,6 +22,7 @@ import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOpt
 import { verifyManagedNativeVerificationSource } from "../../../src/domain/managed/managedNativeVerification.js";
 import { readManagedNativeVerificationSource } from "../../../src/domain/managed/managedNativeVerificationSource.js";
 import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const record = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("Expected a schema object");
@@ -56,7 +58,10 @@ it("advertises semantic output invariants and keeps producers aligned with Zod",
     name: "output-schema-semantics",
     version: "1",
   });
-  const client = new Client({ name: "output-schema-semantics", version: "1" });
+  const client = new Client(
+    { name: "output-schema-semantics", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   for (const contract of contracts)
@@ -218,7 +223,7 @@ mcpTest(
     };
     const evidence = (result: JsonValue) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "ghidra", name: "Controlled bridge result", version: "12.1.4" },
         { operation: contract.name, parameters: {}, result },
       );

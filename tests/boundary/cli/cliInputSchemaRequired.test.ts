@@ -1,9 +1,11 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -86,7 +88,7 @@ const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
     const mismatches: string[] = [];
-    const primary = createCliInventory(cli).primary;
+    const primary = createCliInventory(cliCommands(cli)).primary;
     expect(primary).toEqual(
       expect.arrayContaining(["inspect-pcap-client", "inspect-pcap-capture"]),
     );
@@ -381,8 +383,8 @@ describe("ADB selector input schemas", () => {
       ["S".repeat(257), false],
     ] as const;
     let checked = 0;
-    for (const command of createCliInventory(cli).primary.filter((name) =>
-      name.includes("-adb-"),
+    for (const command of createCliInventory(cliCommands(cli)).primary.filter(
+      (name) => name.includes("-adb-"),
     )) {
       const parser = parserSchema(cli, command, "args");
       const field = parser?.shape.serial as z.ZodType | undefined;
@@ -424,17 +426,6 @@ describe("ADB selector input schemas: package and activity", () => {
   it("preserves package and activity selector boundaries in parser and advertisement", async () => {
     const cli = createCli({});
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const descriptions: Record<string, string> = {
-      "pull-adb-package:package": "Installed package name",
-      "inspect-adb-package:package": "Package",
-      "uninstall-adb-package:package": "Installed package to uninstall",
-      "start-adb-app:package": "Installed package to start",
-      "stop-adb-app:package": "Package to force-stop",
-      "start-adb-activity:action": "Intent action to start",
-      "start-adb-activity:data-uri": "Intent data URI (-d)",
-      "start-adb-activity:component":
-        "Explicit component in package/activity form (-n)",
-    };
     const selections = [
       {
         commands: [
@@ -506,8 +497,14 @@ describe("ADB selector input schemas: package and activity", () => {
           throw new Error(`Missing ${command} ${selection.key}`);
         const advertised = await advertisedSchema(cli, command);
         const schema = advertised[selection.group];
+        // The CLI advertises each contract field's own description.
+        const contract = adbInputSchemas[
+          command.replaceAll("-", "_") as keyof typeof adbInputSchemas
+        ] as z.ZodObject;
         expect(schema?.properties[selection.key]).toMatchObject({
-          description: descriptions[`${command}:${selection.key}`],
+          description: (
+            contract.shape[selection.key.replaceAll("-", "_")] as z.ZodType
+          ).description,
         });
         expect(schema?.required?.includes(selection.key) ?? false).toBe(
           selection.group === "args",

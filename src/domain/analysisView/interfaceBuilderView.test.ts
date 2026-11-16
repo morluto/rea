@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  changedEvidenceSubject,
+  UNKNOWN_EVIDENCE_SUBJECT,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { interfaceBuilderAnalysisSchema } from "../apple/interfaceBuilderGraph.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
 import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const target = "a".repeat(64);
@@ -93,13 +98,13 @@ const parent = (
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "decode_interface_builder",
   normalizedResult,
-  subject: {
+  subject: evidenceSubject({
     name: "Fixture",
-    digest: { sha256 },
+    sha256,
     format: "mach-o",
     architecture: "arm64",
-    local_path: "/Applications/Fixture.app/Contents/MacOS/Fixture",
-  },
+    path: "/Applications/Fixture.app/Contents/MacOS/Fixture",
+  }),
   limitations: [],
 });
 
@@ -124,7 +129,9 @@ describe("Interface Builder immutable interpretation", () => {
       expect(parse).toHaveBeenCalledTimes(1);
       const changed = {
         ...source,
-        subject: { ...source.subject!, digest: { sha256: "d".repeat(64) } },
+        subject: changedEvidenceSubject(source.subject!, {
+          sha256: "d".repeat(64),
+        }),
       };
       const rejected = projectAnalysisView(changed, { kind: "summary" });
       if (rejected.ok)
@@ -211,7 +218,7 @@ describe("Interface Builder analysis views", () => {
   it("keeps resource-root provenance in both summary and detail views without a subject", () => {
     const source: AnalysisViewParent = {
       ...parent(resourceReport()),
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
     };
     const summary = projectAnalysisView(source, { kind: "summary" });
     const detail = projectAnalysisView(source, {

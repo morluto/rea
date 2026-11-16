@@ -20,6 +20,17 @@ export class AnalysisCleanupRelease implements AnalysisCleanupReleaseClaim {
     return error.bindCleanupReleaseClaim(this);
   }
 
+  /**
+   * Let a failure reported by another producer read this release only when
+   * its cleanup has no owner of its own; an owned failure keeps reading that
+   * owner, so a later release of its resources is not hidden behind this one.
+   */
+  bindUnowned<T extends AnalysisError>(error: T): T {
+    return error.cleanupIncomplete && !error.hasCleanupOwner
+      ? this.bind(error)
+      : error;
+  }
+
   confirm(): void {
     this.#released = true;
   }

@@ -193,7 +193,7 @@ describe("CdpBrowserProvider: page cookie scope", () => {
 });
 
 describe("CdpBrowserProvider: complete storage fingerprints", () => {
-  it("fingerprints cache bodies above the former byte ceiling", async () => {
+  it("fingerprints cache bodies above 64 KiB", async () => {
     const body = "x".repeat(64 * 1_024 + 1);
     const browser = await startFakeCdpBrowser({ cachedResponseBody: body });
     trackBrowser(browser);

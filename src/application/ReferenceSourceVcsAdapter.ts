@@ -6,8 +6,10 @@ import {
   ReferenceSourceGitDirectoryCancelled,
 } from "./ReferenceSourceGitDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -16,9 +18,10 @@ import {
   readRegularFile,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
-import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
+} from "../process/RegularFileRead.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { referenceSourceResourceFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 export type ReferenceSourceVcsInfo =
   | {
@@ -280,6 +283,3 @@ const errorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" && cause !== null && "code" in cause
     ? String(cause.code)
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

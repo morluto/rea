@@ -1,0 +1,19 @@
+{
+  "src/application/EvidenceInputResolver.ts": 1,
+  "src/application/binary/BinarySession.ts": 1,
+  "src/application/desktop/DesktopApplicationState.ts": 1,
+  "src/application/frida/FridaInstrumentationService.ts": 1,
+  "src/browser/CdpBrowserProvider.ts": 1,
+  "src/browser/CdpElectronProvider.ts": 1,
+  "src/browser/PlaywrightBrowserScenarioProvider.ts": 1,
+  "src/browser/execution/CdpWebRuntimeProvider.ts": 1,
+  "src/browser/history/HistoricalCaptureDecoder.ts": 1,
+  "src/cli/cliJsonInput.ts": 1,
+  "src/evm/EvmoleInterfaceProvider.ts": 1,
+  "src/ghidra/GhidraClient.ts": 1,
+  "src/hopper/HopperClient.ts": 2,
+  "src/hopper/HopperMachOImage.ts": 1,
+  "src/native/pwntools/PwntoolsDecoder.ts": 1,
+  "src/reference/ReferenceSourceReaderEntries.ts": 1,
+  "src/sqlite/SqliteDatabaseProvider.ts": 1
+}

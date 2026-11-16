@@ -192,7 +192,7 @@ cliTest(
       operation: "inspect_python_pyc",
       subject: {
         local_path: path,
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       },
     });
   },

@@ -3,7 +3,6 @@ import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
 } from "../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { setImmediate } from "node:timers/promises";
@@ -16,21 +15,20 @@ import type {
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
-  normalizeArtifactPath,
-  ArtifactPathRegistry,
-} from "./ArtifactPaths.js";
-import {
+  assertArtifactReadActive,
   ArtifactReaderFailure,
   copyArtifactEntry,
   assertProducedEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  normalizeArtifactPath,
+  ArtifactPathRegistry,
+  ArtifactFileSource,
+  artifactReaderLimitFailure,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {
   bunFormatFailure,

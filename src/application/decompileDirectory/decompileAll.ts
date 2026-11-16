@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { PseudocodeAbsence } from "../../domain/native/pseudocodeAbsence.js";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 
 import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
@@ -19,7 +19,7 @@ import { digestSchema } from "../../domain/digests.js";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -29,7 +29,7 @@ import {
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import { listProceduresFact } from "../../domain/native/nativeOperationFacts.js";
@@ -236,11 +236,11 @@ export const decompileAll = async (
       primary !== closed.error &&
       closed.error.cleanupIncomplete
     ) {
-      failure = analysisErrorWithCleanupFailure(
+      failure = analysisErrorWithCleanupDependencies(
         primary,
         closed.error,
         "decompile_all",
-      ).bindCleanupDependencies([primary, closed.error]);
+      );
     }
     if (publishedOutput !== undefined)
       failure.retainPrimaryDiagnostics({ published_output: publishedOutput });

@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../fixtures/canonicalOutputSchema.js";
 import { apkSignatureResultSchema } from "../../src/domain/apkSignature/apkSignatureReport.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -236,7 +239,7 @@ cliTest(
     ] as const) {
       const reply = await client.callTool(
         { name: tool.name, arguments: { path, detail: "complete" } },
-        { toolDefinition: tool },
+        { toolDefinition: withCanonicalOutputSchema(tool) },
       );
       expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       expect(
