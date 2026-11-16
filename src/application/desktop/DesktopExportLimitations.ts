@@ -15,7 +15,7 @@ import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
 import { recoveryListLimitation } from "../../domain/desktop/seedRecoveryList.js";
 
 /** The limitation naming files the desktop Trash held at the seed; none when it held none. */
-export const trashedFilesLimitation = (
+const trashedFilesLimitation = (
   files: readonly string[],
 ): string | undefined =>
   files.length === 0
@@ -23,7 +23,7 @@ export const trashedFilesLimitation = (
     : `The desktop Trash held ${String(files.length)} file(s) at the seed checkpoint, which are not seeded: ${files.map((home) => `~/${home}`).join(", ")}. Restore one the task needs and capture again.`;
 
 /** The limitation on where the seed came from: made for the task, or the user's real state, kept local. */
-export const seedLimitation = (syntheticSeed: boolean): string =>
+const seedLimitation = (syntheticSeed: boolean): string =>
   syntheticSeed
     ? "The seed was made for the task, not taken from a user's own data; read it before publishing the bundle."
     : "The seed is the user's real state at the seed checkpoint; keep the bundle local.";

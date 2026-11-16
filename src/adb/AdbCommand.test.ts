@@ -1,10 +1,11 @@
 import { expect, it, vi } from "vitest";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   ExecFileOutputCancelledError,
   execFileBytes,
 } from "../process/ExecFileOutput.js";
 import { probeAdbPathExistence, runAdbCapture } from "./AdbCommand.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/ExecFileOutput.js")>()),
@@ -133,6 +134,44 @@ it.each([
   },
 );
 
+it.each([
+  [true, "live"],
+  [undefined, "capture"],
+] as const)(
+  "names the adb capture allowance and its byte value (volatile output: %s)",
+  async (volatileOutput, kind) => {
+    vi.mocked(execFileBytes).mockRejectedValueOnce(
+      Object.assign(new Error("too much"), {
+        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+        stdout: "",
+        stderr: "",
+        signal: null,
+        killed: false,
+        outputTruncated: true,
+      }),
+    );
+    const result = await runAdbCapture(
+      "list_adb_devices",
+      { device: "device" },
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
+      ["devices"],
+      {
+        timeoutMs: 100,
+        maxOutputBytes: 1024,
+        ...(volatileOutput === undefined ? {} : { volatileOutput }),
+      },
+      undefined,
+    );
+    if (result.ok) throw new Error("Expected a capture refusal");
+    expect(result.error).toHaveProperty("fixedAllowance", {
+      name: expect.any(String),
+      kind,
+      limit: 1024,
+      unit: "bytes",
+    });
+  },
+);
+
 it("recognizes an empty successful probe as existence", async () => {
   vi.mocked(execFileBytes).mockResolvedValueOnce({
     stdout: Buffer.alloc(0),
@@ -210,65 +249,6 @@ it("does not infer cancellation from a foreign ABORT_ERR code", async () => {
     ok: false,
     error: { _tag: "AnalysisProtocolError" },
   });
-});
-
-it.each([true, false])(
-  "projects a truncated adb capture as retryable only for volatile output (%s)",
-  async (volatileOutput) => {
-    vi.mocked(execFileBytes).mockRejectedValueOnce(
-      Object.assign(new Error("too much"), {
-        code: 1,
-        stdout: "",
-        stderr: "",
-        signal: null,
-        killed: false,
-        outputTruncated: true,
-      }),
-    );
-    const result = await runAdbCapture(
-      volatileOutput ? "read_adb_logcat" : "install_adb_package",
-      { device: "device" },
-      { binary: "/host/adb", pathSource: "environment", environment: {} },
-      volatileOutput ? ["logcat", "-d"] : ["install", "app.apk"],
-      { timeoutMs: 100, maxOutputBytes: 1024, volatileOutput },
-      undefined,
-    );
-    if (result.ok) throw new Error("Expected a capture allowance refusal");
-    const projected = projectAnalysisError(result.error);
-    expect(projected.retryable).toBe(volatileOutput);
-    expect(projected).toMatchObject({
-      code: "resource_constraint",
-      details: { reported_limits: { max_output_bytes: 1024 } },
-    });
-    expect(projected.details?.limit).toBeUndefined();
-  },
-);
-
-it("reports the effective fixed adb deadline", async () => {
-  vi.mocked(execFileBytes).mockRejectedValueOnce(
-    Object.assign(new Error("deadline"), {
-      code: "ETIMEDOUT",
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: true,
-    }),
-  );
-  const result = await runAdbCapture(
-    "pull_adb_file",
-    { device: "device" },
-    { binary: "/host/adb", pathSource: "environment", environment: {} },
-    ["pull", "/remote"],
-    { timeoutMs: 600_000, maxOutputBytes: 1024 },
-    undefined,
-  );
-  if (result.ok) throw new Error("Expected an adb deadline");
-  const projected = projectAnalysisError(result.error);
-  expect(projected).toMatchObject({
-    code: "provider_timeout",
-    details: { timeout_ms: 600_000 },
-  });
-  expect(projected.details?.limit).toBeUndefined();
 });
 
 it("keeps a physical failure even when the later abort reason is that same error", async () => {
@@ -398,32 +378,49 @@ it("reports an adb that never started without claiming an exit code", async () =
   });
 });
 
-it("reports exhausted host capacity rather than an adb protocol failure", async () => {
-  vi.mocked(execFileBytes).mockRejectedValueOnce(
-    Object.assign(new Error("spawn EAGAIN"), {
-      code: "EAGAIN",
-      spawnFailed: true,
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-    }),
-  );
-  const result = await runAdbCapture(
-    "list_adb_devices",
-    { device: "device" },
-    { binary: "/host/adb", pathSource: "environment", environment: {} },
-    ["devices"],
-    { timeoutMs: 100, maxOutputBytes: 1024 },
-    undefined,
-  );
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-      retryable: true,
-      reportedLimits: { spawn_error: "EAGAIN" },
+it.each([
+  ["EAGAIN", "capacity", true, { boundary: "host-capacity" }],
+  // Device commands carry request operands, so the request may shrink too.
+  [
+    "E2BIG",
+    "transport",
+    false,
+    {
+      boundary: "provider-launch",
+      oversized_launch_input: "request_and_environment",
     },
-  });
-});
+  ],
+] as const)(
+  "reports host launch constraint %s through the shared launch owner rather than as an adb protocol failure",
+  async (code, resource, retryable, facts) => {
+    vi.mocked(execFileBytes).mockRejectedValueOnce(
+      Object.assign(spawnFailure(code, "/host/adb"), {
+        spawnFailed: true,
+        stdout: "",
+        stderr: "",
+        signal: null,
+        killed: false,
+      }),
+    );
+    const result = await runAdbCapture(
+      "list_adb_devices",
+      { device: "device" },
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
+      ["devices"],
+      { timeoutMs: 100, maxOutputBytes: 1024 },
+      undefined,
+    );
+    if (result.ok) throw new Error("Expected a launch constraint");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource,
+      retryable,
+      reportedLimits: { spawn_error: code },
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        diagnostics: { system_code: code, command: "/host/adb", ...facts },
+      },
+    });
+  },
+);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 const language = (byteOrder) => {
@@ -194,7 +195,7 @@ export function parseMipsReadelf(
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
 export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
-  const command = process.env.REA_MIPS_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
@@ -226,7 +227,7 @@ export async function inspectMipsReadelf(path, byteOrder, floatAbi = "hard") {
 
 /** Independent GNU readelf interpretation for the recordless legacy fixture. */
 export async function inspectLegacyMipsReadelf(path, byteOrder) {
-  const command = process.env.REA_MIPS_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.mipsReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,

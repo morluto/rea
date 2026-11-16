@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -5,17 +7,14 @@ import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { JAVASCRIPT_FEATURE_TRACE_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { deliverApplicationEvidence } from "../../../src/server/registerApplicationTools/helpers.js";
+import { deliverApplicationExecution } from "../../../src/server/deliverApplicationExecution.js";
+import { settledExecution } from "../../../src/application/ApplicationToolExecutions.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { silentLogger } from "../../../src/logger.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -70,10 +69,7 @@ contextBridge.exposeInMainWorld("api",{${CHANNELS.map(
   return root;
 };
 
-const connect = async (
-  profile: "full" | "compact",
-  maximumResponseBytes?: number,
-) => {
+const connect = async (profile: "compact", maximumResponseBytes?: number) => {
   const application = await analyzeJavaScriptApplication({
     input_path: await writeApplication(),
   });
@@ -119,7 +115,7 @@ const bytes = (value: unknown): number =>
 
 type Harness = Awaited<ReturnType<typeof connect>>;
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "returns selected feature-trace facts and retains the complete trace (%s)",
   async (profile) => {
     const harness = await connect(profile);
@@ -145,13 +141,10 @@ it.each(["full", "compact"] as const)(
     expect(summary.evidence.normalized_result).toMatchObject({
       kind: "summary",
       parent_operation: "trace_application_feature",
-      artifact:
-        parent.subject === null
-          ? null
-          : {
-              path: parent.subject.local_path,
-              sha256: parent.subject.digest.sha256,
-            },
+      artifact: {
+        path: parent.subject.local_path,
+        sha256: fileIdentity(parent.subject).sha256,
+      },
       summary: {
         trace_id: full.trace_id,
         source_evidence_id: full.source_evidence_id,
@@ -171,7 +164,9 @@ it.each(["full", "compact"] as const)(
       ({ name }) => name === "trace_application_feature",
     )!;
     expect(ajv.validateSchema(traceTool.inputSchema)).toBe(true);
-    const outputSchema: Record<string, unknown> = traceTool.outputSchema!;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      traceTool.name,
+    );
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const request = {
       kind: "feature-trace",
@@ -343,7 +338,7 @@ const assertRetainedTracePages = async (
 };
 
 it("keeps a no-match trace's discovery and empty collections explicit", async () => {
-  const { inputs, call } = await connect("full");
+  const { inputs, call } = await connect("compact");
   const missing = {
     ...inputs,
     seed: { kind: "string", value: "absent-literal", match: "exact" },
@@ -376,7 +371,10 @@ it("refuses a selected view before tracing when the server retains no Evidence",
     throw new Error("No deep provider");
   });
   const server = createServer({ kind: "fixed", analysis: session });
-  const client = new Client({ name: "feature-trace-fixed", version: "1" });
+  const client = new Client(
+    { name: "feature-trace-fixed", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -410,7 +408,7 @@ it("refuses a selected view before tracing when the server retains no Evidence",
 
 it("recovers an oversized completed trace through its retained paths page", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, call, reply } = await connect("full", budget);
+  const { session, inputs, call, reply } = await connect("compact", budget);
   const failed = await reply("trace_application_feature", inputs);
   const error = parseMcpToolError(failed).error;
   expect(error.code).toBe("resource_constraint");
@@ -462,7 +460,7 @@ it("recovers an oversized completed trace through its retained paths page", asyn
 
 it("names the retained trace and a smaller page when a selected page is oversized", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, reply } = await connect("full", budget);
+  const { session, inputs, reply } = await connect("compact", budget);
   const selection = {
     kind: "feature-trace",
     collection: "nodes",
@@ -509,7 +507,7 @@ it("names the retained trace and a smaller page when a selected page is oversize
   );
 });
 
-it("retains a completed trace and its sources when cancelled before delivery", async () => {
+it("commits no session facts when cancelled after the trace completes", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider");
   });
@@ -517,47 +515,32 @@ it("retains a completed trace and its sources when cancelled before delivery", a
     JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   );
   if (!traceExecution.ok) throw traceExecution.error;
-  const artifactResources = new ArtifactResourceScope();
-  onTestFinished(() => artifactResources.close());
+  const before = session.exportEvidenceBundle();
   for (const view of [undefined, { kind: "summary" } as const]) {
     const cancelled = new AbortController();
-    setImmediate(() => cancelled.abort(new Error("client cancelled")));
+    cancelled.abort(new Error("client cancelled"));
     // Cancellation can only arrive between completion and commit through this
     // staging step, which the public workflow cannot schedule deterministically.
-    const delivered = await deliverApplicationEvidence(
-      { delivery: createToolResultDelivery(undefined) },
+    const delivered = await deliverApplicationExecution(
+      createToolResultDelivery(undefined),
       {
-        artifactResources,
-        logger: silentLogger,
         evidenceById: (id) => session.evidenceById(id),
         recordEvidence: (evidence) => session.recordEvidence(evidence),
-        recordEvidenceWithUnknown: undefined,
       },
       toolContract("trace_application_feature"),
-      traceExecution.value,
+      settledExecution(traceExecution.value),
       view,
       cancelled.signal,
     );
+    // Same contract as compare_source_to_bundle: a cancelled request leaves the session unchanged.
     expect(parseMcpToolError(delivered)).toMatchObject({
-      error: {
-        code: "cancelled",
-        details: {
-          partial_observation: {
-            kind: "retained-evidence",
-            evidence_id: traceExecution.value.evidence.evidence_id,
-          },
-        },
-      },
+      error: { code: "cancelled" },
     });
-    expect(
-      session.evidenceById(traceExecution.value.evidence.evidence_id),
-    ).toEqual(traceExecution.value.evidence);
-    for (const source of traceExecution.value.sources)
-      expect(session.evidenceById(source.evidence_id)).toEqual(source);
+    expect(session.exportEvidenceBundle()).toEqual(before);
   }
 });
 
-it("reports source retention failure without discarding the completed parent on cancellation", async () => {
+it("keeps every completed record when a later cancellation arrives", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider");
   });
@@ -565,34 +548,20 @@ it("reports source retention failure without discarding the completed parent on 
     JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   );
   if (!trace.ok) throw trace.error;
-  const resources = new ArtifactResourceScope();
-  onTestFinished(() => resources.close());
-  const controller = new AbortController();
-  controller.abort("cancelled after computation");
-  const failure = new AnalysisResourceConstraintError(
-    "record_evidence",
-    "capacity",
-    "source refused",
-    null,
-  );
-  const result = await deliverApplicationEvidence(
-    { delivery: createToolResultDelivery(undefined) },
+  const cancelled = new AbortController();
+  setImmediate(() => cancelled.abort(new Error("client cancelled")));
+  const delivered = await deliverApplicationExecution(
+    createToolResultDelivery(undefined),
     {
-      artifactResources: resources,
-      logger: silentLogger,
       evidenceById: (id) => session.evidenceById(id),
-      recordEvidence: (evidence) =>
-        evidence.evidence_id === trace.value.evidence.evidence_id
-          ? session.recordEvidence(evidence)
-          : err(failure),
-      recordEvidenceWithUnknown: undefined,
+      recordEvidence: (evidence) => session.recordEvidence(evidence),
     },
     toolContract("trace_application_feature"),
-    trace.value,
+    settledExecution(trace.value),
     undefined,
-    controller.signal,
+    cancelled.signal,
   );
-  expect(parseMcpToolError(result)).toMatchObject({
+  expect(parseMcpToolError(delivered)).toMatchObject({
     error: {
       code: "cancelled",
       details: {
@@ -600,16 +569,12 @@ it("reports source retention failure without discarding the completed parent on 
           kind: "retained-evidence",
           evidence_id: trace.value.evidence.evidence_id,
         },
-        diagnostics: {
-          source_retention_error: { code: "resource_constraint" },
-        },
       },
     },
   });
-  expect(session.evidenceById(trace.value.evidence.evidence_id)).toEqual(
-    trace.value.evidence,
-  );
   expect(
-    session.evidenceById(trace.value.sources[0]!.evidence_id),
-  ).toBeUndefined();
+    session.evidenceById(trace.value.evidence.evidence_id),
+  ).toEqual(trace.value.evidence);
+  for (const source of trace.value.sources)
+    expect(session.evidenceById(source.evidence_id)).toEqual(source);
 });

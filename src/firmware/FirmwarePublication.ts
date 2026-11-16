@@ -1,16 +1,18 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
-  firmwareFailure,
+  AnalysisCleanupLease,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  firmwareFailureDialect,
   firmwarePhaseInterruption,
 } from "./FirmwareFailures.js";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../artifacts/SafeOutputTreeCreationFailure.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -46,6 +48,8 @@ const UNNAMED_DEPENDENCY_CONTINUATION =
 
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const depthContinuation = (
   maxDepth: number,
@@ -223,19 +227,22 @@ export const publishFirmwareExtraction = async (context: {
         : new AnalysisCleanupLease(async () => {
             await ownedTree.rollback();
           });
-    const primary = firmwareFailure(
+    const primary = classifyProviderFailure(
       outputDirectoryAdmissionRefusal(
         "extract_firmware",
         "output_directory",
         cause,
       ),
-      {
+      firmwareFailureDialect({
         engine: "unblob",
         operation: "extract_firmware",
-        deadline: context.deadline,
+        phase: {
+          signal: context.signal,
+          deadline: context.deadline,
+          publication: progress(),
+        },
         treeCleanupLease: treeLease,
-        publication: progress(),
-      },
+      }),
     );
     try {
       await treeLease?.release();
@@ -251,12 +258,8 @@ export const publishFirmwareExtraction = async (context: {
         "unblob",
         [context.outputDirectory, context.workspacePath],
         {
-          reason:
-            cleanupCause instanceof Error
-              ? cleanupCause.message
-              : String(cleanupCause),
-          previous_error:
-            cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cleanupCause),
+          previous_error: errorMessage(cause),
         },
         {
           cause: cleanupCause,
@@ -270,11 +273,11 @@ export const publishFirmwareExtraction = async (context: {
         context.retainCleanup(tree, treeLease, cleanup);
       if (publishedResult !== undefined)
         primary.retainPartialObservation(publishedResult);
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "extract_firmware",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     }
     if (tree?.published === true && result !== undefined) return result;
     throw primary;
@@ -380,7 +383,7 @@ const extractionGaps = (
   const continuation = (instruction: string): string => {
     const known = instructions.get(instruction);
     if (known !== undefined) return known;
-    const id = createHash("sha256").update(instruction).digest("hex");
+    const id = sha256Hex(instruction);
     instructions.set(instruction, id);
     return id;
   };

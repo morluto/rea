@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import {
   A_ARMORED,
   B_ARMORED,
@@ -617,6 +617,29 @@ describe.skipIf(process.platform === "win32")(
   },
 );
 
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "an apt release the check cannot reach",
+  () => {
+    it("says the release files could not be checked rather than that apt holds none", async () => {
+      const { root, inspect } = await vendorFixture();
+      const lists = join(root, "lists");
+      await chmod(lists, 0o000);
+      try {
+        const result = await inspect();
+        if (!result.ok) throw new Error(result.error.reason);
+        const repository = result.value.inventory.package.apt_repositories?.[0];
+
+        expect(repository).toMatchObject({
+          signing_key: null,
+          signing_key_reason: `apt's release files for it in ${lists} could not be checked`,
+        });
+      } finally {
+        await chmod(lists, 0o755);
+      }
+    });
+  },
+);
+
 describe.skipIf(process.platform === "win32")("library packages", () => {
   it("keeps the library packages the Ubuntu archive offers and sets aside the rest", async () => {
     const vendor = await inspected();
@@ -876,34 +899,37 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     expect(installed).not.toHaveProperty("executable_package_reason");
   });
 
-  it("finds apt's package lists in the folder apt-config names, or the default when it cannot say", async () => {
-    const { root, runQuery, inspect } = await writerFixture();
-    // A user-space apt-get update under APT_CONFIG keeps its lists elsewhere.
-    const userLists = join(root, "user's lists");
-    await rename(join(root, "lists"), userLists);
-    await mkdir(join(root, "lists"));
-    const answering =
-      (outcome: QueryOutcome): QueryRunner =>
-      async (command, argv, signal) =>
-        command === "apt-config" ? outcome : runQuery(command, argv, signal);
-    const quoted = `LISTS='${userLists.replaceAll("'", "'\\''")}/'\n`;
+  it.each(["user's lists", "user's\nlists"])(
+    "finds apt's package lists in %j, or the default when it cannot say",
+    async (name) => {
+      const { root, runQuery, inspect } = await writerFixture();
+      // A user-space apt-get update under APT_CONFIG keeps its lists elsewhere.
+      const userLists = join(root, name);
+      await rename(join(root, "lists"), userLists);
+      await mkdir(join(root, "lists"));
+      const answering =
+        (outcome: QueryOutcome): QueryRunner =>
+        async (command, argv, signal) =>
+          command === "apt-config" ? outcome : runQuery(command, argv, signal);
+      const quoted = `LISTS='${userLists.replaceAll("'", "'\\''")}/'\n`;
 
-    const present = await Promise.all(
-      [
-        { stdout: quoted, exitCode: 0 },
-        { stdout: "", exitCode: 100 },
-        "missing" as const,
-      ].map(async (outcome) => {
-        const { installed } = await inspect(
-          { desktopEntry: "libreoffice-writer" },
-          { run: answering(outcome) },
-        );
-        return installed.package_lists_present;
-      }),
-    );
+      const present = await Promise.all(
+        [
+          { stdout: quoted, exitCode: 0 },
+          { stdout: "", exitCode: 100 },
+          "missing" as const,
+        ].map(async (outcome) => {
+          const { installed } = await inspect(
+            { desktopEntry: "libreoffice-writer" },
+            { run: answering(outcome) },
+          );
+          return installed.package_lists_present;
+        }),
+      );
 
-    expect(present).toEqual([true, false, false]);
-  });
+      expect(present).toEqual([true, false, false]);
+    },
+  );
 
   it("records why the computer cannot install the program's package when no source it can use offers it", async () => {
     const { runQuery, inspect } = await writerFixture();

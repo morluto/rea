@@ -2,7 +2,7 @@ import { Cli } from "incur";
 import pino from "pino";
 
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { registerApktoolCommands } from "../../../src/cli/apktoolCommands.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
 import type { ApktoolRequest } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";

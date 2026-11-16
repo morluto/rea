@@ -1,13 +1,12 @@
-import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -36,131 +35,112 @@ cliTest(
         "directory",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(cliResponse.exitCode).toBe(0);
     const cliEvidence = toolContract(
       "analyze_javascript_application",
     ).outputSchema.parse(cliResponse.json);
-    const client = new Client({ name: "event-payload-e2e", version: "1" });
-    const transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "" },
-      stderr: "pipe",
+    const { client } = await connectLocalToolsMcp();
+    const response = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: root, format: "directory" },
     });
-    transport.stderr?.on("data", () => undefined);
-    try {
-      await client.connect(transport);
-      const response = await client.callTool({
-        name: "analyze_javascript_application",
-        arguments: { input_path: root, format: "directory" },
-      });
-      expect(response.isError).not.toBe(true);
-      const evidence = toolContract(
-        "analyze_javascript_application",
-      ).outputSchema.parse(response.structuredContent);
-      expect(evidence.evidence_id).toBe(cliEvidence.evidence_id);
-      const text = response.content.find((item) => item.type === "text");
-      if (text?.type !== "text") throw new Error("Missing MCP text result");
-      expect(
-        toolContract("analyze_javascript_application").outputSchema.parse(
-          JSON.parse(text.text),
-        ).evidence_id,
-      ).toBe(evidence.evidence_id);
-      const graph = javascriptApplicationAnalysisResultSchema.parse(
-        evidence.normalized_result,
-      ).semantic_graph;
-      const events = graph.nodes.filter((node) => node.kind === "event");
-      const selected = events.filter(
-        (node) => node.properties.event_name === name,
-      );
-      expect(selected).toHaveLength(1);
-      const event = selected[0];
-      if (event === undefined) throw new Error("Complete event was lost");
-      const listeners = graph.nodes.filter(
+    expect(response.isError).not.toBe(true);
+    const evidence = toolContract(
+      "analyze_javascript_application",
+    ).outputSchema.parse(response.structuredContent);
+    expect(evidence.evidence_id).toBe(cliEvidence.evidence_id);
+    const text = response.content.find((item) => item.type === "text");
+    if (text?.type !== "text") throw new Error("Missing MCP text result");
+    expect(
+      toolContract("analyze_javascript_application").outputSchema.parse(
+        JSON.parse(text.text),
+      ).evidence_id,
+    ).toBe(evidence.evidence_id);
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    ).semantic_graph;
+    const events = graph.nodes.filter((node) => node.kind === "event");
+    const selected = events.filter(
+      (node) => node.properties.event_name === name,
+    );
+    expect(selected).toHaveLength(1);
+    const event = selected[0];
+    if (event === undefined) throw new Error("Complete event was lost");
+    const listeners = graph.nodes.filter(
+      (node) => node.kind === "listener" && node.properties.event_name === name,
+    );
+    expect(new Set(listeners.map((node) => node.properties.method))).toEqual(
+      new Set(["on", "off"]),
+    );
+    const listenerIds = new Set(listeners.map((node) => node.node_id));
+    expect(
+      graph.relations
+        .filter(
+          (relation) =>
+            relation.source_node_id === event.node_id &&
+            listenerIds.has(relation.target_node_id),
+        )
+        .map((relation) => relation.relation),
+    ).toEqual(
+      expect.arrayContaining(["registers-listener", "removes-listener"]),
+    );
+    const lookalikeEvent = events.find(
+      (node) => node.properties.event_name === lookalike,
+    );
+    expect(lookalikeEvent).toBeDefined();
+    expect(lookalikeEvent?.node_id).not.toBe(event.node_id);
+    const shortEvents = events.filter(
+      (node) => node.properties.event_name === "ok",
+    );
+    expect(shortEvents).toHaveLength(2);
+    expect(
+      new Set(shortEvents.map((node) => node.properties.emitter_key)).size,
+    ).toBe(2);
+    expect(
+      shortEvents.every(
         (node) =>
-          node.kind === "listener" && node.properties.event_name === name,
-      );
-      expect(new Set(listeners.map((node) => node.properties.method))).toEqual(
-        new Set(["on", "off"]),
-      );
-      const listenerIds = new Set(listeners.map((node) => node.node_id));
-      expect(
-        graph.relations
-          .filter(
-            (relation) =>
-              relation.source_node_id === event.node_id &&
-              listenerIds.has(relation.target_node_id),
-          )
-          .map((relation) => relation.relation),
-      ).toEqual(
-        expect.arrayContaining(["registers-listener", "removes-listener"]),
-      );
-      const lookalikeEvent = events.find(
-        (node) => node.properties.event_name === lookalike,
-      );
-      expect(lookalikeEvent).toBeDefined();
-      expect(lookalikeEvent?.node_id).not.toBe(event.node_id);
-      const shortEvents = events.filter(
-        (node) => node.properties.event_name === "ok",
-      );
-      expect(shortEvents).toHaveLength(2);
-      expect(
-        new Set(shortEvents.map((node) => node.properties.emitter_key)).size,
-      ).toBe(2);
-      expect(
-        shortEvents.every(
-          (node) =>
-            node.label === "ok" && node.identity.role_key.endsWith("\0ok"),
-        ),
-      ).toBe(true);
-      const dynamic = events.find(
-        (node) => node.properties.event_name === null,
-      );
-      expect(dynamic?.label).toBeNull();
-      expect(
-        graph.unknowns.some(
-          (unknown) =>
-            unknown.node_id === dynamic?.node_id && unknown.family === "event",
-        ),
-      ).toBe(true);
-      const traceResponse = await client.callTool({
-        name: "trace_javascript_semantics",
-        arguments: {
-          application: {
-            kind: "retained-evidence",
-            evidence_id: evidence.evidence_id,
-          },
-          query: {
-            seed: { kind: "event", name },
-            direction: "forward-influence",
-          },
+          node.label === "ok" && node.identity.role_key.endsWith("\0ok"),
+      ),
+    ).toBe(true);
+    const dynamic = events.find((node) => node.properties.event_name === null);
+    expect(dynamic?.label).toBeNull();
+    expect(
+      graph.unknowns.some(
+        (unknown) =>
+          unknown.node_id === dynamic?.node_id && unknown.family === "event",
+      ),
+    ).toBe(true);
+    const traceResponse = await client.callTool({
+      name: "trace_javascript_semantics",
+      arguments: {
+        application: {
+          kind: "retained-evidence",
+          evidence_id: evidence.evidence_id,
         },
-      });
-      expect(traceResponse.isError).not.toBe(true);
-      const traceEvidence = toolContract(
-        "trace_javascript_semantics",
-      ).outputSchema.parse(traceResponse.structuredContent);
-      const trace = javaScriptSemanticTraceResultSchema.parse(
-        traceEvidence.normalized_result,
-      );
-      expect(new Set(trace.seed_node_ids)).toEqual(
-        new Set([event.node_id, ...listenerIds]),
-      );
-      expect(
-        trace.nodes
-          .filter((node) => listenerIds.has(node.node_id))
-          .map((node) => node.properties.event_name),
-      ).toEqual(listeners.map(() => name));
-      await client.ping();
-    } finally {
-      await client.close();
-      await transport.close();
-    }
+        query: {
+          seed: { kind: "event", name },
+          direction: "forward-influence",
+        },
+      },
+    });
+    expect(traceResponse.isError).not.toBe(true);
+    const traceEvidence = toolContract(
+      "trace_javascript_semantics",
+    ).outputSchema.parse(traceResponse.structuredContent);
+    const trace = javaScriptSemanticTraceResultSchema.parse(
+      traceEvidence.normalized_result,
+    );
+    expect(new Set(trace.seed_node_ids)).toEqual(
+      new Set([event.node_id, ...listenerIds]),
+    );
+    expect(
+      trace.nodes
+        .filter((node) => listenerIds.has(node.node_id))
+        .map((node) => node.properties.event_name),
+    ).toEqual(listeners.map(() => name));
+    await client.ping();
   },
-  120_000,
 );
 
 cliTest(
@@ -179,7 +159,6 @@ cliTest(
         "directory",
         "--json",
       ],
-      timeoutMs: 60_000,
     });
     expect(analyzed.exitCode, analyzed.stderr).toBe(0);
     const application = toolContract(
@@ -212,7 +191,6 @@ cliTest(
     );
     const traced = await cli.run({
       arguments: ["trace-javascript-semantics", request, "--json"],
-      timeoutMs: 60_000,
     });
     expect(traced.exitCode, traced.stdout).toBe(0);
     const trace = javaScriptSemanticTraceResultSchema.parse(
@@ -221,5 +199,4 @@ cliTest(
     );
     expect(new Set(trace.seed_node_ids)).toEqual(retained);
   },
-  120_000,
 );

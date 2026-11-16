@@ -99,7 +99,7 @@ stable.kill();
         family === "child-process" && reason === "ambiguous-target",
     ),
   ).toHaveLength(2);
-}, 60000);
+});
 
 it("keeps deferred instance field child ownership uncertain through CLI and MCP", async () => {
   const evidence = await analyzeThroughCliAndMcp(
@@ -140,4 +140,4 @@ stable.kill();
         family === "child-process" && reason === "ambiguous-target",
     ),
   ).toHaveLength(1);
-}, 60000);
+});

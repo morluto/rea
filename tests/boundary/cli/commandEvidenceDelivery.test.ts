@@ -1,12 +1,17 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import pino from "pino";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import {
   createEvidence,
   parseEvidence,
@@ -17,6 +22,7 @@ import { ok } from "../../../src/domain/result.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
+import { ownedOutput } from "../../support/reverseEngineeringCompositionFixtures.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const kinds = ["objdump", "architectures", "gdb"] as const;
@@ -24,13 +30,12 @@ const fixture = async (kind: (typeof kinds)[number]) => {
   const directory = await createTestTempDirectory("rea-command-delivery-");
   const path = join(directory, "input.bin");
   await writeFile(path, "local CLI publication fixture");
-  const runProvider = vi.fn(async () => ({
-    stdout: "opaque provider output\n",
-    stderr: "provider diagnostic\n",
-  }));
+  const runProvider = vi.fn(async () =>
+    ownedOutput("opaque provider output\n", "provider diagnostic\n"),
+  );
   const service = new TestReverseEngineeringService({
     environment: {},
-    run: runProvider,
+    runOwned: runProvider,
   });
   const closeService = vi.spyOn(service, "close");
   const manager = new GdbSessionManager({ platform: "linux", environment: {} });
@@ -46,7 +51,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     output_truncated: false,
   };
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gdb", name: "GDB", version: null },
     {
       operation: "gdb_console",
@@ -84,11 +89,12 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     kind === "gdb"
       ? CLI_COMMANDS.debugWithGdb
       : kind === "objdump"
-        ? CLI_COMMANDS.inspectWithObjdump
+        ? cliCommandFor("inspect_with_objdump")
         : CLI_COMMANDS.listObjdumpArchitectures;
   const command = Cli.toCommands.get(cli)?.get(commandName);
   if (command === undefined) throw new Error("CLI command was not registered");
-  const argsSchema = Reflect.get(command, "args");
+  // A command without positionals registers no argument schema.
+  const argsSchema: unknown = Reflect.get(command, "args") ?? z.object({});
   const optionsSchema = Reflect.get(command, "options");
   const execute = Reflect.get(command, "run");
   if (
@@ -168,8 +174,8 @@ it.each(kinds)(
       expect(f.closeService).toHaveBeenCalledOnce();
     }
     if (kind !== "objdump") {
-      expect(parent.subject).toBeNull();
-      expect(selected.subject).toBeNull();
+      expect(parent.subject.identity.kind).toBe("unknown");
+      expect(selected.subject.identity.kind).toBe("unknown");
       expect(selected.normalized_result).toMatchObject({ artifact: null });
     }
   },

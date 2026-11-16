@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { retryPublishedCleanup } from "./DesktopBuildWitness.js";
 

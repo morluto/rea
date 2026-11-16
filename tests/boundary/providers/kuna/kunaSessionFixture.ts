@@ -6,7 +6,7 @@ import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement
 
 import { onTestFinished } from "vitest";
 
-import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../../src/ports/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
@@ -143,13 +143,10 @@ export const awaitKunaCommand = async (
     }
   })();
   try {
-    // Cold installation, workspace and inventory preparation precede decompile.
-    // The phase probe took over two seconds with the two-core resource bound.
     await awaitAcknowledgement(
       acknowledged,
       operation,
       `Kuna ${command} child`,
-      5_000,
     );
   } finally {
     waiting = false;

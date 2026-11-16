@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   cancel,
   confirm,
@@ -59,6 +60,10 @@ export const confirmInteractiveSetup = async (
   }
   if (actions.length === 0) return { approved: true, selectedActionIds: [] };
   renderPreflight(actions);
+  if (context?.remediation !== undefined) {
+    writeLine("│");
+    writeLine(`│  ${context.remediation}`);
+  }
   const approved = await confirm({
     ...promptStreams,
     ...(signal === undefined ? {} : { signal }),
@@ -90,9 +95,17 @@ export const renderSetupProgress = (event: SetupProgressEvent): void => {
 };
 
 /** Show the resolved dry-run plan to a human at an interactive terminal. */
-export const renderSetupDryRun = (actions: readonly SetupAction[]): void => {
+export const renderSetupDryRun = (
+  actions: readonly SetupAction[],
+  remediation?: string,
+): void => {
   intro("REA setup plan", promptStreams);
   renderPreflight(actions);
+  // A known manual step belongs to the plan, as it does at approval.
+  if (remediation !== undefined) {
+    writeLine("│");
+    writeLine(`│  ${remediation}`);
+  }
   outro("Dry run complete. No changes were made.", promptStreams);
 };
 
@@ -249,7 +262,7 @@ const renderKeyboardHelp = (accessible: boolean): void => {
 };
 
 const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string => {
-  const runner = invokingPackageRunner(environment);
+  const runner = invokingPackageRunner(environment, HOST_PLATFORM.platform);
   return runner === undefined ? "rea" : `${runner} rea-agents`;
 };
 

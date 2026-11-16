@@ -29,7 +29,7 @@ it("observes a real Node Inspector and releases attachments after cancellation a
     stderr += chunk.toString();
   });
   const address = /ws:\/\/127\.0\.0\.1:\d+\/[^\s]+/u;
-  await expect.poll(() => stderr, { timeout: 5000 }).toMatch(address);
+  await expect.poll(() => stderr).toMatch(address);
   const socket = address.exec(stderr)?.[0];
   if (socket === undefined) throw new Error("Node omitted its Inspector URL");
   const endpoint = `http://127.0.0.1:${new URL(socket).port}`;
@@ -91,17 +91,21 @@ it("observes a real Node Inspector and releases attachments after cancellation a
   const detachments = () => (stderr.match(/Debugger ending on/gu) ?? []).length;
   const before = attachments();
   const controller = new AbortController();
+  const observationMs = 10_000;
+  const started = performance.now();
   const cancelled = expect(
     call(
       "observe_javascript_runtime",
-      { ...request, observation_ms: 10_000 },
+      { ...request, observation_ms: observationMs },
       { signal: controller.signal },
     ),
   ).rejects.toThrow("cancel live observation");
-  await expect.poll(attachments, { timeout: 5000 }).toBe(before + 1);
+  await expect.poll(attachments).toBe(before + 1);
   controller.abort(new Error("cancel live observation"));
   await cancelled;
-  await expect.poll(detachments, { timeout: 5000 }).toBe(attachments());
+  await expect.poll(detachments).toBe(attachments());
+  // An ignored cancellation still detaches, but only when the window ends.
+  expect(performance.now() - started).toBeLessThan(observationMs);
   expect(child.exitCode).toBeNull();
   expect(child.signalCode).toBeNull();
   expect((await call("observe_javascript_runtime", request)).isError).not.toBe(
@@ -122,4 +126,4 @@ it("observes a real Node Inspector and releases attachments after cancellation a
       details: { reason: "endpoint_unreachable" },
     },
   });
-}, 30_000);
+});
