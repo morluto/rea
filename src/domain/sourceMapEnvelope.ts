@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isRecord } from "./isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Artifact source declarations do not require generated-position decoding. */
 type SourceMapRecord = Readonly<Record<string, unknown>>;

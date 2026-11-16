@@ -1,9 +1,9 @@
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { isTransportCredentialHeader } from "../../domain/explicitSensitiveValues.js";
 import {
   isJson,
   mediaTypeEssence,
 } from "../../domain/analysisView/recordedMediaType.js";
-import { createHash } from "node:crypto";
 import { safeParseJson } from "../../domain/safeJson.js";
 
 import {
@@ -23,6 +23,7 @@ import type {
   ScenarioRedactionScope,
 } from "../BrowserScenarioSecrets.js";
 import { withPlaywrightExecutionBoundary } from "../PlaywrightExecutionBoundary.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The producer seam for ordered, duplicate-preserving HTTP headers. */
 export interface NetworkHeadersSource {
@@ -53,13 +54,6 @@ export type NetworkBodyPreflight = (input: {
   readonly allocationBytes: number;
   readonly mediaType: string | undefined;
 }) => BrowserScenarioEventAdmission | Promise<BrowserScenarioEventAdmission>;
-
-const credentialHeaders = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-]);
 
 const errorMessage = (
   cause: unknown,
@@ -95,7 +89,7 @@ export const captureNetworkHeaders = async (
       { state: "captured" }
     >["items"] = [];
     for (const { name, value } of headers) {
-      const credential = credentialHeaders.has(name.toLowerCase());
+      const credential = isTransportCredentialHeader(name);
       cost +=
         secrets.redactionAllocationCost(
           name.length + (credential ? 0 : value.length),
@@ -262,7 +256,7 @@ export const captureNetworkBody = async (
       encoding: "base64",
       content: retained.toString("base64"),
       bytes: retained.length,
-      sha256: createHash("sha256").update(retained).digest("hex"),
+      sha256: sha256Hex(retained),
       media_type:
         contentType === undefined
           ? null

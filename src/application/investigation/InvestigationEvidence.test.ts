@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
 import {
   createInvestigationEvidenceClosureChecker,

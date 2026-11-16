@@ -122,7 +122,7 @@ await withVerifierCleanup(async () => {
       input,
     );
     const projection = evidence.normalized_result;
-    assert.equal(evidence.subject?.format, format);
+    assert.equal(evidence.subject?.identity.format, format);
     assert.equal(projection.root_format, format);
     assert.deepEqual(projection.platforms, ["macos"]);
     assert.deepEqual(projection.application_roots, [applicationRoot]);

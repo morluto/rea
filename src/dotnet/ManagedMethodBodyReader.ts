@@ -8,12 +8,12 @@ import type { ManagedMethodImplementationFlags } from "./ManagedMethodDefinition
 import {
   admitManagedProjection,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import type { ManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import type { ManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import type {
   ManagedMethodBody,
   ParsedTokenInstruction,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   decodeInstructions,
   parseExceptionRegions,
@@ -24,15 +24,15 @@ import {
   metadataTokenFact,
   type MetadataTokenFact,
   readMetadataBlob,
-  sha256Bytes,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   readLocalSignatureFacts,
   isParsedTokenInstruction,
-} from "./ManagedMemberInspectorCore.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
+import type { ManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const EMPTY_CATCH_TOKENS: ReadonlyMap<number, MetadataTokenFact> = new Map();
 
@@ -313,9 +313,8 @@ export const methodBody = (
       local_var_sig_token: localSignature?.token ?? null,
       local_var_signature: localVarSignature,
       il_size: header.ilSize,
-      il_sha256: sha256Bytes(il),
-      normalized_il_sha256:
-        status === "present" ? sha256Bytes(normalized) : null,
+      il_sha256: sha256Hex(il),
+      normalized_il_sha256: status === "present" ? sha256Hex(normalized) : null,
       instruction_count: decoded.count,
       decoded_instruction_count: decoded.parsed.length,
       truncated_instructions: decoded.truncated,
