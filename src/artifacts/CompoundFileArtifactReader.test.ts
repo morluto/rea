@@ -6,8 +6,8 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { CompoundFileArtifactReader } from "./CompoundFileArtifactReader.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 
 const SECTOR = 512;
 const END = 0xffff_fffe;

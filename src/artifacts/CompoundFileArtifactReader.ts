@@ -14,14 +14,14 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { normalizeArtifactPath } from "./ArtifactPaths.js";
+} from "../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { normalizeArtifactPath } from "../resources/ArtifactPaths.js";
 import {
   assertArtifactReadActive,
   artifactReadCancelledBy,
-} from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import {
   FileReadCancelled,
   readFileHandleChunks,
@@ -122,6 +122,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `compound file entry does not match its owning inventory: ${entry.path}`,
+          { integrityCheck: "entry-metadata" },
         );
       // A zero-byte stream has no sector range and opens as an empty stream;
       // requiring a byte offset here would make every empty file unreadable.
@@ -163,6 +164,7 @@ export class CompoundFileArtifactReader implements ArtifactReader {
           throw new ArtifactReaderFailure(
             "integrity",
             `${label} entry ended early: ${stored.path}`,
+            { integrityCheck: "member-identity" },
           );
         await this.#source.read(signal);
       };
