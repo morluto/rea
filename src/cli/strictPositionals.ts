@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { Errors } from "incur";
 import { z } from "zod";
 
-import { splitIncurBuiltinArguments } from "../cliBuiltinArguments.js";
+import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
 import { parseCliArgv } from "./argvParser.js";
 import type { CliInstance } from "./types.js";
 import { visitRegisteredCommands } from "./visitRegisteredCommands.js";
@@ -43,9 +43,9 @@ const optionTokenShape = (
 export const validateCliArguments = (
   cli: CliInstance,
 ): ((
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
   options: ServeOptions,
-  serve: (arguments_: string[], options: ServeOptions) => Promise<void>,
+  serve: (options: ServeOptions) => Promise<void>,
 ) => Promise<void>) => {
   const invocation = new AsyncLocalStorage<readonly string[]>();
   visitRegisteredCommands(cli, (command) => {
@@ -139,8 +139,6 @@ export const validateCliArguments = (
       ...(command.middleware ?? []),
     ];
   });
-  return (arguments_, options, serve) =>
-    invocation.run(splitIncurBuiltinArguments(arguments_).command, () =>
-      serve([...arguments_], options),
-    );
+  return (global, options, serve) =>
+    invocation.run(global.command, () => serve(options));
 };

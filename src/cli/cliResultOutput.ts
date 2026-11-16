@@ -5,10 +5,7 @@ import { estimateTokenCount } from "tokenx";
 
 import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import type { ParsedCliOutputArguments } from "../cliOutput.js";
-import {
-  normalizeCliArguments,
-  splitIncurBuiltinArguments,
-} from "../cliBuiltinArguments.js";
+import { parseCliGlobalArguments } from "../cliBuiltinArguments.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
@@ -308,8 +305,8 @@ export const createCliResultOutput = (
       sdkCompletion = undefined;
     },
     sdkArguments(args) {
-      const normalized = normalizeCliArguments(args);
-      const split = splitIncurBuiltinArguments(normalized);
+      const split = parseCliGlobalArguments(args);
+      const normalized = split.arguments;
       const values = new Set(split.outputValues.map(({ index }) => index));
       const hasFlag = (flag: string) =>
         normalized.some((token, index) => token === flag && !values.has(index));
@@ -328,7 +325,7 @@ export const createCliResultOutput = (
             !hasFlag("--version")));
       // The caller's parsed controls remain authoritative: the CLI may adapt
       // CSV/TSV to JSON for Incur without changing the requested presentation.
-      if (format !== "jsonl" || !options.tokenCount) return normalized;
+      if (format !== "jsonl" || !options.tokenCount) return [...normalized];
       // Incur counts errors before REA can retain their diagnostic payload.
       // Preserve operands using the shared builtin consumption rules.
       return normalized.filter(

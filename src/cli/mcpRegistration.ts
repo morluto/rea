@@ -21,11 +21,11 @@ import {
   classifyMcpAddDiscovery,
   declaredSensitiveValues,
   readMcpAddArguments,
-  splitIncurBuiltinArguments,
+  type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
-  parseCliOutputArguments,
+  readCliOutputArguments,
   renderCliDocument,
   renderCliOutputArgumentError,
   type CliOutputArgumentValidation,
@@ -98,7 +98,7 @@ const precedingFlags = [
 
 /** Route only the named REA registration operation; other Incur commands remain theirs. */
 export const serveMcpRegistration = (
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
   environment: Readonly<NodeJS.ProcessEnv>,
   defaultCommand: Result<
     ClientRegistrationCommand,
@@ -106,27 +106,22 @@ export const serveMcpRegistration = (
   >,
   options: ServeOptions,
 ): Promise<void> | undefined => {
-  const split = splitIncurBuiltinArguments(arguments_);
-  const offset = split.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+  const offset = global.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
   if (
-    split.command[offset] !== "mcp" ||
-    split.command[offset + 1] !== "add" ||
-    precedingFlags.some((flag) => split.flags.has(flag))
+    global.command[offset] !== "mcp" ||
+    global.command[offset + 1] !== "add" ||
+    precedingFlags.some((flag) => global.flags.has(flag))
   )
     return undefined;
   return (async () => {
-    const presentation = createRegistrationPresentation(
-      arguments_,
-      split.command,
-      options,
-    );
+    const presentation = createRegistrationPresentation(global, options);
     if (
       presentation === undefined ||
-      (await serveRegistrationDiscovery(split.flags, presentation))
+      (await serveRegistrationDiscovery(global.flags, presentation))
     )
       return Promise.resolve();
     const request = readRegistrationRequest(
-      split.command.slice(offset + 2),
+      global.command.slice(offset + 2),
       defaultCommand,
     );
     if (!request.ok) {
@@ -146,8 +141,7 @@ export const serveMcpRegistration = (
 
 /** Bind one invocation's rendering, explicit redaction and exit behavior. */
 const createRegistrationPresentation = (
-  arguments_: readonly string[],
-  command: readonly string[],
+  global: CliGlobalArguments,
   options: ServeOptions,
 ): RegistrationPresentation | undefined => {
   const write =
@@ -156,7 +150,7 @@ const createRegistrationPresentation = (
     if (options.exit !== undefined) options.exit(1);
     else process.exitCode = 1;
   };
-  const output = parseCliOutputArguments(arguments_);
+  const output = readCliOutputArguments(global);
   const validation: CliOutputArgumentValidation =
     output.validation.ok && (output.format === "csv" || output.format === "tsv")
       ? {
@@ -209,7 +203,7 @@ const createRegistrationPresentation = (
     async validation(message, field, error, code = "invalid_value") {
       const retained = redactExplicitText(
         message,
-        declaredSensitiveValues(command),
+        declaredSensitiveValues(global.command),
       );
       await document(
         {

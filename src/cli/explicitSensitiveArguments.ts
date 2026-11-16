@@ -4,12 +4,12 @@ import { Errors, type MiddlewareHandler } from "incur";
 import { z } from "zod";
 
 import {
-  parseCliOutputArguments,
+  readCliOutputArguments,
   renderCliOutputArgumentError,
 } from "../cliOutput.js";
 import {
   declaredSensitiveValues,
-  splitIncurBuiltinArguments,
+  type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import type { CliInstance } from "./types.js";
@@ -31,10 +31,10 @@ type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 
 /** Share the executable boundary's output admission and structured diagnostics. */
 const reportDeclaredOutputRejection = (
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
   options: ServeOptions,
 ): boolean => {
-  const validation = parseCliOutputArguments(arguments_).validation;
+  const validation = readCliOutputArguments(global).validation;
   if (validation.ok) return false;
   (options.stdout ?? ((text: string) => process.stdout.write(text)))(
     renderCliOutputArgumentError(validation),
@@ -98,9 +98,9 @@ const withoutDeclaredText = (
 export const excludeDeclaredSensitiveArguments = (
   cli: CliInstance,
 ): ((
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
   options: ServeOptions,
-  serve: (arguments_: string[], options: ServeOptions) => Promise<void>,
+  serve: (options: ServeOptions) => Promise<void>,
 ) => Promise<void>) => {
   const declarations = new AsyncLocalStorage<readonly string[]>();
   const excludeFromFailures: MiddlewareHandler = async (_context, next) => {
@@ -121,11 +121,10 @@ export const excludeDeclaredSensitiveArguments = (
       // as the parsing and run that Incur executes inside the chain.
       command.middleware = [excludeFromFailures, ...(command.middleware ?? [])];
   });
-  return async (arguments_, options, serve) => {
-    const split = splitIncurBuiltinArguments(arguments_);
-    const values = declaredSensitiveValues(split.command);
-    if (values.length === 0) return serve([...arguments_], options);
-    if (reportDeclaredOutputRejection(arguments_, options)) return;
-    return declarations.run(values, () => serve([...arguments_], options));
+  return async (global, options, serve) => {
+    const values = declaredSensitiveValues(global.command);
+    if (values.length === 0) return serve(options);
+    if (reportDeclaredOutputRejection(global, options)) return;
+    return declarations.run(values, () => serve(options));
   };
 };
