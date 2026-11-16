@@ -174,7 +174,9 @@ const unownedParameterDefault = (
 ): ManagedReaderFailure | null => {
   const declares = (row: number, reason: string) => {
     const { offset, flags } = readParamRow(reader, layout, row);
-    return constant(8, row, flags) === null
+    // Presence is enough to make every method's defaults unknown, so an
+    // unowned row's value is never decoded or charged.
+    return !constant.declares(8, row, flags)
       ? null
       : managedFailure(
           "invalid-row",
@@ -219,6 +221,8 @@ export const createManagedParameterDefaultReader = (
 ): ((methodRow: number) => ParameterDefault[] | null) => {
   const reader = new BinaryReader(bytes, true, "managed");
   let runs: ParamRuns | undefined;
+  // Undefined until the unowned-row scan runs; a clean scan caches null so the
+  // Param table is scanned once per reader, not once per method.
   let unowned: ManagedReaderFailure | null | undefined;
   return (methodRow) => {
     // Without Param rows no method owns a parameter default, whatever its
@@ -227,13 +231,14 @@ export const createManagedParameterDefaultReader = (
     try {
       runs ??= readParamRuns(bytes, layout);
       const { start, end } = attributedRun(bytes, layout, runs, methodRow);
-      unowned ??= unownedParameterDefault(
-        bytes,
-        reader,
-        layout,
-        constant,
-        runs,
-      );
+      if (unowned === undefined)
+        unowned = unownedParameterDefault(
+          bytes,
+          reader,
+          layout,
+          constant,
+          runs,
+        );
       if (unowned !== null) throw unowned;
       const defaults: ParameterDefault[] = [];
       for (let position = start; position < end; position += 1) {

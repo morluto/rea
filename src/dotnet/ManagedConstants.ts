@@ -89,11 +89,22 @@ const constantDeclarations = (
  * declaration index, and the layout budget owns decoding allocations and
  * retained values. Null means the row has neither HasDefault nor a Constant row.
  */
-export type ManagedConstantReader = (
+export type ManagedConstantReader = ((
   table: ManagedConstantParentTable,
   row: number,
   flags: number,
-) => ManagedConstant | null;
+) => ManagedConstant | null) & {
+  /**
+   * Whether the row declares a default (HasDefault or a Constant row), read
+   * from its flags and the declaration index alone: no blob is read, decoded
+   * or charged.
+   */
+  readonly declares: (
+    table: ManagedConstantParentTable,
+    row: number,
+    flags: number,
+  ) => boolean;
+};
 
 export const createManagedConstantReader = (
   bytes: Buffer,
@@ -101,10 +112,24 @@ export const createManagedConstantReader = (
   issues: ManagedParseIssue[],
 ): ManagedConstantReader => {
   let declarations: ReadonlyMap<string, Declaration[]> | undefined;
-  return (table, row, flags) => {
+  const declarationsOf = (table: ManagedConstantParentTable, row: number) => {
     declarations ??= constantDeclarations(bytes, layout, issues);
+    return declarations.get(metadataToken(table, row)) ?? [];
+  };
+  const declares = (
+    table: ManagedConstantParentTable,
+    row: number,
+    flags: number,
+  ): boolean =>
+    declarationsOf(table, row).length > 0 ||
+    (flags & OWNERS[table].hasDefault) !== 0;
+  const read = (
+    table: ManagedConstantParentTable,
+    row: number,
+    flags: number,
+  ): ManagedConstant | null => {
     const token = metadataToken(table, row);
-    const rows = declarations.get(token) ?? [];
+    const rows = declarationsOf(table, row);
     const owner = OWNERS[table];
     const hasDefault = (flags & owner.hasDefault) !== 0;
     if (rows.length === 0 && !hasDefault) return null;
@@ -165,4 +190,5 @@ export const createManagedConstantReader = (
     }
     return admitManagedProjection(result, budget);
   };
+  return Object.assign(read, { declares });
 };

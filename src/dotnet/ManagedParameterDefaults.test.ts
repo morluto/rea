@@ -11,6 +11,16 @@ import {
   managedMembersViewRequestSchema,
 } from "../domain/analysisView/managedMemberViewSchemas.js";
 import { freezeOwnedJsonTreeSnapshot } from "../domain/immutableJson.js";
+import {
+  managedDecodeBudget,
+  ManagedRepresentationFailure,
+} from "../domain/managed/managedDecodeBudget.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
+import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import type { ManagedConstantReader } from "./ManagedConstants.js";
+import { createManagedConstantReader } from "./ManagedConstants.js";
+import { createManagedParameterDefaultReader } from "./ManagedParameterDefaults.js";
 
 /** Static void Configure(int32 count, int32 mode = ...). */
 const configureSignature = Buffer.from([0x00, 0x02, 0x01, 0x08, 0x08]);
@@ -455,6 +465,95 @@ describe("ParamPtr indirection", () => {
         expect.objectContaining({ scope: "metadata.ParamPtr" }),
       ]),
     );
+  });
+});
+
+describe("Param rows no method owns", () => {
+  const metadataLayout = (bytes: Buffer) => {
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Fixture has no CLI metadata");
+    return readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "metadata"),
+      pe.cli.metadata.size,
+    );
+  };
+  // ParamPtr lists only Param row 1, so row 2 has no owning method.
+  const unlistedSecondRow = (
+    modeFlags: number,
+    constants: NonNullable<ManagedPeFixtureOptions["constants"]> = [],
+  ) =>
+    buildManagedPeFixture({
+      methods: [
+        {
+          name: "Configure",
+          paramList: 1,
+          params: [{ name: "count" }, { name: "mode", flags: modeFlags }],
+        },
+        { name: "Main", paramList: 2 },
+      ],
+      constants,
+      paramPointers: [1],
+    });
+
+  it("scans the Param table once per reader when no unowned row declares a default", () => {
+    const bytes = unlistedSecondRow(0);
+    const layout = metadataLayout(bytes);
+    const constant = createManagedConstantReader(bytes, layout, []);
+    let checks = 0;
+    const counted: ManagedConstantReader = Object.assign(
+      (...args: Parameters<ManagedConstantReader>) => constant(...args),
+      {
+        declares: (...args: Parameters<ManagedConstantReader["declares"]>) => {
+          checks += 1;
+          return constant.declares(...args);
+        },
+      },
+    );
+    const read = createManagedParameterDefaultReader(
+      bytes,
+      layout,
+      [],
+      counted,
+    );
+    expect(read(1)).toEqual([]);
+    expect(read(2)).toEqual([]);
+    expect(checks).toBe(1);
+  });
+
+  it("reports an unowned default without decoding or charging its value", () => {
+    const bytes = unlistedSecondRow(0x1010, [
+      {
+        typeCode: 0x08,
+        parentRaw: paramParent(2),
+        value: Buffer.from("04000000", "hex"),
+      },
+    ]);
+    const layout = metadataLayout(bytes);
+    const issues: ManagedParseIssue[] = [];
+    const constant = createManagedConstantReader(bytes, layout, issues);
+    const read = createManagedParameterDefaultReader(
+      bytes,
+      layout,
+      issues,
+      constant,
+    );
+    // Index the Constant table first, then leave less than one KiB of the
+    // budget: decoding the unowned value would exceed it.
+    expect(constant.declares(8, 2, 0x1010)).toBe(true);
+    const budget = managedDecodeBudget(layout);
+    budget.reserve(63 * 1024 * 1024, null);
+    expect(() => {
+      for (let i = 0; i < 1024; i++) budget.reserve(1024, null);
+    }).toThrow(ManagedRepresentationFailure);
+    expect(read(1)).toBeNull();
+    expect(issues).toEqual([
+      expect.objectContaining({
+        code: "invalid-row",
+        scope: "metadata.Param:0x08000002",
+        detail: expect.stringContaining("no ParamPtr row lists it"),
+      }),
+    ]);
   });
 });
 
