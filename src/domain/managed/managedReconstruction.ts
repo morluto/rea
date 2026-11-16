@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import { evidenceSchema, type Evidence } from "../evidence.js";
@@ -8,6 +6,7 @@ import type { EvidenceRequestFrameInput } from "../evidenceInputContract.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
+  managedMetadataStatusSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
@@ -18,6 +17,7 @@ import { AnalysisInputError } from "../analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { err, ok, type Result } from "../result.js";
 import { nonEmptyTextSchema } from "../textSchemas.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 
@@ -106,7 +106,7 @@ export const managedReconstructionImportResultSchema = z.strictObject({
     byte_length: z.int().min(0),
     module_name: z.string().nullable(),
     mvid: cliMetadataGuidSchema.nullable(),
-    metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+    metadata_status: managedMetadataStatusSchema,
   }),
   decompiler: decompilerSchema.extend({
     options_sha256: digestSchema,
@@ -137,9 +137,6 @@ type Member = ManagedMemberInspection["methods"][number];
 type ImportedMethod = ManagedReconstructionImportResult["methods"][number];
 type StaticObservation =
   ManagedReconstructionImportResult["static_observation"];
-
-const sha256Text = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");
 
 const countLines = (text: string): number =>
   text.length === 0 ? 0 : text.split(/\r\n|\r|\n/u).length;
@@ -289,7 +286,7 @@ export const resolveManagedReconstructionImport = (
         ]),
       );
     }
-    const textSha256 = sha256Text(candidate.reconstruction.text);
+    const textSha256 = sha256Hex(candidate.reconstruction.text);
     if (
       candidate.reconstruction.text_sha256 !== undefined &&
       candidate.reconstruction.text_sha256 !== textSha256

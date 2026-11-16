@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -42,7 +43,11 @@ describe("client registration status", () => {
       }),
     );
 
-    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { platform: HOST_PLATFORM.platform },
+    );
 
     expect(statuses).toEqual([
       expect.objectContaining({
@@ -84,7 +89,9 @@ describe("client registration status", () => {
     );
     await writeFile(join(home, ".gemini/settings.json"), "not-json");
 
-    const statuses = await readClientRegistrationStatuses(home, currentEntry);
+    const statuses = await readClientRegistrationStatuses(home, currentEntry, {
+      platform: HOST_PLATFORM.platform,
+    });
     expect(statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -124,7 +131,11 @@ describe("client registration status", () => {
         join(home, ".cursor/mcp.json"),
         JSON.stringify({ mcpServers: servers }),
       );
-      expect(await readClientRegistrationStatuses(home)).toEqual([
+      expect(
+        await readClientRegistrationStatuses(home, undefined, {
+          platform: HOST_PLATFORM.platform,
+        }),
+      ).toEqual([
         expect.objectContaining({
           client: "cursor",
           state: "invalid",
@@ -151,7 +162,11 @@ describe("client registration environment validation", () => {
         },
       }),
     );
-    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { platform: HOST_PLATFORM.platform },
+    );
     expect(statuses).toContainEqual(
       expect.objectContaining({
         client: "lm_studio",
@@ -176,7 +191,11 @@ describe("client registration environment validation", () => {
       }),
     );
 
-    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      { platform: HOST_PLATFORM.platform },
+    );
 
     expect(statuses).toEqual([
       expect.objectContaining({
@@ -217,9 +236,7 @@ describe("client registration environment validation", () => {
     const statuses = await readClientRegistrationStatuses(
       home,
       "/current/rea",
-      {
-        resolveProviderRequestBudget,
-      },
+      { platform: HOST_PLATFORM.platform, resolveProviderRequestBudget },
     );
 
     const byClient = new Map(statuses.map((status) => [status.client, status]));
@@ -245,7 +262,9 @@ describe("client registration launcher identity", () => {
       '[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents", "mcp"]\n',
     );
 
-    const statuses = await readClientRegistrationStatuses(home);
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+    });
 
     expect(statuses).toEqual([
       expect.objectContaining({
@@ -267,7 +286,9 @@ describe("client registration launcher identity", () => {
       }),
     );
 
-    const [status] = await readClientRegistrationStatuses(home);
+    const [status] = await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+    });
 
     expect(status).toMatchObject({
       client: "claude_code",
@@ -286,7 +307,9 @@ describe("client registration launcher identity", () => {
     });
     await writeFile(config, original);
 
-    const [status] = await readClientRegistrationStatuses(home, "");
+    const [status] = await readClientRegistrationStatuses(home, "", {
+      platform: HOST_PLATFORM.platform,
+    });
 
     expect(status).toMatchObject({
       client: "cursor",
@@ -295,7 +318,11 @@ describe("client registration launcher identity", () => {
       config_path: config,
       remediation: expect.stringMatching(/\S/u),
     });
-    expect(await readClientRegistrationInspections(home, "")).toEqual([
+    expect(
+      await readClientRegistrationInspections(home, "", {
+        platform: HOST_PLATFORM.platform,
+      }),
+    ).toEqual([
       expect.objectContaining({
         status,
         activation: "enabled",
@@ -322,6 +349,7 @@ describe("client registration launcher identity", () => {
     const [relativeStatus] = await readClientRegistrationStatuses(
       home,
       currentEntry,
+      { platform: HOST_PLATFORM.platform },
     );
     expect(relativeStatus).toMatchObject({
       command: [process.execPath, "./rea.mjs", "mcp"],
@@ -332,6 +360,7 @@ describe("client registration launcher identity", () => {
     const [absoluteStatus] = await readClientRegistrationStatuses(
       home,
       currentEntry,
+      { platform: HOST_PLATFORM.platform },
     );
     expect(absoluteStatus).toMatchObject({
       command: [process.execPath, currentEntry, "mcp"],
@@ -346,6 +375,7 @@ describe("client registration launcher identity", () => {
     const [relativeInterpreterStatus] = await readClientRegistrationStatuses(
       home,
       currentEntry,
+      { platform: HOST_PLATFORM.platform },
     );
     expect(relativeInterpreterStatus).toMatchObject({
       command: [relativeInterpreter, currentEntry, "mcp"],
@@ -372,7 +402,9 @@ describe("client registration package version identity", () => {
         `[mcp_servers.rea]\ncommand = "${command[0]}"\nargs = ["${command[1]}", "${command[2]}", "${command[3]}"]\n`,
       );
 
-      const [status] = await readClientRegistrationStatuses(home);
+      const [status] = await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
+      });
 
       expect(classifyClientRegistrationCommand(command, undefined)).toBe(
         "owned",
@@ -449,7 +481,11 @@ describe("commandcode registration status", () => {
         join(home, ".commandcode/mcp.json"),
         "utf8",
       );
-      expect(await readClientRegistrationStatuses(home, entry)).toEqual([
+      expect(
+        await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
+        }),
+      ).toEqual([
         expect.objectContaining({
           client: "commandcode",
           state,
@@ -473,7 +509,11 @@ describe("commandcode registration status", () => {
       args: [...ownedArgs()],
     });
 
-    expect(await readClientRegistrationStatuses(home, entry)).toEqual([
+    expect(
+      await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
+      }),
+    ).toEqual([
       expect.objectContaining({
         client: "commandcode",
         state: "stale",
@@ -497,7 +537,10 @@ describe("client activation keys", () => {
         `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 450\n${activation}\n`,
       );
       expect(
-        await readClientRegistrationStatuses(home, entry, { environment: {} }),
+        await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
+          environment: {},
+        }),
       ).toEqual([expect.objectContaining({ client: "codex", state })]);
     },
   );
@@ -548,6 +591,7 @@ describe("client activation keys", () => {
       );
       expect(
         await readClientRegistrationStatuses(home, entry, {
+          platform: HOST_PLATFORM.platform,
           environment: { XDG_CONFIG_HOME: join(home, ".config") },
         }),
       ).toEqual([expect.objectContaining({ client, state })]);
@@ -573,6 +617,7 @@ describe("Ghidra multi-function deadline registration advice", () => {
       const original = `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\ntool_timeout_sec = ${timeout}\n[mcp_servers.rea.env]\nREA_ANALYSIS_PROVIDER = "${provider}"\nREA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS = "600"\n`;
       await writeFile(configPath, original);
       const [status] = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(status).toMatchObject({ client: "codex", state: "aligned" });
@@ -613,6 +658,7 @@ describe("Node-wrapped registration policy", () => {
         `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = ${String(timeout)}\ntool_timeout_sec = 450\n`,
       );
       const statuses = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses).toEqual([
@@ -633,6 +679,7 @@ describe("Node-wrapped registration policy", () => {
       `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 5\ntool_timeout_sec = 10\n`,
     );
     const [status] = await readClientRegistrationStatuses(home, entry, {
+      platform: HOST_PLATFORM.platform,
       environment: {},
     });
     expect(status).toMatchObject({
@@ -653,6 +700,7 @@ describe("Node-wrapped registration policy", () => {
         `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = ${String(timeout)}\n`,
       );
       const statuses = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses).toEqual([
@@ -673,7 +721,10 @@ describe("Node-wrapped registration policy", () => {
       `disabled_mcp_servers = ["rea"]\n[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entry)}, "mcp"]\nstartup_timeout_sec = 30\n`,
     );
     expect(
-      await readClientRegistrationStatuses(home, entry, { environment: {} }),
+      await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      }),
     ).toEqual([
       expect.objectContaining({ client: "grok_build", state: "stale" }),
     ]);
@@ -689,9 +740,7 @@ describe("Node-wrapped registration policy", () => {
     const statuses = await readClientRegistrationStatuses(
       home,
       "/current/rea",
-      {
-        environment: {},
-      },
+      { platform: HOST_PLATFORM.platform, environment: {} },
     );
     expect(statuses).toEqual([
       expect.objectContaining({ client: "codex", state: "stale" }),
@@ -718,6 +767,7 @@ describe("Node-wrapped registration policy", () => {
         }),
       );
       const statuses = await readClientRegistrationStatuses(home, entry, {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       });
       expect(statuses).toEqual([
@@ -747,6 +797,7 @@ describe("explicit client selection", () => {
       home,
       "/current/rea",
       {
+        platform: HOST_PLATFORM.platform,
         environment: {},
         selectedClientIds: ["freebuff"],
       },
@@ -772,6 +823,7 @@ describe("explicit client selection", () => {
         home,
         "/current/rea",
         {
+          platform: HOST_PLATFORM.platform,
           environment: {},
           selectedClientIds: ["freebuff"],
         },
@@ -793,9 +845,7 @@ describe("explicit client selection", () => {
     const statuses = await readClientRegistrationStatuses(
       home,
       "/current/rea",
-      {
-        environment: {},
-      },
+      { platform: HOST_PLATFORM.platform, environment: {} },
     );
 
     expect(statuses.map(({ client }) => client)).not.toContain("freebuff");
@@ -824,6 +874,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       const statuses = await readClientRegistrationStatuses(
         home,
         "/current/rea",
+        { platform: HOST_PLATFORM.platform },
       );
       expect(
         statuses.find((status) => status.client === "claude_code"),
@@ -834,8 +885,11 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
         remediation: expect.stringMatching(/\S/u),
       });
       expect(
-        (await existingMaintenanceScope(home, "/current/rea", process.env))
-          .clients,
+        (
+          await existingMaintenanceScope(home, "/current/rea", process.env, {
+            platform: HOST_PLATFORM.platform,
+          })
+        ).clients,
       ).not.toContain("claude_code");
     } finally {
       await chmod(locked, 0o700);
@@ -858,6 +912,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       const statuses = await readClientRegistrationStatuses(
         home,
         "/current/rea",
+        { platform: HOST_PLATFORM.platform },
       );
       expect(
         statuses.find((status) => status.client === "claude_code"),
@@ -872,6 +927,29 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   },
 );
 
+it("reports an unresolved client location as unknown and still inspects other clients", async () => {
+  const home = await createTestTempDirectory("rea-registration-unknown-path-");
+  await writeFile(
+    join(home, ".claude.json"),
+    JSON.stringify({ mcpServers: { rea: { command: "/old/rea", args: [] } } }),
+  );
+  const statuses = await readClientRegistrationStatuses(home, "/current/rea", {
+    platform: HOST_PLATFORM.platform,
+    environment: { MCPORTER_CONFIG: "config/mcporter.json" },
+  });
+  expect(statuses.find(({ client }) => client === "mcporter")).toEqual({
+    client: "mcporter",
+    config_path: "config/mcporter.json",
+    command: [],
+    command_identity: "unknown",
+    state: "unknown",
+    remediation: expect.stringContaining("MCPORTER_CONFIG is relative"),
+  });
+  expect(statuses.find(({ client }) => client === "claude_code")).toMatchObject(
+    { state: "stale" },
+  );
+});
+
 it("reports a dangling configuration entry as missing without losing the detected client", async () => {
   const home = await createTestTempDirectory(
     "rea-registration-dangling-config-",
@@ -879,8 +957,10 @@ it("reports a dangling configuration entry as missing without losing the detecte
   const path = join(home, ".claude.json");
   await symlink(join(home, "absent.json"), path);
   expect(
-    (await readClientRegistrationStatuses(home)).find(
-      (status) => status.client === "claude_code",
-    ),
+    (
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
+      })
+    ).find((status) => status.client === "claude_code"),
   ).toMatchObject({ config_path: path, state: "missing", command: [] });
 });

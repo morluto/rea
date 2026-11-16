@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { boundedList } from "../boundedList.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
@@ -69,7 +70,7 @@ export const webBundleViewRequestSchema = z.discriminatedUnion("collection", [
 
 export const webBundleSummarySchema = z.strictObject({
   target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable().optional(),
+  target_origin: recordedBrowserOriginSchema.nullable(),
   scripts_observed: z.number().int().nonnegative(),
   scripts_analyzed: z.number().int().nonnegative(),
   counts: z.strictObject({
@@ -117,6 +118,34 @@ const choose = <T extends object>(
   return out;
 };
 
+/**
+ * Call sites each source unknown repeats on every summary and page. The
+ * shared fields are copied into every view before the page budget applies,
+ * so per-call detail stays a small prefix; the parent keeps every call site.
+ */
+const VIEW_CALL_SITES = 20;
+
+/**
+ * A web bundle's unknowns as views repeat them: per-call detail is a prefix,
+ * with the count of call sites only the parent Evidence lists.
+ */
+export const webBundleViewSourceUnknownsSchema = z.array(
+  webBundleAnalysisSchema.shape.unknowns.element.extend({
+    call_sites_omitted: z.int().min(1).exactOptional(),
+  }),
+);
+
+const viewSourceUnknowns = (
+  unknowns: WebBundleAnalysis["unknowns"],
+): z.output<typeof webBundleViewSourceUnknownsSchema> =>
+  unknowns.map((unknown) => {
+    if (unknown.call_sites === undefined) return unknown;
+    const { items, omitted } = boundedList(unknown.call_sites, VIEW_CALL_SITES);
+    return omitted === 0
+      ? unknown
+      : { ...unknown, call_sites: [...items], call_sites_omitted: omitted };
+  });
+
 /** Historical projection of completed analyze_web_bundle Evidence. */
 export const projectWebBundleView = (
   parent: AnalysisViewParent,
@@ -151,10 +180,6 @@ export const projectWebBundleView = (
   if (!parsed.ok) return parsed;
   const report: WebBundleAnalysis = parsed.value;
 
-  const targetOrigin =
-    report.capture.target_origin === undefined
-      ? {}
-      : { target_origin: report.capture.target_origin };
   const sourceLimitations = [
     ...new Set([...parent.limitations, ...report.limitations]),
   ];
@@ -165,8 +190,8 @@ export const projectWebBundleView = (
     parent_digest: parent.evidenceId.slice(3),
     artifact: parent.artifact ?? null,
     target_url: report.capture.target_url,
-    ...targetOrigin,
-    source_unknowns: report.unknowns,
+    target_origin: report.capture.target_origin,
+    source_unknowns: viewSourceUnknowns(report.unknowns),
     limitations: boundedViewMessages(
       sourceLimitations,
       parent.evidenceId,
@@ -200,7 +225,7 @@ export const projectWebBundleView = (
 
   const buildSummary = (): z.output<typeof webBundleSummarySchema> => ({
     target_url: report.capture.target_url,
-    ...targetOrigin,
+    target_origin: report.capture.target_origin,
     scripts_observed: report.capture.scripts_observed,
     scripts_analyzed: report.capture.scripts_analyzed,
     counts: {
@@ -225,7 +250,7 @@ export const projectWebBundleView = (
       view: selected,
       ...shared,
       summary,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,
@@ -246,7 +271,7 @@ export const projectWebBundleView = (
       items: [],
       summary,
       byte_limited: false,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     };
     return jsonValueByteLength(
       result as unknown as JsonValue,

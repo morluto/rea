@@ -99,6 +99,20 @@ describe("readElfDependencies", () => {
     ).toMatchObject({ ok: true, value: { needed: [needed] } });
   });
 
+  it("refuses repeated PT_DYNAMIC headers instead of reading the first", async () => {
+    const image = elfImage({ needed: ["libc.so.6"] });
+    // Retype the PT_LOAD header so the image declares two PT_DYNAMIC headers.
+    image.writeUInt32LE(2, 64);
+    expect(await dependencies(image)).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining(
+          "declares 2 PT_DYNAMIC program headers",
+        ),
+      },
+    });
+  });
+
   it("reports no dependencies for a static image", async () => {
     expect(await dependencies(elfImage({ static: true }))).toMatchObject({
       ok: true,

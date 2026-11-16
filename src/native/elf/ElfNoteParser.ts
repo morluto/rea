@@ -6,9 +6,11 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+  type ArtifactFixedLimit,
+} from "../../resources/index.js";
 import {
   readElfFixedHeader,
   type ElfFixedHeader,
@@ -28,8 +30,10 @@ import {
   elfObjectTypeName,
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -40,6 +44,17 @@ const HEX_DESCRIPTOR_LIMIT = 64;
 const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
   (header.osAbi === 0 || header.osAbi === 3) && header.abiVersion === 0;
 
+/**
+ * The note text, hash, and scan ceiling. It equals the admitted image length
+ * plus decoded section names, so host memory cannot raise it.
+ */
+const noteTextAllowance = (budget: TextBudget): ArtifactFixedLimit => ({
+  name: "The ELF note text, hash, and scan allowance (derived from the image length and section names)",
+  kind: "parser",
+  limit: budget.limit,
+  unit: "bytes",
+});
+
 interface TextBudget {
   limit: number;
   used: number;
@@ -49,20 +64,49 @@ interface TextBudget {
   readonly scans: Map<string, number>;
 }
 
-/** Caller can raise max_file_bytes to admit the decoded section-name table. */
-export class ElfNoteSectionNameBudgetFailure extends Error {
-  readonly _tag = "ElfNoteSectionNameBudgetFailure";
+/** Limit name of the caller's file budget, which also bounds decoded section names. */
+const SECTION_NAME_BUDGET_LIMIT = "max_file_bytes";
 
-  constructor(
-    readonly minimumMaxFileBytes: bigint,
-    readonly selectedMaxFileBytes: number,
-  ) {
-    super(
-      `ELF source and decoded section names require ${String(minimumMaxFileBytes)} bytes, above the selected max_file_bytes (${String(selectedMaxFileBytes)}).`,
-    );
-    this.name = "ElfNoteSectionNameBudgetFailure";
-  }
-}
+/** Caller can raise max_file_bytes to admit the decoded section-name table. */
+const sectionNameBudgetFailure = (
+  required: bigint,
+  selected: number,
+): ParseFailureError<"limit"> =>
+  decodeLimit(
+    "elf",
+    `ELF source and decoded section names require ${String(required)} bytes, above the selected max_file_bytes (${String(selected)}).`,
+    { name: SECTION_NAME_BUDGET_LIMIT, maximum: selected, required },
+  );
+
+/**
+ * The section-name budget stop's limit: the selected max_file_bytes and the
+ * size the source plus decoded names require.
+ */
+export const elfNoteSectionNameBudget = (
+  cause: unknown,
+):
+  | {
+      readonly selected: number;
+      readonly required: bigint;
+      readonly detail: string;
+    }
+  | undefined => {
+  if (
+    !(cause instanceof ParseFailureError) ||
+    cause.failure.kind !== "limit" ||
+    cause.failure.format !== "elf" ||
+    cause.failure.limit.name !== SECTION_NAME_BUDGET_LIMIT
+  )
+    return undefined;
+  const { maximum, required } = cause.failure.limit;
+  return required === undefined
+    ? undefined
+    : {
+        selected: maximum,
+        required: BigInt(required),
+        detail: cause.failure.detail,
+      };
+};
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
@@ -81,13 +125,10 @@ const chargeText = (
     throw new ArtifactReaderFailure(
       "limit",
       `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
-      { boundary: "memory" },
+      { boundary: "memory", fixedAllowance: noteTextAllowance(budget) },
     );
   budget[field] += bytes;
 };
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const GNU_OS_NAMES: Readonly<Record<number, string>> = {
   0: "linux",
@@ -424,7 +465,7 @@ const decodeCoreFile = (
     throw new ArtifactReaderFailure(
       "limit",
       `ELF note text exceeds the ${String(text.limit)}-byte budget.`,
-      { boundary: "memory" },
+      { boundary: "memory", fixedAllowance: noteTextAllowance(text) },
     );
   }
 
@@ -785,7 +826,7 @@ export const parseElfNotes = (
     );
     if (decoded.state === "malformed") return fail(decoded.message);
     if (decoded.state === "limit")
-      throw new ElfNoteSectionNameBudgetFailure(
+      throw sectionNameBudgetFailure(
         BigInt(bytes.length) + decoded.requiredBytes,
         input.max_file_bytes,
       );
@@ -946,7 +987,7 @@ const toEntry = (
   let digest = text.hashes.get(range);
   if (digest === undefined) {
     chargeText(text, note.descriptor.length, "hashed");
-    digest = sha256(note.descriptor);
+    digest = sha256Hex(note.descriptor);
     text.hashes.set(range, digest);
   }
   return {

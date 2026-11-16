@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -18,7 +18,10 @@ import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { nativeCallClassificationSchema } from "../domain/native/nativeCallReference.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { HopperClient } from "./HopperClient.js";
-import { parseHopperReply, type HopperReply } from "./HopperReplyContracts.js";
+import {
+  HopperReplyContractError,
+  type HopperReply,
+} from "./HopperReplyContracts.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import {
   hopperCallerScanBudgetForMilliseconds,
@@ -167,11 +170,14 @@ async function buildIndex(
                   : reportScanProgress(options, start, total),
             },
           };
-    const page = await client.callTool(
-      "rea_caller_scan_page",
-      args,
-      pageOptions,
-    );
+    const page = await client.callTool("rea_caller_scan_page", args, {
+      ...pageOptions,
+      operation,
+    });
+    if (!page.ok && page.error instanceof HopperReplyContractError)
+      return options?.signal?.aborted
+        ? fail(cancelled(), { code: "cancelled" }, page.error.reply)
+        : fail(page.error, { code: "invalid_page" }, page.error.reply);
     if (!page.ok)
       return options?.signal?.aborted
         ? fail(cancelled(), { code: "cancelled" })
@@ -179,16 +185,7 @@ async function buildIndex(
             analysisClientFailureForOperation(page.error, "hopper", operation),
             { code: "page_failure" },
           );
-    const decoded = parseHopperReply(
-      "rea_caller_scan_page",
-      page.value,
-      operation,
-    );
-    if (!decoded.ok)
-      return options?.signal?.aborted
-        ? fail(cancelled(), { code: "cancelled" }, page.value)
-        : fail(decoded.error, { code: "invalid_page" }, page.value);
-    const value = decoded.value;
+    const value = page.value;
     if (
       value.start !== start ||
       value.next < start ||
@@ -201,14 +198,14 @@ async function buildIndex(
       (value.oversized && value.next !== start)
     )
       return options?.signal?.aborted
-        ? fail(cancelled(), { code: "cancelled" }, page.value)
+        ? fail(cancelled(), { code: "cancelled" }, value)
         : fail(
             new AnalysisOutputError(
               operation,
               "Invalid Hopper caller scan progress",
             ),
             { code: "invalid_progress" },
-            page.value,
+            value,
           );
     if (total !== undefined && value.total !== total) {
       stop = { code: "inventory_changed" };
@@ -329,11 +326,17 @@ const compactForwardDestinations = (
   };
 };
 
+/** The validated native reply each reconciled operation starts from. */
+export type HopperCallerNativeReply =
+  | HopperReply<"rea_caller_base">
+  | HopperReply<"analyze_function">
+  | HopperReply<"procedure_references">;
+
 export const reconcileHopperCallers = async (
   client: HopperClient,
   operation: Operation,
   parameters: Readonly<Record<string, JsonValue>>,
-  original: JsonValue,
+  nativeReply: Result<HopperCallerNativeReply, HopperReplyContractError>,
   options: ExecutionOptions | undefined,
   budget: number | HopperCallerScanBudget,
 ): Promise<
@@ -347,6 +350,10 @@ export const reconcileHopperCallers = async (
     AnalysisError
   >
 > => {
+  // The native reply exactly as Hopper sent it, kept when it missed its contract.
+  const original: JsonValue = nativeReply.ok
+    ? nativeReply.value
+    : nativeReply.error.reply;
   const scanBudget =
     typeof budget === "number"
       ? hopperCallerScanBudgetForMilliseconds(budget)
@@ -393,13 +400,7 @@ export const reconcileHopperCallers = async (
     );
     return error;
   };
-  // Each native reply is validated once by its bridge reply contract.
-  const nativeReply =
-    operation === "procedure_callers"
-      ? parseHopperReply("rea_caller_base", original, operation)
-      : operation === "analyze_function"
-        ? parseHopperReply("analyze_function", original, operation)
-        : parseHopperReply("procedure_references", original, operation);
+  // The client validated the native reply against its method contract.
   if (!nativeReply.ok)
     return err(
       retainNative(nativeReply.error, { scan: null, destinations: null }),
@@ -410,43 +411,35 @@ export const reconcileHopperCallers = async (
   if (parameters.document !== undefined) args.document = parameters.document;
   if (parameters.procedure !== undefined) args.procedure = parameters.procedure;
   // The callers base already carries its scan target.
-  const targetResponse =
+  const selected =
     base !== undefined
-      ? ok<JsonValue>(original)
-      : await client.callTool(
-          "rea_caller_scan_target",
-          args,
-          reconciliationChildOptions(options),
-        );
-  if (!targetResponse.ok)
-    return err(
-      retainNative(
-        analysisClientFailureForOperation(
-          targetResponse.error,
-          "hopper",
+      ? ok(base)
+      : await client.callTool("rea_caller_scan_target", args, {
+          ...reconciliationChildOptions(options),
           operation,
-        ),
-        { scan: null, destinations: null },
-      ),
-    );
-  if (options?.signal?.aborted)
+        });
+  if (
+    options?.signal?.aborted &&
+    (selected.ok || selected.error instanceof HopperReplyContractError)
+  )
     return err(
       retainNative(cancelledBy(operation, options.signal), {
         scan: null,
         destinations: null,
       }),
     );
-  const selected =
-    base !== undefined
-      ? ok(base)
-      : parseHopperReply(
-          "rea_caller_scan_target",
-          targetResponse.value,
-          operation,
-        );
   if (!selected.ok)
     return err(
-      retainNative(selected.error, { scan: null, destinations: null }),
+      retainNative(
+        selected.error instanceof HopperReplyContractError
+          ? selected.error
+          : analysisClientFailureForOperation(
+              selected.error,
+              "hopper",
+              operation,
+            ),
+        { scan: null, destinations: null },
+      ),
     );
   const { target, instructions, instructions_complete } = selected.value;
   if (
@@ -502,10 +495,16 @@ export const reconcileHopperCallers = async (
   }
   const addresses = new Set(instructions);
   addresses.add(target.address);
-  const selectedDestination = index.destinations.get(target.address);
-  const callers = new Map(selectedDestination?.callers ?? []);
+  // The index holds forward observations from the examined procedures only. A
+  // miss means none of them named the target: it adds no callers, and does
+  // not show there are none. Relationship coverage stays unknown, with the
+  // scan facts as its reason, whatever the index holds.
+  const selectedDestination: Destination = index.destinations.get(
+    target.address,
+  ) ?? { callers: new Map(), references: [] };
+  const callers = new Map(selectedDestination.callers);
   const selectedReferences: Array<{ caller: Identity; edge: CompactEdge }> = [];
-  for (const item of selectedDestination?.references ?? []) {
+  for (const item of selectedDestination.references) {
     if (!addresses.has(item.edge.target_address)) continue;
     const source =
       item.edge.source_procedure === "caller"
@@ -554,7 +553,7 @@ export const reconcileHopperCallers = async (
   const compactReferences = selectedReferences.map(({ caller, edge }) =>
     compactCallReference(caller, edge),
   );
-  const inventoryCallers = selectedDestination?.callers ?? new Map();
+  const inventoryCallers = selectedDestination.callers;
   const siteCallers = new Map<string, Identity>();
   for (const { caller } of selectedReferences)
     if (
@@ -666,9 +665,7 @@ export const reconcileHopperCallers = async (
       native_result: retainedNativeResult,
       forward_observations: {
         target,
-        callee_inventory_callers: [
-          ...(selectedDestination?.callers.values() ?? []),
-        ],
+        callee_inventory_callers: [...selectedDestination.callers.values()],
         call_site_callers: [...siteCallers.values()],
         call_references: compactReferences,
         provenance:

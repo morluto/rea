@@ -38,11 +38,6 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 export type ClientConfigurationFormat =
   | NonNullable<SetupClient["format"]>
-  | "amp"
-  | "fx"
-  | "zed"
-  | "kilo"
-  | "goose"
   | "copilot_cli_project";
 type ClientServersKey =
   | "mcp_servers"
@@ -79,6 +74,15 @@ export interface ClientConfigurationDocument {
    * still loads them, and a native entry with the same name takes precedence.
    */
   readonly legacyServers: Record<string, unknown>;
+}
+
+/**
+ * Configuration a client reads from an environment variable instead of a file.
+ * It is the client's highest-precedence layer, and REA never writes it.
+ */
+export interface ClientInlineConfiguration {
+  readonly origin: "KILO_CONFIG_CONTENT";
+  readonly parsed: ClientConfigurationDocument;
 }
 
 /** Admit source mappings without Zod's record clone dropping caller keys. */
@@ -528,22 +532,24 @@ export const clientServerForEdit = (
 
 /**
  * Return `parsed.document` with `servers` at its server table. A legacy OpenCode
- * V1 member named in `removeLegacy` is removed beside a native V2 table.
+ * V1 member named in `removeLegacy` is removed beside a native V2 table. The
+ * platform names the environment identity a Cordis entry is written with.
  */
 export const withClientServers = (
   parsed: ClientConfigurationDocument,
   servers: Record<string, unknown>,
+  platform: NodeJS.Platform,
   removeLegacy?: string,
 ): Record<string, unknown> => {
   // The Harness patch list upserts or removes by entry id, not by table.
   if (parsed.dialect === "dsh")
     return Object.hasOwn(servers, PRODUCT_IDENTITY.mcpServerKey)
-      ? editDshDocument(
-          parsed,
-          clientConfigurationRecordSchema.parse(
+      ? editDshDocument(parsed, {
+          desired: clientConfigurationRecordSchema.parse(
             servers[PRODUCT_IDENTITY.mcpServerKey],
           ),
-        )
+          platform,
+        })
       : editDshDocument(parsed);
   if (parsed.serversPath.length === 0) return { ...servers };
   const [key = "", nested] = parsed.serversPath;

@@ -18,7 +18,13 @@ const sideParametersSchema = z.object({
 export const comparisonSourceEvidenceSides = (
   evidence: Evidence,
 ): { left: string[]; right: string[] } => {
-  const parsed = readEvidencePayload(sideParametersSchema, evidence.parameters);
+  const parsed = readEvidencePayload(
+    sideParametersSchema,
+    evidence.parameters,
+    {
+      within: ["parameters"],
+    },
+  );
   if (!parsed.ok) throw parsed.error;
   const parameters = parsed.value;
   if (

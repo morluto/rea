@@ -20,7 +20,7 @@ import type {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import {
   normalizeCaptureFailure,
   describeProcessCaptureExecutionFailure,
@@ -33,7 +33,7 @@ import {
   type ProcessCaptureCleanupRetainer,
 } from "./ProcessCaptureRead.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 
 const hasSameIdentity = (
   before: Stats,
@@ -280,11 +280,7 @@ export class ProcessCaptureSnapshotFailure extends ProcessCaptureError {
     const primary = this.cleanupPrimary;
     if (!(primary instanceof AnalysisAccessDeniedError)) return this;
     return this.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          this,
-          "capture_process",
-        ).bindCleanupDependencies([primary, this])
+      ? analysisErrorWithCleanupDependencies(primary, this, "capture_process")
       : primary;
   }
 }

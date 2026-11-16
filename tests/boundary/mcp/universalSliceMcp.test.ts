@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -94,15 +95,13 @@ sliceTest(
     const advertised = (await client.listTools()).tools.find(
       ({ name }) => name === "inspect_go_binary",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Missing advertised Go output schema");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     expect(
       ajv.compile(advertised.inputSchema)({ path, architecture: "arm64" }),
     ).toBe(true);
-    const validateOutput = ajv.compile(
-      z.record(z.string(), z.unknown()).parse(advertised.outputSchema),
-    );
+    const validateOutput = ajv.compile(canonicalOutputSchema(advertised.name));
 
     const response = await client.callTool({
       name: "inspect_go_binary",
@@ -152,9 +151,11 @@ sliceTest(
         .toString(),
     ).toBe("go1.26.1");
     expect(evidence.subject).toMatchObject({
-      format: "mach-o-universal",
-      architecture: "arm64",
-      digest: { sha256: sha256(universal.bytes) },
+      identity: {
+        format: "mach-o-universal",
+        architecture: "arm64",
+        sha256: sha256(universal.bytes),
+      },
     });
     expect(evidence.parameters).toEqual({ path, architecture: "arm64" });
     // A retained report cannot claim a slice its own container or CPU contradicts.

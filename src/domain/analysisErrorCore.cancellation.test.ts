@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
+  CallerAbort,
   cancelledBy,
   carriedReason,
   isAborted,
@@ -71,4 +72,21 @@ it("does not accept a cause beside the required reason", () => {
   // @ts-expect-error The reason argument owns the cause.
   const error = cancelledBy("probe", controller.signal, { cause: "other" });
   expect(error.cause).toBe("caller");
+});
+
+it("keeps a caller abort the platform AbortError shape that names its adapter", () => {
+  const interrupt = CallerAbort.forProcessSignal("SIGINT");
+  const cancelled = new CallerAbort("request-cancelled", "user stopped");
+
+  for (const reason of [interrupt, cancelled]) {
+    expect(reason).toBeInstanceOf(DOMException);
+    expect(reason).toBeInstanceOf(Error);
+    expect(reason.name).toBe("AbortError");
+  }
+  expect(interrupt.kind).toBe("interrupt");
+  expect(CallerAbort.forProcessSignal("SIGTERM").kind).toBe("terminate");
+  expect(cancelled.clientReason).toBe("user stopped");
+  expect(OwnerCancellation.startupOwnerClosed).not.toBe(
+    OwnerCancellation.ownerClosed,
+  );
 });

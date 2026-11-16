@@ -1,6 +1,6 @@
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
@@ -17,16 +17,21 @@ import {
 import {
   parsePointerFixupsSteps,
   type PointerFixups,
-} from "../AppleMachoFixups.js";
-import { parseMachoLayout } from "../AppleMachoSelection.js";
-import { decodeMachoName } from "../AppleMachoNames.js";
+} from "../../domain/apple/appleMachoFixups.js";
+import { parseMachoLayout } from "../../domain/apple/appleMachoSelection.js";
+import { selectMachoSlice } from "../../domain/apple/machoSliceSelection.js";
+import { decodeMachoName } from "../../domain/apple/appleMachoNames.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   createFileMappingIndex,
   type ImageSection,
-} from "../metadata/BinaryContainer.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+} from "../../domain/binaryContainer.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
+import {
+  joinCoverageStatus,
+  type CoverageStatus,
+} from "../../domain/coverage.js";
 import {
   finishInitializerReport,
   type CollectedInitializer,
@@ -71,16 +76,26 @@ export interface MachoInitializerImage {
 interface MachoScan {
   readonly bytes: Buffer;
   readonly notes: InitializerNotes;
-  incomplete: boolean;
+  /** Known gaps (`partial`) and undetermined facts (`unknown`) noted so far. */
+  coverage: CoverageStatus;
   /** Pointer slots whose fixup decode returned no rebase, bind or raw value. */
   undecoded: number;
   /** Object-file slots whose section relocation this reader does not apply. */
   unappliedObjectRelocations: number;
 }
 
-const note = (scan: MachoScan, message: string): void => {
+/** Widen coverage: `partial` for a known gap, `unknown` when it cannot be determined. */
+const widen = (scan: MachoScan, effect: "partial" | "unknown"): void => {
+  scan.coverage = joinCoverageStatus([scan.coverage, effect]);
+};
+
+const note = (
+  scan: MachoScan,
+  message: string,
+  effect: "partial" | "unknown",
+): void => {
   scan.notes.add(message);
-  scan.incomplete = true;
+  widen(scan, effect);
 };
 
 /**
@@ -102,8 +117,19 @@ const layoutFixups = async (
     cpu === 0x0100000c ? "arm64" : cpu === 0x01000007 ? "x86_64" : null;
   if (bits !== 64 || !little || architecture === null)
     return { fixups: null, base: null };
+  // The architecture is the scanned header's own, so the thin image is
+  // selected whole; a refusal is noted like any other undecoded fixup.
+  const selected = selectMachoSlice(scan.bytes, {
+    mode: "admitted",
+    architecture,
+    slice: undefined,
+  });
+  if (!selected.ok) {
+    note(scan, selected.error.message, "unknown");
+    return { fixups: null, base: null };
+  }
   try {
-    const layout = parseMachoLayout(scan.bytes, architecture);
+    const layout = parseMachoLayout(scan.bytes, selected.value);
     const steps = parsePointerFixupsSteps(
       scan.bytes,
       layout.fixups,
@@ -124,6 +150,7 @@ const layoutFixups = async (
       cause instanceof Error
         ? cause.message
         : "Mach-O fixups could not be decoded.",
+      "unknown",
     );
     return { fixups: null, base: null };
   }
@@ -190,11 +217,18 @@ interface MachoSymbols {
   readonly table: SymbolTable | null;
 }
 
-/** Name at `strx`. Index 0 is the empty name; an index outside the table is unreadable. */
+/**
+ * Name at `strx`. Index 0 is the empty name; an index outside the table is
+ * unreadable, which leaves coverage unknown. `overBudget` is the coverage
+ * effect of a name over the name budget: `partial` when it is the reported
+ * entry's own name (a known withheld fact), `unknown` when it only feeds the
+ * symbol index, where which entries it would have named cannot be told.
+ */
 const nameAt = (
   scan: MachoScan,
   strings: Buffer,
   strx: number,
+  overBudget: "partial" | "unknown",
 ): string | null => {
   if (strx === 0) return null;
   const observed = observeElfStringTableEntry(
@@ -204,18 +238,18 @@ const nameAt = (
   );
   if (observed.state === "truncated") {
     scan.notes.tally("long-symbol-name");
-    scan.incomplete = true;
+    widen(scan, overBudget);
     return null;
   }
   if (observed.state === "outside") {
     scan.notes.tally("unreadable-symbol-name");
-    scan.incomplete = true;
+    widen(scan, "unknown");
     return null;
   }
   const text = decodeMachoName(observed.bytes);
   if (typeof text !== "string") {
     scan.notes.tally("unreadable-symbol-name");
-    scan.incomplete = true;
+    widen(scan, "unknown");
     return null;
   }
   return text.length === 0 ? null : text;
@@ -244,7 +278,7 @@ const readSymbols = (
     if (frame.value.command !== LC.SYMTAB) continue;
     const table = readMachoSymtabCommand(body, little);
     if (table === null) {
-      note(scan, "LC_SYMTAB is truncated.");
+      note(scan, "LC_SYMTAB is truncated.", "unknown");
       return done();
     }
     const stringsEnd = table.stroff + table.strsize;
@@ -255,7 +289,7 @@ const readSymbols = (
       stringsEnd > scan.bytes.length ||
       table.nsyms > (scan.bytes.length - table.symoff) / width
     ) {
-      note(scan, "LC_SYMTAB points outside the Mach-O image.");
+      note(scan, "LC_SYMTAB points outside the Mach-O image.", "unknown");
       return done();
     }
     const range = `${String(table.symoff)}:${String(table.nsyms)}:${String(table.stroff)}:${String(table.strsize)}`;
@@ -295,7 +329,7 @@ const readSymbols = (
               ? scan.bytes.readUInt32LE(at + 8)
               : scan.bytes.readUInt32BE(at + 8),
           );
-      const text = nameAt(scan, strings, strx);
+      const text = nameAt(scan, strings, strx, "unknown");
       if (text === null || names.has(value)) continue;
       names.set(value, text);
     }
@@ -303,6 +337,7 @@ const readSymbols = (
       note(
         scan,
         `Symbol scanning stopped at ${String(SYMBOL_SCAN)} symbols across all LC_SYMTAB commands. Later names may be missing.`,
+        "unknown",
       );
       return done();
     }
@@ -409,8 +444,9 @@ const decodePointer = (
     const overBudget =
       decoded.symbol.length > MAX_NATIVE_INITIALIZER_NAME_BYTES;
     if (overBudget) {
+      // This entry's own import name is withheld: a known gap.
       scan.notes.tally("long-symbol-name");
-      scan.incomplete = true;
+      widen(scan, "partial");
     }
     return {
       method: "unresolved_import",
@@ -420,7 +456,7 @@ const decodePointer = (
       definedName: null,
     };
   }
-  note(scan, decoded.reason);
+  note(scan, decoded.reason, "unknown");
   return {
     method: "unresolved",
     value: null,
@@ -500,6 +536,7 @@ const objectRelocations = (
     note(
       walk.scan,
       `${section.name} relocation entries lie outside the file, so its slots are listed as unresolved.`,
+      "unknown",
     );
     return { bySlot, complete: false };
   }
@@ -509,6 +546,7 @@ const objectRelocations = (
     note(
       walk.scan,
       `Object-file relocation scanning stopped at ${String(SECTION_RELOCATION_SCAN)} entries. Slots past that point are listed as unresolved.`,
+      "unknown",
     );
   const little = walk.image.byte_order === "little";
   const length = stride === 8 ? 3 : 2;
@@ -593,13 +631,14 @@ const objectSymbol = (
       );
   // Debugger stabs never name a relocation target.
   if ((type & 0xe0) !== 0) return UNRESOLVED;
-  const name = nameAt(walk.scan, table.strings, strx);
+  // The name is this entry's own, so one over the budget is a withheld fact.
+  const ownName = () => nameAt(walk.scan, table.strings, strx, "partial");
   // N_UNDF: defined in another object or library.
   if ((type & 0x0e) === 0)
     return {
       method: "unresolved_import",
       value: null,
-      importName: name,
+      importName: ownName(),
       definedName: null,
     };
   // Only N_SECT has an address in this object.
@@ -608,7 +647,8 @@ const objectSymbol = (
     method: "symbol_addend",
     value: BigInt.asUintN(walk.image.bits, value + stored),
     importName: null,
-    definedName: stored === 0n ? name : null,
+    // A nonzero addend points past the symbol, so its name is not reported.
+    definedName: stored === 0n ? ownName() : null,
   };
 };
 
@@ -650,6 +690,7 @@ const slotsOf = async (
     note(
       walk.scan,
       `${section.name} is not file-backed. Its slots were omitted.`,
+      "partial",
     );
     return false;
   }
@@ -657,6 +698,7 @@ const slotsOf = async (
     note(
       walk.scan,
       `${section.name} size is not a multiple of its slot width. Trailing bytes were not read.`,
+      "partial",
     );
   const count = Math.floor(section.size / stride);
   const little = walk.image.byte_order === "little";
@@ -678,6 +720,7 @@ const slotsOf = async (
       note(
         walk.scan,
         `${section.name} slot mapping disagrees with its section offset; affected slots are unresolved.`,
+        "unknown",
       );
     const unresolved: SlotRelocation = {
       method: "unresolved",
@@ -781,7 +824,7 @@ export const readMachoInitializers = async (
   const scan: MachoScan = {
     bytes: image.bytes,
     notes: new InitializerNotes(),
-    incomplete: false,
+    coverage: "complete",
     undecoded: 0,
     unappliedObjectRelocations: 0,
   };
@@ -821,6 +864,7 @@ export const readMachoInitializers = async (
         note(
           scan,
           "An address has ambiguous file mappings (overlapping load segments with different file offsets, or file and zero-fill memory), so its file offset is not reported.",
+          "unknown",
         );
       return null;
     }
@@ -862,23 +906,27 @@ export const readMachoInitializers = async (
     note(
       scan,
       "Initializer scanning stopped at 65536 slots. Later slots were not read.",
+      "partial",
     );
   // decode() records failures lazily, so sample them only after every slot was decoded.
   if (
     container.macho_chained_fixups === true &&
     (decoded.fixups === null || decoded.fixups.failures.length > 0)
   )
-    note(scan, "Mach-O chained fixup coverage is incomplete.");
-  if (unchecked !== null && scan.undecoded > 0) note(scan, unchecked);
+    note(scan, "Mach-O chained fixup coverage is incomplete.", "unknown");
+  if (unchecked !== null && scan.undecoded > 0)
+    note(scan, unchecked, "unknown");
   if (scan.unappliedObjectRelocations > 0)
     note(
       scan,
       `${String(scan.unappliedObjectRelocations)} object-file slot(s) have section relocations this reader does not apply and are listed as unresolved.`,
+      "unknown",
     );
   if (scan.undecoded > 0)
     note(
       scan,
       `${String(scan.undecoded)} pointer slot(s) could not be decoded through Mach-O fixups and are listed as unresolved.`,
+      "unknown",
     );
   return finishInitializerReport(
     {
@@ -895,6 +943,6 @@ export const readMachoInitializers = async (
     entries.length,
     scan.notes,
     page,
-    scan.incomplete,
+    scan.coverage,
   );
 };

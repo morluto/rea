@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   createEvidence,
@@ -9,7 +10,7 @@ import type {
   RecordUnknownInput,
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
-import type { ProviderIdentity } from "../AnalysisProvider.js";
+import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
 
 /** Provider identity for analyst-authored residual-unknown mutations. */
 const UNKNOWN_REGISTRY_PROVIDER: ProviderIdentity = {
@@ -32,7 +33,7 @@ export const unknownMutationEvidence = (
   providerSelection?: ProviderSelectionProvenance,
 ): Evidence =>
   withEvidenceProviderSelection(
-    createEvidence(target, UNKNOWN_REGISTRY_PROVIDER, {
+    createEvidence(target ?? unknownTarget("not-observed"), UNKNOWN_REGISTRY_PROVIDER, {
       predicateType: "rea.residual-unknown-mutation",
       operation: mutation.operation,
       parameters: { ...mutation.input },

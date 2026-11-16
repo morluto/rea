@@ -1,6 +1,17 @@
+import { ParseFailureError } from "./parseFailure.js";
 import { byteOrderMarkEncoding } from "./textByteOrderMark.js";
+import { decodeStrictUtf8 } from "./strictUtf8.js";
 
-export class XmlPlistTextDecodeError extends TypeError {
+const XML_PLIST_FORMAT = "xml-plist";
+
+/**
+ * XML plist text that cannot be decoded. An unsupported encoding holds text
+ * this decoder cannot read; invalid bytes and a contradicted declaration are
+ * malformed.
+ */
+export class XmlPlistTextDecodeError extends ParseFailureError<
+  "malformed" | "unsupported"
+> {
   constructor(
     readonly reason:
       | "invalid-bytes"
@@ -10,7 +21,17 @@ export class XmlPlistTextDecodeError extends TypeError {
     readonly declaredEncoding?: string,
     options?: ErrorOptions,
   ) {
-    super(message, options);
+    super(
+      reason === "unsupported-encoding"
+        ? {
+            kind: "unsupported",
+            format: XML_PLIST_FORMAT,
+            detail: message,
+            undecodedContent: true,
+          }
+        : { kind: "malformed", format: XML_PLIST_FORMAT, detail: message },
+      options,
+    );
     this.name = "XmlPlistTextDecodeError";
   }
 }
@@ -65,8 +86,9 @@ const asciiXmlDeclaration = (bytes: Uint8Array): string | undefined => {
   for (let index = start + 5; index < bytes.length; index += 1) {
     if (bytes[index]! > 0x7f) return undefined;
     if (bytes[index] === 0x3f && bytes[index + 1] === 0x3e)
-      return new TextDecoder("utf-8", { fatal: true }).decode(
+      return decodeStrictUtf8(
         bytes.subarray(start, index + 2),
+        "strip-signature",
       );
   }
   return undefined;

@@ -11,24 +11,20 @@ import { setImmediate } from "node:timers/promises";
 import {
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCompletion,
   bindArtifactFileCleanup,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { Il2cppMetadataPort } from "../application/il2cpp/Il2cppMetadataPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { Il2cppMetadataPort } from "../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
@@ -63,6 +59,7 @@ import {
   linkIl2cppBinarySteps,
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
@@ -83,17 +80,30 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "limit")
+  if (
+    cause instanceof Il2cppBinaryFormatFailure &&
+    cause.failure.kind === "limit"
+  )
     return new AnalysisResourceConstraintError(
       OPERATION,
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
       cause.message,
-      {},
+      // The producing site states what its maximum counts.
+      {
+        boundary: cause.reason,
+        ...(cause.unit === undefined
+          ? {}
+          : { [`maximum_${cause.unit}`]: cause.failure.limit.maximum }),
+      },
       {
         cause,
         ...fixedAllowanceOptions(
           "The IL2CPP native-link allowance",
           cause.reason === "native-type-text-capacity" ? "parser" : "count",
+          {
+            limit: cause.failure.limit.maximum,
+            ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+          },
         ),
       },
     );
@@ -137,7 +147,14 @@ const failureForPrimary = (
         { maximum_input_bytes: maximum },
         {
           cause,
-          ...fixedAllowanceOptions("the fixed IL2CPP input allowance", "input"),
+          ...fixedAllowanceOptions(
+            "the fixed IL2CPP input allowance",
+            "input",
+            {
+              limit: maximum,
+              unit: "bytes",
+            },
+          ),
         },
       );
     if (cause.reason === "path")
@@ -158,7 +175,7 @@ const failureForPrimary = (
       cause,
       diagnostics: {
         path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );
@@ -597,6 +614,11 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             binaryPath === undefined
               ? "Native code addresses and IL2CPP binary registration are not recovered without binary_path."
               : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.`,
+            ...(linked.binary?.format === "elf"
+              ? [
+                  "ELF symbolic pointers use the selected file's defined symbols to derive link-image addresses; runtime symbol interposition, external definitions, TLS addresses and IFUNC results are not established.",
+                ]
+              : []),
             ...(binaryPath !== undefined && input.generic_instances === true
               ? [
                   "Generic method instances come from genericMethodTable, methodSpecs, genericInsts and genericMethodPointers, with names following Il2CppDumper's GetMethodSpecName (namespace on the declaring type, nested types joined with '.', arity cut, IntPtr/UIntPtr, no byref mark). The CodeRegistration layout is the only one of the known 27.0 to 31 layouts whose counts bound every genericMethodTable row; metadata versions 24 and 39 and builds without a static CodeRegistration are refused. A generic row is no-body for an observed zero pointer slot and unknown, with no address, exactly when an issue names its row: a contradicting method spec (its name is then null), a shared method spec, an unmapped or non-executable pointer, or an unresolved relocation.",

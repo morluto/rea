@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isRecord } from "../../kernel/isRecord.js";
 
 import {
   observeCdpFrameUrl,
@@ -58,9 +59,6 @@ export interface CdpResourceTree {
 interface MutableNode extends CdpFrameTreeNode {
   readonly children: CdpFrameTreeNode[];
 }
-
-const isRecord = (value: unknown): value is UnknownRecord =>
-  recordValue(value) !== undefined;
 
 const treeRecord = z.custom<UnknownRecord>(isRecord, {
   message: "Expected a frame tree object.",
@@ -148,6 +146,15 @@ export const cdpResourceTreeReplySchema = z
       malformedResources,
     };
   });
+
+/**
+ * The URL member the producer reported, before fragment handling; undefined
+ * only when it is missing. Scope checks of the raw report read this.
+ */
+export const reportedFrameUrl = (
+  observation: CdpFrameUrlObservation,
+): string | undefined =>
+  observation.kind === "missing" ? undefined : observation.scopeUrl;
 
 /** The readable URL of an observed frame; malformed or missing identity is undefined. */
 export const observedFrameUrl = (

@@ -5,6 +5,7 @@ import {
   ZIP_MAX_COMMENT_BYTES,
   zipEndOfCentralDirectoryCandidates,
 } from "../zipEndOfCentralDirectory.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 const CENTRAL_HEADER = 0x02014b50;
 const CENTRAL_HEADER_BYTES = 46;
@@ -17,7 +18,7 @@ const UNICODE_PATH = 0x7075;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
 const MSDOS_DIRECTORY = 0x10;
-const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const STRICT_UTF8 = strictUtf8Decoder("preserve");
 
 /** An archive's central directory read a record at a time, bounded to the records it keeps. */
 export interface ZipDirectory {

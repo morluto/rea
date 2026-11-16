@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
   chmod,
@@ -13,9 +14,9 @@ import { basename, dirname, join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 
 import {
   DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY,
@@ -34,7 +35,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -43,10 +44,11 @@ import {
   type LeaseFailure,
   type OwnedLease,
 } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { compareProcedureAddresses } from "./selection.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export interface ExportIdentity {
   readonly targetSha256: string | null;
@@ -355,11 +357,11 @@ export class DecompileExport {
       return closed.ok
         ? opened
         : err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               opened.error,
               closed.error,
               "decompile_all",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
     }
     return ok(
@@ -435,7 +437,7 @@ const commitFunctionFile = async (
   if (!isDecompileFunctionRelativePath(relativePath)) return { status: "io" };
   const finalPath = join(root, relativePath);
   if (!isPathWithinRoot(root, finalPath)) return { status: "io" };
-  const digest = sha256(bytes);
+  const digest = sha256Hex(bytes);
   const linked = await resources.publish(bytes, finalPath, "link").then(
     () => true,
     (cause: unknown) => cause,
@@ -737,10 +739,7 @@ const parseJournal = (
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
   let committed: string;
   try {
-    committed = new TextDecoder("utf-8", {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(bytes.subarray(0, committedBytes));
+    committed = decodeStrictUtf8(bytes.subarray(0, committedBytes), "preserve");
   } catch {
     return err(incompatibleJournal());
   }
@@ -909,7 +908,7 @@ const allocateFunctionPath = (
   const directory = DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY;
   const plain = `${directory}/${base}.c`;
   if (!used.has(portablePathKey(plain))) return plain;
-  const suffix = createHash("sha256").update(address).digest("hex").slice(0, 8);
+  const suffix = sha256Hex(address).slice(0, 8);
   let candidate = `${directory}/${base}-${suffix}.c`;
   let discriminator = 0;
   // Terminates: `used` is finite.
@@ -1116,9 +1115,6 @@ export const exportOutputFailure = (
   bindArtifactFileCleanup(cause, error);
   return error;
 };
-
-export const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const isFileHandle = (value: unknown): value is FileHandle =>
   typeof value === "object" &&

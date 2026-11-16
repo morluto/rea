@@ -4,9 +4,14 @@ import {
   semanticProjectedSourceEligibilityAtRead,
   semanticNormalizeCapturedSelections,
   semanticShiftCapturedSelections,
+  hasFreshProjectedReceiver,
   type SemanticCapturedSelection,
 } from "./javascriptSemanticProjectedSources.js";
 import * as t from "@babel/types";
+import {
+  createGlobalPathReader,
+  type GlobalReferenceRead,
+} from "./javascriptSemanticAmbientWrites.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 
 import { BUILTIN_RESOURCE_METHODS } from "./javascriptBuiltinResourceMethods.js";
@@ -24,8 +29,6 @@ import {
   isUnmodifiedCommonJsWrapperBinding,
   semanticBindingAtRead,
   semanticBindingHasPriorValueWrite,
-  semanticEffectTiming,
-  semanticTopLevelEffectFollowsCapture,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
@@ -39,7 +42,15 @@ import {
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  createSemanticModuleInterop,
+  semanticModuleInteropWithAmbientWrites,
+} from "./javascriptModuleInterop.js";
+import {
+  ambientBindingMayObserveWriteAt,
+  ambientPathMayObserveAt,
+  semanticEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import {
@@ -116,8 +127,8 @@ const commonJsDelegateChangedAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  writesModuleRequire(state).some(
-    (write) => semanticEffectTiming(node, write.node, state) !== "after",
+  writesModuleRequire(state).some((write) =>
+    semanticEffectMayPrecede(state, node, write.node),
   );
 
 const commonJsLoaderAt = (
@@ -177,9 +188,7 @@ const requireLoaderValueAt = (
       semanticResolutionBlocked(state, loader, "require")
     )
       return "unknown";
-    return (state.ambientBindingWrites.get("require") ?? []).some(
-      (write) => semanticEffectTiming(node, write, state) !== "after",
-    )
+    return ambientBindingMayObserveWriteAt(state, node, "require")
       ? "unknown"
       : commonJsLoaderAt(node, state);
   }
@@ -677,35 +686,6 @@ const selectedRequireSourcesAt = (
     : undefined;
 };
 
-const loaderInvocationInterops = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  {
-    readonly writes: number;
-    readonly interop: ReturnType<typeof createSemanticModuleInterop>;
-  }
->();
-
-const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
-  const prior = loaderInvocationInterops.get(state);
-  if (prior?.writes === state.ambientWriteEffects.length) return prior.interop;
-  const interop = createSemanticModuleInterop(state);
-  for (const effect of state.ambientWriteEffects)
-    if (effect.path[0] === "global")
-      interop.retainWrite(effect.node ?? state.program, [
-        "intrinsic",
-        ...effect.path
-          .slice(1)
-          .map((key) =>
-            key === null || typeof key === "object" ? null : String(key),
-          ),
-      ]);
-  loaderInvocationInterops.set(state, {
-    writes: state.ambientWriteEffects.length,
-    interop,
-  });
-  return interop;
-};
-
 export interface JavaScriptRequireCallFact {
   readonly operation: "load" | "resolve";
   readonly loader: JavaScriptRequireLoaderFact;
@@ -887,7 +867,7 @@ export const semanticRequireCallAt = (
           : { sourceRelativePath: selected.sourceRelativePath }),
       };
   }
-  const interop = loaderInvocationInterop(state);
+  const interop = semanticModuleInteropWithAmbientWrites(state);
   if (!t.isNewExpression(node)) {
     // Invocation normalization retains the selected path identity. Keep its
     // filename alongside that path rather than selecting the outer call again.
@@ -1001,12 +981,6 @@ const isWrapperRequireInitializerCall = (
   );
 };
 
-// Ambient indexing finishes before these derived facts are consumed. Keep only
-// replacement sites, rather than rescanning unrelated global member writes.
-const globalProcessReplacements = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  readonly (t.Node | undefined)[]
->();
 type ModuleSourceMatch = "possible" | "no-match" | "incomplete";
 type ModuleRequireWrite = {
   readonly node: t.Node;
@@ -1570,7 +1544,7 @@ export const semanticModuleRequireCallAt = (
   if (isCommonJsRequireDelegate(target, state, includeUnknown, node))
     return true;
   if (t.isNewExpression(node)) return false;
-  const interop = loaderInvocationInterop(state);
+  const interop = semanticModuleInteropWithAmbientWrites(state);
   return (
     interop.intrinsicInvocation(node, (callee) =>
       isCommonJsRequireDelegate(callee, state, false, node)
@@ -1649,41 +1623,63 @@ const objectMayProvideRequire = (node: t.Node | undefined): boolean =>
 export const semanticOriginalGlobalProcessAt = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !ambientPathMayObserveAt(state, node, ["global", "process"]) &&
+  !ambientBindingMayObserveWriteAt(state, node, "process");
+
+const globalProcessReaders = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  (site: t.Node) => GlobalReferenceRead
+>();
+
+/**
+ * Whether a write or escape through the global process object at this source
+ * site may still reach the original object: the global path reader does not
+ * prove a replacement with a fresh object before it. Reads that need a
+ * definite identity ask `semanticOriginalGlobalProcessAt` instead.
+ */
+export const semanticEffectMayReachOriginalGlobalProcess = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  let replacements = globalProcessReplacements.get(state);
-  if (replacements === undefined) {
-    replacements = [
-      ...state.ambientWriteEffects
-        .filter(
-          ({ path }) =>
-            path.length <= 2 &&
-            path.every((key, index) =>
-              semanticPropertyPathKeyMatches(
-                key,
-                ["global", "process"][index]!,
-              ),
-            ),
-        )
-        .map(({ node: write }) => write),
-      ...(state.ambientBindingWrites.get("process") ?? []),
-    ];
-    globalProcessReplacements.set(state, replacements);
+  let read = globalProcessReaders.get(state);
+  if (read === undefined) {
+    read = createGlobalPathReader(state, ["process"]);
+    globalProcessReaders.set(state, read);
   }
-  return !replacements.some(
-    (write) =>
-      !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
+  const fact = read(node);
+  return (
+    fact.status !== "replacement" ||
+    !hasFreshProjectedReceiver(fact.value, [], state)
   );
 };
+
+/**
+ * What a global process reference is used for. A `"read"` needs the original
+ * object for certain; an `"effect"` (a write or an escape through the
+ * reference) is attributed to it while it may still be the original.
+ */
+export type SemanticGlobalProcessUse = "read" | "effect";
+
+const globalProcessAt = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  use: SemanticGlobalProcessUse,
+): boolean =>
+  use === "read"
+    ? semanticOriginalGlobalProcessAt(node, state)
+    : semanticEffectMayReachOriginalGlobalProcess(node, state);
 
 /** Node's unbound process reference shares the cached process exports object. */
 export const semanticGlobalProcessOrigin = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  use: SemanticGlobalProcessUse = "read",
 ): JavaScriptModuleOrigin | undefined =>
   t.isIdentifier(node, { name: "process" }) &&
   resolveSemanticBindingState(state, node, "process") === undefined &&
   !semanticResolutionBlocked(state, node, "process") &&
-  semanticOriginalGlobalProcessAt(node, state)
+  globalProcessAt(node, state, use)
     ? { specifier: "node:process", importedPath: [], resolutionMode: "require" }
     : undefined;
 
@@ -1691,6 +1687,7 @@ export const semanticGlobalProcessOrigin = (
 export const semanticGlobalProcessPathOrigin = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  use: SemanticGlobalProcessUse = "read",
 ): JavaScriptModuleOrigin | undefined => {
   const chain = semanticMemberChain(node);
   if (chain === undefined) return undefined;
@@ -1701,7 +1698,7 @@ export const semanticGlobalProcessPathOrigin = (
     resolveSemanticBindingState(state, current, current.name) !== undefined ||
     semanticResolutionBlocked(state, current, current.name) ||
     members[0] !== "process" ||
-    !semanticOriginalGlobalProcessAt(node, state)
+    !globalProcessAt(node, state, use)
   )
     return undefined;
   return {
@@ -1741,10 +1738,7 @@ const isConditionalRequireAt = (
         )))
   )
     return false;
-  return !(state.ambientBindingWrites.get("require") ?? []).some(
-    (write) =>
-      !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
-  );
+  return !ambientBindingMayObserveWriteAt(state, node, "require");
 };
 
 /** Recover an unshadowed literal require origin and its exact member path. */
@@ -1786,14 +1780,7 @@ export const semanticRequireOriginCandidate = (
         (binding === undefined &&
           (javaScriptRuntimeContext(state.program) === "module" ||
             semanticResolutionBlocked(state, current.callee, "require"))) ||
-        (state.ambientBindingWrites.get("require") ?? []).some(
-          (write) =>
-            !semanticTopLevelEffectFollowsCapture(
-              current,
-              write,
-              state.parentsByNode,
-            ),
-        )
+        ambientBindingMayObserveWriteAt(state, current, "require")
   )
     return undefined;
   const specifier = stringValue(current.arguments[0]);

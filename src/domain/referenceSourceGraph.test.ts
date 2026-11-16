@@ -166,6 +166,7 @@ const registerSourceCommitmentTests = (): void => {
         input.exclusions = [
           {
             path: "private.env",
+            entry_kind: "file",
             reason: "configured-secret",
             pattern: ".env",
           },
@@ -187,7 +188,12 @@ const registerSourceCommitmentTests = (): void => {
         ...graphInput(),
         inventory_state: "partial",
         exclusions: [
-          { path: "private.env", reason: "configured-secret", pattern },
+          {
+            path: "private.env",
+            entry_kind: "file",
+            reason: "configured-secret",
+            pattern,
+          },
         ],
       });
     expect(graphWith(".env").root_sha256).not.toBe(
@@ -427,6 +433,7 @@ describe("partial historical source graphs", () => {
         exclusions: [
           {
             path: "secret",
+            entry_kind: "file" as const,
             reason: "configured-secret" as const,
             pattern: "secret",
           },
@@ -560,10 +567,8 @@ describe("historical source graph excluded symlink targets", () => {
       path: "secret.txt",
       reason: "configured-secret",
       pattern: "secret.txt",
-    };
-    expect(() => createHistoricalSourceGraph(input)).toThrow(
-      /recorded exclusion/u,
-    );
+    } as (typeof input.exclusions)[number];
+    expect(() => createHistoricalSourceGraph(input)).toThrow(/entry_kind/u);
   });
 });
 
