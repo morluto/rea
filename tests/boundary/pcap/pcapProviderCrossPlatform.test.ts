@@ -584,3 +584,21 @@ it.each(["tshark", "capinfos"] as const)(
     );
   },
 );
+
+it.skipIf(isWindows).each([
+  ["freebsd", { status: "unavailable", code: "unsupported_host" }],
+  ["win32", { status: "available" }],
+] as const)(
+  "decides capture-host support from the selected %s host, not the running one",
+  async (platform, expected) => {
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tsharkStub,
+        REA_CAPINFOS_COMMAND: capinfosStub,
+      },
+      platform,
+    });
+    onTestFinished(() => provider.close());
+    expect(await provider.inspectAvailability()).toMatchObject(expected);
+  },
+);

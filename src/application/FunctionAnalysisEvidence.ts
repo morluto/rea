@@ -2,7 +2,7 @@ import { parseAnalysisInput } from "./AnalysisInput.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";

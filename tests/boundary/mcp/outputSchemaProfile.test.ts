@@ -7,10 +7,6 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
-import {
-  COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
-  resolveMcpOutputSchemaProfile,
-} from "../../../src/config/mcpOutputSchemaProfile.js";
 import { createServer as createProductionServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -18,9 +14,14 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
-import type { McpOutputSchemaProfile } from "../../../src/config/mcpOutputSchemaProfile.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import {
+  COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+} from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const createServer = (outputSchemaProfile: McpOutputSchemaProfile) =>
   new EvidenceMcpServer(
@@ -39,7 +40,10 @@ it("omits only output schema advertisements and keeps canonical MCP output valid
   );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "schema-profile-test", version: "1" });
+  const client = new Client(
+    { name: "schema-profile-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const contract = {
     ...toolContract("comment"),
     name: "output_schema_fixture",
@@ -103,7 +107,10 @@ it("bounds output schema advertisements and keeps canonical MCP output validatio
   );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "compact-output-test", version: "1" });
+  const client = new Client(
+    { name: "compact-output-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const contract = {
     ...toolContract("comment"),
     name: "compact_output_schema_fixture",
@@ -184,7 +191,10 @@ it("keeps both output profiles below a measured one-megabyte frame", async () =>
     const server = createServer(profile);
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const client = new Client({ name: "catalog-size-test", version: "1" });
+    const client = new Client(
+      { name: "catalog-size-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     for (const contract of TOOL_CONTRACTS)
       server.registerTool(
         contract.name,
@@ -258,7 +268,10 @@ it("rejects canonical-invalid output that the reduced advertisement accepts", as
   const server = createServer("compact");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "reduced-output-test", version: "1" });
+  const client = new Client(
+    { name: "reduced-output-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const contract = {
     ...toolContract("comment"),
     name: "reduced_output_schema_fixture",
@@ -353,7 +366,10 @@ it("omits output schemas by default and still delivers validated structured resu
     { kind: "session", session },
     { environment: { HOME: process.env.HOME }, logger: silentLogger },
   );
-  const client = new Client({ name: "default-output-profile", version: "1" });
+  const client = new Client(
+    { name: "default-output-profile", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

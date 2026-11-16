@@ -8,7 +8,7 @@ import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.j
 import { nativeCallObservationInputSchema } from "../../../../src/domain/native/nativeCallObservation.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import * as processBoundary from "../../../../src/process/ProviderProcess.js";

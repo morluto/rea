@@ -26,6 +26,7 @@ import {
   type ProtobufBudget,
   type WireSchema,
 } from "./ProtobufWire.js";
+import { errorMessage } from "../../../kernel/errorMessage.js";
 
 export type ProtobufSchemaAdmissionFailure =
   | {
@@ -266,7 +267,7 @@ export class ProtobufSchema implements WireSchema {
       return err({
         kind: "malformed-descriptor",
         field: "descriptor_set_path",
-        message: `Malformed FileDescriptorSet: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `Malformed FileDescriptorSet: ${errorMessage(cause)}`,
       });
     }
     const admitted = await admitRegistryDescriptor(descriptor, budget);
@@ -280,7 +281,7 @@ export class ProtobufSchema implements WireSchema {
       return err({
         kind: "malformed-descriptor",
         field: "descriptor_set_path",
-        message: `Invalid FileDescriptorSet declaration: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `Invalid FileDescriptorSet declaration: ${errorMessage(cause)}`,
       });
     }
     if (message === undefined)

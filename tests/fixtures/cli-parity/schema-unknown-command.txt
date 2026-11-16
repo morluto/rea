@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropi --schema
+exit: 1
+--- stdout
+Error: 'inspect-byte-entropi' is not a command for 'rea'. Did you mean 'inspect-byte-entropy'?
+<end>
+--- stderr
+<end>

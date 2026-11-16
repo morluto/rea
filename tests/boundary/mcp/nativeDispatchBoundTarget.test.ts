@@ -10,6 +10,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { localToolsMcpEnvironment } from "../../fixtures/localToolsMcp.js";
 import { objcRecordBudgetMacho } from "../../fixtures/objcRecordBudgetMacho.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 type Replacement = "missing" | "directory" | "loop" | "unreadable";
 
@@ -36,7 +37,10 @@ const inspectReplacements = async (replacements: readonly Replacement[]) => {
     env[key] = directory;
     await mkdir(directory);
   }
-  const client = new Client({ name: "dispatch-bound-target", version: "1" });
+  const client = new Client(
+    { name: "dispatch-bound-target", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],

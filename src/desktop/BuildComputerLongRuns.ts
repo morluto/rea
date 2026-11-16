@@ -8,16 +8,14 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import {
-  AGENTENV_PROVIDER,
-  type ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
-import {
-  answerSchema,
-  runBuildController,
-  type Answer,
-  type ControlledComputer,
-} from "./BuildComputerController.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
+import { answerSchema, runBuildController } from "./BuildComputerController.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../ports/BuildComputerControl.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "export_build_environment";
 const POLL_S = 30;
@@ -170,8 +168,7 @@ export class BuildComputerLongRuns {
         : cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, OPERATION, {
-              userMessage:
-                cause instanceof Error ? cause.message : String(cause),
+              userMessage: errorMessage(cause),
               cause,
             });
       if (signal.aborted && cause instanceof AnalysisError && cause !== primary)
@@ -280,12 +277,12 @@ export class BuildComputerLongRuns {
     } catch (cause: unknown) {
       return {
         verified: false,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       };
     }
   }
 
-  #receipt(job: Job, answer: Answer): JsonValue {
+  #receipt(job: Job, answer: BuildControllerAnswer): JsonValue {
     return {
       stdout: job.stdout,
       ...(typeof answer.stdout_bytes === "number"

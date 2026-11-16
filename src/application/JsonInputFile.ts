@@ -1,5 +1,6 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { constants } from "node:buffer";
+import { isAbortWithReason } from "../process/SignalAbort.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -24,13 +25,13 @@ import {
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
 import {
   RegularFileReadFailure,
   withRegularFile,
   type RegularFileReadOptions,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   JSON_BYTE_ORDER_MARK_MESSAGE,
   JSON_INPUT_RESOURCE_REMEDIATION,
@@ -138,14 +139,7 @@ const isOwnedJsonPipelineCancellation = (
   try {
     while (pending.length > 0) {
       const current = pending.pop();
-      if (
-        current === cancellation ||
-        (current instanceof Error &&
-          current.name === "AbortError" &&
-          "code" in current &&
-          current.code === "ABORT_ERR" &&
-          current.cause === cancellation)
-      ) {
+      if (isAbortWithReason(current, cancellation)) {
         owned = true;
         continue;
       }

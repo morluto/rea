@@ -1,3 +1,4 @@
+import { evidenceFileTarget } from "../evidence.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -57,7 +58,7 @@ export const managedViewIdentityUnknowns = (
   mvid: string | null,
 ): string[] => [
   "Metadata tokens are build-local coordinates bound to the recorded artifact SHA-256 and module MVID; this view does not load or execute the assembly.",
-  ...(parent.subject == null
+  ...(evidenceFileTarget(parent) === undefined
     ? [
         "The parent has no recorded subject; its normalized artifact identity cannot be cross-checked against a subject digest.",
       ]

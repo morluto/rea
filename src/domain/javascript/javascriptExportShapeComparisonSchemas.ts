@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 
@@ -266,7 +267,7 @@ export const javaScriptExportShapeComparisonChangeSchema = z.strictObject({
 
 const inventoryPropertyCoverageSchema = z.strictObject({
   path: jsonPointerSchema,
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
 });
 
 const propertyInventorySchema = z.strictObject({

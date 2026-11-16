@@ -1,15 +1,21 @@
-import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
-import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  deadlineParameterLimit,
+} from "./analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
+import { analysisResultLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema, coverageStatusSchema } from "./coverage.js";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
   browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
   browserDeadlineRetry,
   noRuntimeOverrideSentence,
   optionalBrowserDeadlineMs,
@@ -99,17 +105,27 @@ export type AnalyzeWebBundleInput = z.infer<typeof analyzeWebBundleInputSchema>;
 /** Per-script deadlineExpired text. It is not the total analysis deadline. */
 export const webBundleScriptTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms per-script deadline (deadlineExpired) for analysis_timeout_ms. This is not total_analysis_timeout_ms and not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS, "--analysis-timeout-ms")} Keep it less than or equal to total_analysis_timeout_ms (omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}); a per-script timeout above the total is rejected. ${browserDeadlineRetry} analysis_timeout_ms does not raise max_heap_mb, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets.`,
+  limit: deadlineParameterLimit(
+    "analysis_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)} Keep it less than or equal to total_analysis_timeout_ms (omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}); a per-script timeout above the total is rejected. ${browserDeadlineRetry} analysis_timeout_ms does not raise max_heap_mb, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets.`,
 });
 
 /** Total captured-script deadlineExpired text. */
 export const webBundleTotalTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms total captured-script analysis deadline (deadlineExpired) for total_analysis_timeout_ms. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch.`,
-  remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS, "--total-analysis-timeout-ms")} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
+  limit: deadlineParameterLimit(
+    "total_analysis_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
 });
 
 /**
@@ -157,7 +173,7 @@ const webBundleHeapRange = (): string =>
 
 const webBundleHeapIncrease = (heapMb: number): string =>
   heapMb < MAX_WEB_BUNDLE_HEAP_MB
-    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}), or use --max-heap-mb on the CLI.`
+    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}).`
     : `max_heap_mb is already at the maximum ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB; do not increase it further.`;
 
 const webBundleHeapDoesNotRaise =
@@ -179,6 +195,26 @@ export const webBundleHeapExhaustedReason = (
         : `Owned web analyzer ran out of memory before its ${String(exhaustion.processMemoryLimitBytes)}-byte process commit limit was reported as reached. That configured limit is max_heap_mb ${String(exhaustion.heapMb)} MiB plus a 512 MiB Bun runtime reserve (${range}). Bun ignores the V8 old-space flag, so this exit is not V8 old-space exhaustion.`;
   }
 };
+
+/**
+ * The per-call control of an exhaustion that a larger `max_heap_mb` raises,
+ * or undefined when that allowance did not stop the analyzer.
+ */
+export const webBundleHeapLimit = (
+  exhaustion: WebBundleMemoryExhaustion,
+): AnalysisControlLimit | undefined =>
+  exhaustion.kind === "bun-allocation"
+    ? undefined
+    : {
+        control_kind: "parameter",
+        parameter: "max_heap_mb",
+        effective_value: exhaustion.heapMb,
+        unit: "MiB",
+        minimum: MIN_WEB_BUNDLE_HEAP_MB,
+        maximum: MAX_WEB_BUNDLE_HEAP_MB,
+        default_value: DEFAULT_WEB_BUNDLE_HEAP_MB,
+        applies_at: "next_call",
+      };
 
 export const webBundleHeapExhaustedRemediation = (
   exhaustion: WebBundleMemoryExhaustion,
@@ -253,6 +289,13 @@ const sourceLocationSchema = z.object({
   line: z.int().min(1).nullable(),
   column: z.int().min(0).nullable(),
 });
+
+/** One source call whose endpoint is unknown, and the API it calls. */
+export const webBundleCallSiteSchema = z.object({
+  mechanism: z.string(),
+  location: sourceLocationSchema,
+});
+export type WebBundleCallSite = z.infer<typeof webBundleCallSiteSchema>;
 
 const basisSchema = z.object({
   script_key: z.string(),
@@ -493,7 +536,7 @@ export const webBundleAnalysisSchema = z.object({
             "Statically known own property names from the declared schema projection; a partial list may omit unresolved members.",
           ),
         schema_property_names_coverage: z
-          .enum(["complete", "partial", "unknown", "not_present"])
+          .enum([...coverageStatusSchema.options, "not_present"])
           .describe(
             "Coverage of the schema property-name projection. Not a schema-validity result.",
           ),
@@ -521,8 +564,10 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
-      /** The setting that bounded these scripts, and how to change it. */
-      limit: analysisSettingLimitSchema.exactOptional(),
+      /** The source calls this unknown is about, when it is about calls. */
+      call_sites: z.array(webBundleCallSiteSchema).exactOptional(),
+      /** The setting or request parameter that bounded these scripts, and how to change it. */
+      limit: analysisResultLimitSchema.exactOptional(),
       remediation: z.string().exactOptional(),
       /**
        * The phase a work allowance refused for these scripts. Their parse
@@ -533,7 +578,7 @@ export const webBundleAnalysisSchema = z.object({
     }),
   ),
   completeness: z.object({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     parsed_scripts: z.int().min(0),
     parse_failures: z.int().min(0),
     visited_ast_nodes: z.int().min(0),

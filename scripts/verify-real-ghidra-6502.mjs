@@ -219,7 +219,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     const cli = parseEvidence(JSON.parse(stdout));
     assert.deepEqual(cli.normalized_result, image.normalized_result);
     assert.equal(cli.analysis_profile.digest, image.analysis_profile.digest);
-    assert.equal(cli.subject.digest.sha256, sha256);
+    assert.equal(cli.subject.identity.sha256, sha256);
     const fileCli = await exec(
       process.execPath,
       [
@@ -245,7 +245,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       filePseudo.normalized_result,
     );
     assert.deepEqual(fileCliEvidence.locations, filePseudo.locations);
-    assert.equal(fileCliEvidence.subject.digest.sha256, sha256);
+    assert.equal(fileCliEvidence.subject.identity.sha256, sha256);
     assert.deepEqual(await readFile(path), bytes);
     assert.deepEqual(await readdir(runtime), []);
     const lowMemory = [];
@@ -511,8 +511,8 @@ async function call(name, args = {}) {
 
 function evidence(value, sha256) {
   const result = parseEvidence(value);
-  assert.equal(result.subject.digest.sha256, sha256);
-  assert.equal(result.subject.architecture, "6502");
-  assert.equal(result.subject.format, "raw-binary");
+  assert.equal(result.subject.identity.sha256, sha256);
+  assert.equal(result.subject.identity.architecture, "6502");
+  assert.equal(result.subject.identity.format, "raw-binary");
   return result;
 }

@@ -1,5 +1,4 @@
 import { captureBudgets } from "./CaptureBudgets.js";
-import { createHash } from "node:crypto";
 import { LosslessNumber } from "lossless-json";
 import { parseCaptureJson } from "./CaptureJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -16,6 +15,7 @@ import {
 } from "./CaptureRedaction.js";
 import { createHarValidator } from "./HarSchema.js";
 import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,
@@ -161,7 +161,7 @@ const projectHar = (
       ) {
         const bytes = decodeHarBase64(item, pointer);
         const contentBase64 = bytes.toString("base64");
-        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        const sha256 = sha256Hex(bytes);
         const hidden =
           redactor.sensitiveBytes(bytes) ||
           sensitiveValues.some(
