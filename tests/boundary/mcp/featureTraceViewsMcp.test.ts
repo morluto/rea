@@ -12,10 +12,9 @@ import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { deliverApplicationEvidence } from "../../../src/server/registerApplicationTools/helpers.js";
+import { deliverApplicationExecution } from "../../../src/server/deliverApplicationExecution.js";
+import { settledExecution } from "../../../src/application/ApplicationToolExecutions.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
-import { silentLogger } from "../../../src/logger.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -372,7 +371,10 @@ it("refuses a selected view before tracing when the server retains no Evidence",
     throw new Error("No deep provider");
   });
   const server = createServer({ kind: "fixed", analysis: session });
-  const client = new Client({ name: "feature-trace-fixed", version: "1" });
+  const client = new Client(
+    { name: "feature-trace-fixed", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -513,25 +515,20 @@ it("commits no session facts when cancelled after the trace completes", async ()
     JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   );
   if (!traceExecution.ok) throw traceExecution.error;
-  const artifactResources = new ArtifactResourceScope();
-  onTestFinished(() => artifactResources.close());
   const before = session.exportEvidenceBundle();
   for (const view of [undefined, { kind: "summary" } as const]) {
     const cancelled = new AbortController();
     cancelled.abort(new Error("client cancelled"));
     // Cancellation can only arrive between completion and commit through this
     // staging step, which the public workflow cannot schedule deterministically.
-    const delivered = await deliverApplicationEvidence(
-      { delivery: createToolResultDelivery(undefined) },
+    const delivered = await deliverApplicationExecution(
+      createToolResultDelivery(undefined),
       {
-        artifactResources,
-        logger: silentLogger,
         evidenceById: (id) => session.evidenceById(id),
         recordEvidence: (evidence) => session.recordEvidence(evidence),
-        recordEvidenceWithUnknown: undefined,
       },
       toolContract("trace_application_feature"),
-      traceExecution.value,
+      settledExecution(traceExecution.value),
       view,
       cancelled.signal,
     );

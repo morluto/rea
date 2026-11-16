@@ -3,6 +3,7 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { DebuggerCleanupIncomplete } from "../domain/debuggerSessionErrors.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   AnalysisCancelledError,
@@ -188,6 +189,7 @@ export class OwnedDebuggerSessionRegistry<
       .then(() => this.#options.stopProcess(session))
       .catch((cause: unknown): OwnedDebuggerStopResult => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: `${this.#options.stopFailurePrefix}: ${errorMessage(cause)}`,
       }))
       .then((stopped) => {
@@ -220,7 +222,7 @@ export class OwnedDebuggerSessionRegistry<
   retainCleanupFailure(
     session: Session,
     operation: string,
-    reason: string,
+    stopped: DebuggerCleanupIncomplete,
     options: AnalysisErrorOptions = {},
   ): AnalysisError {
     return this.retain(
@@ -231,7 +233,7 @@ export class OwnedDebuggerSessionRegistry<
           displayName: this.#options.displayName,
         },
         operation,
-        reason,
+        stopped,
         [session.id],
         options,
       ),

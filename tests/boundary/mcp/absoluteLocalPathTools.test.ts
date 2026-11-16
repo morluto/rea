@@ -13,6 +13,7 @@ import { PYTHON_PYC_TOOL_CONTRACTS } from "../../../src/contracts/python/pythonP
 import { DEB_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/deb/debPackageToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const CONTRACTS = [
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
@@ -95,7 +96,10 @@ it("rejects one relative path field at a time on tools/list", async () => {
       () => ({ content: [] }),
     );
   }
-  const client = new Client({ name: "absolute-path-client", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const ajv = new Ajv2020({ strict: false, validateFormats: false });

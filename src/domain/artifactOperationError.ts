@@ -7,6 +7,7 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
+import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
@@ -63,6 +64,8 @@ export class ArtifactOperationError extends AnalysisError {
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly boundary: ArtifactLimitBoundary | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  /** For a `limit` reason, the release-fixed allowance that refused the input. */
+  readonly fixedAllowance: FixedAllowance | undefined;
   /** For an `integrity` reason, the check the producing reader named. */
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
@@ -109,6 +112,7 @@ export class ArtifactOperationError extends AnalysisError {
       readonly admission?: ArtifactAdmissionLimit;
       readonly boundary?: ArtifactLimitBoundary;
       readonly readerLimit?: ArtifactReaderLimitFact;
+      readonly fixedAllowance?: FixedAllowance;
       readonly integrityCheck?: ArtifactIntegrityCheck;
     },
   ) {
@@ -121,6 +125,7 @@ export class ArtifactOperationError extends AnalysisError {
     this.admission = options?.admission;
     this.boundary = options?.boundary;
     this.readerLimit = options?.readerLimit;
+    this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
     this.remediationAction = options?.remediationAction;
     this.userMessage =

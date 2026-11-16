@@ -5,7 +5,7 @@ import { createEvidence } from "../evidence.js";
 import { managedReconstructionImportInputSchema } from "./managedReconstruction.js";
 
 describe("managed reconstruction import input", () => {
-  it("accepts more than the former 50-method and 100-note ceilings", () => {
+  it("accepts more than 50 methods and 100 notes", () => {
     const evidence = createEvidence(
       unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },

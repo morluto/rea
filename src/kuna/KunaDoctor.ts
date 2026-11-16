@@ -11,12 +11,13 @@ import {
   type KunaAdmissionRefusal,
 } from "./KunaAdmission.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { kunaRetainedResourceCleanupError } from "./KunaCommand.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { kunaInstallationDialect } from "./KunaCommand.js";
 import {
   createKunaResourceScope,
   inspectKunaInstallation,
-  kunaInstallationFailureDiagnostics,
   type KunaReadinessFailure,
 } from "./KunaInstallation.js";
 import {
@@ -137,21 +138,14 @@ const versionCheck = async (
   }
   if (!installation.ok) {
     const check = probeFailure(installation.error);
-    const cleanupResources = kunaResources.cleanupResources;
     if (!kunaResources.hasPending) return { version: null, check };
     return {
       version: null,
-      check: {
-        ...check,
-        code: "cleanup_incomplete",
-        details: {
-          ...installation.error.diagnostics,
-          cleanup_incomplete: true,
-          ...(cleanupResources === undefined
-            ? {}
-            : { cleanup_resources: [...cleanupResources] }),
-        },
-      },
+      check: cleanupIncompleteCheck(
+        { ...check, code: "cleanup_incomplete" },
+        installation.error.diagnostics,
+        kunaResources.cleanupResources,
+      ),
     };
   }
   const { value } = installation;
@@ -200,45 +194,55 @@ const admissionFailure = (
   details: refusal.diagnostics,
 });
 
-/** A probe that threw: retained or unconfirmed cleanup, else rethrown. */
+/** An installation check whose inspection left cleanup unconfirmed. */
+const cleanupIncompleteCheck = (
+  check: Omit<DoctorProviderCheck, "details">,
+  diagnostics: Readonly<Record<string, JsonValue>> | undefined,
+  cleanupResources: readonly string[] | undefined,
+): DoctorProviderCheck => ({
+  ...check,
+  details: {
+    ...diagnostics,
+    cleanup_incomplete: true,
+    ...(cleanupResources === undefined
+      ? {}
+      : { cleanup_resources: [...cleanupResources] }),
+  },
+});
+
+/**
+ * A probe that threw. The installation dialect owns what an inspection
+ * failure means; doctor reports a failure with unconfirmed cleanup and
+ * rethrows the rest.
+ */
 const probeCleanupFailure = (
   cause: unknown,
   kunaResources: ReturnType<typeof createKunaResourceScope>,
 ): DoctorProviderCheck => {
-  const retainedCleanup = kunaRetainedResourceCleanupError(cause, "doctor");
-  if (retainedCleanup !== undefined)
-    return {
+  let recognised = true;
+  const failure = classifyProviderFailure(
+    cause,
+    kunaInstallationDialect("doctor", kunaResources, (unrecognised) => {
+      recognised = false;
+      return new ProviderAdapterError(KUNA_PROVIDER_ID, "doctor", {
+        cause: unrecognised,
+      });
+    }),
+  );
+  if (!recognised) throw cause;
+  if (!failure.cleanupIncomplete) throw failure;
+  return cleanupIncompleteCheck(
+    {
       name: "version",
       ok: false,
       code: "cleanup_incomplete",
-      detail: retainedCleanup.message,
+      detail: `Kuna installation inspection could not confirm cleanup: ${failure.message}`,
       remediation: null,
       classification: "config_drift",
-      details: {
-        cleanup_incomplete: true,
-        cleanup_resources: [...retainedCleanup.cleanupResources],
-      },
-    };
-  if (!(cause instanceof RegularFileCleanupFailure)) {
-    const cancellation = kunaResources.installationCancellationError(
-      cause,
-      "doctor",
-    );
-    if (cancellation !== undefined) throw cancellation;
-    throw cause;
-  }
-  return {
-    name: "version",
-    ok: false,
-    code: "cleanup_incomplete",
-    detail: `Kuna installation inspection could not confirm file cleanup: ${errorMessage(cause)}`,
-    remediation: null,
-    classification: "config_drift",
-    details: {
-      cleanup_incomplete: true,
-      ...kunaInstallationFailureDiagnostics(cause),
     },
-  };
+    failure.diagnostics,
+    failure.cleanupResources,
+  );
 };
 
 /** A failed version probe of an admitted command. */

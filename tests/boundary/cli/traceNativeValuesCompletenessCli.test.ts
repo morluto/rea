@@ -1,6 +1,6 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -85,7 +85,7 @@ const serveTraceCli = async (
     createNativeBinarySession: createSession,
     createManagedBinarySession: createSession,
   };
-  const cli = Cli.create("rea-value-trace-cli-test", { sync: false });
+  const cli = createCommandCli();
   registerCoreNativeCommands(
     cli,
     pino({ enabled: false }),

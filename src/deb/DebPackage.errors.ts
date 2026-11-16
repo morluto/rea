@@ -31,13 +31,17 @@ export class DebPackageCapacityFailure extends ParseFailureError<"limit"> {
     readonly maximum: number,
     message: string,
     readonly partial?: DebPackage,
+    options?: ErrorOptions,
   ) {
-    super({
-      kind: "limit",
-      format: "deb",
-      detail: message,
-      limit: { name: resource, maximum },
-    });
+    super(
+      {
+        kind: "limit",
+        format: "deb",
+        detail: message,
+        limit: { name: resource, maximum },
+      },
+      options,
+    );
     this.name = "DebPackageCapacityFailure";
   }
 }

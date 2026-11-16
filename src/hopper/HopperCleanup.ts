@@ -2,8 +2,7 @@ import type { Socket } from "node:net";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { HopperError } from "../domain/hopperErrors.js";
-import { HopperProcessError } from "../domain/hopperErrors.js";
+import { HopperProcessError } from "./HopperErrors.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -25,6 +24,8 @@ import {
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
 import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 interface CleanupIssue {
   readonly resource: string;
@@ -59,6 +60,8 @@ export interface HopperOwnedResources {
         readonly identity: ProcessIdentityObservation;
       }
     | undefined;
+  /** Descriptors a failed bridge identity read left open, released by cleanup. */
+  readonly inspections: ArtifactResourceScope;
 }
 
 export interface HopperCleanupInput {
@@ -71,7 +74,7 @@ export interface HopperCleanupInput {
   readonly onDiagnostic: ((event: HopperDiagnostic) => void) | undefined;
   request(
     method: "shutdown" | "shutdown_document",
-  ): Promise<Result<JsonValue, HopperError>>;
+  ): Promise<Result<JsonValue, AnalysisError>>;
   releaseTransport(socket: Socket | undefined): void;
 }
 
@@ -146,7 +149,26 @@ export const cleanupHopperSession = async (
       });
     }
   }
+  await releaseInspections(input, state);
   return cleanupOutcome(input, state);
+};
+
+/** Retry descriptors whose identity read could not close them. */
+const releaseInspections = async (
+  input: HopperCleanupInput,
+  state: CleanupState,
+): Promise<void> => {
+  try {
+    await input.resources.inspections.retryCleanup();
+  } catch (cause: unknown) {
+    const resources = input.resources.inspections.cleanupResources;
+    for (const resource of resources.length === 0
+      ? ["hopper-process-inspection"]
+      : resources) {
+      state.resources.add(resource);
+      state.issues.push({ resource, reason: errorMessage(cause) });
+    }
+  }
 };
 
 export const confirmExternalApplicationExit = async (
@@ -162,10 +184,21 @@ export const confirmExternalApplicationExit = async (
     application?.identity.state !== "readable"
   )
     return undefined;
-  const observed = await observeExit(
-    application.pid,
-    application.identity.identity,
-  );
+  let observed: Awaited<ReturnType<typeof observeExit>>;
+  try {
+    observed = await observeExit(
+      application.pid,
+      application.identity.identity,
+    );
+  } catch (cause: unknown) {
+    // Exit stays unverified; descriptors the read left open stay owned.
+    if (
+      retainArtifactCommandCleanup(cause, resources.inspections, "close_binary")
+        .length === 0
+    )
+      throw cause;
+    return "unverified";
+  }
   if (observed === "exited") {
     resources.shutdownConfirmed = true;
     releaseTransport(socket);
@@ -215,7 +248,7 @@ const requestShutdown = async (
   const outcome = shutdown.ok
     ? parseHopperShutdownReply(method, shutdown.value)
     : undefined;
-  let fallback: Result<JsonValue, HopperError> | undefined;
+  let fallback: Result<JsonValue, AnalysisError> | undefined;
   if (
     outcome?.ok === true &&
     outcome.value === "cleanup_required" &&
@@ -273,7 +306,7 @@ const requestShutdown = async (
 
 const fallbackDocumentShutdown = async (
   input: HopperCleanupInput,
-): Promise<Result<JsonValue, HopperError>> => {
+): Promise<Result<JsonValue, AnalysisError>> => {
   const fallback = await input
     .request("shutdown_document")
     .catch((cause: unknown) =>
@@ -315,7 +348,7 @@ const shutdownRequestFailure = (
 
 /** Name the shutdown failure in retained-cleanup details without its cause text. */
 const shutdownErrorDetails = (
-  error: HopperError,
+  error: AnalysisError,
 ): Record<string, JsonValue> => ({
   error_tag: error._tag,
   ...(error instanceof HopperProcessError
@@ -324,7 +357,7 @@ const shutdownErrorDetails = (
 });
 
 const shutdownFailureDetails = (
-  error: HopperError,
+  error: AnalysisError,
 ): Record<string, JsonValue> => ({
   errorTag: error._tag,
   ...(error instanceof HopperProcessError && error.operation !== undefined

@@ -40,6 +40,7 @@ import {
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
+  type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -62,12 +63,15 @@ import type {
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
+import { execFileOutputFailure } from "../../process/ExecFileOutput.js";
 import {
-  execFileOutputFailure,
-  HOST_SPAWN_CAPACITY_CODES,
-} from "../../process/ExecFileOutput.js";
+  describeLaunchFailure,
+  launcherFailureOf,
+} from "../../process/launchFailure.js";
+import { classifyLaunchFailure } from "../../process/classifyProviderOutcome.js";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
@@ -775,43 +779,31 @@ export class ReverseEngineeringService {
           : undefined);
       if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
         outputLimitReached = true;
-      if (earlyFailure === undefined && code === "E2BIG")
-        earlyFailure = new AnalysisResourceConstraintError(
-          operation,
-          "transport",
-          "The host rejected the provider command because its argument list exceeds the process launch limit.",
-          {
-            argument_bytes: args.reduce(
-              (bytes, argument, index) =>
-                bytes + Buffer.byteLength(argument) + (index === 0 ? 0 : 1),
-              0,
-            ),
-          },
-          { cause, ...ownedCleanupOptions(cause) },
+      // Host capacity and an oversized argument list are classified by the
+      // shared launch owner; a refusal keeps this provider's repair below.
+      const launch =
+        preparationHostCapacityFailure(ownedCause) ??
+        launcherFailureOf(
+          cause instanceof LinuxOwnedProcessPrerequisiteError
+            ? cause.cause
+            : cause,
         );
       if (
         earlyFailure === undefined &&
-        typeof code === "string" &&
-        HOST_SPAWN_CAPACITY_CODES.has(code)
-      ) {
-        earlyFailure = new AnalysisResourceConstraintError(
+        (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+      )
+        earlyFailure = classifyLaunchFailure(launch, {
+          providerId: profile.identity.id,
           operation,
-          "capacity",
-          `The host ran out of process, memory or file-descriptor capacity (${code}) to start ${provider}.`,
-          { spawn_error: code, command },
-          {
-            cause,
-            retryable: true,
-            remediationAction: `The host ran out of process, memory or file-descriptor capacity (${code}). Close unused processes or files, or raise the process or open-file limit of the REA process, then retry; ${setting} does not need to change.`,
-            diagnostics: {
-              boundary: "host-capacity",
-              command,
-              system_code: code,
-            },
-            ...ownedCleanupOptions(cause),
-          },
-        );
-      }
+          command,
+          selection: setting,
+          argumentBytes: args.reduce(
+            (bytes, argument, index) =>
+              bytes + Buffer.byteLength(argument) + (index === 0 ? 0 : 1),
+            0,
+          ),
+          details: { cause, ...ownedCleanupOptions(cause) },
+        });
       if (
         earlyFailure === undefined &&
         cause instanceof LinuxOwnedProcessPrerequisiteError
@@ -967,22 +959,45 @@ export class ReverseEngineeringService {
           });
         else {
           const { provider, remediationAction } = profile.repair;
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            profile.identity.id,
-            operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
-            {
-              cause,
-              userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
-              remediationAction,
-              diagnostics: {
-                boundary: "provider-launch",
-                command,
-                system_code: code ?? null,
+          // This provider's repair names the configured executable; the
+          // shared launch owner supplies the errno and syscall facts.
+          const unavailable = (
+            description: string,
+            details: AnalysisErrorOptions,
+          ): AnalysisError =>
+            new AnalysisCapabilityUnavailableError(
+              profile.identity.id,
+              operation,
+              `Unable to run configured command (${description})`,
+              {
+                ...details,
+                userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${description}).`,
+                remediationAction,
               },
-              ...ownedCleanupOptions(cause),
-            },
-          );
+            );
+          const details: AnalysisErrorOptions = {
+            cause,
+            ...ownedCleanupOptions(cause),
+          };
+          earlyFailure =
+            launch === undefined
+              ? unavailable(String(code ?? "unknown error"), {
+                  ...details,
+                  diagnostics: {
+                    boundary: "provider-launch",
+                    command,
+                    system_code: code ?? null,
+                  },
+                })
+              : classifyLaunchFailure(launch, {
+                  providerId: profile.identity.id,
+                  operation,
+                  command,
+                  selection: setting,
+                  details,
+                  unavailable: (failure, launchDetails) =>
+                    unavailable(describeLaunchFailure(failure), launchDetails),
+                });
         }
       }
       if (earlyFailure === undefined && capture !== undefined) {
@@ -1151,6 +1166,7 @@ export class ReverseEngineeringService {
       completion_status: completionStatus,
       artifact_sha256_after: absolutePath === undefined ? null : digestAfter,
       artifact_changed: absolutePath === undefined ? null : artifactChanged,
+      ...(rejection === undefined ? {} : { refusal: rejection.refusal }),
     };
     const limitations = [
       // A pathless command reports no artifact; its provider says what the
@@ -1162,7 +1178,7 @@ export class ReverseEngineeringService {
           ]),
       ...(profile.limitations ?? []),
       "A non-zero process exit is preserved as an observed command result.",
-      ...(rejection === undefined ? [] : [rejection]),
+      ...(rejection === undefined ? [] : [rejection.limitation]),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[
@@ -1408,13 +1424,11 @@ const runOwnedCommandOutput =
             ? "ETIMEDOUT"
             : cause.reason === "output-limit"
               ? "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-              : launchErrorCode === "E2BIG"
-                ? "E2BIG"
-                : snapshot === null
-                  ? typeof launchErrorCode === "string"
-                    ? launchErrorCode
-                    : "ERR_PROVIDER_LAUNCH"
-                  : (snapshot.exitCode ?? null);
+              : snapshot === null
+                ? typeof launchErrorCode === "string"
+                  ? launchErrorCode
+                  : "ERR_PROVIDER_LAUNCH"
+                : (snapshot.exitCode ?? null);
       throw new OwnedOutputFailure({
         stdout: snapshot?.stdout.text ?? "",
         stderr: snapshot?.stderr.text ?? "",
@@ -1558,9 +1572,8 @@ const PHYSICAL_FAILURE_CODES = new Set([
 
 /**
  * A late abort does not replace a recognized physical failure. Other rejections
- * observed while the caller signal is aborted remain cancellation. A bare
- * `ABORT_ERR` is not cancellation until the command boundary, which already
- * used that code for an aborted provider process.
+ * observed while the caller signal is aborted remain cancellation; a bare
+ * `ABORT_ERR` without the caller's abort is not.
  */
 const preflightCancelled = (
   signal: AbortSignal | undefined,
@@ -1583,7 +1596,7 @@ const commandCancelled = (
     cause.cause instanceof OwnedCommandFailure
   )
     return cause.cause.reason === "cancelled";
-  return code === "ABORT_ERR" || preflightCancelled(signal, cause, code);
+  return preflightCancelled(signal, cause, code);
 };
 
 const callerCancellationCause = (

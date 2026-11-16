@@ -9,15 +9,18 @@ import {
 } from "../resources/index.js";
 import type { DebPackagePort } from "../ports/deb/DebPackagePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   DEB_PACKAGE_LIMIT_MAXIMA,
   type InspectDebPackageInput,
 } from "../domain/deb/debPackage.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok } from "../domain/result.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -61,6 +64,26 @@ const partialDiagnostics = (cause: unknown) => {
 };
 
 /**
+ * The refusal for a Debian limit: the file-size budget, or a parser capacity
+ * such as member count or expanded tar bytes. The limit's name and maximum
+ * come from the failure's LimitRef; the recovery names the request option.
+ */
+const capacityConstraint = (
+  cause: DebPackageCapacityFailure,
+  details: Omit<AnalysisErrorOptions, "cause">,
+) =>
+  parseLimitConstraint(
+    OPERATION,
+    cause.resource === "max_file_bytes" ? "file-size" : "capacity",
+    cause,
+    {
+      ...details,
+      ...parserLimitRecovery(cause.resource, cause.maximum),
+      ...partialDiagnostics(cause),
+    },
+  );
+
+/**
  * Debian's dialect for the shared provider failure classifier. Parser limit
  * and format refusals, and the recovery text for those limits, are the only
  * cases this provider names.
@@ -72,18 +95,7 @@ const failureDialect = (
   operation: OPERATION,
   recognise: (cause, details) => {
     if (cause instanceof DebPackageCapacityFailure)
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        cause.resource === "max_file_bytes" ? "file-size" : "capacity",
-        cause.message,
-        { [cause.resource]: cause.maximum },
-        {
-          ...details,
-          cause,
-          ...parserLimitRecovery(cause.resource, cause.maximum),
-          ...partialDiagnostics(cause),
-        },
-      );
+      return capacityConstraint(cause, details);
     return parseFailureAnalysisError(
       OPERATION,
       input.path,
@@ -96,16 +108,16 @@ const failureDialect = (
     path: input.path,
     description: "deb",
     retainCompletedIdentity: true,
-    fileSize: (limit, details) =>
-      new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        limit.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          ...details,
-          ...parserLimitRecovery("max_file_bytes", input.max_file_bytes),
-        },
+    fileSize: (limit, { cause, ...details }) =>
+      capacityConstraint(
+        new DebPackageCapacityFailure(
+          "max_file_bytes",
+          input.max_file_bytes,
+          limit.message,
+          undefined,
+          { cause },
+        ),
+        details,
       ),
   },
   unclassified: (cause, details) =>

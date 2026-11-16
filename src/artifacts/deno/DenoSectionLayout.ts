@@ -1,6 +1,9 @@
-import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
-import { ArtifactReaderFailure, abortIfNeeded } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  artifactFixedLimitFailure,
+} from "../../resources/index.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
@@ -373,14 +376,16 @@ const addRemoteBody = (total: bigint, length: number): bigint => {
 };
 
 const assertTableCount = (count: number, scope: string): void => {
-  if (count > MAX_DENO_TABLE_COUNT) {
-    const allowance = `Deno compile ${scope} allowance of ${String(MAX_DENO_TABLE_COUNT)} records`;
-    const message = `Deno compile ${scope} table claims ${String(count)} records, exceeding MAX_DENO_TABLE_COUNT (${String(MAX_DENO_TABLE_COUNT)} records). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-    throw new ArtifactReaderFailure("limit", message, {
-      boundary: "capacity",
-      userMessage: message,
-    });
-  }
+  if (count > MAX_DENO_TABLE_COUNT)
+    throw artifactFixedLimitFailure(
+      {
+        name: `The Deno compile ${scope} record allowance`,
+        kind: "count",
+        limit: MAX_DENO_TABLE_COUNT,
+        unit: "records",
+      },
+      `Deno compile ${scope} table claims ${String(count)} records, exceeding MAX_DENO_TABLE_COUNT (${String(MAX_DENO_TABLE_COUNT)} records).`,
+    );
 };
 
 const decodeStrict = (
@@ -525,11 +530,14 @@ export const denoByteLimit = (
   scope: string,
   claimed: number | bigint,
   allowance: number,
-): ArtifactReaderFailure => {
-  const name = `Deno compile ${scope} allowance of ${String(allowance)} bytes`;
-  const message = `The ${scope} claims ${String(claimed)} bytes. ${fixedAllowanceRemediation(name, "parser")} This release has no runtime override.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "memory",
-    userMessage: message,
-  });
-};
+): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: `The Deno compile ${scope} allowance`,
+      kind: "parser",
+      limit: allowance,
+      unit: "bytes",
+    },
+    `The ${scope} claims ${String(claimed)} bytes, above ${String(allowance)} bytes.`,
+    "memory",
+  );

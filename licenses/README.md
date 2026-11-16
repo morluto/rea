@@ -35,6 +35,11 @@ without installing packages or executing lifecycle scripts. It includes
 optional platform packages that may not be present in one local installation.
 Temporary archives were removed after collection.
 
+The `incur@0.6.1` notice remains for the CLI code derived from that release,
+even though Incur is no longer an npm dependency. Its preserved MIT text and
+the copyright headers in the derived source remain unchanged. Other remaining
+runtime archive identities and notices are unchanged by this removal.
+
 For releases that omit original documents, the collection uses pinned upstream
 texts, embedded source/README license sections, or the same release's parent
 notice for the `@lydell/node-pty` prebuilt family. `evmole@0.9.3` uses the existing

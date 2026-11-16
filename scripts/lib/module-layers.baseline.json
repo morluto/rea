@@ -7,16 +7,8 @@
     "cli <-> cliOutput.ts",
     "main <-> server"
   ],
-  "crossProvider": {
-    "apktool -> artifacts": 2,
-    "desktop -> electron": 1,
-    "gpu -> artifacts": 1,
-    "model -> artifacts": 1
-  },
+  "crossProvider": {},
   "entry": {
-    "application -> browser": 2,
-    "application -> desktop": 41,
-    "application -> frida": 2,
-    "application -> reference": 8
+    "application -> desktop": 14
   }
 }

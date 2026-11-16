@@ -16,7 +16,7 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 /**

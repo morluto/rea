@@ -30,6 +30,7 @@ import {
   THIRD_BOOK,
 } from "../../fixtures/environmentStateWrites.js";
 import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface ToolSchemas {
   readonly name: string;
@@ -344,7 +345,10 @@ const advertiseAndEnforceProcessEnvironmentKeyConstraint =
         };
       },
     );
-    const client = new Client({ name: "process-schema", version: "0" });
+    const client = new Client(
+      { name: "process-schema", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -464,7 +468,10 @@ describe("MCP JSON Schema validity", () => {
 
   it("advertises valid input and output schemas for every canonical tool", async () => {
     const server = new McpServer({ name: "schema-validation", version: "0" });
-    const client = new Client({ name: "schema-validation", version: "0" });
+    const client = new Client(
+      { name: "schema-validation", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     for (const contract of TOOL_CONTRACTS)
@@ -523,7 +530,10 @@ describe("MCP JSON Schema validity", () => {
 describe("MCP root input schemas", () => {
   it("advertises object roots while enforcing union requirements at runtime", async () => {
     const server = new McpServer({ name: "schema-constraints", version: "0" });
-    const client = new Client({ name: "schema-constraints", version: "0" });
+    const client = new Client(
+      { name: "schema-constraints", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     for (const contract of TOOL_CONTRACTS)
@@ -666,7 +676,10 @@ const advertiseAndEnforceItemSelectorCollectionConstraints =
         content: [],
       }),
     );
-    const client = new Client({ name: "item-selector-schema", version: "0" });
+    const client = new Client(
+      { name: "item-selector-schema", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -742,10 +755,13 @@ describe("MCP process input JSON Schema", () => {
       name: "process-schema-validation",
       version: "0",
     });
-    const client = new Client({
-      name: "process-schema-validation",
-      version: "0",
-    });
+    const client = new Client(
+      {
+        name: "process-schema-validation",
+        version: "0",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     for (const contract of TOOL_CONTRACTS)

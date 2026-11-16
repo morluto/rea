@@ -100,6 +100,10 @@ const failureForPrimary = (
         ...fixedAllowanceOptions(
           "The IL2CPP native-link allowance",
           cause.reason === "native-type-text-capacity" ? "parser" : "count",
+          {
+            limit: cause.failure.limit.maximum,
+            ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+          },
         ),
       },
     );
@@ -143,7 +147,14 @@ const failureForPrimary = (
         { maximum_input_bytes: maximum },
         {
           cause,
-          ...fixedAllowanceOptions("the fixed IL2CPP input allowance", "input"),
+          ...fixedAllowanceOptions(
+            "the fixed IL2CPP input allowance",
+            "input",
+            {
+              limit: maximum,
+              unit: "bytes",
+            },
+          ),
         },
       );
     if (cause.reason === "path")

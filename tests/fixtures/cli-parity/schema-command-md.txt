@@ -1,0 +1,95 @@
+$ rea inspect-byte-entropy --schema --format md
+exit: 0
+--- stdout
+## args.type
+
+object
+
+## args.properties.path
+
+| Key         | Value          |
+|-------------|----------------|
+| type        | string         |
+| minLength   | 1              |
+| pattern     | ^\[^\\x00\]\*$ |
+| description | Local file     |
+
+## args.required
+
+\["path"\]
+
+## args.additionalProperties
+
+false
+
+## options.type
+
+object
+
+## options.properties.blockSize.default
+
+4096
+
+## options.properties.blockSize.anyOf
+
+| type    | minimum | maximum | pattern    |
+|---------|---------|---------|------------|
+| integer | 256     | 65536   |            |
+| string  |         |         | ^\[0-9\]+$ |
+
+## options.properties.blockSize.description
+
+Power-of-two block size from 256 to 65536 bytes
+
+## options.properties.offset.default
+
+0
+
+## options.properties.offset.anyOf
+
+| type    | minimum | maximum          | pattern    |
+|---------|---------|------------------|------------|
+| integer | 0       | 9007199254740991 |            |
+| string  |         |                  | ^\[0-9\]+$ |
+
+## options.properties.offset.description
+
+Window start as a decimal file byte offset
+
+## options.properties.length.anyOf
+
+| type    | minimum | maximum          | pattern    |
+|---------|---------|------------------|------------|
+| integer | 0       | 9007199254740991 |            |
+| string  |         |                  | ^\[0-9\]+$ |
+
+## options.properties.length.description
+
+Window length in bytes; omit to extend through EOF
+
+## options.additionalProperties
+
+false
+
+## globals.type
+
+object
+
+## globals.properties.timings
+
+| Key         | Value                                    |
+|-------------|------------------------------------------|
+| default     | false                                    |
+| description | Write measured command timing to stderr. |
+| type        | boolean                                  |
+
+## globals.required
+
+\["timings"\]
+
+## globals.additionalProperties
+
+false
+<end>
+--- stderr
+<end>

@@ -15,6 +15,7 @@ import { createServer } from "../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 vi.mock("../../src/application/JsonAuthenticationHeadroom.js", { spy: true });
 vi.mock(
@@ -196,7 +197,10 @@ const connectedComparison = async () => {
     throw new Error("Comparison must not start a native provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "source-cancel", version: "1" });
+  const client = new Client(
+    { name: "source-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

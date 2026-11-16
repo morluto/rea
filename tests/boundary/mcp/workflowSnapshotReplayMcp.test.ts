@@ -34,6 +34,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { recordUnknownInputSchema } from "../../../src/domain/residualUnknown.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "fixture", name: "Fixture", version: "1" } as const;
 const profile = createAnalysisProfile(identity, { fixture: true });
@@ -892,7 +893,10 @@ const connectWorkflowMcp = async (
       ...(providerEnvironment === undefined ? {} : { providerEnvironment }),
     },
   );
-  const mcp = new Client({ name: clientName, version: "1.0.0" });
+  const mcp = new Client(
+    { name: clientName, version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);

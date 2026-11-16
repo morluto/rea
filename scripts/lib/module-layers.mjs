@@ -283,9 +283,11 @@ export const ENTRY_FILES = Object.freeze(
       deb: ["DebPackageProvider.ts", "DebPackageProviderIdentity.ts"],
       desktop: [
         "AgentEnvComputer.ts",
+        "AgentEnvProviderIdentity.ts",
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
@@ -367,7 +369,16 @@ export const ENTRY_FILES = Object.freeze(
         "PcapProviderIdentity.ts",
       ],
       python: ["PythonPycProvider.ts", "PythonPycProviderIdentity.ts"],
-      reference: [],
+      reference: [
+        // The reference-source import workflow (src/application/ReferenceSource*)
+        // runs the reader and consumes its result and failure types. It reports
+        // its own root and VCS reads with the reader's two failure builders, so
+        // both kinds of failure share one shape and wording. Traversal state,
+        // symlink reconciliation and the per-entry failure helpers stay private.
+        "ReferenceSourceFailureBuilders.ts",
+        "ReferenceSourceReader.ts",
+        "ReferenceSourceReaderTypes.ts",
+      ],
       rizin: [
         "RizinCommand.ts",
         "RizinDebugSessionManager.ts",
@@ -443,6 +454,16 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // and reports its failures, instead of parsing the fuse wire twice.
     reason:
       "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
+  }),
+  Object.freeze({
+    from: "desktop",
+    to: "electron",
+    files: Object.freeze(["ElectronFuseReader.ts"]),
+    // The Linux application inventory marks an executable as Electron when
+    // it carries a fuse sentinel. It locates the sentinel with the electron
+    // provider's fuse reader instead of searching the fuse wire again.
+    reason:
+      "the Linux application inventory detects Electron executables with the electron provider's fuse reader",
   }),
   Object.freeze({
     from: "captures",

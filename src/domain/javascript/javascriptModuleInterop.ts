@@ -33,7 +33,7 @@ import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSour
 import {
   opaqueCodeMayRebindBinding,
   semanticAmbientIntrinsicWrites,
-  semanticAmbientWriteGeneration,
+  semanticAmbientEffectGeneration,
 } from "./javascriptSemanticEffectLog.js";
 import { semanticDirectEvalRecorded } from "./javascriptSemanticEffectRecord.js";
 
@@ -928,7 +928,7 @@ const ambientWriteInterops = new WeakMap<
 export const semanticModuleInteropWithAmbientWrites = (
   state: JavaScriptSemanticAnalysisState,
 ): ReturnType<typeof createSemanticModuleInterop> => {
-  const generation = semanticAmbientWriteGeneration(state);
+  const generation = semanticAmbientEffectGeneration(state);
   const prior = ambientWriteInterops.get(state);
   if (prior?.generation === generation) return prior.interop;
   const interop = createSemanticModuleInterop(state);

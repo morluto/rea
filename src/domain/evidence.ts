@@ -16,6 +16,8 @@ import {
   binaryTargetIdentity,
   fileTargetSelectionSchema,
   nonFileTargetIdentitySchema,
+  sessionTargetIdentitySchema,
+  unknownTargetIdentitySchema,
   type NonFileTargetIdentity,
   sameTargetIdentity,
   type FileTargetIdentity,
@@ -89,9 +91,16 @@ const fileSubjectSchema = z.strictObject({
   name: z.string().min(1),
   local_path: nulFreeStringSchema,
 });
-/** A subject that names no file (a URL, or an unknown target) has no file display facts. */
+/** A debugger session whose launch file is validated like a file subject. */
+const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
+  target: z.union([subjectIdentitySchema, unknownTargetIdentitySchema]),
+});
+/** A subject that names no file (a URL, process, session, or unknown target) has no file display facts. */
 const nonFileSubjectSchema = z.strictObject({
-  identity: nonFileTargetIdentitySchema,
+  identity: z.union([
+    nonFileTargetIdentitySchema,
+    sessionSubjectIdentitySchema,
+  ]),
   name: z.null(),
   local_path: z.null(),
 });
