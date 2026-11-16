@@ -32,6 +32,31 @@ export const inspectRawRasterCandidatesInputSchema = z.strictObject({
   max_hypotheses: z.number().int().min(1).max(100000).default(20000),
   max_candidates: z.number().int().min(1).max(100).default(20),
 });
+/** Public admission preserves omission; resolution happens only in the service. */
+export const inspectRawRasterCandidatesRequestSchema =
+  inspectRawRasterCandidatesInputSchema.extend({
+    offset: inspectRawRasterCandidatesInputSchema.shape.offset
+      .removeDefault()
+      .optional(),
+    widths: inspectRawRasterCandidatesInputSchema.shape.widths
+      .removeDefault()
+      .optional(),
+    heights: inspectRawRasterCandidatesInputSchema.shape.heights
+      .removeDefault()
+      .optional(),
+    formats: inspectRawRasterCandidatesInputSchema.shape.formats
+      .removeDefault()
+      .optional(),
+    min_score: inspectRawRasterCandidatesInputSchema.shape.min_score
+      .removeDefault()
+      .optional(),
+    max_hypotheses: inspectRawRasterCandidatesInputSchema.shape.max_hypotheses
+      .removeDefault()
+      .optional(),
+    max_candidates: inspectRawRasterCandidatesInputSchema.shape.max_candidates
+      .removeDefault()
+      .optional(),
+  });
 const metric = z.number().finite().nonnegative();
 export const rawRasterDiscoverySchema = z.strictObject({
   artifact: z.strictObject({
@@ -39,6 +64,18 @@ export const rawRasterDiscoverySchema = z.strictObject({
     bytes: nonnegative,
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
   }),
+  resolved_controls: inspectRawRasterCandidatesRequestSchema
+    .required({
+      offset: true,
+      widths: true,
+      heights: true,
+      formats: true,
+      min_score: true,
+      max_hypotheses: true,
+      max_candidates: true,
+      length: true,
+    })
+    .omit({ path: true }),
   window: z.strictObject({ offset: nonnegative, length: nonnegative }),
   candidates: z
     .array(

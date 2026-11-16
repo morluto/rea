@@ -1,9 +1,9 @@
 import {
-  inspectStructuredRasterCandidatesInputSchema,
+  inspectStructuredRasterCandidatesRequestSchema,
   structuredRasterCandidatesSchema,
 } from "../../domain/native/structuredRasterCandidates.js";
 import {
-  inspectRawRasterCandidatesInputSchema,
+  inspectRawRasterCandidatesRequestSchema,
   rawRasterDiscoverySchema,
 } from "../../domain/native/rawRasterCandidates.js";
 import {
@@ -288,7 +288,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "Find candidate raster descriptor tables under an explicit configurable grammar, not universal image detection. Choose flat bytes, caller logical/file segments, or the separately named fgs-records container grammar with footer size/CRC validation. No firmware ID, known resource address or palette is used. Reports inferred tables, format/bpp/offset-unit alternatives, coverage, logical offsets and bounded source mappings. Unknown palette/color/transparency/orientation remain unknown. Optional index-only thumbnails are artificial grayscale, not original colors. Numeric tables can pass. At most 128 MiB whole-file hashing, 16 MiB selected/materialized bytes, 4096 inferred resources; output defaults128 resources,4 thumbnails, shared256 mapping spans. Explicit truncation is not absence. Use raw heuristic discovery for unstructured smooth data; this operation requires compatible descriptor structure.",
-    inputSchema: inspectStructuredRasterCandidatesInputSchema,
+    inputSchema: inspectStructuredRasterCandidatesRequestSchema,
     outputSchema: evidenceResultOf(structuredRasterCandidatesSchema),
     examples: [
       {
@@ -305,7 +305,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     kind: "native-provider",
     description:
       "Rank unheadered raw raster hypotheses in a selected local byte range without signatures, extraction, target execution or external tools. Samples 2D continuity on an explicit offset/dimension/format grid. Returns inferred candidate layouts, scores (not probabilities), exact coverage and limitations. Structured non-image tables can pass; empty output is not absence. Width/height are sampled windows, not discovered image boundaries; channel order, orientation and alpha semantics remain unknown. Tight gray8/RGB888/RGBA8888 only, no indexed/padded/tiled/compressed formats. Whole file SHA-256 read capped at 128 MiB; selected range capped at 16 MiB. Use existing firmware region/entropy results to select a range, then review candidates with the raw raster preview workflow.",
-    inputSchema: inspectRawRasterCandidatesInputSchema,
+    inputSchema: inspectRawRasterCandidatesRequestSchema,
     outputSchema: evidenceResultOf(rawRasterDiscoverySchema),
     examples: [
       {

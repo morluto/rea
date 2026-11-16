@@ -1,12 +1,15 @@
 import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
-import { open, stat, writeFile } from "node:fs/promises";
+import { open, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as discovery from "../../domain/rawRasterDiscovery.js";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { rawRasterDiscoverySchema } from "../../domain/native/rawRasterCandidates.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import { RawRasterDiscoveryService } from "./RawRasterDiscoveryService.js";
 const grid = {
   widths: [32],
@@ -135,7 +138,13 @@ it("observes cancellation queued during synchronous scoring before publishing Ev
       { signal: controller.signal },
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.partialObservation).toMatchObject({
+        operation: "inspect_raw_raster_candidates",
+        normalized_result: { artifact: { path } },
+      });
+    }
   } finally {
     spy.mockRestore();
     await service.close();
@@ -202,6 +211,86 @@ it("preserves an already typed provider failure by identity", async () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected typed failure");
     expect(result.error).toBe(cause);
+  } finally {
+    await service.close();
+  }
+});
+
+it("retains omitted controls separately from resolved analysis defaults", async () => {
+  const root = await createTestTempDirectory("rea-raster-defaults-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(512));
+  const service = new RawRasterDiscoveryService();
+  try {
+    const omitted = await service.inspect({ path });
+    const explicit = await service.inspect({ path, max_candidates: 20 });
+    if (!omitted.ok) throw omitted.error;
+    if (!explicit.ok) throw explicit.error;
+    expect(omitted.value.parameters).toEqual({ path });
+    expect(explicit.value.parameters).toEqual({ path, max_candidates: 20 });
+    expect(omitted.value.normalized_result).toMatchObject({
+      resolved_controls: { max_candidates: 20, max_hypotheses: 20000 },
+    });
+  } finally {
+    await service.close();
+  }
+});
+
+it("reports deterministic acquisition ceilings without retryable capacity advice", async () => {
+  const root = await createTestTempDirectory("rea-raster-ceilings-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(0));
+  const service = new RawRasterDiscoveryService();
+  try {
+    for (const [size, expectedLimit] of [
+      [128 * 1024 * 1024 + 1, 128 * 1024 * 1024],
+      [16 * 1024 * 1024 + 1, 16 * 1024 * 1024],
+    ] as const) {
+      await truncate(path, size);
+      const result = await service.inspect({ path });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatchObject({
+          _tag: "AnalysisResourceConstraintError",
+          retryable: false,
+        });
+        if (result.error instanceof AnalysisResourceConstraintError)
+          expect(result.error.recovery.fixedAllowance).toMatchObject({
+            limit: expectedLimit,
+            unit: "bytes",
+          });
+      }
+    }
+  } finally {
+    await service.close();
+  }
+});
+
+it("rejects incomplete resolved controls instead of inventing output defaults", async () => {
+  const root = await createTestTempDirectory("rea-raster-resolved-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(512));
+  const service = new RawRasterDiscoveryService();
+  try {
+    const result = await service.inspect({ path, max_hypotheses: 1 });
+    if (!result.ok) throw result.error;
+    const report = rawRasterDiscoverySchema.parse(
+      result.value.normalized_result,
+    );
+    for (const key of Object.keys(report.resolved_controls)) {
+      const controls = Object.fromEntries(
+        Object.entries(report.resolved_controls).filter(
+          ([name]) => name !== key,
+        ),
+      );
+      expect(
+        rawRasterDiscoverySchema.safeParse({
+          ...report,
+          resolved_controls: controls,
+        }).success,
+        key,
+      ).toBe(false);
+    }
   } finally {
     await service.close();
   }

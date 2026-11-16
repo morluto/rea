@@ -18,7 +18,7 @@ import {
   cancelledBy,
   carriedReason,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
@@ -41,6 +41,7 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 
 /** Bound retained result rows before constructing the Evidence representation. */
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
@@ -60,6 +61,9 @@ export interface SelectedRasterAnalysisDefinition<
 > {
   operation: string;
   inputSchema: z.ZodType<Input>;
+  callerInputSchema?: z.ZodType<{
+    [Key in keyof Input]?: Input[Key] | undefined;
+  }>;
   reportSchema: z.ZodType<Report>;
   analyze(
     bytes: Uint8Array,
@@ -86,6 +90,7 @@ export class SelectedRasterAnalysisService<
       "open" | "stat"
     > = { open, stat },
     resources: ArtifactResourceScope = new ArtifactResourceScope(),
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {
     this.#resources = resources;
   }
@@ -132,6 +137,13 @@ export class SelectedRasterAnalysisService<
       options?.signal,
     );
     if (!parsed.ok) return parsed;
+    const caller = parseAnalysisInput(
+      this.definition.operation,
+      rawInput,
+      this.definition.callerInputSchema ?? this.definition.inputSchema,
+      options?.signal,
+    );
+    if (!caller.ok) return caller;
     let input = parsed.value;
     const callerInputPath = input.path;
     input = { ...input, path: absoluteCallerPath(input.path) };
@@ -143,7 +155,9 @@ export class SelectedRasterAnalysisService<
           {
             operation: this.definition.operation,
             parameters: Object.fromEntries(
-              Object.entries(input).filter(([, value]) => value !== undefined),
+              Object.entries({ ...caller.value, path: input.path }).filter(
+                ([, value]) => value !== undefined,
+              ),
             ),
             result: report,
             rawResult: null,
@@ -218,7 +232,7 @@ export class SelectedRasterAnalysisService<
       admitted = true;
       // Only an admitted selected file may consult filesystem spelling. Do not
       // replace symlink/junction/8.3 aliases or touch source-derived paths.
-      if (process.platform === "win32") {
+      if (this.platform === "win32") {
         const canonical = await realpath(input.path).catch(() => undefined);
         assertArtifactReadActive(options?.signal);
         if (canonical?.toLowerCase() === input.path.toLowerCase())
@@ -260,19 +274,29 @@ export class SelectedRasterAnalysisService<
               "length",
               "Selected byte window extends beyond the end of the file.",
             );
-          if (size > MAX_FILE_BYTES || length > 16 * 1024 * 1024)
-            throw new AnalysisResourceConstraintError(
+          if (size > MAX_FILE_BYTES)
+            throw fixedCeilingConstraint(
               this.definition.operation,
               "capacity",
-              "Discovery accepts at most a 128 MiB file and a 16 MiB selected range.",
+              "Discovery accepts at most a 128 MiB file.",
               {
-                max_file_bytes: MAX_FILE_BYTES,
-                max_selected_bytes: 16 * 1024 * 1024,
+                name: "Raster discovery whole-file input",
+                kind: "input",
+                limit: MAX_FILE_BYTES,
+                unit: "bytes",
               },
+            );
+          if (length > 16 * 1024 * 1024)
+            throw fixedCeilingConstraint(
+              this.definition.operation,
+              "capacity",
+              "Discovery accepts at most a 16 MiB selected range.",
               {
-                retryable: false,
-                remediationAction:
-                  "Use a smaller local artifact or selected range.",
+                name: "Raster discovery selected range",
+                kind: "bytes",
+                limit: 16 * 1024 * 1024,
+                unit: "bytes",
+                narrowing: "Select a smaller complete byte range.",
               },
             );
           if (length === 0)
@@ -317,23 +341,19 @@ export class SelectedRasterAnalysisService<
           // Yield before bounded synchronous scoring so queued cancellation is observed.
           await setImmediate();
           assertArtifactReadActive(options?.signal);
-          let discovery;
-          try {
-            discovery = this.definition.analyze(
-              selectedBytes,
-              input,
-              size,
-              options?.signal,
-            );
-          } catch (cause) {
-            if (cause instanceof RangeError)
-              throw invalid("path", cause.message);
-            throw cause;
-          }
-          await setImmediate();
-          assertArtifactReadActive(options?.signal);
+          const discovery = this.definition.analyze(
+            selectedBytes,
+            input,
+            size,
+            options?.signal,
+          );
           return this.definition.reportSchema.parse({
             ...discovery,
+            resolved_controls: Object.fromEntries(
+              Object.entries({ ...input, length }).filter(
+                ([key, value]) => key !== "path" && value !== undefined,
+              ),
+            ),
             artifact: {
               path: input.path,
               bytes: size,
@@ -348,6 +368,9 @@ export class SelectedRasterAnalysisService<
           });
         },
       );
+      // The owned callback must return its completed observation before queued
+      // cancellation is delivered, so cleanup and cancellation can retain it.
+      await setImmediate();
       return completeProviderEvidence(
         evidenceFromReport(report),
         options?.signal,

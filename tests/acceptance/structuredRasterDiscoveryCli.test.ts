@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   structuredRasterFixture,
@@ -41,9 +42,12 @@ cliTest.for(["flat", "fgs-records"] as const)(
       ],
     });
     expect(result.exitCode, result.stdout + result.stderr).toBe(0);
-    const evidence = toolContract(
+    const evidence = contractNamed(
+      BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
       "inspect_structured_raster_candidates",
     ).outputSchema.parse(result.json);
+    expect(evidence.parameters).not.toHaveProperty("min_records");
+    expect(evidence.normalized_result.resolved_controls).toBeDefined();
     expect(evidence.confidence).toBe("inferred");
     expect(evidence.normalized_result.projection).toMatchObject({
       resourceOffset: 2,

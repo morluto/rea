@@ -31,6 +31,20 @@ it.each(["flat", "fgs-records"] as const)(
         r.value.normalized_result,
       );
       expect(r.value.confidence).toBe("inferred");
+      for (const key of Object.keys(report.resolved_controls)) {
+        const controls = Object.fromEntries(
+          Object.entries(report.resolved_controls).filter(
+            ([name]) => name !== key,
+          ),
+        );
+        expect(
+          structuredRasterCandidatesSchema.safeParse({
+            ...report,
+            resolved_controls: controls,
+          }).success,
+          key,
+        ).toBe(false);
+      }
       expect(report.projection).toMatchObject({
         availableResources: 12,
         returnedResources: 3,

@@ -1,6 +1,7 @@
 import { discoverRawRaster } from "../../domain/rawRasterDiscovery.js";
 import {
   inspectRawRasterCandidatesInputSchema,
+  inspectRawRasterCandidatesRequestSchema,
   rawRasterDiscoverySchema,
 } from "../../domain/native/rawRasterCandidates.js";
 import { SelectedRasterAnalysisService } from "./SelectedRasterAnalysisService.js";
@@ -18,6 +19,7 @@ export class RawRasterDiscoveryService extends SelectedRasterAnalysisService<
       {
         operation: "inspect_raw_raster_candidates",
         inputSchema: inspectRawRasterCandidatesInputSchema,
+        callerInputSchema: inspectRawRasterCandidatesRequestSchema,
         reportSchema: rawRasterDiscoverySchema,
         analyze(bytes, input, _fileSize, signal) {
           const report = discoverRawRaster(

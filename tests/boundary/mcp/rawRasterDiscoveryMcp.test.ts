@@ -54,6 +54,8 @@ mcpTest(
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const result = contract.outputSchema.parse(response.structuredContent);
     expect(session.evidenceById(result.evidence_id)).toEqual(result);
+    expect(result.parameters).not.toHaveProperty("max_candidates");
+    expect(result.normalized_result.resolved_controls).toBeDefined();
     expect(result.confidence).toBe("inferred");
     expect(result.normalized_result.candidates[0]?.layout.offset).toBe(0);
   },

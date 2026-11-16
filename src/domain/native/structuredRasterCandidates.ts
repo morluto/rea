@@ -167,6 +167,36 @@ export const inspectStructuredRasterCandidatesRequestSchema =
     })
     .superRefine(refineStructuredControls);
 const resolvedStructuredRasterControlsSchema = structuredRasterInputShape
+  .extend({
+    offset:
+      inspectStructuredRasterCandidatesRequestSchema.shape.offset.unwrap(),
+    profile:
+      inspectStructuredRasterCandidatesRequestSchema.shape.profile.unwrap(),
+    min_records:
+      inspectStructuredRasterCandidatesRequestSchema.shape.min_records.unwrap(),
+    min_consistency:
+      inspectStructuredRasterCandidatesRequestSchema.shape.min_consistency.unwrap(),
+    max_work:
+      inspectStructuredRasterCandidatesRequestSchema.shape.max_work.unwrap(),
+    max_tables:
+      inspectStructuredRasterCandidatesRequestSchema.shape.max_tables.unwrap(),
+    max_records:
+      inspectStructuredRasterCandidatesRequestSchema.shape.max_records.unwrap(),
+    bits_per_pixel:
+      inspectStructuredRasterCandidatesRequestSchema.shape.bits_per_pixel.unwrap(),
+    offset_units:
+      inspectStructuredRasterCandidatesRequestSchema.shape.offset_units.unwrap(),
+    resource_offset:
+      inspectStructuredRasterCandidatesRequestSchema.shape.resource_offset.unwrap(),
+    max_resources:
+      inspectStructuredRasterCandidatesRequestSchema.shape.max_resources.unwrap(),
+    max_previews:
+      inspectStructuredRasterCandidatesRequestSchema.shape.max_previews.unwrap(),
+    thumbnail_side:
+      inspectStructuredRasterCandidatesRequestSchema.shape.thumbnail_side.unwrap(),
+    length:
+      inspectStructuredRasterCandidatesRequestSchema.shape.length.unwrap(),
+  })
   .omit({ path: true })
   .superRefine(refineStructuredControls);
 const range = z.strictObject({ offset, length: offset });
