@@ -55,7 +55,7 @@ describe("binary production construction ownership", () => {
     ).toEqual([]);
   });
 
-  it("rejects the former runtime composition exception", () => {
+  it("rejects an application module that re-exports composition", () => {
     expect(
       inspectModuleBoundaries(
         "src/application/runtime.ts",
