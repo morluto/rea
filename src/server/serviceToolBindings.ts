@@ -137,6 +137,7 @@ import {
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
 import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
+import type { EvidenceCommand } from "./externalMutationToolHandler.js";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -282,6 +283,22 @@ export interface ReverseEngineeringToolOptions {
   >;
   readonly session: ExternalMutationAdmission | undefined;
 }
+
+/**
+ * Validate a Rizin request and settle earlier inspection cleanup before
+ * external-mutation admission, so either refusal leaves the bound target open.
+ */
+const prepareRizinCommand =
+  (service: ReverseEngineeringToolOptions["service"]) =>
+  async (input: unknown): Promise<Result<EvidenceCommand, AnalysisError>> => {
+    const request = resolveRizinCommandRequest(input);
+    if (!request.ok) return request;
+    const cleanup = await service.retryCleanup("execute_rizin_command");
+    if (!cleanup.ok) return cleanup;
+    return ok((signal) =>
+      service.executeRizinCommandValidated(request.value, { signal }),
+    );
+  };
 
 /** GDB sessions a manager owns and the session their commands may change. */
 export interface GdbToolOptions {
@@ -1328,15 +1345,7 @@ const SERVICE_TOOL_BINDINGS = {
       mutation: {
         kind: "evidence",
         retryCleanup: () => service.retryCleanup("execute_rizin_command"),
-        prepare: async (input) => {
-          const request = resolveRizinCommandRequest(input);
-          if (!request.ok) return request;
-          const cleanup = await service.retryCleanup("execute_rizin_command");
-          if (!cleanup.ok) return cleanup;
-          return ok((signal: AbortSignal) =>
-            service.executeRizinCommandValidated(request.value, { signal }),
-          );
-        },
+        prepare: prepareRizinCommand(service),
       },
     },
   })) satisfies Bind<ReverseEngineeringToolOptions>,

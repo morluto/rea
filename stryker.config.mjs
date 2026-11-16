@@ -110,6 +110,12 @@ export default {
         name: "createExternalMutationToolHandler",
       },
     ]),
+    ...mutationRanges("src/server/serviceToolBindings.ts", [
+      {
+        kind: "declaration",
+        name: "prepareRizinCommand",
+      },
+    ]),
     ...mutationRanges("src/gdb/GdbSessionManager.ts", [
       {
         kind: "constructor",
