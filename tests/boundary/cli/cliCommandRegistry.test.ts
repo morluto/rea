@@ -76,6 +76,35 @@ describe("REA's CLI command table", () => {
     ]);
   });
 
+  it("flags every contract field an option sets: grouped fields and named selectors", () => {
+    const flags = (command: string, operation: string) =>
+      entry(command).operations.find(({ name }) => name === operation)?.flags;
+    // One JSON option supplies each field of its group; the group's CLI key
+    // is not a contract field.
+    const jni = flags(
+      "inspect-android-jni-bindings",
+      "inspect_android_jni_bindings",
+    );
+    expect(jni).toMatchObject({
+      class_name: "--query",
+      method_names: "--query",
+      descriptors: "--query",
+      abis: "--query",
+      library_paths: "--query",
+    });
+    expect(jni).not.toHaveProperty("query");
+    // A positional selector is also set by its named option.
+    expect(flags("function", "analyze_function")).toMatchObject({
+      procedure: "--procedure",
+    });
+    expect(flags("decompile", "procedure_pseudo_code")).toMatchObject({
+      procedure: "--procedure",
+    });
+    expect(flags("search", "search_strings")).toMatchObject({
+      pattern: "--pattern",
+    });
+  });
+
   it("lists host commands without operations", () => {
     for (const name of ["setup", "doctor", "guidance", "capture-process"]) {
       expect(entry(name).source).toEqual({ kind: "host" });
