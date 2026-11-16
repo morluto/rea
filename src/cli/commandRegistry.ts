@@ -18,6 +18,11 @@ export interface CliCommandOperation {
    * delivery fields have no flag.
    */
   readonly flags: Readonly<Record<string, string>>;
+  /**
+   * The CLI selector option and value that chooses this operation when the
+   * command defaults to another contract, such as `"--kind procedures"`.
+   */
+  readonly selector?: string | undefined;
 }
 
 type Inputs<Schema extends z.ZodObject | undefined> = Schema extends z.ZodObject
@@ -133,12 +138,14 @@ export const contractDescriptionOperations = (
     readonly contract: { readonly name: string };
     readonly evidenceTargets?: ContractCliDescription["evidenceTargets"];
   },
+  options: { readonly selector?: string | undefined } = {},
 ): readonly CliCommandOperation[] => {
   const { sessionTarget, evidenceTargets } = description;
   return [
     {
       name: description.contract.name,
       flags: description.inputBinding?.flags ?? {},
+      ...(options.selector === undefined ? {} : { selector: options.selector }),
     },
     ...(sessionTarget?.opening === undefined
       ? []
@@ -214,13 +221,18 @@ export const cliCommandForOperation = (
   let otherMatch: string | undefined;
   for (const entry of entries) {
     const own = commandOwnOperations(entry);
-    if (!own.some(({ name }) => name === operation)) continue;
-    if (entry.name === canonical) return `${cliName} ${canonical}`;
+    const matched = own.find(({ name }) => name === operation);
+    if (matched === undefined) continue;
+    const command =
+      matched.selector === undefined
+        ? entry.name
+        : `${entry.name} ${matched.selector}`;
+    if (entry.name === canonical) return `${cliName} ${command}`;
     if (entry.source.kind === "contract") {
-      if (own[0]?.name === operation) contractPrimary ??= entry.name;
-      else contractSecondary ??= entry.name;
+      if (own[0]?.name === operation) contractPrimary ??= command;
+      else contractSecondary ??= command;
     } else {
-      otherMatch ??= entry.name;
+      otherMatch ??= command;
     }
   }
   if (

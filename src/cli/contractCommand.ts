@@ -748,11 +748,14 @@ export const registerContractCommand = <
       },
     } as never,
     {
-      operations: distinctOperations(
-        [description, ...chosen.values()].flatMap(
-          contractDescriptionOperations,
+      operations: distinctOperations([
+        ...contractDescriptionOperations(description),
+        ...[...chosen.entries()].flatMap(([value, choice]) =>
+          contractDescriptionOperations(choice, {
+            selector: `--${optionFlagName(projection.operationBy!.option)} ${String(value)}`,
+          }),
         ),
-      ),
+      ]),
       source: { kind: "contract", description },
     },
   );

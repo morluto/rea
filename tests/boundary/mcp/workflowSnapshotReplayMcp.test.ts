@@ -791,6 +791,7 @@ const expectSnapshotImportGuidance = async (mcp: Client, path: string) => {
     },
   });
   expect(error.remediation.action).toContain("open_binary");
+  expect(error.remediation.action).toContain("close_binary");
   expect(error.remediation.action).toContain("snapshot_path");
   expect(error.remediation.action).not.toContain("--snapshot");
   expect((await readFile(path)).equals(before)).toBe(true);

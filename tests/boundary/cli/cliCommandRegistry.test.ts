@@ -27,10 +27,14 @@ describe("REA's CLI command table", () => {
       },
     ]);
     // `--kind procedures` chooses another operation.
-    expect(entry("search").operations.map(({ name }) => name)).toEqual([
-      "search_strings",
-      "open_binary",
-      "search_procedures",
+    expect(entry("search").operations).toEqual([
+      { name: "search_strings", flags: expect.any(Object) },
+      { name: "open_binary", flags: expect.any(Object) },
+      {
+        name: "search_procedures",
+        flags: expect.any(Object),
+        selector: "--kind procedures",
+      },
     ]);
     expect(entry("decompile").operations.map(({ name }) => name)).toEqual([
       "procedure_pseudo_code",

@@ -284,7 +284,7 @@ it("renders related_cli_flags and related_cli_commands from the CLI command regi
       related_cli_commands: {
         analyze_function: "rea function",
         procedure_pseudo_code: "rea decompile",
-        search_procedures: "rea search",
+        search_procedures: "rea search --kind procedures",
         inspect_plist: "rea inspect-plist",
         inspect_wasm_artifact: "rea inspect-wasm-artifact",
         inspect_native_load_image: "rea inspect-native-load-image",
