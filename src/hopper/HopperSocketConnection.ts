@@ -5,7 +5,7 @@ import {
   hopperCancelledBySignal,
   type HopperCancelledError,
   HopperStartError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { err, type Result } from "../domain/result.js";
 
 /** Open one abort-aware Hopper Unix-socket connection attempt. */

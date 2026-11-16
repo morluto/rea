@@ -1,0 +1,6 @@
+$ COMPLETE=bash rea -- rea completions ""
+exit: 0
+--- stdout
+bash<0x0b>zsh<0x0b>fish<0x0b>nushell<end>
+--- stderr
+<end>

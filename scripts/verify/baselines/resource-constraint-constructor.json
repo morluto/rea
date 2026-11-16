@@ -140,7 +140,6 @@
   "src/server/EvidenceMcpServerCore.ts": 2,
   "src/server/ProgressiveToolCatalog.ts": 1,
   "src/server/ToolResultDelivery.ts": 2,
-  "src/sqlite/SqliteDatabaseFailures.ts": 1,
   "src/sqlite/SqliteDatabaseProvider.ts": 1,
   "src/sqlite/SqliteDatabaseSnapshot.ts": 1,
   "src/sqlite/SqliteDatabaseWorkerExecution.ts": 3,

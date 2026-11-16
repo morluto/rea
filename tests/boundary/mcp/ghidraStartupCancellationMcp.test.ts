@@ -16,6 +16,7 @@ import { createServer } from "../../../src/server/createServer.js";
 
 import { GhidraFixtureLauncher } from "../providers/ghidra/ghidraClient.fixture.js";
 import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each([0, 1])(
   "releases cancelled MCP startup caller %s while its peer completes and stays warm",
@@ -80,7 +81,10 @@ it.each([0, 1])(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "ghidra-shared-startup", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "ghidra-shared-startup", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const controllers = [new AbortController(), new AbortController()];

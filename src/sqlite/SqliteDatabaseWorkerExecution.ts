@@ -44,6 +44,7 @@ import {
   SQLITE_DATABASE_LIMITS,
   SQLITE_INSPECTION_REASONS,
   SQLITE_STRUCTURED_INSPECTION_REASONS,
+  SQLITE_WORKER_HEAP_BYTES,
 } from "./SqliteDatabaseLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
@@ -147,7 +148,7 @@ const rejectedReply = (
       "memory",
       reply.message,
       {
-        javascript_heap_bytes: 256 * 1024 * 1024,
+        javascript_heap_bytes: SQLITE_WORKER_HEAP_BYTES,
       },
       { capturedOutput, diagnostics: { selected_path: selectedPath } },
     );
@@ -232,7 +233,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     {
       command: process.execPath,
       arguments: [
-        "--max-old-space-size=256",
+        `--max-old-space-size=${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)}`,
         fileURLToPath(new URL("./SqliteDatabaseWorker.js", import.meta.url)),
         requestPath,
       ],

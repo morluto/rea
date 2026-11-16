@@ -1,3 +1,7 @@
+import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../process/RuntimeExhaustion.js";
 import { Budget } from "../domain/budget.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
@@ -164,6 +168,8 @@ type WebBundleObservedFailure =
       readonly signal: NodeJS.Signals | null;
       readonly memoryLimitReached: boolean;
       readonly heapExhaustion: boolean;
+      /** The runtime's own report, kept once the supervisor observed it. */
+      readonly exhaustion?: RuntimeExhaustion;
     };
 
 type WebBundleActiveJob = {
@@ -259,13 +265,15 @@ export class WebBundleAnalysisWorker {
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
+        // V8's heap report is observed as output streams, so a retention
+        // budget or a stack trace that overflowed it cannot hide it.
+        runtime: "v8",
         onDiagnostic: (event) => {
           if (this.#activeDeadline?.interruption !== undefined) return;
           if (
             event.type === "exit" &&
             (event.code !== 0 || event.signal !== null)
           ) {
-            const stderr = event.snapshot.stderr.text;
             const memoryLimitReached =
               event.snapshot.memoryLimitReached === true;
             this.#latchFailure({
@@ -275,9 +283,10 @@ export class WebBundleAnalysisWorker {
               memoryLimitReached,
               heapExhaustion:
                 memoryLimitReached ||
-                /heap out of memory|heap limit|allocation failed/iu.test(
-                  stderr,
-                ),
+                event.snapshot.runtimeExhaustion !== undefined,
+              ...(event.snapshot.runtimeExhaustion === undefined
+                ? {}
+                : { exhaustion: event.snapshot.runtimeExhaustion }),
             });
           } else if (event.type === "output-close") {
             if (
@@ -290,19 +299,16 @@ export class WebBundleAnalysisWorker {
           } else if (event.type === "output") {
             const failure = this.#observedFailure;
             if (failure?.kind !== "exit") return;
-            const memoryLimitReached =
-              this.#runtime.supervisor?.snapshot().memoryLimitReached === true;
-            const heapMarker =
-              event.stream === "stderr" &&
-              /heap out of memory|heap limit|allocation failed/iu.test(
-                this.#runtime.supervisor?.snapshot().stderr.text ?? "",
-              );
-            if (!memoryLimitReached && !heapMarker) return;
+            const snapshot = this.#runtime.supervisor?.snapshot();
+            const memoryLimitReached = snapshot?.memoryLimitReached === true;
+            const reported = snapshot?.runtimeExhaustion;
+            if (!memoryLimitReached && reported === undefined) return;
             this.#observedFailure = {
               ...failure,
               heapExhaustion: true,
               memoryLimitReached:
                 failure.memoryLimitReached || memoryLimitReached,
+              ...(reported === undefined ? {} : { exhaustion: reported }),
             };
           }
         },
@@ -902,6 +908,15 @@ export class WebBundleAnalysisWorker {
             {
               capturedOutput,
               limit: webBundleHeapLimit(exhaustion),
+              ...(failure.exhaustion === undefined
+                ? {}
+                : {
+                    diagnostics: {
+                      runtime_exhaustion_report: runtimeExhaustionReport(
+                        failure.exhaustion,
+                      ),
+                    },
+                  }),
               remediationAction: webBundleHeapExhaustedRemediation(exhaustion),
             },
           );

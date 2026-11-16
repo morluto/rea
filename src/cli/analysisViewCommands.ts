@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 
 import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
 import { ArtifactResourceScope } from "../resources/index.js";
@@ -15,6 +15,7 @@ import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -33,7 +34,7 @@ export const registerAnalysisViewCommands = (
   cli: CliInstance,
   logger: Logger,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectEvidenceBundle, {
+  registerCliCommand(cli, CLI_COMMANDS.inspectEvidenceBundle, {
     description:
       "Inspect a local Evidence bundle completely, as discovery metadata, as a page of selected complete records, or as direct-link and retained-closure membership.",
     args: z.object({

@@ -17,6 +17,7 @@ import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js"
 import { ok as resultOk, err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { nativeDispatchMetadataResultSchema } from "../../../src/domain/native/objcSwiftMetadata.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const targetObservation = (value: unknown) =>
   resultOk(
@@ -231,7 +232,10 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "enhanced-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "enhanced-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

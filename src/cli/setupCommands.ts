@@ -1,6 +1,6 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { z } from "incur";
+import { z } from "zod";
 
 import type { DoctorScope } from "../application/Doctor.js";
 import {
@@ -33,6 +33,7 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 
@@ -56,7 +57,7 @@ const registerSetupCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.setup, {
+  registerCliCommand(cli, CLI_COMMANDS.setup, {
     description: "Configure agent integrations and optional analysis providers",
     outputPolicy: "agent-only",
     options: z.object({
@@ -143,7 +144,7 @@ const registerDoctorCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.doctor, {
+  registerCliCommand(cli, CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
       target: localPathStringSchema
@@ -187,7 +188,7 @@ const registerMaintenanceCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.uninstall, {
+  registerCliCommand(cli, CLI_COMMANDS.uninstall, {
     description: "Remove REA-owned agent configuration and skill files",
     options: z.object({
       purgeData: z
@@ -215,7 +216,7 @@ const registerMaintenanceCommands = (
         isUninstallFailure,
       ),
   });
-  cli.command(CLI_COMMANDS.update, {
+  registerCliCommand(cli, CLI_COMMANDS.update, {
     description:
       "Update this REA installation and verify the installed release",
     run: ({ formatExplicit }) =>

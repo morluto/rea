@@ -134,6 +134,44 @@ it.each([
   },
 );
 
+it.each([
+  [true, "live"],
+  [undefined, "capture"],
+] as const)(
+  "names the adb capture allowance and its byte value (volatile output: %s)",
+  async (volatileOutput, kind) => {
+    vi.mocked(execFileBytes).mockRejectedValueOnce(
+      Object.assign(new Error("too much"), {
+        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+        stdout: "",
+        stderr: "",
+        signal: null,
+        killed: false,
+        outputTruncated: true,
+      }),
+    );
+    const result = await runAdbCapture(
+      "list_adb_devices",
+      { device: "device" },
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
+      ["devices"],
+      {
+        timeoutMs: 100,
+        maxOutputBytes: 1024,
+        ...(volatileOutput === undefined ? {} : { volatileOutput }),
+      },
+      undefined,
+    );
+    if (result.ok) throw new Error("Expected a capture refusal");
+    expect(result.error).toHaveProperty("fixedAllowance", {
+      name: expect.any(String),
+      kind,
+      limit: 1024,
+      unit: "bytes",
+    });
+  },
+);
+
 it("recognizes an empty successful probe as existence", async () => {
   vi.mocked(execFileBytes).mockResolvedValueOnce({
     stdout: Buffer.alloc(0),

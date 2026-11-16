@@ -36,6 +36,13 @@ import { toolAvailabilityInventory } from "../../../src/contracts/toolOutputSche
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { emptyElectronPageCoverage } from "../../../src/domain/javascript/electronPageInspection.fixture.js";
 import type { ElectronPageInspection } from "../../../src/domain/javascript/electronObservation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const testClient = (name: string) =>
+  new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
 
 const browsers: FakeCdpBrowser[] = [];
 const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -48,7 +55,7 @@ it("retains failed JavaScript inventory cleanup through server shutdown retries"
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "javascript-cleanup-owner", version: "1" });
+  const client = testClient("javascript-cleanup-owner");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const originalClose = AsarArtifactReader.prototype.close;
@@ -151,7 +158,7 @@ it("records completed Electron facts after final detach as server Evidence", asy
       electronObservation: provider,
     },
   );
-  const client = new Client({ name: "electron-final-detach", version: "1" });
+  const client = testClient("electron-final-detach");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -196,7 +203,7 @@ it("lets MCP JavaScript analysis continue only with recorded untrusted ASAR byte
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "asar-integrity-policy", version: "1" });
+  const client = testClient("asar-integrity-policy");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -241,10 +248,13 @@ it("advertises owned JavaScript analysis effects without foreign target executio
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "javascript-analysis-effects",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "javascript-analysis-effects",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -322,7 +332,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       }),
     },
   );
-  const client = new Client({ name: "electron-mcp-test", version: "1" });
+  const client = testClient("electron-mcp-test");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -500,7 +510,7 @@ it("runs active Electron scenarios with selected paths and inferred working dire
       }),
     },
   );
-  const client = new Client({ name: "electron-active-mcp-test", version: "1" });
+  const client = testClient("electron-active-mcp-test");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -634,10 +644,13 @@ it("exposes the target-free static JavaScript application workflow", async () =>
       }),
     },
   );
-  const client = new Client({
-    name: "electron-static-mcp-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "electron-static-mcp-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -736,10 +749,13 @@ it.skipIf(process.platform === "win32")(
       );
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({
-      name: "application-source-admission",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "application-source-admission",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(client, server, session);
@@ -800,7 +816,7 @@ const activePathAdmissionClient = async (
       },
     },
   );
-  const client = new Client({ name: "electron-path-test", version: "1" });
+  const client = testClient("electron-path-test");
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);

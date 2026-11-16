@@ -25,6 +25,7 @@ import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 describe("JavaScript runtime observation MCP tools", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -46,7 +47,10 @@ function registerRuntimeParameterContract(
       throw new Error("No provider expected");
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "runtime-parameter-test", version: "1" });
+    const client = new Client(
+      { name: "runtime-parameter-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     resources.push(client, server, session);
     await server.connect(st);
@@ -332,7 +336,10 @@ const createObservationClient = async (
       }),
     },
   );
-  const client = new Client({ name: "v8-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "v8-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);

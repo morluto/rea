@@ -1,6 +1,7 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
 import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
@@ -44,7 +45,10 @@ const projectFileOperation = async <Value>(
     return await work();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) throw cause;
-    throw ghidraFileFailure(cause, operation, { path });
+    throw classifyProviderFailure(
+      cause,
+      ghidraFileDialect(operation, { path }),
+    );
   }
 };
 
