@@ -189,8 +189,10 @@ export interface ValueToolRequest {
 
 /**
  * Bind a named workflow returning a plain JSON value to shared logging and
- * delivery. It records no Evidence; it runs under analysis admission only
- * when one is supplied.
+ * delivery. A success records no Evidence; a failure's partial Evidence (a
+ * cancelled session's cleanup record, say) is delivered through the session
+ * writer like any other. It runs under analysis admission only when one is
+ * supplied.
  */
 export const createValueToolHandler =
   (
@@ -201,6 +203,7 @@ export const createValueToolHandler =
     ) => Promise<Result<JsonValue, AnalysisError>>,
     logger: Logger,
     withAdmittedAnalysis?: WithAdmittedAnalysis,
+    recordEvidence?: EvidenceWriter["recordEvidence"],
   ) =>
   (contract: ToolContract) =>
   async (input: unknown, context: ServerContext): Promise<CallToolResult> =>
@@ -209,17 +212,22 @@ export const createValueToolHandler =
       withAdmittedAnalysis,
       contract.name,
       context.mcpReq.signal,
-      async () =>
-        server.delivery.toCallToolResult(
-          await logToolExecution(logger, contract.name, () =>
-            operation(input, {
-              signal: context.mcpReq.signal,
-              progress: mcpProgressReporter(context),
-              context,
-            }),
-          ),
-          contract,
-        ),
+      async () => {
+        const result = await logToolExecution(logger, contract.name, () =>
+          operation(input, {
+            signal: context.mcpReq.signal,
+            progress: mcpProgressReporter(context),
+            context,
+          }),
+        );
+        return result.ok
+          ? server.delivery.toCallToolResult(result, contract)
+          : server.delivery.toPartialErrorToolResult(
+              result.error,
+              contract.returnsTargetContent,
+              recordEvidence,
+            );
+      },
     );
 
 /** What a derivation may read before it runs. */
