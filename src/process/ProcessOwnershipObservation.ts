@@ -38,9 +38,9 @@ import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import {
   execFileOutput,
   execFileOutputFailure,
-  HOST_SPAWN_CAPACITY_CODES,
   spawnCapacityExhausted,
 } from "./ExecFileOutput.js";
+import { launchExhaustedResource } from "./launchFailure.js";
 import {
   createDarwinProcessRunTokenReader,
   DarwinProcessOwnershipInspectionError,
@@ -1557,8 +1557,7 @@ export const createSystemProcessOwnershipHost = (
         spawnCapacityExhausted(failure) ||
         (typeof cause === "object" &&
           cause !== null &&
-          typeof Reflect.get(cause, "code") === "string" &&
-          HOST_SPAWN_CAPACITY_CODES.has(Reflect.get(cause, "code") as string))
+          launchExhaustedResource(Reflect.get(cause, "code")) !== undefined)
       )
         throw cause;
       const rawCode =

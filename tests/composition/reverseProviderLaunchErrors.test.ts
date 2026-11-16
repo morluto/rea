@@ -1,3 +1,4 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -39,16 +40,12 @@ it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
   async (code) => {
     const { directory, path } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled executable launch rejection"),
-      { code },
-    );
+    // The owned supervisor rethrows the launcher's spawn error unchanged.
+    const hostFailure = spawnFailure(code, command);
     const service = new TestReverseEngineeringService({
       environment: { REA_OBJDUMP_COMMAND: command },
       runOwned: async () => {
-        throw new OwnedCommandFailure("process", "launch failed", null, null, {
-          cause: hostFailure,
-        });
+        throw hostFailure;
       },
     });
     try {
@@ -92,16 +89,12 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory, path } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled host capacity rejection"),
-      { code },
-    );
+    // The owned supervisor rethrows the launcher's spawn error unchanged.
+    const hostFailure = spawnFailure(code, command);
     const service = new TestReverseEngineeringService({
       environment: { REA_OBJDUMP_COMMAND: command },
       runOwned: async () => {
-        throw new OwnedCommandFailure("process", "launch failed", null, null, {
-          cause: hostFailure,
-        });
+        throw hostFailure;
       },
     });
     try {
@@ -150,16 +143,12 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory, path } = await createArtifact();
     const command = resolve(directory, "configured-rizin");
-    const hostFailure = Object.assign(
-      new Error("controlled host capacity rejection"),
-      { code },
-    );
+    // The owned supervisor rethrows the launcher's spawn error unchanged.
+    const hostFailure = spawnFailure(code, command);
     const service = new TestReverseEngineeringService({
       environment: { REA_RIZIN_COMMAND: command },
       runOwned: async () => {
-        throw new OwnedCommandFailure("process", "launch failed", null, null, {
-          cause: hostFailure,
-        });
+        throw hostFailure;
       },
     });
     try {
@@ -208,10 +197,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled ps host capacity rejection"),
-      { code },
-    );
+    const hostFailure = spawnFailure(code, "/bin/ps");
     const prepareSpy = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockRejectedValue(hostFailure);
@@ -258,10 +244,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
   async (code) => {
     const { directory } = await createArtifact();
     const command = resolve(directory, "configured-objdump");
-    const hostFailure = Object.assign(
-      new Error("controlled ps host capacity rejection"),
-      { code },
-    );
+    const hostFailure = spawnFailure(code, "/bin/ps");
     const prepareSpy = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
       .mockRejectedValue(new LinuxOwnedProcessPrerequisiteError(hostFailure));
