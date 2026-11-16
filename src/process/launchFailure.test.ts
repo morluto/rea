@@ -14,6 +14,7 @@ it.each([
   ["EACCES", "not_executable"],
   ["EPERM", "not_executable"],
   ["ENOEXEC", "not_executable"],
+  ["EFTYPE", "not_executable"],
   ["EISDIR", "not_executable"],
 ])("classifies spawn %s as %s", (code, kind) => {
   expect(classifyLaunchErrno(code)).toEqual({ kind, code });
@@ -77,6 +78,36 @@ it.each([
     {
       kind: "not_executable",
       code: "EACCES",
+      executable: "C:\\tools\\tool.exe",
+      syscall: undefined,
+    },
+  ],
+  [
+    "Windows native launcher bad image",
+    {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      win32Code: 193,
+      constraint: "Create process atomically inside owned Job Object failed",
+      requestedPath: "C:\\tools\\tool.dll",
+    },
+    {
+      kind: "not_executable",
+      code: "EFTYPE",
+      executable: "C:\\tools\\tool.dll",
+      syscall: undefined,
+    },
+  ],
+  [
+    "Windows native launcher other code",
+    {
+      code: "ERR_REA_WINDOWS_NATIVE",
+      win32Code: 216,
+      constraint: "Create process atomically inside owned Job Object failed",
+      requestedPath: "C:\\tools\\tool.exe",
+    },
+    {
+      kind: "failed",
+      code: "ERR_REA_WINDOWS_NATIVE",
       executable: "C:\\tools\\tool.exe",
       syscall: undefined,
     },
