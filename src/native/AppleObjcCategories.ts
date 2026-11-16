@@ -1,12 +1,16 @@
 import { malformedInput } from "../domain/parseFailure.js";
 import { expectedAppleMetadataReadFailure } from "./AppleMetadataReadFailure.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { Section } from "./AppleMachoSelection.js";
+import type { Section } from "../domain/apple/appleMachoSelection.js";
 import type { ObjcDispatchReaders } from "./AppleObjcDispatchFacets.js";
 import { readObjcPropertiesOf } from "./AppleObjcProperties.js";
-import { issue, type DecodeIssue } from "./AppleDispatchDecodeFacts.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import {
+  issue,
+  type DecodeIssue,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import type { ObjcProtocolListResult } from "./AppleObjcProtocols.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const CLASS_SYMBOL = /^_OBJC_(?:META)?CLASS_\$_(.+)$/u;
 
@@ -97,7 +101,7 @@ export const decodeObjcCategories = (input: {
               issue(
                 "objc_properties_categories",
                 "category_class_unresolved",
-                `Category ${name} class reference 0x${local.toString(16)}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                `Category ${name} class reference 0x${local.toString(16)}: ${errorMessage(cause)}`,
                 `0x${(category + 8n).toString(16)}`,
               ),
             );
@@ -173,7 +177,7 @@ export const decodeObjcCategories = (input: {
         });
       } catch (cause: unknown) {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
-        const message = cause instanceof Error ? cause.message : String(cause);
+        const message = errorMessage(cause);
         input.issues.push(
           issue(
             "objc_properties_categories",

@@ -1,14 +1,12 @@
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "./contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "./contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./domain/analysisErrorProjectionSchema.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "./domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
-import { isRecord } from "./domain/isRecord.js";
+import { isRecord } from "./kernel/isRecord.js";
 
 type CliFailureIdentity = Pick<
   AnalysisErrorProjection,

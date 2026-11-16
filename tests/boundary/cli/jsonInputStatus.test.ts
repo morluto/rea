@@ -489,7 +489,7 @@ describe("compiled JSON parser and logger success seam", () => {
           [
             "--input-type=module",
             "-e",
-            `import { parseCliJsonInput } from "./dist/cliJsonInput.js";
+            `import { parseCliJsonInput } from "./dist/cli/cliJsonInput.js";
          import { logCliCommand } from "./dist/cliLogging.js";
          import { silentLogger } from "./dist/logger.js";
          const parsed = await parseCliJsonInput(process.argv[1], "test-input");
@@ -516,7 +516,7 @@ describe("compiled CLI parser with relative brace and bracket paths", () => {
         const value = { selected: filename };
         await writeFile(join(root, filename), JSON.stringify(value));
         const moduleUrl = new URL(
-          "../../../dist/cliJsonInput.js",
+          "../../../dist/cli/cliJsonInput.js",
           import.meta.url,
         ).href;
         const result = await processes.run(
@@ -550,7 +550,7 @@ describe("compiled CLI parser with relative brace and bracket paths", () => {
       async ({ processes }) => {
         const root = await createTestTempDirectory("rea-cli-json-missing-");
         const moduleUrl = new URL(
-          "../../../dist/cliJsonInput.js",
+          "../../../dist/cli/cliJsonInput.js",
           import.meta.url,
         ).href;
         const result = await processes.run(

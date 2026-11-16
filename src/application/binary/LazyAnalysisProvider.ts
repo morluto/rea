@@ -8,7 +8,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 
 type LoadAnalysisProvider = () => Promise<AnalysisProvider>;
 

@@ -2,8 +2,8 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
   AnalysisInputError,
@@ -25,7 +25,7 @@ import type {
   AgentEnvComputer,
   DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   listBuildSecretHandles,
   readBuildSecretFile,

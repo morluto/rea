@@ -8,27 +8,34 @@ import { readMachoSectionHeader } from "../../domain/apple/machoSectionHeader.js
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
-import { parsePeResources } from "../../native/pe/PeResourceParser.js";
+import {
+  parsePeResources,
+  peResourceLimitBoundary,
+} from "../../domain/pe/peResourceInventory.js";
 import {
   hasPeResourceName,
   readPeResourceLayout,
-} from "../../native/pe/PeResourceLayout.js";
+} from "../../domain/pe/peResourceLayout.js";
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+  type PeResources,
 } from "../../domain/native/peResources.js";
 import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactParseFailure,
+  artifactReaderLimitFailure,
+  abortIfNeeded,
+} from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
 import {
   readFatContainerHeader,
   readFatHeaderPrefix,
@@ -52,6 +59,7 @@ import {
   observeNodeSeaFuseMatches,
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -673,25 +681,30 @@ const locatePeResources = async (carrier: Carrier): Promise<BlobRange[]> => {
   try {
     layout = readPeResourceLayout(bytes);
   } catch (cause) {
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+    if (cause instanceof ParseFailureError && cause.kind === "malformed")
       return [];
     throw cause;
   }
-  const resources = await parsePeResources(
-    bytes,
-    {
-      path: "<admitted SEA carrier>",
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes: bytes.length,
-    },
-    {
-      path: "/admitted-sea-carrier",
-      max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
-      max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-    },
-    carrier.signal,
-    layout,
-  );
+  let resources: PeResources;
+  try {
+    resources = await parsePeResources(
+      bytes,
+      {
+        path: "<admitted SEA carrier>",
+        sha256: sha256Hex(bytes),
+        bytes: bytes.length,
+      },
+      {
+        path: "/admitted-sea-carrier",
+        max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
+        max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+      },
+      carrier.signal,
+      layout,
+    );
+  } catch (cause) {
+    throw artifactParseFailure(cause, carrier.signal, peResourceLimitBoundary);
+  }
   return resources.resources.flatMap((resource) => {
     if (
       resource.type.kind !== "id" ||

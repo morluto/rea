@@ -1,6 +1,7 @@
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { classifyLaunchFailureCode } from "../process/launchFailure.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import {
   retainOwnedCommandCleanup,
@@ -13,9 +14,9 @@ import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
@@ -28,6 +29,7 @@ import { constants, accessSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Bound the Java version probe so a chatty or hostile JVM cannot force an
@@ -290,6 +292,19 @@ const observeGhidraJava = async (
     } else if (cause instanceof AnalysisError) {
       primary = cause;
     }
+    const launch = launcherFailureOf(commandFailure?.processError ?? cause);
+    if (
+      primary === undefined &&
+      (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+    )
+      // The host, not the selected Java runtime, refused this launch.
+      primary = classifyLaunchFailure(launch, {
+        providerId: "ghidra",
+        operation: "ghidra:java",
+        fixedArguments: true,
+        command,
+        details: { cause, diagnostics: { java_executable: command } },
+      });
     if (primary === undefined) {
       const code =
         commandFailure?.reason === "timeout"
@@ -300,10 +315,10 @@ const observeGhidraJava = async (
       const failed: GhidraJavaProbeFailure = {
         _tag: "GhidraJavaProbeFailure",
         code:
-          classifyLaunchFailureCode(code)?.kind === "missing"
+          launch?.kind === "missing"
             ? "runtime_missing"
             : "runtime_unavailable",
-        detail: `${command}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        detail: `${command}: ${errorMessage(cause)}`,
         ...(code === undefined ? {} : { processErrorCode: code }),
         ...(output === undefined ? {} : { output }),
       };
@@ -319,11 +334,11 @@ const observeGhidraJava = async (
       primary = probeFailureError(failed, cause);
     }
     for (const cleanup of cleanups)
-      primary = analysisErrorWithCleanupFailure(
+      primary = analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "ghidra:java",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     return err(
       bindProcessInspectionCancellations(cause, primary, "ghidra:java"),
     );

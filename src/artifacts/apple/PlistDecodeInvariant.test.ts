@@ -21,20 +21,25 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
  */
 const decoder = vi.hoisted(() => ({ broken: false }));
 
-vi.mock("./BinaryPlistMaterializer.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("./BinaryPlistMaterializer.js")>();
-  return {
-    ...actual,
-    decodeBinaryPropertyList: (
-      ...args: Parameters<typeof actual.decodeBinaryPropertyList>
-    ) => {
-      if (decoder.broken)
-        throw invariantViolation("Binary plist source plan is missing");
-      return actual.decodeBinaryPropertyList(...args);
-    },
-  };
-});
+vi.mock(
+  "../../domain/apple/binaryPlistMaterializer.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../domain/apple/binaryPlistMaterializer.js")
+      >();
+    return {
+      ...actual,
+      decodeBinaryPropertyList: (
+        ...args: Parameters<typeof actual.decodeBinaryPropertyList>
+      ) => {
+        if (decoder.broken)
+          throw invariantViolation("Binary plist source plan is missing");
+        return actual.decodeBinaryPropertyList(...args);
+      },
+    };
+  },
+);
 
 afterEach(() => {
   decoder.broken = false;

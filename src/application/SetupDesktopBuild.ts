@@ -1,45 +1,17 @@
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { AGENTENV_INSTALL_COMMAND } from "./DesktopBuildDoctor.js";
 import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
-import { assertSetupActive } from "./SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 import type {
   SetupAction,
   SetupOptions,
   SetupProgressEvent,
   SetupProviderEnvironment,
 } from "./SetupTypes.js";
-
-/** What setup reads from a host before it plans a desktop build setup. */
-export interface DesktopBuildSetupFacts {
-  /** Each build setting resolved to an absolute path; absent when none resolves. */
-  readonly settings: SetupProviderEnvironment;
-  /** Settings the caller's environment selected, which setup records as they are. */
-  readonly selected: readonly string[];
-  readonly archive: string;
-  readonly archivePacked: boolean;
-  /** Why this REA cannot pack its runtime, when it cannot. */
-  readonly packBlocker?: string;
-  readonly agentEnvVersion?: string | undefined;
-  /** uv on PATH and the agent-env its tool install places. */
-  readonly uv?: { readonly path: string; readonly agentEnv: string };
-  /** Per client, the build settings its registration already records with a value of its own. */
-  readonly recorded: Readonly<Record<string, readonly string[]>>;
-}
-
-/** Effects `rea setup --desktop-build` needs from its host. */
-export interface DesktopBuildSetupHost {
-  facts(clientIds: readonly string[]): Promise<DesktopBuildSetupFacts>;
-  /** Pack this REA as the build-computer runtime; the reason when it failed. */
-  packRuntime(
-    archive: string,
-    signal?: AbortSignal,
-  ): Promise<string | undefined>;
-  /** Install the pinned agentenv-framework with uv; the reason when it failed. */
-  installAgentenv(
-    uv: string,
-    signal?: AbortSignal,
-  ): Promise<string | undefined>;
-}
+import type {
+  DesktopBuildSetupFacts,
+  DesktopBuildSetupHost,
+} from "../ports/DesktopBuildHost.js";
 
 /** A desktop build setup as runSetup drives it; inert when it was not selected. */
 export interface DesktopBuildSetup {

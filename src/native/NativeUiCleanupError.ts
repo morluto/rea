@@ -1,7 +1,8 @@
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLeaseGroup } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import type { NativeUiHelperRuntime } from "./NativeUiHelperRuntime.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Exact runtime owners remain reachable for standalone callers' cleanup retry. */
 export class NativeUiCleanupError extends ProviderCleanupError {
@@ -27,7 +28,7 @@ export class NativeUiCleanupError extends ProviderCleanupError {
         reason: "Native UI runtime cleanup remains incomplete",
         failures: failures.map(({ runtime, cause }) => ({
           resources: [...runtime.resources()],
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         })),
       },
       {

@@ -4,7 +4,7 @@ import {
   equalSelectorGuidance,
 } from "./analysisSelector.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
 import { nativeTarget } from "./options.js";
 import type { CliInstance } from "./types.js";
@@ -37,7 +37,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "annotate_native_function"),
     {
-      command: CLI_COMMANDS.annotateNativeFunction,
       description: "Edit function annotations and return refreshed analysis",
       sessionTarget: executable,
       positionals: ["procedure"],
@@ -61,7 +60,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "search_bytes"),
     {
-      command: CLI_COMMANDS.searchBytes,
       description:
         "Find masked bytes; unbounded searches skip unloaded blocks and overlays",
       sessionTarget: executable,
@@ -89,7 +87,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "inspect_native_load_image"),
     {
-      command: CLI_COMMANDS.inspectNativeLoadImage,
       description:
         "Inspect native load observations and supported snapshot verification",
       sessionTarget: executable,
@@ -103,7 +100,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "read_bytes"),
     {
-      command: CLI_COMMANDS.readBytes,
       description:
         "Read provider memory bytes; Ghidra memory may include loader fixups and differ from file bytes",
       sessionTarget: executable,
@@ -121,7 +117,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "address_to_file_offset"),
     {
-      command: CLI_COMMANDS.addressToFileOffset,
       description:
         "Map one analysis address to a file offset; memory bytes may differ and ranges may not be contiguous",
       sessionTarget: executable,
@@ -136,7 +131,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_native_values"),
     {
-      command: CLI_COMMANDS.traceNativeValues,
       description: "Trace bounded native def-use and call dependencies",
       sessionTarget: nativeApplication,
       positionals: ["procedure"],
@@ -163,7 +157,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "inspect_native_data_type"),
     {
-      command: CLI_COMMANDS.inspectNativeDataType,
       description: `Inspect one recovered database type or typed data object. ${dataTypeSelectorGuidance}`,
       sessionTarget: nativeApplication,
       omit: noDocument,
@@ -180,12 +173,12 @@ export const registerCoreNativeCommands = (
   );
   for (const [command, operation, description] of [
     [
-      CLI_COMMANDS.inspectNativeInstruction,
+      cliCommandFor("inspect_native_instruction"),
       "inspect_native_instruction",
       "Inspect a code or data address, its containing Ghidra listing object, and typed incoming references where supported",
     ],
     [
-      CLI_COMMANDS.resolveNativeCallTargets,
+      cliCommandFor("resolve_native_call_targets"),
       "resolve_native_call_targets",
       "Resolve one static native call site",
     ],
@@ -210,7 +203,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(ENHANCED_TOOL_CONTRACTS, "trace_native_ui_action"),
     {
-      command: CLI_COMMANDS.traceNativeUiAction,
       description:
         "Trace a compiled UI action selector to its native handler and direct callees",
       sessionTarget: nativeTarget(evidenceTarget),
@@ -232,7 +224,6 @@ export const registerCoreNativeCommands = (
     logger,
     contractNamed(ENHANCED_TOOL_CONTRACTS, "inspect_native_dispatch_metadata"),
     {
-      command: CLI_COMMANDS.inspectNativeDispatchMetadata,
       description: "Inspect typed Objective-C and Swift dispatch metadata",
       sessionTarget: nativeTarget(
         evidenceTarget,
@@ -269,7 +260,6 @@ const registerProcedureSelectorCommands = (
     logger,
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "procedure_references"),
     {
-      command: CLI_COMMANDS.procedureReferences,
       description: `Inspect incoming or outgoing references for one native procedure. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
       sessionTarget: nativeTarget("Local executable path", true),
       positionals: ["procedure"],
@@ -298,7 +288,6 @@ const registerProcedureSelectorCommands = (
     logger,
     contractNamed(ENHANCED_TOOL_CONTRACTS, "inspect_native_api"),
     {
-      command: CLI_COMMANDS.inspectNativeApi,
       description: `Reconstruct one native function API boundary with evidence. ${addressOrProcedureGuidance} ${equalSelectorGuidance}`,
       sessionTarget: nativeTarget("App or program path", true),
       positionals: ["procedure"],

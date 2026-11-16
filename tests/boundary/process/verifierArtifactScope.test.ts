@@ -3,8 +3,8 @@ import {
   VerifierArtifactCleanupFailure,
   withVerifierArtifactScope,
 } from "../../../scripts/lib/verifier-artifact-scope.mjs";
-import type { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import type { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 it("retains the exact scope for retry and preserves the operation failure", async () => {
   const primary = new Error("analysis failed");
@@ -55,22 +55,14 @@ it("retains cleanup authority when the operation succeeds", async () => {
 it("finishes every close hook when cancellation arrives during final cleanup", async () => {
   const controller = new AbortController();
   const cleanup = new Error("first close failed");
-  let release: (() => void) | undefined;
-  let entered: (() => void) | undefined;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const verifierArtifactCloseHook = phaseGate();
   const calls: string[] = [];
   let attempts = 0;
   const operation = withVerifierArtifactScope(async (scope) => {
     scope.addCloseHook(async () => {
       calls.push("first");
       if (++attempts === 1) {
-        entered?.();
-        await gate;
+        await verifierArtifactCloseHook.hold();
         if (controller.signal.aborted) throw cleanup;
       }
     });
@@ -80,15 +72,14 @@ it("finishes every close hook when cancellation arrives during final cleanup", a
     return "finished";
   });
   try {
-    await awaitAcknowledgement(
-      started,
+    await verifierArtifactCloseHook.reached(
       operation,
       "verifier artifact close hook",
     );
     controller.abort();
   } finally {
     // Release and join the parked cleanup even when the boundary is missed.
-    release?.();
+    verifierArtifactCloseHook.release();
     await operation.catch(() => undefined);
   }
   let failure: unknown;

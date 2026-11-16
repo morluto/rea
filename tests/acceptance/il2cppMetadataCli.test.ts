@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { desktopSummarySchema } from "../../src/domain/analysisView/desktopApplicationView.js";
 import { createHash } from "node:crypto";
 import {
@@ -768,7 +769,7 @@ it("imports historical metadata Evidence with unavailable member collections wit
   const historical = createEvidence(
     {
       path,
-      sha256: original.subject!.digest.sha256,
+      sha256: fileIdentity(original.subject).sha256,
       format: "file",
     },
     original.provider,
@@ -1416,7 +1417,8 @@ cliTest(
         issues: [
           {
             path: ["ghidra_seeds"],
-            message: expect.stringContaining("needs --binary"),
+            message:
+              "Ghidra seed output links method addresses in binary_path.",
           },
         ],
       },
@@ -1476,7 +1478,7 @@ cliTest(
     expect(unlinked.exitCode).not.toBe(0);
     expect(unlinked.json).toMatchObject({
       code: "invalid_request",
-      details: { issues: [{ path: ["generic_instances"] }] },
+      details: { issues: [{ path: ["genericInstances"] }] },
     });
   },
 );

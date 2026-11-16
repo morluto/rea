@@ -15,7 +15,7 @@ import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
-} from "./OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import type {
   CommandProviderLaunchFailures,
   ReverseEngineeringOperation,
@@ -36,10 +36,9 @@ import {
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import {
   annotationsFromEffects,
-  toolSessionEffects,
   type ToolEffects,
 } from "../contracts/toolEffects.js";
-import type { ToolKind } from "../contracts/toolContractTypes.js";
+import type { ToolContract, ToolKind } from "../contracts/toolContractTypes.js";
 import type {
   HostRestrictedFeature,
   ToolAvailabilityDeclaration,
@@ -49,8 +48,8 @@ import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type {
   AnalysisOperation,
   ProviderAvailability,
-} from "./AnalysisProvider.js";
-import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -59,8 +58,8 @@ import {
   cleanupRetryRemediation,
   type AnalysisCleanupRetry,
 } from "../domain/analysisErrorRecovery.js";
-import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 import { offeredOperationAlternatives } from "./OperationAlternatives.js";
+import { isBundleResourceOperation } from "../ports/BundleResourceOperations.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -325,85 +324,88 @@ export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
   isToolAdvertised: (name: string) => boolean = () => true,
+  contracts: readonly ToolContract[] = TOOL_CONTRACTS,
 ): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
     status.capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
-  return TOOL_CONTRACTS.map((contract): ToolAvailability => {
-    const availability = availabilityFor({
-      name: contract.name,
-      kind: contract.kind,
-      declared: "availability" in contract ? contract.availability : undefined,
-      targetOpen: status.open,
-      cleanupRetry: status.cleanup_retry,
-      resourceSession: status.session_kind === "bundle_resources",
-      requiresActiveTarget:
-        "requiresActiveTarget" in contract &&
-        contract.requiresActiveTarget === true,
-      targetKind: status.kind,
-      targetFormat: status.format,
-      descriptors,
-      policy,
-      isToolAdvertised,
-    });
-    const effects = composedEffects(
-      contract.name,
-      toolSessionEffects(contract.name),
-      status.capabilities,
-    );
-    const annotations = annotationsFromEffects(effects);
-    const facts = {
-      name: contract.name,
-      surface: contract.kind,
-      ...(contract.name === "trace_native_values"
+  return contracts
+    .map((contract): ToolAvailability => {
+      const availability = availabilityFor({
+        name: contract.name,
+        kind: contract.kind,
+        declared:
+          "availability" in contract ? contract.availability : undefined,
+        targetOpen: status.open,
+        cleanupRetry: status.cleanup_retry,
+        resourceSession: status.session_kind === "bundle_resources",
+        requiresActiveTarget:
+          "requiresActiveTarget" in contract &&
+          contract.requiresActiveTarget === true,
+        targetKind: status.kind,
+        targetFormat: status.format,
+        descriptors,
+        policy,
+        isToolAdvertised,
+      });
+      const effects = composedEffects(
+        contract.name,
+        contract.sessionEffects,
+        status.capabilities,
+      );
+      const annotations = annotationsFromEffects(effects);
+      const facts = {
+        name: contract.name,
+        surface: contract.kind,
+        ...(contract.name === "trace_native_values"
+          ? {
+              value_flow_support: (() => {
+                const source = descriptors.get("analyze_function");
+                return source?.native_value_flow === undefined
+                  ? {
+                      status: "unknown" as const,
+                      provider_id: source?.provider.id ?? null,
+                    }
+                  : {
+                      ...source.native_value_flow,
+                      provider_id: source.provider.id,
+                    };
+              })(),
+            }
+          : {}),
+        ...(availability.defaultModeAvailable === undefined
+          ? {}
+          : { default_mode_available: availability.defaultModeAvailable }),
+        ...(availability.modes === undefined
+          ? {}
+          : { modes: [...availability.modes] }),
+        client_requirements: emptyClientRequirements(),
+        effects,
+        annotations: {
+          read_only: annotations.readOnlyHint,
+          destructive: annotations.destructiveHint,
+          idempotent: annotations.idempotentHint,
+          open_world: annotations.openWorldHint,
+        },
+      };
+      return availability.reason === "available"
         ? {
-            value_flow_support: (() => {
-              const source = descriptors.get("analyze_function");
-              return source?.native_value_flow === undefined
-                ? {
-                    status: "unknown" as const,
-                    provider_id: source?.provider.id ?? null,
-                  }
-                : {
-                    ...source.native_value_flow,
-                    provider_id: source.provider.id,
-                  };
-            })(),
+            ...facts,
+            available: true,
+            reason: availability.reason,
+            remediation: null,
           }
-        : {}),
-      ...(availability.defaultModeAvailable === undefined
-        ? {}
-        : { default_mode_available: availability.defaultModeAvailable }),
-      ...(availability.modes === undefined
-        ? {}
-        : { modes: [...availability.modes] }),
-      client_requirements: emptyClientRequirements(),
-      effects,
-      annotations: {
-        read_only: annotations.readOnlyHint,
-        destructive: annotations.destructiveHint,
-        idempotent: annotations.idempotentHint,
-        open_world: annotations.openWorldHint,
-      },
-    };
-    return availability.reason === "available"
-      ? {
-          ...facts,
-          available: true,
-          reason: availability.reason,
-          remediation: null,
-        }
-      : {
-          ...facts,
-          available: false,
-          reason: availability.reason,
-          remediation: availability.remediation,
-          ...(availability.alternatives === undefined
-            ? {}
-            : { alternatives: [...availability.alternatives] }),
-        };
-  })
+        : {
+            ...facts,
+            available: false,
+            reason: availability.reason,
+            remediation: availability.remediation,
+            ...(availability.alternatives === undefined
+              ? {}
+              : { alternatives: [...availability.alternatives] }),
+          };
+    })
     .filter(({ name }) => isToolAdvertised(name))
     .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
 };

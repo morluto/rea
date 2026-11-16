@@ -1,16 +1,7 @@
-import { z } from "incur";
-import { localPathStringSchema } from "../domain/localPath.js";
+import { z } from "zod";
 
-import {
-  executableFormatHintSchema,
-  type ExecutableFormatHint,
-} from "../domain/dosCom.js";
+import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
-import {
-  binaryArchitectureSchema,
-  rawBinaryEntryPointSchema,
-} from "../domain/rawBinary.js";
-import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
@@ -172,40 +163,6 @@ const NATIVE_OPEN_HELP = {
     "Bind deep analysis to a provider ID or use deterministic auto selection",
   snapshot: "Load and update a local analysis snapshot",
 } as const;
-
-export const providerSelectionOption = analysisProviderSelectorSchema
-  .optional()
-  .describe(NATIVE_OPEN_HELP.provider);
-
-/** Optional path to the local analysis snapshot loaded or updated by a command. */
-export const snapshotSelectionOption = localPathStringSchema
-  .optional()
-  .describe(NATIVE_OPEN_HELP.snapshot);
-
-/**
- * Explicit interpretation for headerless native executable formats. Flash
- * dumps take their offsets on the artifact commands instead.
- */
-const formatSelectionOption = executableFormatHintSchema
-  .exclude(["esp-flash-image"])
-  .optional()
-  .describe(NATIVE_OPEN_HELP.format);
-
-export const architectureSelectionOption = binaryArchitectureSchema
-  .optional()
-  .describe(NATIVE_OPEN_HELP.architecture);
-
-export const entryPointSelectionOption = rawBinaryEntryPointSchema
-  .optional()
-  .describe(NATIVE_OPEN_HELP.entryPoint);
-
-/** Shared CLI flags that bind a native target interpretation. */
-export const nativeOpenOptionFields = {
-  "target-format": formatSelectionOption,
-  architecture: architectureSelectionOption,
-  "entry-point": entryPointSelectionOption,
-  provider: providerSelectionOption,
-};
 
 /**
  * A native executable opened as an MCP client opens it, with `open_binary`'s
