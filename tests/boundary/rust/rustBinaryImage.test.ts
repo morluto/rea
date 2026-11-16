@@ -10,9 +10,9 @@ import {
   rustDependencyPayload,
 } from "../../fixtures/rust/image.js";
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
-import { RustAuditableFormatFailure } from "../../../src/rust/RustAuditableReader.js";
+import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
 const packages = [
   {
@@ -306,9 +306,37 @@ it("finds rustc paths in read-only ELF load data without section headers", () =>
 
 it("refuses a universal Mach-O container", () => {
   expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(
-    RustAuditableFormatFailure,
+    ParseFailureError,
   );
   expect(() => readRustBinaryImage(fat([0x0100000c]))).toThrow(/thin slice/);
+});
+
+it("keeps the container's truncated failure and its facts unchanged", () => {
+  const bytes = createRustImage({ format: "elf" });
+  // The fixture's first program header is at byte 128; p_filesz and
+  // p_memsz are at +32 and +40.
+  bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 32);
+  bytes.writeBigUInt64LE(BigInt(bytes.length) * 2n, 128 + 40);
+  const thrown = (read: () => unknown): unknown => {
+    try {
+      read();
+    } catch (cause: unknown) {
+      return cause;
+    }
+    throw new Error("expected a container failure");
+  };
+  const container = thrown(() => readBinaryContainer(bytes));
+  const rust = thrown(() => readRustBinaryImage(bytes));
+  expect(rust).toBeInstanceOf(ParseFailureError);
+  expect((rust as ParseFailureError).failure).toEqual(
+    (container as ParseFailureError).failure,
+  );
+  expect((rust as ParseFailureError).failure).toMatchObject({
+    kind: "truncated",
+    format: "elf",
+    offset: expect.any(Number),
+    field: expect.any(String),
+  });
 });
 
 it("does not read SHT_NOBITS dependency sections as stored bytes", () => {
@@ -319,7 +347,7 @@ it("does not read SHT_NOBITS dependency sections as stored bytes", () => {
   try {
     metadata = readRustBinaryImage(bytes).auditable_metadata;
   } catch (cause: unknown) {
-    expect(cause).toBeInstanceOf(RustAuditableFormatFailure);
+    expect(cause).toBeInstanceOf(ParseFailureError);
     return;
   }
   expect(metadata).toBeNull();
@@ -353,6 +381,16 @@ it("retains dependency facts when compiler paths exceed the selected prefix", ()
     status: "partial",
     reason: "max_rustc_hashes",
     effective_limit: 64,
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_rustc_hashes",
+      effective_value: 64,
+      unit: "count",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 64,
+      applies_at: "next_call",
+    },
   });
   const recovered = readRustBinaryImage(bytes, 65);
   expect(recovered.rustc_commit?.hashes).toHaveLength(65);

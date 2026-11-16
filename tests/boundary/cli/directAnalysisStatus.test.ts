@@ -1,4 +1,4 @@
-import { createCatalogIdentity } from "../../../src/catalogIdentity.js";
+import { createCatalogIdentity } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
 import { promptsForToolFamilies } from "../../../src/contracts/promptToolFamilyScope.js";
 import { Cli } from "incur";
@@ -127,7 +127,6 @@ it.each(["capabilities", "providers"])(
             readConfiguration: () =>
               parseConfig({
                 REA_MCP_TOOL_FAMILIES: " session,session ",
-                REA_MCP_INPUT_SCHEMA_PROFILE: "full",
                 REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
               }),
             createBinarySession: () => session,

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { readGhidraLanguageCatalog } from "../../../src/ghidra/GhidraLanguageCatalog.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -31,17 +31,17 @@ it.each([
         '"><language id="toy:LE:32:default"/></language_definitions>',
       ),
     ]),
-    expectedError: "invalid-bytes",
+    expectedError: { reason: "invalid-bytes" },
   },
   {
     name: "encoding mismatch",
     bytes: Buffer.from('<?xml version="1.0" encoding="UTF-16"?>' + xml),
-    expectedError: "encoding-mismatch",
+    expectedError: { reason: "encoding-mismatch" },
   },
   {
     name: "malformed XML alongside U+FFFD",
     bytes: Buffer.from(xml.replace('id="toy:LE:32:default"', "id=unquoted")),
-    expectedError: "malformed",
+    expectedError: { _tag: "ParseFailureError", kind: "malformed" },
   },
 ])(
   "reads $name at the language-file byte boundary",
@@ -64,8 +64,6 @@ it.each([
     else
       await expect(
         readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
-      ).rejects.toMatchObject({
-        reason: expectedError,
-      });
+      ).rejects.toMatchObject(expectedError);
   },
 );

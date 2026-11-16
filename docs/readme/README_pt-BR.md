@@ -82,11 +82,11 @@ Escolha seus agentes, revise as alterações propostas e aprove-as. A configura�
 
 A configuração oferece suporte ao Claude Code, Codex, Cursor, Gemini CLI, Grok Build e [outros agentes](../getting-started/installation.md#supported-agents). Consulte [instalação e configuração](../getting-started/installation.md) para configurar provedores e registrar o MCP manualmente.
 
-O MCP usa esquemas de entrada compactos por padrão. Para obter todas as orientações de campos e validação aninhada, defina `REA_MCP_INPUT_SCHEMA_PROFILE=full` no registro MCP. Ambos os perfis mantêm todas as ferramentas e a mesma validação canônica do servidor; veja o guia dos contratos MCP.
+O MCP usa esquemas de entrada compactos por padrão. As orientações que um esquema compacto omite seguem a descrição da ferramenta. Todas as ferramentas e a validação canônica do servidor permanecem iguais; veja o guia dos contratos MCP.
 
 A configuração registra diretamente o runtime escolhido e o script de entrada do REA. Ao usar um executor de pacotes, mantenha sua entrada de cache e o runtime; obtenha o pacote em um diretório confiável fora do projeto alvo. Consulte o guia de instalação.
 
-Os esquemas de saída completos são anunciados por padrão. Se o cliente limitar `tools/list`, defina `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ou `off` no registro MCP. A validação do servidor e os resultados estruturados continuam completos. Consulte “Output schemas” no guia de contratos MCP.
+Os esquemas de saída são omitidos de `tools/list` por padrão: nenhuma API de modelo os lê, e o REA valida cada resultado por conta própria. Defina `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` no registro MCP para anunciar cada esquema de saída dentro de 4096 bytes. Em todas as configurações, a validação do servidor e os resultados estruturados continuam completos. Consulte “Output schemas” no guia de contratos MCP.
 
 ### Peça ao seu agente
 
@@ -174,7 +174,7 @@ O REA requer Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ou 26+ (>=26.12.1), alé
 | JavaScript / Electron       | Módulos, importações, source maps, rotas, IPC e relações com complementos nativos                                       | Node.js e npm; [análise de aplicativos](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
 | Sites                       | Estrutura da página, scripts, observações de rede e capturas de tela solicitadas                                        | Um navegador da família Chrome; [análise do navegador](../guides/web/browser-observation.md)                                                                     |
 | Capturas de rede salvas     | Requisições, respostas, payloads acessíveis e localizações de origem                                                    | HAR / Fiddler Everywhere SAZ; mitmdump no Linux para capturas no formato nativo do mitmproxy; [guia de capturas](../guides/web/web-network-captures.md)          |
-| Capturas de pacotes         | Endpoints, DNS, TLS SNI, distribuição de protocolos e requisições HTTP                                                  | tshark e capinfos fornecidos pelo chamador; [guia pcap](../guides/data/pcap-analysis.md)                                                                         |
+| Capturas de pacotes         | Endpoints, DNS, TLS SNI, distribuição de protocolos e requisições HTTP                                                  | tshark e capinfos fornecidos pelo chamador (verificados no Linux); [guia pcap](../guides/data/pcap-analysis.md)                                                  |
 | Assemblies .NET             | Metadados, instruções CIL, dependências nativas declaradas e comparações de builds                                      | Inspeção estática; [guia de código gerenciado](../guides/managed/managed-code-analysis.md)                                                                       |
 | PyInstaller                 | CArchive, PYZ, Python bytecode                                                                                          | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                            |
 | Deno compile binaries       | Virtual files, entry point, recorded options, npm snapshot length                                                       | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |

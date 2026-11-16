@@ -1028,7 +1028,10 @@ it("rejects out-of-range bundle entries without guessing a payload", async () =>
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "BinaryTargetError" },
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    },
   });
 });
 
@@ -1247,7 +1250,10 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
     bytes.writeBigUInt64LE(count, 24);
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected malformed directory");
-    expect(result.error._tag).toBe("BinaryTargetError");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    });
   }
   const framed = Buffer.alloc(32 + 65537 * 25);
   Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(framed);

@@ -1,16 +1,12 @@
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "./contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "./contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./domain/analysisErrorProjectionSchema.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "./domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "./kernel/isRecord.js";
 
 type CliFailureIdentity = Pick<
   AnalysisErrorProjection,

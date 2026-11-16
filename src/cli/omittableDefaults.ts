@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 
 import type { CliInstance } from "./types.js";
 import { visitRegisteredCommands } from "./visitRegisteredCommands.js";

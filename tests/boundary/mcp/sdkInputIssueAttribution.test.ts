@@ -8,6 +8,7 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("keeps concurrent SDK validation issues attached to their own tool call", async () => {
   let calls = 0;
@@ -20,7 +21,10 @@ it("keeps concurrent SDK validation issues attached to their own tool call", asy
       },
     },
   });
-  const client = new Client({ name: "input-issue-attribution", version: "1" });
+  const client = new Client(
+    { name: "input-issue-attribution", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -134,7 +138,9 @@ it("retains mixed SDK field diagnostics without repeating custom guidance", asyn
   server.registerTool("custom_issues", { inputSchema }, async () => ({
     content: [{ type: "text", text: "unexpected dispatch" }],
   }));
-  const client = new Client(info);
+  const client = new Client(info, {
+    jsonSchemaValidator: createMcpSchemaValidation(),
+  });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -210,7 +216,9 @@ it("keeps same-path union and independent issues attributed to their producers",
   server.registerTool("overlapping_issues", { inputSchema }, async () => ({
     content: [{ type: "text", text: "unexpected dispatch" }],
   }));
-  const client = new Client(info);
+  const client = new Client(info, {
+    jsonSchemaValidator: createMcpSchemaValidation(),
+  });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -297,8 +305,12 @@ it("discloses when bounded projection cannot retain union branch details", async
   });
   server.registerTool("long_key", { inputSchema: keySchema }, unreachable);
   sdkServer.registerTool("long_key", { inputSchema: keySchema }, unreachable);
-  const client = new Client(info);
-  const sdkClient = new Client(info);
+  const client = new Client(info, {
+    jsonSchemaValidator: createMcpSchemaValidation(),
+  });
+  const sdkClient = new Client(info, {
+    jsonSchemaValidator: createMcpSchemaValidation(),
+  });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const [sdkClientTransport, sdkServerTransport] =

@@ -2,8 +2,7 @@ import { AnalysisSettings } from "../dist/application/AnalysisSettings.js";
 import { runtimeAnalysisConfig } from "../dist/config/runtimeAnalysisSettings.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -23,6 +22,10 @@ import {
   completeVerifierRun,
   createVerifierRun,
 } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 // Volatile straight-line work produces a natural native response above 1 MiB
 // and a decompile above one second, without the old branch-heavy fixture.
@@ -111,9 +114,10 @@ const installation = await inspectVerifierGhidraInstallation({
 assert.equal(installation.status, "available", JSON.stringify(installation));
 assert.equal(installation.providerVersion, SUPPORTED_GHIDRA_VERSION);
 
-const workspace = await mkdtemp(
-  join(tmpdir(), "rea-ghidra-decompile-timeout-"),
-);
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-decompile-timeout-",
+});
+const workspace = workspaceFixture.path;
 const began = performance.now();
 const controller = new AbortController();
 const outerDeadline = setTimeout(
@@ -123,7 +127,16 @@ const outerDeadline = setTimeout(
 outerDeadline.unref();
 let cleaned = true;
 let report;
-try {
+// The workspace stays while an owned Ghidra process or server may still use
+// it: this cleanup confirms only once their cleanup was verified.
+workspaceFixture.releaseAfter(() => {
+  clearTimeout(outerDeadline);
+  if (!cleaned)
+    throw new Error(
+      `Owned Ghidra cleanup is unverified; retaining ${workspace}.`,
+    );
+});
+await withVerifierFixture(workspaceFixture, async () => {
   const sourcePath = join(workspace, "slow-decompile.c");
   const source = fixtureSource();
   await writeFile(sourcePath, source);
@@ -403,8 +416,5 @@ try {
     scope:
       "Real Ghidra analysis of generated Mach-O/ELF through authenticated loopback: independent value-flow budgets, lowered admission, native payload exhaustion and recovery, natural decompile timeout with listing-backed partial facts, and deadline recovery on the same Program. No target execution. Windows and public CLI/MCP transport recovery are unverified. Timings are observations, not performance comparisons; CPU, peak process-family memory and agent tokens are unmeasured.",
   };
-} finally {
-  clearTimeout(outerDeadline);
-  if (cleaned) await rm(workspace, { recursive: true, force: true });
-}
+});
 console.log(JSON.stringify({ ...report, cleanup: "complete" }));

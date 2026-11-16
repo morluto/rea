@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { perfDataSchema } from "../../domain/perfData/perfData.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
