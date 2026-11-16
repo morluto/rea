@@ -11,7 +11,10 @@ import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import {
+  fixedAllowanceOptions,
+  type FixedCeilingFacts,
+} from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_IMPORT_DLLS,
   MAX_INSPECT_PE_IMPORT_FILE_BYTES,
@@ -91,7 +94,7 @@ const functionRemediation = (input: InspectPeImportsInput): string =>
 const limitRecovery = (
   limit: PeImportLimit | null,
   input: InspectPeImportsInput,
-  maximum: number,
+  ceiling: FixedCeilingFacts,
 ): ResourceConstraintRecovery => {
   switch (limit) {
     case "dlls":
@@ -111,7 +114,7 @@ const limitRecovery = (
       return fixedAllowanceOptions(
         "The PE structural decoding allowance",
         "parser",
-        { limit: maximum, unit: "bytes" },
+        ceiling,
       );
   }
 };
@@ -133,7 +136,7 @@ const peImportsFailure = (
           MAX_INSPECT_PE_IMPORT_FILE_BYTES,
         ),
       limits: PE_IMPORT_LIMITS,
-      limitRecovery: (limit, maximum) => limitRecovery(limit, input, maximum),
+      limitRecovery: (limit, ceiling) => limitRecovery(limit, input, ceiling),
     },
     snapshot,
   );

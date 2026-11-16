@@ -24,7 +24,10 @@ import {
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import { parseKernelModule } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
@@ -103,7 +106,7 @@ const kernelModuleFailurePrimary = (
         ...fixedAllowanceOptions(
           "The ELF structural decoding allowance",
           "parser",
-          { limit: cause.maximum_bytes, unit: "bytes" },
+          binaryResourceCeiling(cause),
         ),
       },
     );

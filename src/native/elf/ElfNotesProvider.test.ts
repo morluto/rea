@@ -86,13 +86,11 @@ describe("ELF note provider failures", () => {
   it("names the note text budget instead of host memory", async () => {
     const root = await createTestTempDirectory("rea-elf-note-text-budget-");
     const path = join(root, "program");
-    await writeFile(
-      path,
-      elfNoteFixture({
-        ownership: "program",
-        notes: elfNote("GNU", 3, Buffer.alloc(4096, 1)),
-      }),
-    );
+    const bytes = elfNoteFixture({
+      ownership: "program",
+      notes: elfNote("GNU", 3, Buffer.alloc(4096, 1)),
+    });
+    await writeFile(path, bytes);
     const result = await inspect(path);
     if (result.ok) throw new Error("Expected a text budget refusal");
     const error = result.error as AnalysisResourceConstraintError;
@@ -100,12 +98,12 @@ describe("ELF note provider failures", () => {
     expect(error.message).toMatch(/byte budget/u);
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
-    // The parser names the ceiling with the value it enforced.
-    const limit = Number(/(\d+)-byte budget/u.exec(error.message)?.[1]);
+    // The ceiling is the image length plus decoded section names; this
+    // program-only fixture has no section names.
     expect(projected.details?.refusal).toMatchObject({
       kind: "fixed_ceiling",
       allowance_kind: "parser",
-      limit,
+      limit: bytes.length,
       unit: "bytes",
     });
     expect(error.fixedAllowance).toBeDefined();

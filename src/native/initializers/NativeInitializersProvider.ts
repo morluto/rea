@@ -31,6 +31,7 @@ import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProvider
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
 import { ElfPointerRelocationFailure } from "../../domain/native/elfPointerRelocations.js";
 import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
@@ -228,7 +229,7 @@ const failurePrimary = (
         ...fixedAllowanceOptions(
           "The native initializer structural allowance",
           "parser",
-          { limit: cause.maximum_bytes, unit: "bytes" },
+          binaryResourceCeiling(cause),
         ),
       },
     );
