@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -12,6 +13,7 @@ import {
 } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import { DshCordisDocument } from "../../../src/application/DshCordisPatch.js";
 
 import {
   configureClientConfiguration,
@@ -35,6 +37,37 @@ const command = currentClientRegistrationCommand({
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
+
+it("normalizes DSH expression identity on Windows and accepts a literal alias override", () => {
+  const document = new DshCordisDocument(`- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        env:
+          rea_ghidra_startup_timeout_ms: !!js process.env.STARTUP
+          caller_value: keep
+`);
+  const selected = document.environment({}, "effective", "win32");
+  expect(selected.ok).toBe(true);
+  if (!selected.ok) throw selected.error;
+  expect([...selected.value.unresolvedSettings]).toEqual([
+    "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+  ]);
+  expect(selected.value.values).toEqual({ caller_value: "keep" });
+
+  const overridden = document.environment(
+    { REA_GHIDRA_STARTUP_TIMEOUT_MS: "45000" },
+    "effective",
+    "win32",
+  );
+  expect(overridden.ok).toBe(true);
+  if (!overridden.ok) throw overridden.error;
+  expect([...overridden.value.unresolvedSettings]).toEqual([]);
+  expect(overridden.value.values).toEqual({
+    caller_value: "keep",
+    REA_GHIDRA_STARTUP_TIMEOUT_MS: "45000",
+  });
+});
 
 const dshClient = (
   env: Parameters<typeof supportedClients>[2],
@@ -66,7 +99,12 @@ describe("DeepSeek Harness configuration paths", () => {
         markerPath: join(home, dshRoot),
       });
       expect(
-        clientSkillDirectories(home, ["dsh"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["dsh"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client, directory: join(home, agentsRoot, "skills") }]);
     },
   );
@@ -86,7 +124,12 @@ describe("DeepSeek Harness configuration paths", () => {
         markerPath: root,
       });
       expect(
-        clientSkillDirectories(home, ["dsh"], environment).directories,
+        clientSkillDirectories(
+          home,
+          ["dsh"],
+          environment,
+          HOST_PLATFORM.platform,
+        ).directories,
       ).toEqual([{ client: "dsh", directory: join(root, "skills") }]);
     },
   );
@@ -104,9 +147,14 @@ describe("DeepSeek Harness configuration paths", () => {
       resolve("/custom/harness", "cordis.patch.yml"),
     );
     expect(
-      clientSkillDirectories(join("/home/a"), ["dsh"], {
-        DSH_AGENTS_HOME: "/custom/agents",
-      }).directories,
+      clientSkillDirectories(
+        join("/home/a"),
+        ["dsh"],
+        {
+          DSH_AGENTS_HOME: "/custom/agents",
+        },
+        HOST_PLATFORM.platform,
+      ).directories,
     ).toEqual([
       { client: "dsh", directory: resolve("/custom/agents", "skills") },
     ]);
@@ -272,6 +320,58 @@ describe("DeepSeek Harness Cordis patch registration", () => {
       "not-the-harness-client",
     );
   });
+});
+
+describe("DeepSeek Harness caller-selected platform", () => {
+  it.each([
+    ["win32", { GHIDRA_INSTALL_DIR: "/new", CALLER: "keep" }],
+    [
+      "linux",
+      {
+        ghidra_install_dir: "/old",
+        CALLER: "keep",
+        GHIDRA_INSTALL_DIR: "/new",
+      },
+    ],
+  ] as const)(
+    "writes environment names with %s identity",
+    async (platform, env) => {
+      const { client } = await harnessClient();
+      await writeFile(
+        client.configPath,
+        `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+        env:
+          ghidra_install_dir: /old
+          CALLER: keep
+`,
+      );
+      // Windows names match case-insensitively, so the caller's row is
+      // renamed in place; elsewhere the names are distinct settings.
+      expect(
+        (
+          await configureClientConfiguration(
+            client,
+            { GHIDRA_INSTALL_DIR: "/new" },
+            command,
+            undefined,
+            platform,
+          )
+        ).status,
+      ).toBe("configured");
+      const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
+        insert: { config?: { env?: Record<string, string> } }[];
+      }[];
+      const written = patches[0]?.insert[0]?.config?.env ?? {};
+      expect(Object.entries(written)).toEqual(Object.entries(env));
+    },
+  );
 });
 
 describe("DeepSeek Harness registration identity", () => {

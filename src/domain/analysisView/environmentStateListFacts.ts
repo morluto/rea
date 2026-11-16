@@ -1,3 +1,4 @@
+import { jsonPointerTokens } from "../jsonPointer.js";
 import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
@@ -14,7 +15,6 @@ import {
   listItems,
   listsIds,
   pointerTo,
-  pointerTokens,
   recordedItemCount,
   same,
   scalarText,
@@ -52,7 +52,7 @@ export const listFacts = (
       if (items.length >= 2)
         for (const [name, value] of Object.entries(parent))
           if (
-            name !== pointerTokens(plan.pointer)[0] &&
+            name !== jsonPointerTokens(plan.pointer)[0] &&
             listsIds(value, items, field)
           )
             listing.add(name);
@@ -101,7 +101,7 @@ export const itemTotals = (
   parent: JsonObject,
   listPointer: string,
 ): [counter: string, value: JsonValue | undefined][] => {
-  const root = pointerTokens(listPointer)[0];
+  const root = jsonPointerTokens(listPointer)[0];
   const totals: [string, JsonValue | undefined][] = [];
   for (const [name, value] of Object.entries(parent))
     if (isItemTotal(name))
@@ -153,7 +153,7 @@ const continues = (name: string, value: JsonValue | undefined): boolean =>
 
 /** Continuation facts in the envelope or its sibling paging objects, never inside the list payload. */
 const hasContinuation = (parent: JsonObject, listPointer: string): boolean => {
-  const root = pointerTokens(listPointer)[0];
+  const root = jsonPointerTokens(listPointer)[0];
   return Object.entries(parent).some(
     ([name, value]) =>
       continues(name, value) ||

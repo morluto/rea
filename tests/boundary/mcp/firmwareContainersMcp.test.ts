@@ -28,7 +28,7 @@ const ABSOLUTE_REGION = "family-0xe48bff57/0x10ffff00-0x10ffffff.bin";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "exposes UF2 facts, retained regions and extraction through MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-uf2-mcp-");

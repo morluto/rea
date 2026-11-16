@@ -6,6 +6,7 @@ import type { WebModuleImport } from "./webModuleTrace.js";
 import type { ExportedWebScript } from "./webScriptExport.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
+  TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION,
   semanticStaticModuleSource,
 } from "./javascript/javascriptModuleDeclaration.js";
 
@@ -74,9 +75,7 @@ export const collectWebModuleImports = (
     diagnostics: [
       ...(ast.errors?.map((error) => error.message) ?? []),
       ...(hasUncertainTypeOnlyModuleSideEffect(ast.program)
-        ? [
-            "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
-          ]
+        ? [TYPE_ONLY_MODULE_SIDE_EFFECT_LIMITATION]
         : []),
     ],
   };

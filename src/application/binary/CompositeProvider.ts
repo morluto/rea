@@ -1,6 +1,9 @@
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import {
+  closedAnalysisClientError,
+  ProviderAdapterError,
+} from "../../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
@@ -13,8 +16,8 @@ import type {
   CapabilityDescriptor,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
+} from "../../ports/AnalysisProvider.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 /** Synthetic identity for a deterministic provider set. */
@@ -217,11 +220,7 @@ export class CompositeProvider implements AnalysisProvider {
       },
       execute: async (operation, parameters, options) => {
         if (closed)
-          return err(
-            new ProviderAdapterError(this.#identity.id, operation, {
-              diagnostics: { reason: "client_closed" },
-            }),
-          );
+          return err(closedAnalysisClientError(this.#identity.id, operation));
         if (operation === "health")
           return executeCompositeHealth(this.#identity, clients, options);
         const provider = this.#providerByOperation.get(operation);

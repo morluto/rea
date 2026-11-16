@@ -12,13 +12,18 @@ import {
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { runDoctor, systemDoctorHost } from "../application/Doctor.js";
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import type { ClientRegistrationStatus } from "../application/ClientRegistrationStatus.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   defaultBuildComputerArchive,
@@ -794,3 +799,116 @@ it("recognizes a gzip runtime archive with a different top folder", async () => 
     status: "current",
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "settles every client inspection before reporting a retained runner close failure",
+  async () => {
+    const root = await createTestTempDirectory("rea-doctor-peer-settle-");
+    const failing = join(root, "agent-env-a");
+    const slow = join(root, "agent-env-b");
+    const archive = join(root, "runtime.tar.gz");
+    await program(failing, "exit 0");
+    await program(slow, "exit 0");
+    await writeFile(archive, "archive");
+    const resources = new ArtifactResourceScope();
+    let releaseSlow!: () => void;
+    const slowReleased = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    let reachSlow!: () => void;
+    const slowReached = new Promise<void>((resolve) => {
+      reachSlow = resolve;
+    });
+    let failClose!: () => void;
+    const closeFailed = new Promise<void>((resolve) => {
+      failClose = resolve;
+    });
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(async () => {
+        failClose();
+        throw new Error("close denied");
+      });
+    const recorded: Record<string, Record<string, string>> = {
+      a: {
+        REA_AGENT_ENV_COMMAND: failing,
+        REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+      },
+      b: { REA_AGENT_ENV_COMMAND: slow },
+    };
+    const status = (client: string, differing: readonly string[]) =>
+      ({
+        client,
+        command: [process.execPath, "rea.mjs", "mcp"],
+        provider_settings: { differing, unrecorded: [], unresolved: [] },
+      }) as unknown as ClientRegistrationStatus;
+    let outcome: Promise<unknown> = Promise.resolve();
+    try {
+      let settled = false;
+      outcome = readDesktopBuildFacts({
+        environment: { HOME: root, PATH: "" },
+        platform: process.platform,
+        resources,
+        signal: new AbortController().signal,
+        run: async (command) => {
+          if (command === slow) {
+            reachSlow();
+            await slowReleased;
+          }
+          const stdout = "agent-env 0.9.1431\n";
+          return {
+            stdout,
+            stderr: "",
+            stdoutBytes: Buffer.byteLength(stdout),
+            stderrBytes: 0,
+          };
+        },
+        clientIds: ["a", "b"],
+        registrations: async (_clients, _settings, _owned, observe) => {
+          for (const [client, values] of Object.entries(recorded))
+            for (const [name, value] of Object.entries(values))
+              observe?.(client, name, value);
+          return [
+            status("a", ["REA_BUILD_COMPUTER_REA_ARCHIVE"]),
+            status("b", []),
+          ];
+        },
+      }).then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (cause: unknown) => {
+          settled = true;
+          return cause;
+        },
+      );
+      await awaitAcknowledgement(
+        Promise.all([slowReached, closeFailed]),
+        outcome,
+        "slow client probe and failed runner close",
+      );
+      for (let turn = 0; turn < 5; turn += 1)
+        await new Promise((resolve) => setImmediate(resolve));
+      // The failed close must not report while client b is still inspecting.
+      expect(settled).toBe(false);
+      releaseSlow();
+      // The doctor reports a typed cleanup failure naming the retained runner
+      // file, so the CLI and MCP error documents keep it and its recovery.
+      const failure = await outcome;
+      expect(failure).toBeInstanceOf(ProviderCleanupError);
+      const cleanup = failure as ProviderCleanupError;
+      expect(cleanup.operation).toBe("doctor");
+      expect(cleanup.cause).toBeInstanceOf(ArtifactFileCleanupFailure);
+      expect(resources.cleanupResources).toHaveLength(1);
+      expect(cleanup.cleanupResources).toEqual(resources.cleanupResources);
+    } finally {
+      releaseSlow();
+      // Join the inspection before restoring the close it observes.
+      await outcome;
+      close.mockRestore();
+      await resources.retryCleanup();
+      await resources.close();
+    }
+  },
+);

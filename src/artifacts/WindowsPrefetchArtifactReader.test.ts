@@ -2,9 +2,9 @@ import { expect, it, vi } from "vitest";
 
 import { prefetchMetadataSchema } from "../domain/artifactFormatMetadata.js";
 import { WindowsPrefetchArtifactReader } from "./WindowsPrefetchArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import { prefetchFixture, writePrefetch } from "./windows/Prefetch.fixture.js";
 
@@ -490,7 +490,9 @@ it("reports a source that changed during the read as an integrity failure", asyn
       return read.call(this, signal);
     })
     .mockRejectedValueOnce(
-      new ArtifactReaderFailure("integrity", "source identity changed"),
+      new ArtifactReaderFailure("integrity", "source identity changed", {
+        integrityCheck: "container-identity",
+      }),
     );
   try {
     await expect(

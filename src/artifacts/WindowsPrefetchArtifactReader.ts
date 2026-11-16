@@ -12,15 +12,15 @@ import {
 import {
   assertArtifactReadActive,
   artifactReadCancelledBy,
-} from "./ArtifactFileOperation.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+} from "../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 /** Windows Prefetch file whose header facts become the root occurrence. */
 export class WindowsPrefetchArtifactReader implements ArtifactReader {

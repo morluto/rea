@@ -1,4 +1,10 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
+import {
+  snapshotExecution,
+  ANALYSIS_SNAPSHOT_PROFILE as PROFILE,
+  ANALYSIS_SNAPSHOT_PROVIDER as PROVIDER,
+  ANALYSIS_SNAPSHOT_TARGET as TARGET,
+} from "../../../src/domain/analysisSnapshot.fixture.js";
 import { join } from "node:path";
 
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -8,7 +14,7 @@ import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   readAnalysisSnapshot,
   writeAnalysisSnapshot,
@@ -22,11 +28,6 @@ import {
   snapshotTarget,
   type AnalysisSnapshot,
 } from "../../../src/domain/analysisSnapshot.js";
-import {
-  ANALYSIS_SNAPSHOT_PROFILE as PROFILE,
-  ANALYSIS_SNAPSHOT_PROVIDER as PROVIDER,
-  ANALYSIS_SNAPSHOT_TARGET as TARGET,
-} from "../../../src/domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { readJsonObjectFile } from "../../../src/application/JsonInputFile.js";
@@ -44,21 +45,23 @@ const snapshotFixture = (): AnalysisSnapshot => {
     binding,
     operation: "address_name",
     parameters: { address: "0x1000" },
-    execution: createAnalysisExecution(
-      { name: "main", "😀": { "\uE000": "unicode" } },
-      PROVIDER,
-      {
-        analysisProfile: PROFILE,
-        rawResult: { name: "main", "😀": { "\uE000": "unicode" } },
-        subject: {
-          path: TARGET.path,
-          sha256: TARGET.sha256,
-          format: TARGET.format,
-          ...(TARGET.architecture === undefined
-            ? {}
-            : { architecture: TARGET.architecture }),
+    execution: snapshotExecution(
+      createAnalysisExecution(
+        { name: "main", "😀": { "\uE000": "unicode" } },
+        PROVIDER,
+        {
+          analysisProfile: PROFILE,
+          rawResult: { name: "main", "😀": { "\uE000": "unicode" } },
+          subject: {
+            path: TARGET.path,
+            sha256: TARGET.sha256,
+            format: TARGET.format,
+            ...(TARGET.architecture === undefined
+              ? {}
+              : { architecture: TARGET.architecture }),
+          },
         },
-      },
+      ),
     ),
   });
   const evidence = createEvidence(TARGET, PROVIDER, {
@@ -286,7 +289,7 @@ describe("analysis snapshot member decoding", () => {
       reads.release();
     });
     const pending = readAnalysisSnapshot(path, controller.signal);
-    await reads.firstRead;
+    await reads.reached(pending, "first file read");
     controller.abort(reason);
     reads.release();
     try {

@@ -4,7 +4,7 @@ import { AndroidAnalysisService } from "../../../../src/application/android/Andr
 import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { ok } from "../../../../src/domain/result.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
-import type { AnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { createJadxProtocolFixture } from "../../../fixtures/android/jadx.js";
 
 it.each([

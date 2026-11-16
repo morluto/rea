@@ -6,7 +6,7 @@ import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles
 import { createLinkedIl2cppMetadataFixture } from "../../fixtures/il2cpp/metadata.js";
 import { createIl2cppDyldBindFixture } from "../../fixtures/il2cpp/binary.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "preserves both selected IL2CPP input spellings in inline and bundled Evidence",
@@ -22,7 +22,7 @@ cliTest(
     );
     const input = "./metadata.dat";
     const binary = "./GameAssembly.dylib";
-    const inline = await runFileCli(cli, {
+    const inline = await cli.run({
       cwd: root,
       arguments: [
         "inspect-il2cpp-metadata",
@@ -47,7 +47,7 @@ cliTest(
       "./evidence.json",
       "--json",
     ];
-    const summary = await runFileCli(cli, {
+    const summary = await cli.run({
       cwd: root,
       arguments: summaryArgs,
     });
@@ -56,7 +56,7 @@ cliTest(
       parseEvidence((summary.json as { summary: unknown }).summary)
         .caller_input_paths,
     ).toEqual({ binary_path: binary });
-    const refused = await runFileCli(cli, {
+    const refused = await cli.run({
       cwd: root,
       arguments: summaryArgs,
     });
@@ -71,7 +71,7 @@ cliTest(
     expect(saved.value.records[0]?.caller_input_paths).toEqual({
       binary_path: binary,
     });
-    const without = await runFileCli(cli, {
+    const without = await cli.run({
       cwd: root,
       arguments: ["inspect-il2cpp-metadata", input, "--json"],
     });
