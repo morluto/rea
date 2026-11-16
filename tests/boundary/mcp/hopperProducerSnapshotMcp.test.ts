@@ -193,6 +193,9 @@ it("reopens a matching Hopper producer snapshot while keeping observations live"
   expect(first.analysis_profile?.parameters.producer).toEqual(
     hopperProducerIdentity(),
   );
+  expect(first.analysis_profile?.parameters).not.toHaveProperty(
+    "function_dossier_coverage",
+  );
   await f.save();
   const snapshot = parseAnalysisSnapshot(
     JSON.parse(await readFile(f.snapshotPath, "utf8")),
