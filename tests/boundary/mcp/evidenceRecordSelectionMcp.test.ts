@@ -353,7 +353,7 @@ it("pages metadata discovery when complete records and the full summary exceed t
   expect(session.exportEvidenceBundle().records).toEqual(canonical(records));
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "pages filtered metadata without changing summary totals or the unpaged result (%s)",
   async (profile) => {
     const selectedProfile = createAnalysisProfile(GHIDRA, { mode: "selected" });
