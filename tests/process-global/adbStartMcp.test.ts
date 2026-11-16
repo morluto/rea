@@ -10,6 +10,7 @@ import {
   execFileOutput,
 } from "../../src/process/ExecFileOutput.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 vi.mock("../../src/process/ExecFileOutput.js", async (importOriginal) => ({
   ...(await importOriginal<
@@ -60,7 +61,10 @@ it.each(["start_adb_app", "start_adb_activity"] as const)(
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-start-boundary", version: "0.0.0" });
+    const client = new Client(
+      { name: "adb-start-boundary", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
     const input =

@@ -1,4 +1,5 @@
-import { Parser, z } from "incur";
+import { parseCliArgv } from "../../../src/cli/argvParser.js";
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
@@ -20,9 +21,9 @@ import {
 } from "../../../src/cli/contractCommand.js";
 import { jsonInputContentSchema } from "../../../src/cli/jsonInputArgument.js";
 import {
-  visitRegisteredCommands,
-  type RegisteredCommand,
-} from "../../../src/cli/visitRegisteredCommands.js";
+  cliCommands,
+  type CliCommandEntry,
+} from "../../../src/cli/commandRegistry.js";
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
 import { presentRootDiscriminator } from "../../../src/domain/schemaAnnotations.js";
 import {
@@ -33,8 +34,8 @@ import {
 const DECIMAL_TOKEN = /^[0-9]+$/u;
 
 const cli = createCli({});
-const registered = new Map<string, RegisteredCommand>();
-visitRegisteredCommands(cli, (command, path) => {
+const registered = new Map<string, CliCommandEntry["definition"]>();
+cliCommands(cli).forEach(({ definition: command, name: path }) => {
   registered.set(path, command);
 });
 // A routed command contributes one description per contract it runs.
@@ -587,8 +588,9 @@ describe("CLI commands projected from tool contracts", () => {
           [parameter.key]: registeredField(description, parameter),
         });
         const flag = `--${parameter.key.replaceAll(/[A-Z]/gu, (c) => `-${c.toLowerCase()}`)}`;
-        expect(Parser.parse([flag], { options }).options, flag).toEqual({
-          [parameter.key]: true,
+        expect(parseCliArgv([flag], { options }), flag).toMatchObject({
+          ok: true,
+          value: { options: { [parameter.key]: true } },
         });
       }
     },

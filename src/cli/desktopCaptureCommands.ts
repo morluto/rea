@@ -4,7 +4,7 @@ import { desktopViewPolicyInputSchema } from "../domain/desktop/desktopViewPolic
 import { safeParseJson } from "../domain/safeJson.js";
 import { createInterface } from "node:readline";
 
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
@@ -29,8 +29,10 @@ import {
   DESKTOP_CAPTURE_DEFAULTS,
   type DesktopCaptureProgress,
 } from "../domain/desktop/desktopCapture.js";
+import { createDesktopCaptureProvider } from "../desktop/DesktopCaptureProvider.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { writeCliProgressLine } from "./cliProgress.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -305,7 +307,7 @@ const registerDesktopExportCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.exportDesktopApplication, {
+  registerCliCommand(cli, CLI_COMMANDS.exportDesktopApplication, {
     description:
       "Export a desktop application capture folder as an agentenv computer app bundle: class, env.toml, skill and seed",
     args: z.object({
@@ -421,7 +423,7 @@ const registerDesktopTaskCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.describeDesktopApplicationTask, {
+  registerCliCommand(cli, CLI_COMMANDS.describeDesktopApplicationTask, {
     description:
       "Describe how a desktop application capture's files changed from the seed checkpoint to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
     args: z.object({
@@ -467,7 +469,7 @@ const registerDesktopStateCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectDesktopApplicationState, {
+  registerCliCommand(cli, CLI_COMMANDS.inspectDesktopApplicationState, {
     description:
       "Read a desktop application capture folder into the application's state: roles, typed JSON views of each version and kinds of change",
     args: z.object({
@@ -519,7 +521,7 @@ export const registerDesktopCaptureCommands = (
   registerDesktopStateCommand(cli, logger, environment);
   registerDesktopExportCommand(cli, logger, environment);
   registerDesktopTaskCommand(cli, logger, environment);
-  cli.command(CLI_COMMANDS.captureDesktopApplication, {
+  registerCliCommand(cli, CLI_COMMANDS.captureDesktopApplication, {
     description:
       "Launch a Linux desktop application, watch it while it is used and record its windows and state at checkpoints read from stdin",
     options: captureOptions,
@@ -557,6 +559,7 @@ export const registerDesktopCaptureCommands = (
                   platform: HOST_PLATFORM.platform,
                   environment,
                   callerDirectory: process.cwd(),
+                  desktop: createDesktopCaptureProvider(),
                   nextRequest: () => requests.next(),
                   report: async (message, event) => {
                     const progress: DesktopCaptureProgress = {

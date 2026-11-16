@@ -6,7 +6,7 @@ import { afterEach, expect, it } from "vitest";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
-import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
+import { HopperRemoteError } from "../../../src/hopper/HopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -41,6 +41,7 @@ import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCap
 import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import type { JavaScriptRuntimeObservationPort } from "../../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -80,7 +81,10 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
     );
-    const client = new Client({ name: "sqlite-admission", version: "1" });
+    const client = new Client(
+      { name: "sqlite-admission", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -165,10 +169,13 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       { kind: "session", session },
       { sqliteDatabase: new SqliteDatabaseService(provider) },
     );
-    const client = new Client({
-      name: "sqlite-retained-observation",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "sqlite-retained-observation",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -402,7 +409,10 @@ it("closes the bound Go, IL2CPP and web-capture services and retries failed shut
       },
     },
   );
-  const client = new Client({ name: "bound-service-lifecycle", version: "1" });
+  const client = new Client(
+    { name: "bound-service-lifecycle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -534,10 +544,13 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

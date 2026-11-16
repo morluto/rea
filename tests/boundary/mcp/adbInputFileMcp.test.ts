@@ -8,6 +8,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "reports each refused local file before device commands",
@@ -39,7 +40,10 @@ it.skipIf(process.platform === "win32")(
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-input-refusal", version: "1" });
+    const client = new Client(
+      { name: "adb-input-refusal", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
     for (const { selected, hostCode } of [

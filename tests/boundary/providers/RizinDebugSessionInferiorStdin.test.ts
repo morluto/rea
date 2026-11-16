@@ -1,3 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { execFileSync, type ChildProcess } from "node:child_process";
 import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { once } from "node:events";
@@ -10,7 +12,6 @@ import pino from "pino";
 import { expect, it, onTestFinished } from "vitest";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import type { CliInstance } from "../../../src/cli/types.js";
 import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -21,6 +22,7 @@ import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionMa
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rizinTestTtyPathPattern } from "./RizinTestInferiorTty.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // Real Rizin is not exercised here. These launchers apply `-R` keys the way the
 // #8642 report observed on Rizin 0.9.1, and the target is a real process, so the
@@ -278,27 +280,13 @@ const expectRunningOnTerminal = async (
   expect([stdin.dev, stdin.ino]).toEqual([selected.dev, selected.ino]);
 };
 
-const registerCliCommand = (launcher: string) => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: { path: string; command: string };
-        options: { inferiorTty: string };
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (name: string, definition: never) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
+const rizinCommand = (launcher: string) => {
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(cli, pino({ enabled: false }), {
     ...process.env,
     REA_RIZIN_COMMAND: launcher,
   });
-  return commands.get(CLI_COMMANDS.debugWithRizin)!;
+  return cliCommand(cli, CLI_COMMANDS.debugWithRizin)!.definition;
 };
 
 it.skipIf(process.platform === "win32")(
@@ -348,7 +336,10 @@ linuxIt.each([
     const current = await createFixture({ target, reportsInferior: true });
     const manager = createManager(current);
     const server = rizinDebugMcpServer("rizin-stdin", manager);
-    const client = new Client({ name: "rizin-stdin", version: "1" });
+    const client = new Client(
+      { name: "rizin-stdin", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -416,7 +407,8 @@ linuxIt("completes the one-shot CLI on a target that reads stdin", async () => {
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {
-    const result = await registerCliCommand(current.launcher).run({
+    const result = await rizinCommand(current.launcher).run({
+      formatExplicit: false,
       args: { path: "/usr/bin/cat", command: "dr" },
       options: { inferiorTty: current.terminal.path },
     });
@@ -494,7 +486,8 @@ linuxIt(
     const previousExitCode = process.exitCode;
     process.exitCode = 0;
     try {
-      const result = await registerCliCommand(current.launcher).run({
+      const result = await rizinCommand(current.launcher).run({
+        formatExplicit: false,
         args: { path: "/usr/bin/cat", command: "dr" },
         options: { inferiorTty: current.terminal.path },
       });

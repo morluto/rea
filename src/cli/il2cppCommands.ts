@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { createIl2cppMetadataService } from "../composition/il2cpp.js";

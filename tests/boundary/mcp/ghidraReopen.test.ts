@@ -25,6 +25,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { waitForExit } from "../../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const fixturePath = fileURLToPath(
   new URL("../../fixtures/fakeGhidra.mjs", import.meta.url),
@@ -169,7 +170,10 @@ const connectGhidra = async () => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "ghidra-reopen", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "ghidra-reopen", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const close = async () => {

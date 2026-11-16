@@ -242,6 +242,7 @@ export const inspectAdbClient = async (
           ...fixedAllowanceOptions(
             `The adb version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes (this release has no runtime override)`,
             "capture",
+            { limit: VERSION_MAX_OUTPUT_BYTES, unit: "bytes" },
           ),
         },
       );

@@ -95,6 +95,12 @@ it("reports the fixed adb version-output cap", async () => {
     },
   });
   expect(projected.details?.limit).toBeUndefined();
+  expect(failure).toHaveProperty("fixedAllowance", {
+    name: expect.any(String),
+    kind: "capture",
+    limit: 65536,
+    unit: "bytes",
+  });
 });
 
 it.skipIf(process.platform !== "win32")(

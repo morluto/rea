@@ -2,15 +2,17 @@
  * Recovery for a deterministic allowance. Host memory, worker limits, waiting,
  * and a different output channel do not raise it.
  */
-export type FixedAllowanceKind =
-  | "parser"
-  | "count"
-  | "bytes"
-  | "report"
-  | "input"
-  | "capture"
-  | "live"
-  | "work";
+export const FIXED_ALLOWANCE_KINDS = [
+  "parser",
+  "count",
+  "bytes",
+  "report",
+  "input",
+  "capture",
+  "live",
+  "work",
+] as const;
+export type FixedAllowanceKind = (typeof FIXED_ALLOWANCE_KINDS)[number];
 
 const unchangedRequest = "Repeating the unchanged request fails the same way.";
 

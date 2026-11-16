@@ -15,7 +15,7 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import type { RecordUnknownInput } from "../../../src/domain/residualUnknown.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { HopperStartError } from "../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";

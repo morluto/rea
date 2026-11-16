@@ -11,6 +11,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { gdbMcpServer } from "../../fixtures/debuggerMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32").each(["kill", "detach"])(
   "retains a valid GDB session through disposition refusal and explicit %s recovery",
@@ -57,7 +58,10 @@ createInterface({ input: process.stdin }).on('line', line => {
     onTestFinished(() => manager.closeAll());
     const server = gdbMcpServer("gdb-disposition-test", manager);
     onTestFinished(() => server.close());
-    const client = new Client({ name: "gdb-disposition-test", version: "1" });
+    const client = new Client(
+      { name: "gdb-disposition-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
