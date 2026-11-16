@@ -61,6 +61,9 @@ workspaceCliTest(
     expect(await run("completions", "bash", "--json", "--token-count")).toBe(
       await run("completions", "bash", "--json"),
     );
+    const bash = await run("completions", "bash");
+    expect(await run("completions", "bash", "--schema")).toBe(bash);
+    expect(await run("completions", "bash", "--version")).toBe(bash);
 
     const unknown = await cli.run({
       arguments: ["no-such-command", "--schema"],

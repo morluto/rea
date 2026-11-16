@@ -48,6 +48,7 @@ import {
 export interface CliResultOutputMetadata {
   readonly command: string;
   readonly duration: string;
+  /** Terminal update notice; selected views and owned envelopes omit it. */
   readonly cta?: CallToAction | undefined;
   readonly renderOutput?: boolean;
   /** The producer owns a failure document whose complete facts must survive filtering. */
@@ -184,13 +185,38 @@ export const createCliResultOutput = (
     const cliControls = options.fullOutput
       ? metadata.collectCliControls?.()
       : undefined;
+    const selectedMetadata =
+      cliControls === undefined ? metadata : { ...metadata, cliControls };
+    const filterPaths = options.filterPaths?.ok
+      ? options.filterPaths.value
+      : undefined;
+    const operationFailure = metadata.failure
+      ? value
+      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
+        ? cliOperationFailurePayload(value)
+        : undefined;
+    // These presentations own complete documents. A terminal notice must not
+    // become part of their selected view, retained envelope or token count.
+    const ownsDocument =
+      operationFailure !== undefined ||
+      (filterPaths !== undefined && filterPaths.length > 0) ||
+      (options.tokenWindow && !options.tokenCount) ||
+      (options.fullOutput &&
+        (options.tokenCount || selectedMetadata.cliControls !== undefined));
+    const presentedMetadata =
+      ownsDocument && selectedMetadata.cta !== undefined
+        ? { ...selectedMetadata, cta: undefined }
+        : selectedMetadata;
     try {
       const written = await writeResult(
         value,
-        cliControls === undefined ? metadata : { ...metadata, cliControls },
+        presentedMetadata,
+        operationFailure,
       );
       if (
         metadata.cta !== undefined &&
+        (!written || !ownsDocument) &&
+        error === undefined &&
         !options.fullOutput &&
         !options.tokenCount
       ) {
@@ -204,6 +230,7 @@ export const createCliResultOutput = (
       return written;
     } catch (cause: unknown) {
       if (await recoverFormattingFailure(cause)) return true;
+      if (handled) failed = true;
       throw cause;
     }
   };
@@ -235,6 +262,7 @@ export const createCliResultOutput = (
   async function writeResult(
     value: unknown,
     metadata: CliResultOutputMetadata,
+    operationFailure: unknown,
   ): Promise<boolean> {
     completed = {
       metadata,
@@ -244,11 +272,6 @@ export const createCliResultOutput = (
     const filterPaths = options.filterPaths?.ok
       ? options.filterPaths.value
       : undefined;
-    const operationFailure = metadata.failure
-      ? value
-      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
-        ? cliOperationFailurePayload(value)
-        : undefined;
     const failure = options.fullOutput ? operationFailure : undefined;
     const ownsFilteredOutput =
       operationFailure === undefined &&
