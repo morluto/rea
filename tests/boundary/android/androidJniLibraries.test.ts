@@ -264,6 +264,19 @@ it("names the reader check when a selected library fails an integrity check", as
         inventory: result.inventory,
       }).libraries[0]?.failure,
     ).toEqual(failure);
+    // An integrity failure without its check, or a check on another kind, is refused.
+    const library = result.libraries[0];
+    for (const malformed of [
+      { kind: "integrity", message: "x" },
+      { kind: "io", message: "x", integrity_check: "entry-metadata" },
+    ])
+      expect(
+        androidJniLibraryCheckpointSchema.safeParse({
+          scan_state: "completed",
+          libraries: [{ ...library, failure: malformed }],
+          inventory: result.inventory,
+        }).success,
+      ).toBe(false);
   } finally {
     entries.mockRestore();
   }
