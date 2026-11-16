@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 import { matchNativeFunctionsFromBundles } from "../application/native/NativeFunctionMatchingService.js";
 import { ArtifactResourceScope } from "../resources/index.js";

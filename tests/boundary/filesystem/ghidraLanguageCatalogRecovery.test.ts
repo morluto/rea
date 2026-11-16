@@ -14,6 +14,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { nativeAotPeFixture } from "../../fixtures/nativeaotPe.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // Fault only the installed x86 language definition; its real descriptor stays
 // open while close is refused, and closes for real once the fault clears.
@@ -116,7 +117,10 @@ it("retries the retained catalog close on later MCP admission and reopens the sa
       logger: silentLogger,
     },
   );
-  const client = new Client({ name: "catalog-close-recovery", version: "1" });
+  const client = new Client(
+    { name: "catalog-close-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const call = (name: "open_binary" | "close_binary") =>

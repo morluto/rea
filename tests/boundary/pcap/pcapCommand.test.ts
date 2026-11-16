@@ -1,3 +1,4 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
@@ -95,8 +96,12 @@ it("preserves a failed producer when cancellation arrives during its final clean
       }),
   }).catch((cause: unknown) => cause);
   expect(controller.signal.aborted).toBe(true);
-  expect(failure).toBeInstanceOf(AnalysisProtocolError);
-  if (!(failure instanceof AnalysisProtocolError)) throw failure;
+  expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+  if (!(failure instanceof UnclassifiedProviderFailure)) throw failure;
+  expect(failure.examined).toMatchObject({
+    failure_kind: "exited",
+    exit_code: 7,
+  });
   expect(failure.cause).toBeInstanceOf(OwnedCommandFailure);
   expect((failure.cause as OwnedCommandFailure).reason).toBe("process");
   expect(failure.capturedOutput).toMatchObject({

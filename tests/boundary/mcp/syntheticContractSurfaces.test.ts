@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { expect } from "vitest";
 import { z } from "zod";
 
@@ -71,10 +72,7 @@ mcpTest(
     expect(cliCommandNames(contracts)).toContain("inspect-synthetic-fixture");
 
     // CLI: the contract's own command runs its handler with the admitted input.
-    const cli = Cli.create("rea-synthetic-contract", {
-      version: "1",
-      sync: false,
-    });
+    const cli = createCommandCli();
     const cliReceived: unknown[] = [];
     registerContractCommand(
       cli as unknown as CliInstance,
@@ -86,7 +84,7 @@ mcpTest(
         return {};
       },
     );
-    const command = Cli.toCommands.get(cli)?.get("inspect-synthetic-fixture");
+    const command = cliCommand(cli, "inspect-synthetic-fixture")?.definition;
     if (command === undefined)
       throw new Error("inspect-synthetic-fixture is not registered");
     const parse = (key: "args" | "options", value: unknown) =>

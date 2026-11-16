@@ -30,6 +30,11 @@ export interface MutationValue {
   readonly retained?: Readonly<Record<string, string>>;
 }
 
+/** A prepared command that observes through an owned resource. */
+export type EvidenceCommand = (
+  signal: AbortSignal,
+) => Promise<Result<Evidence, AnalysisError>>;
+
 /**
  * What one command that may change the bound artifact does:
  *
@@ -46,15 +51,30 @@ export interface MutationValue {
  * command and stays owned for the next retry.
  */
 export type ExternalMutation<Input = unknown> =
-  | {
+  | ({
       readonly kind: "evidence";
       readonly detail?: "delivery";
-      readonly run: (
-        input: Input,
-        signal: AbortSignal,
-      ) => Promise<Result<Evidence, AnalysisError>>;
       readonly retryCleanup: () => Promise<Result<null, AnalysisError>>;
-    }
+    } & (
+      | {
+          readonly run: (
+            input: Input,
+            signal: AbortSignal,
+          ) => Promise<Result<Evidence, AnalysisError>>;
+          readonly prepare?: never;
+        }
+      | {
+          /**
+           * Validate the request and settle the owner's cleanup before
+           * admission, returning the command to run. A refusal here never
+           * reaches admission, so the bound target stays open.
+           */
+          readonly prepare: (
+            input: Input,
+          ) => Promise<Result<EvidenceCommand, AnalysisError>>;
+          readonly run?: never;
+        }
+    ))
   | {
       readonly kind: "value";
       readonly run: (
@@ -125,11 +145,17 @@ export const createExternalMutationToolHandler =
       const ready = requireAnalysisViewRetention(name, retention);
       if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
     }
+    const prepared: Result<EvidenceCommand, AnalysisError> =
+      mutation.prepare === undefined
+        ? ok((commandSignal) => mutation.run(input, commandSignal))
+        : await mutation.prepare(input);
+    if (!prepared.ok) return failed(prepared.error);
+    const command = prepared.value;
     const observed = await runWithExternalMutationAdmission(
       session,
       name,
       signal,
-      () => logToolExecution(logger, name, () => mutation.run(input, signal)),
+      () => logToolExecution(logger, name, () => command(signal)),
       (evidence) => evidence,
       mutation.retryCleanup,
     );

@@ -27,6 +27,7 @@ import * as evidenceDomain from "../../src/domain/evidence.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const unexpectedBundleFailures = [
   new TypeError("bundle authentication TypeError"),
@@ -187,7 +188,10 @@ it.each(unexpectedBundleFailures)(
       throw new Error("Evidence import must not launch a provider");
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "bundle-import-failure", version: "1" });
+    const client = new Client(
+      { name: "bundle-import-failure", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     spyOnBundleParse(failure);

@@ -39,10 +39,7 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
 import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
-import {
-  reportOperationEnd,
-  reportOperationStart,
-} from "./operationProgress.js";
+import { createOperationProgress } from "./operationProgress.js";
 import {
   deliverApplicationExecution,
   type ApplicationExecutionRecords,
@@ -217,6 +214,17 @@ export class ReducibleValue {
 }
 
 /**
+ * A value followed by content blocks an upstream tool returned (a build
+ * computer's screenshot, say), delivered unchanged after REA's JSON.
+ */
+export class ForwardedValue {
+  constructor(
+    readonly value: JsonValue,
+    readonly content: readonly Readonly<Record<string, JsonValue>>[],
+  ) {}
+}
+
+/**
  * A failure delivered with facts its operation observed alongside the error
  * (an open's selection at failure, say), added to the error's details.
  */
@@ -229,7 +237,7 @@ export class DetailedFailure {
 
 /** What a value workflow returns. */
 export type ValueOutcome = Result<
-  JsonValue | CommittedValue | ReducibleValue,
+  JsonValue | CommittedValue | ReducibleValue | ForwardedValue,
   AnalysisError | DetailedFailure
 >;
 
@@ -295,7 +303,13 @@ export const createValueToolHandler =
                 {},
                 value.alternatives,
               )
-            : server.delivery.toCallToolResult(ok(value), contract);
+            : value instanceof ForwardedValue
+              ? server.delivery.toForwardedToolResult(
+                  ok(value.value),
+                  contract,
+                  value.content,
+                )
+              : server.delivery.toCallToolResult(ok(value), contract);
       },
     );
 
@@ -516,6 +530,12 @@ export type AnalysisWorkflow = (
   request: ApplicationWorkflowRequest,
 ) => Promise<Result<AnalysisWorkflowOutcome, AnalysisError>>;
 
+/** Delivery controls and the owner of this complete workflow's terminal progress. */
+export interface AnalysisWorkflowOptions {
+  readonly detail?: "delivery" | undefined;
+  readonly completionProgress?: "workflow" | undefined;
+}
+
 /**
  * Run a provider-backed workflow on the analysis that admission grants for
  * the call, reporting its start and terminal disposition, and deliver its
@@ -531,16 +551,17 @@ export const createAnalysisToolHandler =
     logger: Logger,
     retention: AnalysisViewRetention,
     withAdmittedAnalysis: WithAdmittedAnalysis,
-    selectsDetail: boolean,
+    options: AnalysisWorkflowOptions,
   ) =>
   (contract: ToolContract) =>
   async (
     rawInput: unknown,
     context: ServerContext,
   ): Promise<CallToolResult> => {
-    const { detail, input } = selectsDetail
-      ? deliveryDetail(rawInput)
-      : { detail: undefined, input: rawInput };
+    const { detail, input } =
+      options.detail === "delivery"
+        ? deliveryDetail(rawInput)
+        : { detail: undefined, input: rawInput };
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(contract.name, retention);
       if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
@@ -550,8 +571,12 @@ export const createAnalysisToolHandler =
       contract.name,
       signal,
       async (analysis) => {
-        const progress = mcpProgressReporter(context);
-        await reportOperationStart(progress, contract.name);
+        const progress = createOperationProgress(
+          mcpProgressReporter(context),
+          contract.name,
+          options.completionProgress,
+        );
+        await progress.start();
         const analyzed = await logToolExecution(logger, contract.name, () =>
           analyze(input, analysis, { signal, progress }),
         );
@@ -580,12 +605,7 @@ export const createAnalysisToolHandler =
                   contract,
                   analyzed.value.recorded,
                 );
-        await reportOperationEnd(
-          progress,
-          contract.name,
-          response.isError !== true,
-        );
-        return response;
+        return progress.complete(response);
       },
     );
     return admitted.ok

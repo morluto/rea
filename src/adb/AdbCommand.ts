@@ -146,10 +146,18 @@ export const runAdbCapture = async (
       const allowance =
         limits.volatileOutput === true
           ? {
-              fixedAllowance: { name, kind: "live" as const },
+              fixedAllowance: {
+                name,
+                kind: "live" as const,
+                limit: limits.maxOutputBytes,
+                unit: "bytes",
+              },
               retryable: true as const,
             }
-          : fixedAllowanceOptions(name, "capture");
+          : fixedAllowanceOptions(name, "capture", {
+              limit: limits.maxOutputBytes,
+              unit: "bytes",
+            });
       return err(
         new AnalysisResourceConstraintError(
           operation,

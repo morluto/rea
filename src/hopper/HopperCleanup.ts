@@ -2,8 +2,7 @@ import type { Socket } from "node:net";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { HopperError } from "../domain/hopperErrors.js";
-import { HopperProcessError } from "../domain/hopperErrors.js";
+import { HopperProcessError } from "./HopperErrors.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -75,7 +74,7 @@ export interface HopperCleanupInput {
   readonly onDiagnostic: ((event: HopperDiagnostic) => void) | undefined;
   request(
     method: "shutdown" | "shutdown_document",
-  ): Promise<Result<JsonValue, HopperError>>;
+  ): Promise<Result<JsonValue, AnalysisError>>;
   releaseTransport(socket: Socket | undefined): void;
 }
 
@@ -249,7 +248,7 @@ const requestShutdown = async (
   const outcome = shutdown.ok
     ? parseHopperShutdownReply(method, shutdown.value)
     : undefined;
-  let fallback: Result<JsonValue, HopperError> | undefined;
+  let fallback: Result<JsonValue, AnalysisError> | undefined;
   if (
     outcome?.ok === true &&
     outcome.value === "cleanup_required" &&
@@ -307,7 +306,7 @@ const requestShutdown = async (
 
 const fallbackDocumentShutdown = async (
   input: HopperCleanupInput,
-): Promise<Result<JsonValue, HopperError>> => {
+): Promise<Result<JsonValue, AnalysisError>> => {
   const fallback = await input
     .request("shutdown_document")
     .catch((cause: unknown) =>
@@ -349,7 +348,7 @@ const shutdownRequestFailure = (
 
 /** Name the shutdown failure in retained-cleanup details without its cause text. */
 const shutdownErrorDetails = (
-  error: HopperError,
+  error: AnalysisError,
 ): Record<string, JsonValue> => ({
   error_tag: error._tag,
   ...(error instanceof HopperProcessError
@@ -358,7 +357,7 @@ const shutdownErrorDetails = (
 });
 
 const shutdownFailureDetails = (
-  error: HopperError,
+  error: AnalysisError,
 ): Record<string, JsonValue> => ({
   errorTag: error._tag,
   ...(error instanceof HopperProcessError && error.operation !== undefined

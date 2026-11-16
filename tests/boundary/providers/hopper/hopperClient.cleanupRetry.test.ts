@@ -7,7 +7,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { AnalysisCleanupRelease } from "../../../../src/domain/analysisCleanupRelease.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { HopperStartError } from "../../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../../src/hopper/HopperErrors.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import type {
