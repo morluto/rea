@@ -23,8 +23,9 @@ import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {
   ANDROID_OTA_HEADER_V2_BYTES,
-  ANDROID_OTA_PAYLOAD_LIMITATIONS,
   androidOtaDistinctOperationDataBytes,
+  androidOtaExtractRefusalError,
+  androidOtaExtractRefusalLimitation,
   parseAndroidOtaHeader,
   parseAndroidOtaPayload,
   reconstructAndroidOtaPartition,
@@ -109,15 +110,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       );
       const { handle, initial } = await this.#source.read(signal);
       this.#assertOpen(signal);
-      if (!stored.partition.extractable) {
-        const limitation =
-          ANDROID_OTA_PAYLOAD_LIMITATIONS.unsupportedOperations;
-        throw new ArtifactEntryContentUnavailable(
-          `Android OTA partition ${stored.partition.name} cannot be reconstructed`,
-          limitation,
-          { traversal: { status: "unknown", limitations: [limitation] } },
-        );
-      }
+      const refused = androidOtaExtractRefusalError(stored.partition);
+      if (refused !== null) throw reconstructFailure(refused);
       const payload = this.#payload;
       if (payload === undefined)
         throw new ArtifactReaderFailure(
@@ -309,8 +303,15 @@ const parseFailure = (
 const reconstructFailure = (
   failure: AndroidOtaPayloadReconstructError,
 ): ArtifactReaderFailure => {
-  if (failure._tag === "AndroidOtaPayloadUnsupportedOperation") {
-    const limitation = ANDROID_OTA_PAYLOAD_LIMITATIONS.unsupportedOperations;
+  if (
+    failure._tag === "AndroidOtaPayloadUnsupportedOperation" ||
+    failure._tag === "AndroidOtaPayloadBlobTruncated"
+  ) {
+    const limitation = androidOtaExtractRefusalLimitation(
+      failure._tag === "AndroidOtaPayloadBlobTruncated"
+        ? "blob_truncated"
+        : "unsupported_operations",
+    );
     return new ArtifactEntryContentUnavailable(failure.message, limitation, {
       traversal: { status: "unknown", limitations: [limitation] },
       cause: failure,
@@ -345,9 +346,10 @@ const entryFor = (partition: AndroidOtaPartition): AndroidOtaEntry => {
     byteOffset: null,
     declaredIntegrity: partition.extractable ? sha256 : null,
     unpacked: false,
-    limitations: partition.extractable
-      ? []
-      : [ANDROID_OTA_PAYLOAD_LIMITATIONS.unsupportedOperations],
+    limitations:
+      partition.extractRefusal === null
+        ? []
+        : [androidOtaExtractRefusalLimitation(partition.extractRefusal)],
     adapterKey: `android-ota-payload:partition:${String(partition.index)}`,
     formatMetadata: {
       kind: "android-ota-partition",

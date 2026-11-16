@@ -54,7 +54,31 @@ export const ANDROID_OTA_PAYLOAD_LIMITATIONS = {
     "The payload blob is truncated; partition inventory comes from the manifest and operation data past the end of the file was not read.",
   unsupportedOperations:
     "Delta and compressed operations other than REPLACE_ZSTD are not applied; those partitions cannot be reconstructed.",
+  missingPartitionSize:
+    "A partition without a new_partition_info size cannot be reconstructed.",
+  partitionSizeLimit: `A partition larger than the fixed ${String(32 * 1024 * 1024)}-byte extraction ceiling is inventoried but not reconstructed.`,
+  partitionBlobTruncated:
+    "A partition whose operation data extends past the end of the payload file cannot be reconstructed.",
 } as const;
+
+/** Why a partition image cannot be reconstructed, or null when it can. */
+export type AndroidOtaExtractRefusal =
+  | "unsupported_operations"
+  | "missing_size"
+  | "size_limit"
+  | "blob_truncated";
+
+/** The limitation text that names one extraction refusal. */
+export const androidOtaExtractRefusalLimitation = (
+  refusal: AndroidOtaExtractRefusal,
+): string =>
+  ({
+    unsupported_operations:
+      ANDROID_OTA_PAYLOAD_LIMITATIONS.unsupportedOperations,
+    missing_size: ANDROID_OTA_PAYLOAD_LIMITATIONS.missingPartitionSize,
+    size_limit: ANDROID_OTA_PAYLOAD_LIMITATIONS.partitionSizeLimit,
+    blob_truncated: ANDROID_OTA_PAYLOAD_LIMITATIONS.partitionBlobTruncated,
+  })[refusal];
 
 /** InstallOperation.Type names keyed by the proto enumerator. */
 export const INSTALL_OPERATION_NAMES: Readonly<Record<number, string>> = {
@@ -109,6 +133,10 @@ export type AndroidOtaPayloadReconstructError =
       readonly message: string;
       readonly declaredHashHex: string;
       readonly observedHashHex: string;
+    }
+  | {
+      readonly _tag: "AndroidOtaPayloadBlobTruncated";
+      readonly message: string;
     };
 
 const malformed = (message: string): AndroidOtaPayloadParseError => ({
@@ -216,6 +244,8 @@ export interface AndroidOtaPartition {
   readonly mergeOperationCount: number;
   readonly estimateCowSize: number | null;
   readonly extractable: boolean;
+  /** The reason `extractable` is false, or null when the image can be rebuilt. */
+  readonly extractRefusal: AndroidOtaExtractRefusal | null;
 }
 
 export interface AndroidOtaDynamicGroup {
@@ -1010,6 +1040,18 @@ export const parseAndroidOtaPayload = (
           operation.dataLength === 0 ||
           operation.dataOffset + operation.dataLength <= blobAvailable,
       );
+      const size = partition.newPartitionInfo.size;
+      const extractRefusal: AndroidOtaExtractRefusal | null = !isExtractable(
+        partition.operations,
+      )
+        ? "unsupported_operations"
+        : size === null
+          ? "missing_size"
+          : size > ANDROID_OTA_MAX_EXTRACT_BYTES
+            ? "size_limit"
+            : needsBlob && !blobFits
+              ? "blob_truncated"
+              : null;
       return {
         index,
         name: partition.name!,
@@ -1037,11 +1079,8 @@ export const parseAndroidOtaPayload = (
         ),
         mergeOperationCount: partition.mergeOperationCount,
         estimateCowSize: partition.estimateCowSize,
-        extractable:
-          isExtractable(partition.operations) &&
-          (!needsBlob || blobFits) &&
-          partition.newPartitionInfo.size !== null &&
-          partition.newPartitionInfo.size <= ANDROID_OTA_MAX_EXTRACT_BYTES,
+        extractable: extractRefusal === null,
+        extractRefusal,
       };
     },
   );
@@ -1052,8 +1091,12 @@ export const parseAndroidOtaPayload = (
   ];
   if (blobTruncated)
     limitations.push(ANDROID_OTA_PAYLOAD_LIMITATIONS.blobTruncated);
-  if (partitions.some((partition) => !partition.extractable))
-    limitations.push(ANDROID_OTA_PAYLOAD_LIMITATIONS.unsupportedOperations);
+  for (const refusal of new Set(
+    partitions.flatMap((partition) =>
+      partition.extractRefusal === null ? [] : [partition.extractRefusal],
+    ),
+  ))
+    limitations.push(androidOtaExtractRefusalLimitation(refusal));
   if (manifest.value.maxTimestampOutOfRange)
     limitations.push(
       "max_timestamp is outside the exact integer range this reader reports.",
@@ -1201,36 +1244,49 @@ export const androidOtaDistinctOperationDataBytes = (
   return ok(total);
 };
 
+/** The typed failure for a partition the inventory refused to reconstruct. */
+export const androidOtaExtractRefusalError = (
+  partition: AndroidOtaPartition,
+): AndroidOtaPayloadReconstructError | null => {
+  switch (partition.extractRefusal) {
+    case null:
+      return null;
+    case "unsupported_operations": {
+      const unsupported = partition.operations.find(
+        (operation) => !EXTRACTABLE_TYPES.has(operation.typeCode),
+      );
+      return {
+        _tag: "AndroidOtaPayloadUnsupportedOperation",
+        message: `Android OTA partition ${partition.name} uses unsupported operation ${unsupported?.typeName ?? "unknown"}`,
+        typeCode: unsupported?.typeCode ?? -1,
+      };
+    }
+    case "missing_size":
+      return malformed(
+        `Android OTA partition ${partition.name} has no new_partition_info size`,
+      );
+    case "size_limit":
+      return capacity(
+        "extracted partition size",
+        ANDROID_OTA_MAX_EXTRACT_BYTES,
+        "byte",
+      );
+    case "blob_truncated":
+      return {
+        _tag: "AndroidOtaPayloadBlobTruncated",
+        message: `Android OTA partition ${partition.name} reads operation data past the end of the payload file`,
+      };
+  }
+};
+
 export const reconstructAndroidOtaPartition = (
   partition: AndroidOtaPartition,
   blockSize: number,
   readBlob: (offset: number, length: number) => Uint8Array,
 ): Result<Uint8Array, AndroidOtaPayloadReconstructError> => {
-  if (!partition.extractable) {
-    const unsupported = partition.operations.find(
-      (operation) => !EXTRACTABLE_TYPES.has(operation.typeCode),
-    );
-    return err({
-      _tag: "AndroidOtaPayloadUnsupportedOperation",
-      message: `Android OTA partition ${partition.name} uses unsupported operation ${unsupported?.typeName ?? "unknown"}`,
-      typeCode: unsupported?.typeCode ?? -1,
-    });
-  }
-  const size = partition.newPartitionInfo.size;
-  if (size === null)
-    return err(
-      malformed(
-        `Android OTA partition ${partition.name} has no new_partition_info size`,
-      ),
-    );
-  if (size > ANDROID_OTA_MAX_EXTRACT_BYTES)
-    return err(
-      capacity(
-        "extracted partition size",
-        ANDROID_OTA_MAX_EXTRACT_BYTES,
-        "byte",
-      ),
-    );
+  const refused = androidOtaExtractRefusalError(partition);
+  if (refused !== null) return err(refused);
+  const size = partition.newPartitionInfo.size!;
   if (blockSize <= 0 || !Number.isSafeInteger(blockSize))
     return err(malformed("block_size is not a positive extent"));
   const image = Buffer.alloc(size);

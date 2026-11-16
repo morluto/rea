@@ -7,9 +7,11 @@ import { expect, it } from "vitest";
 import {
   ANDROID_OTA_HEADER_V2_BYTES,
   ANDROID_OTA_MAGIC,
+  ANDROID_OTA_MAX_EXTRACT_BYTES,
   ANDROID_OTA_MAX_MANIFEST_BYTES,
   ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
   ANDROID_OTA_MAX_SIGNATURE_BYTES,
+  ANDROID_OTA_PAYLOAD_LIMITATIONS,
   parseAndroidOtaHeader,
   parseAndroidOtaPayload,
   recognizeAndroidOtaPayload,
@@ -308,7 +310,65 @@ it("keeps a complete manifest when the blob is truncated", () => {
     "system",
   ]);
   expect(kept.value.partitions[0]?.extractable).toBe(false);
+  expect(kept.value.partitions[0]?.extractRefusal).toBe("blob_truncated");
   expect(kept.value.limitations.join(" ")).toContain("truncated");
+  expect(
+    reconstructAndroidOtaPartition(
+      kept.value.partitions[0]!,
+      kept.value.blockSize,
+      () => new Uint8Array(),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AndroidOtaPayloadBlobTruncated" },
+  });
+});
+
+it("names the extraction ceiling, not unsupported operations, for a large REPLACE partition", () => {
+  const blockSize = 4096;
+  const newSize = ANDROID_OTA_MAX_EXTRACT_BYTES + blockSize;
+  const parsed = parse(
+    buildAndroidOtaPayload({
+      blockSize,
+      partitions: [
+        {
+          name: "super",
+          newSize,
+          operations: [
+            {
+              type: 0,
+              data: Buffer.from("SUPER"),
+              dstExtents: [{ startBlock: 0, numBlocks: newSize / blockSize }],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  const [partition] = parsed.value.partitions;
+  expect(partition).toMatchObject({
+    extractable: false,
+    extractRefusal: "size_limit",
+  });
+  expect(parsed.value.limitations).toContain(
+    ANDROID_OTA_PAYLOAD_LIMITATIONS.partitionSizeLimit,
+  );
+  expect(parsed.value.limitations).not.toContain(
+    ANDROID_OTA_PAYLOAD_LIMITATIONS.unsupportedOperations,
+  );
+  expect(
+    reconstructAndroidOtaPartition(partition!, blockSize, () => {
+      throw new Error("a refused partition reads no operation data");
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AndroidOtaPayloadCapacityFailure",
+      limit: { maximum: ANDROID_OTA_MAX_EXTRACT_BYTES, unit: "byte" },
+    },
+  });
 });
 
 it("refuses operation data that overruns the payload blob", () => {
