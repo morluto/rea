@@ -34,12 +34,13 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import { createServer } from "../../src/server/createServer.js";
 import { silentLogger } from "../../src/logger.js";
 import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { ok } from "../../src/domain/result.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const connectSession = async () => {
   const session = createTestBinarySession(
@@ -53,7 +54,10 @@ const connectSession = async () => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "process-snapshot-cleanup", version: "1" });
+  const client = new Client(
+    { name: "process-snapshot-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

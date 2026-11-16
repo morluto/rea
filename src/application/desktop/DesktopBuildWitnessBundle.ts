@@ -6,8 +6,9 @@ import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
 import type { TaskCheckOutcome } from "../../domain/desktop/appTaskChecks.js";
@@ -31,9 +32,9 @@ import {
   guestFileAnswerWorkingBytes,
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
-import { errorText } from "./DesktopBuildCommands.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const CHECK = "check_build_task";
 
@@ -77,7 +78,7 @@ export const bundleTaskDifference = async (
         bundleFileBytes(),
         signal,
         false,
-        (reason) => new AnalysisCancelledError(CHECK, { cause: reason }),
+        (reason) => cancelledBy(CHECK, carriedReason(reason)),
       ),
     ),
   );
@@ -155,7 +156,7 @@ export const judgeScreenTask = async (
           ? cause
           : cause.retainDiagnostics({ completed_judge_checks: results })
         : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-            userMessage: `The screen judge could not check the screen: ${errorText(cause)}`,
+            userMessage: `The screen judge could not check the screen: ${errorMessage(cause)}`,
             cause,
             ...(results.length === 0
               ? {}

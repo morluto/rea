@@ -56,7 +56,7 @@ export const projectEvtxArchiveView = (
       summary: report.summary,
       source_coverage: report.source_coverage,
     },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       [...parent.limitations, ...report.limitations],
       parent.evidenceId,

@@ -1,12 +1,14 @@
 /** Audit a local Electron .app before and after fuse and source-map remediation. */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const { ELECTRON_FUSE_SENTINEL } = await importVerifierSource(
   new URL("../src/domain/electron/electronFuses.ts", import.meta.url).href,
@@ -193,8 +195,14 @@ const installFuses = async (root) => {
 };
 
 const commands = await createVerifierCommands();
-const root = await mkdtemp(join(tmpdir(), "rea-release-exposure-"));
-await withVerifierCleanup(async () => {
+const fixture = await VerifierFixture.open({
+  prefix: "rea-release-exposure-",
+  private: false,
+});
+const root = fixture.path;
+// The root is removed only after the owned commands confirm.
+fixture.releaseAfter(() => commands.close());
+await withVerifierFixture(fixture, async () => {
   const beforeApp = join(root, "before", "MyApp.app");
   const afterApp = join(root, "after", "MyApp.app");
   const enabled = [0x31, 0x31, 0x31, 0x31, 0x30, 0x30];
@@ -297,4 +305,4 @@ ${table(afterChecks)}
   console.log(`node ${process.version}`);
   console.log(`@electron/fuses ${version}`);
   console.log(`fail_on high exit ${String(gated.status)}`);
-}, [() => commands.close(), () => rm(root, { recursive: true, force: true })]);
+});

@@ -1,16 +1,11 @@
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
-  rm,
   symlink,
   unlink,
   writeFile,
@@ -27,6 +22,10 @@ import {
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-6502.mjs");
@@ -45,7 +44,12 @@ for (const [name, command] of Object.entries({ ca65, ld65 })) {
   toolchain[name] = (version.stdout + version.stderr).trim();
 }
 await mkdir(join(root, "build"), { recursive: true });
-const workspace = await mkdtemp(join(root, "build", "rea-6502-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-6502-proof-",
+  parent: join(root, "build"),
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const path = join(workspace, "image.bin");
@@ -74,7 +78,26 @@ transport.stderr?.on("data", (chunk) => {
 let connected = false;
 let verifierRun;
 let report;
-await withVerifierCleanup(async () => {
+workspaceFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    async () => {
+      if (connected) await call("close_binary", {});
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  verifierRun = await completeVerifierRun(run);
+  if (process.platform !== "win32") {
+    assert.equal(verifierRun.process_lineage.status, "verified");
+    assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  }
+});
+await withVerifierFixture(workspaceFixture, async () => {
   try {
     await exec(
       ca65,
@@ -196,7 +219,7 @@ await withVerifierCleanup(async () => {
     const cli = parseEvidence(JSON.parse(stdout));
     assert.deepEqual(cli.normalized_result, image.normalized_result);
     assert.equal(cli.analysis_profile.digest, image.analysis_profile.digest);
-    assert.equal(cli.subject.digest.sha256, sha256);
+    assert.equal(cli.subject.identity.sha256, sha256);
     const fileCli = await exec(
       process.execPath,
       [
@@ -222,7 +245,7 @@ await withVerifierCleanup(async () => {
       filePseudo.normalized_result,
     );
     assert.deepEqual(fileCliEvidence.locations, filePseudo.locations);
-    assert.equal(fileCliEvidence.subject.digest.sha256, sha256);
+    assert.equal(fileCliEvidence.subject.identity.sha256, sha256);
     assert.deepEqual(await readFile(path), bytes);
     assert.deepEqual(await readdir(runtime), []);
     const lowMemory = [];
@@ -465,28 +488,7 @@ await withVerifierCleanup(async () => {
     if (stderr) process.stderr.write(stderr);
     throw cause;
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      async () => {
-        if (connected) await call("close_binary", {});
-      },
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    assert.deepEqual(
-      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
-      [],
-      "Owned Ghidra runtime survived close",
-    );
-    verifierRun = await completeVerifierRun(run);
-    if (process.platform !== "win32") {
-      assert.equal(verifierRun.process_lineage.status, "verified");
-      assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    }
-    await rm(workspace, { recursive: true, force: true });
-  },
-]);
+});
 verifierRun = await completeVerifierRun(run);
 if (process.platform !== "win32") {
   assert.equal(verifierRun.process_lineage.status, "verified");
@@ -509,8 +511,8 @@ async function call(name, args = {}) {
 
 function evidence(value, sha256) {
   const result = parseEvidence(value);
-  assert.equal(result.subject.digest.sha256, sha256);
-  assert.equal(result.subject.architecture, "6502");
-  assert.equal(result.subject.format, "raw-binary");
+  assert.equal(result.subject.identity.sha256, sha256);
+  assert.equal(result.subject.identity.architecture, "6502");
+  assert.equal(result.subject.identity.format, "raw-binary");
   return result;
 }

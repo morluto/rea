@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const endpoints = (source: string) =>
   analyzeJavaScriptStaticSource(source).endpoints.map((endpoint) => ({
@@ -228,6 +228,37 @@ it("resolves an unchanged URL object's toString target", () => {
       value: "wss://api.example.test/socket",
       mechanism: "call:WebSocket",
       resolution: undefined,
+    },
+  ]);
+});
+
+// Coercing a URL object reads its conversion methods through URL.prototype
+// and its prototype chain; an explicit toString() call reads one of them.
+it.each([
+  ["URL.prototype escapes", "configure(URL.prototype);", "socket.toString()"],
+  [
+    "Object.prototype escapes",
+    "configure(Object.prototype);",
+    "socket.toString()",
+  ],
+  [
+    "URL.prototype's prototype link changes",
+    "URL.prototype.__proto__ = proxy;",
+    "socket",
+  ],
+])("keeps a URL object target partial after %s", (_, effect, target) => {
+  expect(
+    endpoints(`
+        ${effect}
+        const socket = new URL("wss://api.example.test/socket");
+        new WebSocket(${target});
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: target,
+      mechanism: "call:WebSocket",
+      resolution: "partial",
     },
   ]);
 });

@@ -1,11 +1,12 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { Parser, z } from "incur";
+import { Parser } from "incur";
+import { z } from "zod";
 import { decode } from "@toon-format/toon";
 
 import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";
-import { splitIncurBuiltinArguments } from "../../../src/cliBuiltinArguments.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
@@ -49,7 +50,6 @@ cliTest(
           ],
           cwd: f.home,
           environment: f.environment,
-          timeoutMs: 20_000,
         });
       const first = await run();
       expect(first.exitCode, first.stderr).toBe(0);
@@ -107,7 +107,6 @@ cliTest(
           arguments: ["mcp", "add", ...(json ? ["--json"] : [])],
           cwd: f.home,
           environment: f.environment,
-          timeoutMs: 20_000,
         });
         expect(result.exitCode).toBe(1);
         const document = report(result.stdout, json);
@@ -142,7 +141,6 @@ cliTest(
         arguments: arguments_,
         cwd: f.home,
         environment: f.environment,
-        timeoutMs: 20_000,
       });
       expect(result.exitCode, result.stdout).toBe(0);
       expect(await readFile(f.settings, "utf8")).toBe("broken JSON\n");
@@ -167,7 +165,6 @@ cliTest(
           arguments: arguments_,
           cwd: f.home,
           environment: f.environment,
-          timeoutMs: 20_000,
         });
       const registered = await run();
       expect(registered.exitCode, registered.stdout).toBe(0);
@@ -210,10 +207,9 @@ it("timing splitting matches Incur after output values and before the terminator
         undefined,
         { validate: false },
       ).rest;
-      expect(splitIncurBuiltinArguments(command).command).toEqual(expected);
+      expect(parseCliGlobalArguments(command).command).toEqual(expected);
       expect(
-        splitIncurBuiltinArguments(["--filter-output", flag, ...command])
-          .command,
+        parseCliGlobalArguments(["--filter-output", flag, ...command]).command,
       ).toEqual(expected);
     }
   }
@@ -235,7 +231,6 @@ cliTest(
         ],
         cwd: f.home,
         environment: f.environment,
-        timeoutMs: 20_000,
       });
       expect(result.exitCode, result.stdout).toBe(0);
       expect(report(result.stdout, true)).toMatchObject({
@@ -265,7 +260,6 @@ cliTest(
         arguments: ["mcp", "add", ...options, "--json"],
         cwd: f.home,
         environment: f.environment,
-        timeoutMs: 20_000,
       });
       expect(result.exitCode, result.stderr).toBe(1);
       expect(result.json).toMatchObject({

@@ -4,11 +4,30 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
-  bundleDockerfile,
+  planEnvironmentBundle,
   registryPackageSource,
 } from "../../../src/application/environment/environmentBundle.js";
+import {
+  environmentServeFixture,
+  environmentServeServed,
+} from "../../fixtures/environmentServe.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { supportsNodeVersion } from "../../../src/domain/runtimeVersion.js";
+
+const plannedDockerfile = (): string => {
+  const { source, served } = environmentServeServed(environmentServeFixture());
+  const planned = planEnvironmentBundle(source, {
+    packageSource: registryPackageSource(),
+    served: () => served,
+  });
+  if (!planned.ok) throw planned.error;
+  const dockerfile = planned.value.files.find(({ path }) =>
+    path.endsWith("/Dockerfile"),
+  );
+  if (dockerfile === undefined)
+    throw new Error("Expected a planned Dockerfile");
+  return dockerfile.content;
+};
 
 /**
  * The exported Dockerfile installs the CLI that produced the bundle, so the
@@ -20,7 +39,7 @@ describe("environment bundle package pin", () => {
     const pinned = (
       await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
     ).trim();
-    const dockerfile = bundleDockerfile(registryPackageSource());
+    const dockerfile = plannedDockerfile();
     const nodeVersion = /^FROM node:(\d+\.\d+\.\d+)(?:[-@][^\s]+)?$/u.exec(
       dockerfile.split("\n")[0] ?? "",
     )?.[1];
@@ -39,7 +58,7 @@ describe("environment bundle package pin", () => {
           ),
         ),
       );
-    const dockerfile = bundleDockerfile(registryPackageSource());
+    const dockerfile = plannedDockerfile();
     const install = dockerfile
       .split("\n")
       .find((line) => line.startsWith("RUN npm install -g"));

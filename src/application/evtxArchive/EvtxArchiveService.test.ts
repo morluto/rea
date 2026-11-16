@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { inspectEvtxArchiveEvidence } from "./EvtxArchiveService.js";
 

@@ -1,38 +1,32 @@
+import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
+  projectSelectedArtifactFileFailure,
+  projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-  stableArtifactInputRecovery,
-} from "../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
-import {
+  stableArtifactInputFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { GoBinaryPort } from "../application/go/GoBinaryPort.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { GoBinaryPort } from "../ports/go/GoBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import {
   goBinarySchema,
   goAnalysisBudgets,
+  GO_ANALYSIS_BUDGET_DEFAULTS,
   GO_ANALYSIS_BUDGET_MAXIMA,
   type GoAnalysisBudgets,
   type GoBinary,
@@ -43,11 +37,12 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
-import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
+import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+  binaryResourceCeiling,
+} from "../domain/binaryContainer.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_go_binary";
 
@@ -56,8 +51,28 @@ const budgetRecovery = (
   value: number,
 ): string =>
   value < GO_ANALYSIS_BUDGET_MAXIMA[parameter]
-    ? `Increase ${parameter} above ${String(value)} (maximum ${String(GO_ANALYSIS_BUDGET_MAXIMA[parameter])}) on the next inspect_go_binary request (CLI --${parameter.replaceAll("_", "-")}); no restart is required.`
+    ? `Increase ${parameter} above ${String(value)} (maximum ${String(GO_ANALYSIS_BUDGET_MAXIMA[parameter])}) on the next inspect_go_binary request; no restart is required.`
     : `${parameter} is at its runtime representation maximum ${String(value)}; no larger value is supported. Preserve the complete selected artifact and report this boundary rather than repeating the unchanged request.`;
+
+/** The per-call control of an exhausted budget, while a larger value is selectable. */
+const budgetLimit = (
+  parameter: keyof GoAnalysisBudgets,
+  value: number,
+): { readonly limit?: AnalysisControlLimit } =>
+  value < GO_ANALYSIS_BUDGET_MAXIMA[parameter]
+    ? {
+        limit: {
+          control_kind: "parameter",
+          parameter,
+          effective_value: value,
+          unit: parameter.endsWith("_bytes") ? "bytes" : "count",
+          minimum: 1,
+          maximum: GO_ANALYSIS_BUDGET_MAXIMA[parameter],
+          default_value: GO_ANALYSIS_BUDGET_DEFAULTS[parameter],
+          applies_at: "next_call",
+        },
+      }
+    : {};
 
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -67,22 +82,12 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure) {
     const parameter =
       cause.boundary === "search"
@@ -105,27 +110,18 @@ const failureForPrimary = (
           ? fixedAllowanceOptions(
               "The Go structural decoding allowance",
               "parser",
+              binaryResourceCeiling(cause),
             )
           : {
               retryable: false,
               remediationAction: `${cause.boundary === "search" ? "The Go build-info header-search allowance" : "The Go build-info string allowance"} is ${String(budgets[parameter])} bytes. ${budgetRecovery(parameter, budgets[parameter])} Other byte and report budgets are independent. Repeating the unchanged request cannot raise this allowance.`,
+              ...budgetLimit(parameter, budgets[parameter]),
             }),
       },
     );
   }
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
-          cause,
-          undecodedContent: cause.undecodedContent,
-        })
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -144,34 +140,24 @@ const failureForPrimary = (
           cause,
           retryable: false,
           remediationAction: `${budgetRecovery("max_input_bytes", budgets.max_input_bytes)} Report, build-info and structural allowances remain independent. Preserve the complete artifact; do not truncate required bytes.`,
+          ...budgetLimit("max_input_bytes", budgets.max_input_bytes),
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    path,
+    "artifact",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ProviderAdapterError(GO_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };
@@ -210,6 +196,7 @@ const outputLimit = (path: string, maximumBytes: number) =>
     {
       retryable: false,
       remediationAction: `The Go complete-report allowance is ${String(maximumBytes)} bytes. ${budgetRecovery("max_report_bytes", maximumBytes)} This did not produce complete Evidence to page. MCP delivery limits remain independent.`,
+      ...budgetLimit("max_report_bytes", maximumBytes),
     },
   );
 
@@ -377,7 +364,10 @@ export class GoBinaryProvider implements GoBinaryPort {
           ...(stringLiterals === undefined
             ? {}
             : { string_literals: stringLiterals }),
-          limitations: limitationsFor(image, stringLiterals, budgets),
+          limitations: [
+            ...limitationsFor(image, stringLiterals, budgets),
+            ...selected.limitations,
+          ],
         };
         if (
           jsonValueByteLength(report, budgets.max_report_bytes) >

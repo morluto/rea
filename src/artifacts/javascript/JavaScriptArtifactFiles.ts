@@ -1,21 +1,18 @@
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
-import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import {
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import {
+  type ArtifactResourceScope,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../ArtifactReader.js";
-import { streamChunkToBuffer } from "../StreamBytes.js";
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  streamChunkToBuffer,
+} from "../../resources/index.js";
 import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
@@ -30,6 +27,8 @@ import type {
   JavaScriptUnanalyzedArtifactLookup,
   JavaScriptArtifactFileSet,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 interface ExpectedFile {
   readonly path: string;
@@ -123,6 +122,7 @@ export const readJavaScriptArtifactFiles = async (
       throw new ArtifactReaderFailure(
         "integrity",
         "Root artifact node is missing",
+        { integrityCheck: "inventory-node" },
       );
     await verifyEntryBytes(
       await reader.openContainer(signal),
@@ -252,6 +252,7 @@ const visitReader = async (
           throw new ArtifactReaderFailure(
             "integrity",
             `Nested ASAR was not present in inventory: ${path}`,
+            { integrityCheck: "inventory-node" },
           );
         if (container.hash_status === "mismatched") continue;
         if (container.hash_status === "unavailable") continue;
@@ -259,6 +260,7 @@ const visitReader = async (
           throw new ArtifactReaderFailure(
             "integrity",
             `Nested ASAR was not integrity-verified: ${path}`,
+            { integrityCheck: "inventory-node" },
           );
         // Inventory expands an ASAR-named file only when its bytes are an
         // ASAR. One it recorded as ordinary bytes has no members to read.
@@ -268,6 +270,7 @@ const visitReader = async (
           throw new ArtifactReaderFailure(
             "integrity",
             `Verified nested ASAR has no inventory node: ${path}`,
+            { integrityCheck: "inventory-node" },
           );
         await verifyEntryBytes(
           await frame.reader.open(entry, context.signal),
@@ -378,22 +381,22 @@ const readText = async (
     await input.reader.open(input.entry, context.signal),
     context.signal,
   );
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  const digest = sha256Hex(bytes);
   if (digest !== input.expected.sha256 || bytes.length !== input.expected.bytes)
     throw new ArtifactReaderFailure(
       "integrity",
       `Artifact entry changed after inventory: ${input.expected.path}`,
+      { integrityCheck: "member-identity" },
     );
   context.textBytes += bytes.length;
   try {
     return {
       included: true,
-      value: new TextDecoder("utf-8", {
-        fatal: true,
-        ignoreBOM:
-          input.expected.kind === "javascript" ||
-          input.expected.kind === "html",
-      }).decode(bytes),
+      value: strictUtf8Decoder(
+        input.expected.kind === "javascript" || input.expected.kind === "html"
+          ? "preserve"
+          : "strip-signature",
+      ).decode(bytes),
     };
   } catch (cause: unknown) {
     // Non-UTF8 bytes are counted; the fixed reason preserves the schema.
@@ -413,6 +416,7 @@ const verifyEntryBytes = async (
     throw new ArtifactReaderFailure(
       "integrity",
       `Artifact entry changed after inventory: ${expected.path}`,
+      { integrityCheck: "member-identity" },
     );
   abortIfNeeded(signal);
 };
@@ -469,6 +473,7 @@ const expectedInventory = (
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact inventory node is missing: ${occurrence.logical_path}`,
+        { integrityCheck: "inventory-node" },
       );
     // Inventory occurrences can have content identities for directories too.
     // Suffixes only describe file candidates; a directory such as
@@ -668,6 +673,7 @@ const assertExpectedFilesWereVisited = (
       throw new ArtifactReaderFailure(
         "integrity",
         `Relevant artifact entry disappeared after inventory: ${path}`,
+        { integrityCheck: "member-identity" },
       );
 };
 

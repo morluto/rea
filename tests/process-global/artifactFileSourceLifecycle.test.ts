@@ -10,20 +10,19 @@ import { dirname, join } from "node:path";
 import { text } from "node:stream/consumers";
 import { setImmediate } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../../src/artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+} from "../../src/resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { GodotPckArtifactReader } from "../../src/artifacts/GodotPckArtifactReader.js";
 import { NodeSeaArtifactReader } from "../../src/artifacts/NodeSeaArtifactReader.js";
 import { nodeSeaElf } from "../../src/artifacts/nodeSea/NodeSea.fixture.js";
 import type { StableRegularFileDescriptor } from "../../src/filesystem/RegularFile.js";
-import { createDeferred } from "../fixtures/binarySession.js";
 import { buildGodotPck } from "../fixtures/godotPck.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 interface OpenControl {
@@ -123,7 +122,7 @@ it.each(carriers)(
       await writeFile(path, carrier.bytes(BODY.repeat(3)));
       await expect(reader.prepareContainer(sha256)).rejects.toMatchObject({
         reason: "integrity",
-        message: `${carrier.name} source identity changed: ${path}`,
+        integrityCheck: "container-identity",
       });
     } finally {
       await reader.close();
@@ -135,12 +134,10 @@ it.each(carriers)(
   "$name joins late admission before close and refuses replacement work",
   async (carrier) => {
     const { path, sha256 } = await carrierFile(carrier);
-    const admitted = createDeferred<void>();
-    const release = createDeferred<void>();
+    const admission = phaseGate();
     control.onOpen = async (handle) => {
       vi.spyOn(handle, "close");
-      admitted.resolve();
-      await release.promise;
+      await admission.hold();
     };
     const reader = carrier.reader(path);
     const operations: Promise<unknown>[] = [];
@@ -148,11 +145,7 @@ it.each(carriers)(
     try {
       const preparing = reader.prepareContainer(sha256);
       operations.push(preparing);
-      await awaitAcknowledgement(
-        admitted.promise,
-        preparing,
-        "carrier admission",
-      );
+      await admission.reached(preparing, "carrier admission");
       const handle = openedHandle();
       const closeAttempts = [reader.close(), reader.close()];
       operations.push(...closeAttempts);
@@ -164,7 +157,7 @@ it.each(carriers)(
       expect(closed).toBe(false);
       expect(handle.fd).toBeGreaterThanOrEqual(0);
       expect(handle.close).not.toHaveBeenCalled();
-      release.resolve();
+      admission.release();
       await preparing;
       await closing;
       expect(handle.fd).toBe(-1);
@@ -181,7 +174,7 @@ it.each(carriers)(
       await reader.close();
       expect(handle.close).toHaveBeenCalledOnce();
     } finally {
-      release.resolve();
+      admission.release();
       await Promise.allSettled(operations);
       await reader.close();
     }
@@ -192,15 +185,13 @@ it.each(carriers)(
   "$name retains a failed physical close and retries only that exact descriptor",
   async (carrier) => {
     const { path, sha256 } = await carrierFile(carrier);
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
+    const carrierClose = phaseGate();
     const failure = new Error("controlled carrier close failure");
     let blocked = true;
     control.onOpen = async (handle) => {
       const close = handle.close.bind(handle);
       vi.spyOn(handle, "close").mockImplementation(async () => {
-        entered.resolve();
-        await release.promise;
+        await carrierClose.hold();
         if (blocked) throw failure;
         await close();
       });
@@ -214,10 +205,10 @@ it.each(carriers)(
       expect(await text(await reader.open(entry))).toBe(BODY);
       const handle = openedHandle();
       closing = Promise.allSettled([reader.close(), reader.close()]);
-      await awaitAcknowledgement(entered.promise, closing, "carrier close");
+      await carrierClose.reached(closing, "carrier close");
       expect(handle.fd).toBeGreaterThanOrEqual(0);
       expect(handle.close).toHaveBeenCalledOnce();
-      release.resolve();
+      carrierClose.release();
       expect(await closing).toEqual([
         { status: "rejected", reason: failure },
         { status: "rejected", reason: failure },
@@ -232,7 +223,7 @@ it.each(carriers)(
       expect(control.handles.size).toBe(1);
     } finally {
       blocked = false;
-      release.resolve();
+      carrierClose.release();
       await closing;
       await reader.close();
     }
@@ -296,8 +287,7 @@ it.each(admissionCases)(
   "$name awaits physical admission cleanup and preserves $primary (closeFails=$closeFails)",
   async ({ carrier, primary, closeFails }) => {
     const { path } = await carrierFile(carrier);
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
+    const admissionClose = phaseGate();
     const controller = new AbortController();
     const admissionFailure = new Error("controlled descriptor stat failure");
     const cleanupFailure = new Error("controlled admission close failure");
@@ -309,8 +299,7 @@ it.each(admissionCases)(
       else controller.abort(cancellation);
       const close = handle.close.bind(handle);
       vi.spyOn(handle, "close").mockImplementation(async () => {
-        entered.resolve();
-        await release.promise;
+        await admissionClose.hold();
         if (blocked) throw cleanupFailure;
         await close();
       });
@@ -328,18 +317,14 @@ it.each(admissionCases)(
         .finally(() => {
           settled = true;
         });
-      await awaitAcknowledgement(
-        entered.promise,
-        operation,
-        "admission cleanup",
-      );
+      await admissionClose.reached(operation, "admission cleanup");
       const handle = openedHandle();
       // An earlier metadata failure stays primary when cancellation arrives in close.
       controller.abort(cancellation);
       await setImmediate();
       expect(settled).toBe(false);
       expect(handle.fd).toBeGreaterThanOrEqual(0);
-      release.resolve();
+      admissionClose.release();
       const failure = await reading;
       if (!(failure instanceof ArtifactReaderFailure))
         throw new Error("Expected a typed carrier admission failure");
@@ -375,7 +360,7 @@ it.each(admissionCases)(
     } finally {
       controller.abort(cancellation);
       blocked = false;
-      release.resolve();
+      admissionClose.release();
       await reading;
       await reader.close();
     }
