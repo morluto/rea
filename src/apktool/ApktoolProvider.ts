@@ -1,5 +1,8 @@
+import {
+  deadlineParameterLimit,
+  MAX_NODE_TIMER_DELAY_MS,
+} from "../domain/analysisResourceLimits.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
-import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { processInspectionCancellationError } from "../providers/OwnedCommandCleanup.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "./ApktoolProviderIdentity.js";
@@ -106,13 +109,16 @@ const APKTOOL_EXHAUSTION_REMEDIATION: Readonly<
 
 const STDERR_EXCERPT_BYTES = 512;
 
-const apktoolDecodeTimeoutGuidance = (
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+const apktoolDecodeTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
+  limit: deadlineParameterLimit(
+    "decode_timeout_ms",
+    timeoutMs,
+    DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+  ),
   remediationAction: `${
     timeoutMs < MAX_NODE_TIMER_DELAY_MS
-      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), or use rea decode-android-resources <path> --decode-timeout-ms <milliseconds> on the CLI.`
+      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}).`
       : `decode_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`
   } A change applies on the next decode. It does not raise the ${String(DECODE_MAX_OUTPUT_BYTES)}-byte output capture allowance or the version probe; both have no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
@@ -222,12 +228,14 @@ const apktoolCommandFailure = (
         target_path: targetPath,
       },
     });
-  if (!(failure instanceof OwnedCommandFailure))
+  const outcome = providerOutcomeOf(failure);
+  if (outcome === undefined)
     return commandFailure({
       cause: failure,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
     });
-  return classifyProviderOutcome(providerOutcomeOf(failure), {
+  return classifyProviderOutcome(outcome, {
+    providerId: APKTOOL_PROVIDER_IDENTITY.id,
     operation,
     capturedOutput: capturedProviderOutput,
     // Ownership preparation can retain output before any process exists.
@@ -239,8 +247,9 @@ const apktoolCommandFailure = (
     outputLimit: {
       limits: { max_output_bytes: limits.maxOutputBytes },
       recovery: fixedAllowanceOptions(
-        `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+        "The apktool output capture allowance (decode_timeout_ms does not raise it)",
         "capture",
+        { limit: limits.maxOutputBytes, unit: "bytes" },
       ),
     },
     runtimeExhaustion: ({ area }) => ({
@@ -255,6 +264,7 @@ const apktoolCommandFailure = (
       // Only a fully collected ordinary nonzero decode exit carries that meaning.
       if (
         exit.kind !== "exited" ||
+        !(failure instanceof OwnedCommandFailure) ||
         failure.processError !== undefined ||
         failure.preparationFailure !== undefined ||
         exit.exitCode === null ||

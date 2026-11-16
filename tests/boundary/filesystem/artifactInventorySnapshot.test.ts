@@ -6,7 +6,10 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import { translateArtifactFailure } from "../../../src/resources/index.js";
+import {
+  translateArtifactFailure,
+  DirectoryArtifactReader,
+} from "../../../src/resources/index.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -14,7 +17,6 @@ import {
 } from "../../../src/resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../../src/artifacts/inventory/scanCanonical.js";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -130,6 +132,7 @@ it("unwinds every nested traversal and preserves its primary failure", async () 
           throw new ArtifactReaderFailure(
             "integrity",
             "primary nested member failure",
+            { integrityCheck: "container-identity" },
           );
         },
         async return() {

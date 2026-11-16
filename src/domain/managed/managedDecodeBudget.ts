@@ -6,7 +6,10 @@ import { jsonStringByteLength } from "../jsonStringByteLength.js";
 
 import type { ManagedMetadataLayout } from "./managedMetadataLayout.js";
 import { ManagedReaderFailure } from "./managedReaderFailure.js";
-import { DEFAULT_MANAGED_REPRESENTATION_BYTES } from "./managedInspectionLimits.js";
+import {
+  DEFAULT_MANAGED_REPRESENTATION_BYTES,
+  managedRepresentationLimit,
+} from "./managedInspectionLimits.js";
 
 /** The capacity owner's diagnostic, also used to admit a recovery envelope. */
 export class ManagedRepresentationFailure extends ManagedReaderFailure {
@@ -14,8 +17,9 @@ export class ManagedRepresentationFailure extends ManagedReaderFailure {
     super({
       code: "resource-limit",
       scope: "metadata.representation",
-      detail: `Managed metadata exceeds max_metadata_representation_bytes=${String(maximumBytes)} bytes. Increase max_metadata_representation_bytes on the next inspection (CLI --max-metadata-representation-bytes), or select fewer type_names for member inspection. No REA restart is required; snapshot, transport and host memory limits are independent.`,
+      detail: `Managed metadata exceeds max_metadata_representation_bytes=${String(maximumBytes)} bytes. Increase max_metadata_representation_bytes on the next inspection (the issue's limit records the control), or select fewer type_names for member inspection. No REA restart is required; snapshot, transport and host memory limits are independent.`,
       offset,
+      limit: managedRepresentationLimit(maximumBytes),
     });
   }
 }

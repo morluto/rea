@@ -17,6 +17,7 @@ import {
   selectCdpScriptFrame,
 } from "../CdpScriptContextFacts.js";
 import { RuntimeRetention } from "./CdpRuntimeRetention.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Source ownership is proven by execution context/frame metadata, independently of URL aliases. */
 export class CdpRuntimeSources {
@@ -85,7 +86,7 @@ export class CdpRuntimeSources {
           ? cause
           : new AnalysisOutputError(
               this.session.operation,
-              cause instanceof Error ? cause.message : String(cause),
+              errorMessage(cause),
             );
     }
   }

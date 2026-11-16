@@ -100,6 +100,21 @@ itWithCaptureCapability.each([
       const identity = identitySchema.parse(
         JSON.parse(await readFile(identityPath, "utf8")),
       );
+      expect(
+        evidence.subject,
+        "the subject names the observed root by PID and start identity, and withholds both when the caller normalized PIDs",
+      ).toEqual({
+        identity: pids
+          ? { kind: "unknown", reason: "withheld-by-caller" }
+          : {
+              kind: "process",
+              pid: identity.root_pid,
+              start_time: expect.stringMatching(/\S/u),
+              executable_sha256: capture.manifest.executable_sha256,
+            },
+        name: null,
+        local_path: null,
+      });
       const original = `root pid ${identity.root_pid}\r\nchild pid ${identity.child_pid}\r\ncount 9007199254740991\r\n`;
       const expected = pids
         ? "root pid <pid>\r\nchild pid <pid>\r\ncount 9007199254740991\r\n"

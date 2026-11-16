@@ -158,6 +158,8 @@ const readDynamicTags = (
       "structure",
       16 * 1024 * 1024,
       "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      "structure",
+      "bytes",
     );
   if (
     size < 0 ||

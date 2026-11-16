@@ -63,19 +63,20 @@ it("preserves the exact reason when import is cancelled after reading the bundle
       return loaded;
     });
   const imported = vi.spyOn(session, "importEvidenceBundle");
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const delivery = vi.spyOn(
+    ToolResultDelivery.prototype,
+    "toPartialErrorToolResult",
+  );
 
   const response = await handler(contract.inputSchema.parse({ path }), {
     mcpReq: { signal: controller.signal },
   } as ServerContext);
-  const delivered = delivery.mock.calls.find(
-    ([, deliveredContract]) => deliveredContract.name === contract.name,
-  )?.[0];
-  if (delivered === undefined || delivered.ok)
+  const delivered = delivery.mock.calls[0]?.[0];
+  if (delivered === undefined)
     throw new Error("Expected import cancellation at delivery");
   expect(response.isError).toBe(true);
-  expect(delivered.error._tag).toBe("AnalysisCancelledError");
-  expect(delivered.error.cause).toBe(reason);
+  expect(delivered._tag).toBe("AnalysisCancelledError");
+  expect(delivered.cause).toBe(reason);
   expect(authenticatedRead).toHaveBeenCalledOnce();
   expect(imported).not.toHaveBeenCalled();
   expect(session.exportEvidenceBundle()).toEqual(before);
@@ -149,18 +150,23 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   const completed = new Promise<void>((resolve) => {
     resolveCompleted = resolve;
   });
-  let settledResult: unknown;
-  const deliver = ToolResultDelivery.prototype.toCallToolResult;
-  vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult").mockImplementation(
-    function (this: ToolResultDelivery, result, contract) {
-      const reply = deliver.call(this, result, contract);
-      if (contract.name === "import_evidence_bundle") {
-        settledResult = result;
-        resolveCompleted?.();
-      }
-      return reply;
-    },
-  );
+  // Only the import fails while this spy is installed.
+  let settledFailure: unknown;
+  const deliver = ToolResultDelivery.prototype.toPartialErrorToolResult;
+  vi.spyOn(
+    ToolResultDelivery.prototype,
+    "toPartialErrorToolResult",
+  ).mockImplementation(function (
+    this: ToolResultDelivery,
+    error,
+    targetContent,
+    recordEvidence,
+  ) {
+    const reply = deliver.call(this, error, targetContent, recordEvidence);
+    settledFailure = error;
+    resolveCompleted?.();
+    return reply;
+  });
   const cancellation = client
     .callTool(
       { name: "import_evidence_bundle", arguments: { path } },
@@ -180,10 +186,7 @@ it("keeps the complete session unchanged after SDK import cancellation and permi
   // Observe handler settlement, not just the client's local rejection.
   await completed;
   expect(session.exportEvidenceBundle()).toEqual(before);
-  expect(settledResult).toMatchObject({
-    ok: false,
-    error: expect.any(AnalysisCancelledError),
-  });
+  expect(settledFailure).toBeInstanceOf(AnalysisCancelledError);
   await client.ping();
   const retry = await client.callTool({
     name: "import_evidence_bundle",

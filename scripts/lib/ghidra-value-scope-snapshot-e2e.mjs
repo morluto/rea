@@ -70,7 +70,7 @@ export async function verifyLegacyValueScopeSnapshot(
           analysisProfile: legacyProfile,
           limitations: observed.limitations,
           locations: observed.locations,
-          subject: nativeTarget,
+          subject: evidence.subject,
         },
       }),
     ],

@@ -130,6 +130,20 @@ Captures are local Evidence files; keep
 their source artifacts and invocation context available when interpreting a
 difference.
 
+The capture's Evidence subject names the launched root process:
+`{ "kind": "process", "pid", "start_time", "executable_sha256" }`, where
+`start_time` is the platform start identity REA read for that PID at launch,
+bound to the capture's run token, and `executable_sha256` is `null` unless the
+executable's path metadata stayed stable across spawn. `manifest.root_process`
+records the same observation. A PID alone does not identify a process, so when
+the start identity could not be read the subject is
+`{ "kind": "unknown", "reason": "not-observed" }` and `root_process` keeps the
+reason. When PID normalization is selected (the default), REA honours it: the
+raw PID and start identity are not recorded, `root_process` is
+`{ "state": "withheld-by-caller" }`, and the subject is
+`{ "kind": "unknown", "reason": "withheld-by-caller" }`. A planned scenario
+(`dry_run`) launches nothing and stays `not-observed`.
+
 ## Hash a report independently of terminal output
 
 Select the producer's report directory and give `file_bytes` enough room for

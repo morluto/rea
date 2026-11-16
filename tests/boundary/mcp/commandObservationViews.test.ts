@@ -3,12 +3,11 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import {
-  registerGdbTools,
-  type GdbToolManager,
-} from "../../../src/server/registerGdbTools.js";
 import { registerReverseEngineeringTools } from "../../../src/server/registerReverseEngineeringTools.js";
-import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import {
+  registerServiceTools,
+  type GdbToolOptions,
+} from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import {
   createEvidence,
@@ -73,7 +72,7 @@ const connect = async (retain = true) => {
   const execute = vi.fn(async () =>
     ok({ result: capture, evidence: gdbEvidence() }),
   );
-  const manager: GdbToolManager = {
+  const manager: GdbToolOptions["manager"] = {
     start: async () =>
       ok({ session_id: sessionId, mi_version: "mi3" as const }),
     execute,
@@ -86,15 +85,6 @@ const connect = async (retain = true) => {
   );
   const service = new TestReverseEngineeringService({ runOwned: run });
   const logger = pino({ enabled: false });
-  registerGdbTools(
-    server,
-    manager,
-    logger,
-    delivery,
-    retain ? record : undefined,
-    undefined,
-    retain ? lookup : undefined,
-  );
   registerReverseEngineeringTools(
     server,
     service,
@@ -108,7 +98,7 @@ const connect = async (retain = true) => {
   );
   registerServiceTools(
     server,
-    { analysisView: {} },
+    { analysisView: {}, gdb: { manager, session: undefined } },
     {
       logger,
       evidenceById: retain ? lookup : undefined,

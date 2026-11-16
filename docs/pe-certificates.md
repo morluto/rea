@@ -53,9 +53,9 @@ Encoded order is kept, and values are copied as decoded, without RFC 4514
 escaping or RDN reversal, so a name of only single-valued RDNs still places
 `, ` between attributes.
 
-Each signer reports `unsigned_attribute_oids`: null means the field was absent,
-and an array lists the types when present. Older retained Evidence may omit the
-field. Unsigned attribute contents, including nested signatures and timestamp
+Each signer reports `unsigned_attribute_oids`: null means the signer has no
+unsigned attributes, and an array lists their types. Evidence that omits the
+field (written before REA 6.9.0) is refused; recreate the observation. Unsigned attribute contents, including nested signatures and timestamp
 tokens, are not decoded; their presence makes coverage partial and adds a
 limitation. Certificate and signer counts refer to the outer SignedData.
 

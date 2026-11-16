@@ -75,6 +75,8 @@ import {
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperDiagnostic } from "./HopperDiagnostics.js";
@@ -114,6 +116,7 @@ import {
   hopperReplyEnvelope,
   responseResult,
 } from "./protocol.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
 const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
@@ -197,6 +200,7 @@ export class HopperClient<
     runtimeRoot: undefined,
     shutdownConfirmed: false,
     externalApplication: undefined,
+    inspections: new ArtifactResourceScope(),
   };
   #token: string | undefined;
   /** Reply ceiling admitted with the request on the wire; the default before any. */
@@ -470,7 +474,7 @@ export class HopperClient<
       },
       (cause: unknown) => {
         this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Hopper startup promise rejected during bookkeeping",
         );
         if (this.#startupAttempt === attempt) this.#startupAttempt = undefined;
@@ -701,6 +705,13 @@ export class HopperClient<
       try {
         identity = await observeProcessStartIdentity(parsed.value.processId);
       } catch (cause: unknown) {
+        // The identity stays unavailable; descriptors the read left open stay
+        // owned until session cleanup releases them.
+        retainArtifactCommandCleanup(
+          cause,
+          this.#resources.inspections,
+          "open_binary",
+        );
         identity = {
           state: "unavailable" as const,
           reason:
@@ -977,7 +988,7 @@ export class HopperClient<
               "hopper",
               ["hopper-launcher"],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { cause },
             ),

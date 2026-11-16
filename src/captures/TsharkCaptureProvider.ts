@@ -95,6 +95,7 @@ import {
   selectWiresharkTool,
 } from "../pcap/PcapConfiguration.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_packet_capture";
 
@@ -550,6 +551,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               ...fixedAllowanceOptions(
                 "The packet-field discovery record allowance",
                 "capture",
+                { limit: cause.failure.limit.maximum, unit: "bytes" },
               ),
             })
           : undefined,
@@ -567,7 +569,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         ),
       observedOutput,
       unclassified: (cause) => {
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         if (phase === "workspace")
           return privateWorkspaceFailure(
             TSHARK_PROVIDER_IDENTITY.id,

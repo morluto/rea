@@ -3,13 +3,13 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
   type TestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 /** More children than one call can receive as arguments on V8's default stack. */
 const CHILD_DIRECTORIES = 130_000;

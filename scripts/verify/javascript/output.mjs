@@ -13,10 +13,10 @@ import { finished } from "node:stream/promises";
 import { Cli } from "incur";
 import { estimateTokenCount } from "tokenx";
 
-import { parseCliOutputArguments } from "../../../dist/cliOutput.js";
-import { createCliResultOutput } from "../../../dist/cli/cliResultOutput.js";
-import { createEvidence } from "../../../dist/domain/evidence.js";
-import { unknownTarget } from "../../../dist/domain/targetIdentity.js";
+import { parseCliOutputArguments } from "#dist/cliOutput.js";
+import { createCliResultOutput } from "#dist/cli/cliResultOutput.js";
+import { createEvidence } from "#dist/domain/evidence.js";
+import { unknownTarget } from "#dist/domain/targetIdentity.js";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -39,6 +39,7 @@ const fixture = await VerifierFixture.open({
 });
 const workspace = fixture.path;
 const path = join(workspace, "result.json");
+/** @type {import("node:fs").WriteStream | undefined} */
 let destination;
 let peakRss = process.memoryUsage().rss;
 const sampleRss = () => {

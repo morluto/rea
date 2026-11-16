@@ -153,7 +153,8 @@ const peResourcesFailurePrimary = (
               ? fixedNativeAllowance(
                   "The PE resource metadata allowance",
                   "parser",
-                  `${String(PE_RESOURCE_METADATA_BYTES)} bytes (8 MiB)`,
+                  PE_RESOURCE_METADATA_BYTES,
+                  "bytes",
                 )
               : {
                   retryable: false as const,

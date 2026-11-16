@@ -67,6 +67,7 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 
 import { hopperCapabilities } from "./HopperProviderCapabilities.js";
 import { HOPPER_PROVIDER_IDENTITY } from "./HopperProviderMetadata.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Concrete analysis provider backed by REA's private Hopper bridge. */
 export class HopperProvider implements AnalysisProviderCandidate {
@@ -255,7 +256,7 @@ export class HopperProvider implements AnalysisProviderCandidate {
       const failure = new ProviderCleanupError(
         HOPPER_PROVIDER_IDENTITY.id,
         this.#ownedResources.cleanupResources,
-        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { reason: errorMessage(cause) },
         { cause, operation: "close_owned_resources" },
       );
       bindArtifactFileCleanup(cause, failure);

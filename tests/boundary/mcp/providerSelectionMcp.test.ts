@@ -796,10 +796,15 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     });
     return error.details?.binding_mismatch;
   };
+  // A snapshot names its target by the target identity it persisted.
   expect(await mismatch(second, "alpha")).toEqual({
     target: {
-      snapshot: expect.objectContaining({ sha256: sha("first fixture") }),
-      selected: expect.objectContaining({ sha256: sha("second fixture") }),
+      snapshot: expect.objectContaining({
+        identity: expect.objectContaining({ sha256: sha("first fixture") }),
+      }),
+      selected: expect.objectContaining({
+        identity: expect.objectContaining({ sha256: sha("second fixture") }),
+      }),
     },
   });
   const otherProvider = await mismatch(first, "beta");
@@ -824,8 +829,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   const combined = await mismatch(second, "beta");
   expect(combined).toMatchObject({
     target: {
-      snapshot: { sha256: sha("first fixture") },
-      selected: { sha256: sha("second fixture") },
+      snapshot: { identity: { sha256: sha("first fixture") } },
+      selected: { identity: { sha256: sha("second fixture") } },
     },
     provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
   });
@@ -861,8 +866,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   expect(parseMcpToolError(differentEntry).error.details).toMatchObject({
     binding_mismatch: {
       target: {
-        snapshot: { entry_point: "0x1000" },
-        selected: { entry_point: "0x2000" },
+        snapshot: { identity: { selection: { entry_point: "0x1000" } } },
+        selected: { identity: { selection: { entry_point: "0x2000" } } },
       },
     },
   });

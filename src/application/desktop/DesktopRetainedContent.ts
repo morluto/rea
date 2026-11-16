@@ -1,5 +1,4 @@
 import { DESKTOP_VIEW_DEFAULTS } from "../../domain/desktop/desktopViewPolicy.js";
-import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import {
@@ -21,6 +20,7 @@ import {
   RegularFileCapacityError,
   readStableFileBytes,
 } from "../../filesystem/readStableFileBytes.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const MIB = 1024 * 1024;
 
@@ -94,7 +94,7 @@ export class RetainedContent {
       else if (cause instanceof Error) return err("is missing or unreadable");
       else throw cause;
     }
-    return createHash("sha256").update(bytes).digest("hex") === sha256
+    return sha256Hex(bytes) === sha256
       ? ok(bytes)
       : err("does not match its digest");
   }
