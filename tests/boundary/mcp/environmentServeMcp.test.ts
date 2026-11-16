@@ -2,6 +2,7 @@ import {
   environmentCard,
   environmentToolDefinitions,
 } from "../../../src/application/environment/environmentTools.js";
+import { readFile } from "node:fs/promises";
 import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
 import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
@@ -306,6 +307,16 @@ describe("rea environment-serve --replay-only", () => {
       expect(definitions.ok).toBe(true);
       if (!definitions.ok) throw definitions.error;
       expect(body).toEqual(environmentCard("renamed", definitions.value));
+      // This golden is independent of the helpers used by the server and the
+      // comparison above, including every tool description and argument schema.
+      const expectedCard: unknown = JSON.parse(
+        await readFile(
+          new URL("../../fixtures/environmentReplayCard.json", import.meta.url),
+          "utf8",
+        ),
+      );
+      expect(body).toEqual(expectedCard);
+      expect(text).toBe(JSON.stringify(expectedCard));
       expect(body).toMatchObject({
         name: "renamed",
         protocolVersion: "1.0",
