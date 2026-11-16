@@ -10,6 +10,7 @@ import {
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { MacosPkgArtifactReader } from "./MacosPkgArtifactReader.js";
 import {
+  buildComponentPackage,
   buildProductArchive,
   truncatedPkgHeader,
 } from "./macosPkg/MacosPkg.fixture.js";
@@ -84,12 +85,14 @@ it("reopens a payload member after a cancelled stream", async () => {
   }
 });
 
+// The lifecycle cases open the first entry, so their image starts with a
+// heap-backed member rather than a TOC directory record.
 artifactReaderLifecycleCases({
-  image: () => buildProductArchive(),
+  image: () => buildComponentPackage(),
   createReader: (path, admitted) => new MacosPkgArtifactReader(path, admitted),
 });
 
 artifactPreparationRecoveryCases({
-  image: () => buildProductArchive(),
+  image: () => buildComponentPackage(),
   createReader: (path, admitted) => new MacosPkgArtifactReader(path, admitted),
 });

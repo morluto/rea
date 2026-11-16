@@ -695,3 +695,43 @@ it("reads XAR TOC execute bits from owner, group and other permissions", async (
     await reader.close();
   }
 });
+
+it("keeps directory and link-only symlink TOC records without heap bodies", async () => {
+  const { reader, entries } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "Resources", type: "directory" },
+        { path: "Resources/readme.txt", bytes: Buffer.from("readme\n") },
+        { path: "Resources/current", type: "symlink", link: "readme.txt" },
+        { path: "Resources/empty.txt" },
+      ],
+    }),
+  );
+  try {
+    const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+    expect(byPath.get("Resources")).toMatchObject({
+      kind: "directory",
+      byteOffset: null,
+    });
+    const link = byPath.get("Resources/current");
+    expect(link).toMatchObject({
+      kind: "symlink",
+      declaredSize: "readme.txt".length,
+      formatMetadata: expect.objectContaining({
+        role: "xar-file",
+        symlink_target: "readme.txt",
+      }),
+    });
+    expect((await buffer(await reader.open(link!))).toString("utf8")).toBe(
+      "readme.txt",
+    );
+    const empty = byPath.get("Resources/empty.txt");
+    expect(empty).toMatchObject({ kind: "file", declaredSize: 0 });
+    expect((await buffer(await reader.open(empty!))).length).toBe(0);
+    await expect(reader.open(byPath.get("Resources")!)).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+  } finally {
+    await reader.close();
+  }
+});

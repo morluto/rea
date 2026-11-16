@@ -545,9 +545,9 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         limitations.push(rangeError.message);
         continue;
       }
-      if (file.type === "directory") continue;
-      if (file.data === null) continue;
-      this.#addXarFile(file, index, header.heapOffset);
+      if (file.type === "directory" || file.data === null)
+        this.#addXarDeclaration(file, index);
+      else this.#addXarFile(file, index, header.heapOffset);
     }
     const skipped = await this.#decodeInstallerDocuments(
       handle,
@@ -610,13 +610,69 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     });
   }
 
+  /**
+   * Keep a TOC record with no heap body (a directory, a `<link>`-only symlink,
+   * an empty file or a special node) as its own occurrence. Nothing is read
+   * from the heap; a symlink opens as its declared target text.
+   */
+  #addXarDeclaration(file: XarTocFile, tocIndex: number): void {
+    const adapterKey = `pkg:xar:${String(tocIndex)}:${file.path}`;
+    const kind =
+      file.type === "directory"
+        ? "directory"
+        : file.type === "symlink"
+          ? "symlink"
+          : file.type === "file"
+            ? "file"
+            : "metadata";
+    const bytes =
+      kind === "symlink" ? Buffer.from(file.link ?? "") : Buffer.alloc(0);
+    const sized = kind === "file" || kind === "symlink";
+    this.#entries.set(adapterKey, {
+      path: file.path,
+      sourcePath: file.path,
+      kind,
+      declaredSize: sized ? bytes.length : null,
+      compressedSize: null,
+      executable: kind !== "metadata" && xarModeIsExecutable(file.mode),
+      encrypted: false,
+      byteOffset: null,
+      declaredIntegrity: null,
+      unpacked: false,
+      limitations:
+        kind === "metadata"
+          ? [
+              `XAR ${file.type} record has no file contents and is not materialized.`,
+            ]
+          : [],
+      adapterKey,
+      formatMetadata: {
+        kind: "macos-pkg-entry",
+        role: "xar-file",
+        encoding: null,
+        data_offset: null,
+        archived_length: null,
+        extracted_size: null,
+        archived_checksum: null,
+        extracted_checksum: null,
+        mode: file.mode === null ? null : Number.parseInt(file.mode, 8) || null,
+        uid: null,
+        gid: null,
+        symlink_target: file.link,
+      },
+      origin: { kind: "memory", bytes },
+    });
+  }
+
   async #decodeInstallerDocuments(
     handle: Parameters<typeof readArtifactFileBytes>[0],
     metadata: MacosPkgMetadata,
     signal?: AbortSignal,
   ): Promise<readonly string[]> {
+    // Only records with a heap body can carry installer documents.
     const xarEntries = [...this.#entries.values()].filter(
-      (entry) => entry.formatMetadata.role === "xar-file",
+      (entry) =>
+        entry.formatMetadata.role === "xar-file" && entry.origin.kind === "xar",
     );
     const distribution = xarEntries.find(
       (entry) => basename(entry.path) === "Distribution",

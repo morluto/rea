@@ -82,8 +82,10 @@ export const gzipCpio = (members: readonly CpioFixtureMember[]): Buffer =>
 
 export interface XarFixtureFile {
   readonly path: string;
-  readonly type?: "file" | "directory";
+  readonly type?: "file" | "directory" | "symlink";
   readonly bytes?: Buffer;
+  /** TOC `<link>` target text for a symlink record. */
+  readonly link?: string;
   readonly encoding?:
     | "application/octet-stream"
     | "application/x-gzip"
@@ -116,11 +118,17 @@ const treeNodes = (
   files: readonly XarFixtureFile[],
 ): Map<
   string,
-  { readonly type: "file" | "directory"; readonly file?: XarFixtureFile }
+  {
+    readonly type: "file" | "directory" | "symlink";
+    readonly file?: XarFixtureFile;
+  }
 > => {
   const nodes = new Map<
     string,
-    { readonly type: "file" | "directory"; readonly file?: XarFixtureFile }
+    {
+      readonly type: "file" | "directory" | "symlink";
+      readonly file?: XarFixtureFile;
+    }
   >();
   for (const file of files) {
     const parts = file.path.split("/");
@@ -142,7 +150,10 @@ const treeNodes = (
 const renderFiles = (
   nodes: Map<
     string,
-    { readonly type: "file" | "directory"; readonly file?: XarFixtureFile }
+    {
+      readonly type: "file" | "directory" | "symlink";
+      readonly file?: XarFixtureFile;
+    }
   >,
   heap: readonly HeapFile[],
   parent: string,
@@ -165,6 +176,8 @@ const renderFiles = (
     xml += `<file id="${String(id)}"><name>${xmlEscape(name)}</name><type>${node.type}</type>`;
     if (node.file?.mode !== undefined)
       xml += `<mode>${xmlEscape(node.file.mode)}</mode>`;
+    if (node.file?.link !== undefined)
+      xml += `<link type="file">${xmlEscape(node.file.link)}</link>`;
     if (node.type === "file") {
       const stored = heap.find((entry) => entry.path === path);
       if (stored !== undefined) {
