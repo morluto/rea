@@ -11,10 +11,14 @@ import {
   type OptionalProviderLoadFailure,
 } from "../ports/OptionalObservationProviders.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
-import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type {
+  AnalysisOperationPort,
+  ExecutionOptions,
+} from "../ports/AnalysisProvider.js";
 import {
   projectRetainedAnalysis,
   requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
@@ -34,6 +38,10 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
 import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
+import {
+  reportOperationEnd,
+  reportOperationStart,
+} from "./operationProgress.js";
 import {
   deliverApplicationExecution,
   type ApplicationExecutionRecords,
@@ -412,4 +420,93 @@ export const runEvidenceToolOperation = async <Input>(
       );
     },
   );
+};
+
+/** A provider-backed workflow run on the analysis its admission grants. */
+export type AnalysisWorkflow = (
+  input: unknown,
+  analysis: AnalysisOperationPort,
+  request: ApplicationWorkflowRequest,
+) => Promise<Result<Evidence, AnalysisError>>;
+
+/**
+ * Run a provider-backed workflow on the analysis that admission grants for
+ * the call, reporting its start and terminal disposition, and deliver its
+ * Evidence. When the binding declares that `detail` selects delivery, it
+ * never reaches the workflow: a summary is refused before analysis when nothing
+ * retains the complete Evidence, and the complete Evidence is retained
+ * behind the summary it delivers.
+ */
+export const createAnalysisToolHandler =
+  (
+    server: EvidenceMcpServer,
+    analyze: AnalysisWorkflow,
+    logger: Logger,
+    retention: AnalysisViewRetention,
+    withAdmittedAnalysis: WithAdmittedAnalysis,
+    selectsDetail: boolean,
+  ) =>
+  (contract: ToolContract) =>
+  async (
+    rawInput: unknown,
+    context: ServerContext,
+  ): Promise<CallToolResult> => {
+    const { detail, input } = selectsDetail
+      ? deliveryDetail(rawInput)
+      : { detail: undefined, input: rawInput };
+    if (detail === "summary") {
+      const ready = requireAnalysisViewRetention(contract.name, retention);
+      if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
+    }
+    const { signal } = context.mcpReq;
+    const admitted = await withAdmittedAnalysis(
+      contract.name,
+      signal,
+      async (analysis) => {
+        const progress = mcpProgressReporter(context);
+        await reportOperationStart(progress, contract.name);
+        const analyzed = await logToolExecution(logger, contract.name, () =>
+          analyze(input, analysis, { signal, progress }),
+        );
+        const delivered =
+          detail === "summary" && analyzed.ok
+            ? summarizeRetainedAnalysis(analyzed.value, retention)
+            : analyzed;
+        const response = deliverEvidenceResult(
+          server,
+          delivered,
+          contract,
+          retention.recordEvidence,
+        );
+        await reportOperationEnd(
+          progress,
+          contract.name,
+          response.isError !== true,
+        );
+        return response;
+      },
+    );
+    return admitted.ok
+      ? admitted.value
+      : server.delivery.toErrorToolResult(
+          admitted.error,
+          contract.returnsTargetContent,
+        );
+  };
+
+/** Split the delivery detail an SDK-admitted request selects from its workflow input. */
+const deliveryDetail = (
+  rawInput: unknown,
+): {
+  readonly detail: unknown;
+  readonly input: unknown;
+} => {
+  if (
+    typeof rawInput !== "object" ||
+    rawInput === null ||
+    !("detail" in rawInput)
+  )
+    return { detail: undefined, input: rawInput };
+  const { detail, ...input } = rawInput;
+  return { detail, input };
 };

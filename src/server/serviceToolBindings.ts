@@ -54,6 +54,11 @@ import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheS
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import {
+  executeSessionFunctionAnalysis,
+  executeSessionWorkflowEvidence,
+  type WorkflowSession,
+} from "../application/SessionWorkflowEvidence.js";
 import { projectManagedApplicationGraphExecution } from "../application/managed/ManagedApplicationGraphService.js";
 import { compareManagedMembersExecution } from "../application/managed/ManagedMemberComparisonService.js";
 import { verifyManagedNativeBoundariesExecution } from "../application/managed/ManagedNativeVerificationService.js";
@@ -880,6 +885,159 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<ApplicationWorkflowToolOptions>,
+  // Provider-backed workflows run on the analysis admission grants and
+  // complete their Evidence in the session, when the server has one.
+  enhancedWorkflows: (({ session }) => ({
+    trace_native_values: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_native_values", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    inspect_native_dispatch_metadata: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "inspect_native_dispatch_metadata", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_objc_classes: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_objc_classes", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_objc_protocols: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_objc_protocols", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    batch_decompile: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "batch_decompile", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    decompile_all: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "decompile_all", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_call_graph: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_call_graph", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    analyze_swift_types: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "analyze_swift_types", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    find_xrefs_to_name: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "find_xrefs_to_name", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    binary_overview: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "binary_overview", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    inspect_native_api: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "inspect_native_api", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_feature: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_feature", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_call_path: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_call_path", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_native_ui_action: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_native_ui_action", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    analyze_function: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionFunctionAnalysis(input, analysis, session, request),
+    },
+  })) satisfies Bind<{ readonly session: WorkflowSession | undefined }>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
