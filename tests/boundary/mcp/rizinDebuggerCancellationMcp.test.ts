@@ -1,5 +1,5 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { rizinDebugMcpServer } from "../../fixtures/rizinDebugMcp.js";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 

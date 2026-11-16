@@ -54,8 +54,6 @@ import {
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
 import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
-import { registerCutterTools } from "./registerCutterTools.js";
-import { registerGdbTools } from "./registerGdbTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -301,14 +299,6 @@ export const createServer = (
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
-  const recordSessionEvidence =
-    session === undefined
-      ? undefined
-      : (
-          evidence: Parameters<
-            NonNullable<typeof session>["recordEvidence"]
-          >[0],
-        ) => session.recordEvidence(evidence);
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
@@ -378,7 +368,7 @@ export const createServer = (
         reverseEngineering,
         toolLogger,
         delivery,
-        recordSessionEvidence,
+        recordEvidence,
         analysisAdmission,
         session === undefined
           ? undefined
@@ -394,26 +384,13 @@ export const createServer = (
               ),
         evidenceById,
       );
-      registerCutterTools(
-        server,
-        cutter,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-      );
-      registerGdbTools(
-        server,
-        gdbSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-        evidenceById,
-      );
       registerServiceTools(
         server,
-        { rizinDebug: { manager: rizinDebugSessions, session } },
+        {
+          cutter: { service: cutter, session },
+          gdb: { manager: gdbSessions, session },
+          rizinDebug: { manager: rizinDebugSessions, session },
+        },
         { logger: toolLogger, recordEvidence, evidenceById },
       );
       registerBinaryDiagnosticsTools(
@@ -427,7 +404,6 @@ export const createServer = (
       registerServiceTools(
         server,
         {
-          cutterSessions: cutter,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,

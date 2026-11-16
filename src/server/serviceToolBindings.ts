@@ -121,8 +121,10 @@ import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
+  GDB_SESSION_TOOLS,
   RIZIN_DEBUG_SESSION_TOOLS,
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
@@ -148,7 +150,22 @@ import {
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
-import { CommittedValue } from "./contractToolHandler.js";
+import {
+  CommittedValue,
+  DetailedFailure,
+  ReducibleValue,
+} from "./contractToolHandler.js";
+import {
+  getNavigationContext,
+  inspectAddressContext,
+  omitContextEvidenceForDelivery,
+} from "../application/AnalysisContextQueries.js";
+import { binaryTargetSummary } from "../application/binary/BinaryTargetSummary.js";
+import {
+  captureSessionProcessScenario,
+  type ProcessSessionCaptureOptions,
+} from "../application/process/ProcessSessionCapture.js";
+import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import type { ResidualUnknown } from "../domain/residualUnknown.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
@@ -213,6 +230,24 @@ export interface RizinDebugToolOptions {
   readonly manager: Pick<
     RizinDebugSessionManager,
     "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** GDB sessions a manager owns and the session their commands may change. */
+export interface GdbToolOptions {
+  readonly manager: Pick<
+    GdbSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** The Cutter bridge and the session its commands may change. */
+export interface CutterToolOptions {
+  readonly service: Pick<
+    CutterBridgeService,
+    "listSessions" | "execute" | "retryCleanup"
   >;
   readonly session: ExternalMutationAdmission | undefined;
 }
@@ -678,7 +713,9 @@ const SERVICE_TOOL_BINDINGS = {
         jsonValueResult(await readGuidanceSection(input, resources)),
     },
   })) satisfies Bind<ArtifactResourceScope>,
-  cutterSessions: ((service) => ({
+  // Cutter discovery reads only; an arbitrary command may change the bound
+  // artifact, so it runs under external-mutation admission.
+  cutter: (({ service, session }) => ({
     list_cutter_sessions: {
       admission: "sdk",
       value: async (_input, { signal }) => {
@@ -688,7 +725,16 @@ const SERVICE_TOOL_BINDINGS = {
           : listed;
       },
     },
-  })) satisfies Bind<CutterBridgeService>,
+    cutter_command: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        retryCleanup: () => service.retryCleanup(),
+        run: (input, signal) => service.execute(input, { signal }),
+      },
+    },
+  })) satisfies Bind<CutterToolOptions>,
   // Runtime settings remain usable without an active target or healthy
   // provider, so they run outside analysis admission.
   analysisSettings: (({ settings, delivery }) => ({
@@ -1266,6 +1312,61 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<RizinDebugToolOptions>,
+  // Starting GDB loads no target, so it runs outside admission; a console
+  // command may change the bound artifact and runs under external-mutation
+  // admission, keeping a failed cleanup owned for the next retry.
+  gdb: (({ manager, session }) => ({
+    start_gdb_session: {
+      admission: "sdk",
+      value: (input, { signal }) =>
+        manager.start(
+          signal,
+          input.inferior_tty === undefined
+            ? {}
+            : { inferiorTty: input.inferior_tty },
+        ),
+    },
+    gdb_console: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        detail: "delivery",
+        retryCleanup: () => manager.retryCleanupFailures(),
+        run: async (input, signal) => {
+          const executed = await manager.execute(
+            input.session_id,
+            input.command,
+            signal,
+          );
+          return executed.ok ? ok(executed.value.evidence) : executed;
+        },
+      },
+    },
+    gdb_session_status: {
+      admission: "sdk",
+      value: async (input) => {
+        const status = manager.status(input.session_id);
+        return status === undefined
+          ? err(
+              unknownDebuggerSessionError(
+                GDB_SESSION_TOOLS,
+                "gdb_session_status",
+              ),
+            )
+          : ok({ ...status, recent_mi_records: [...status.recent_mi_records] });
+      },
+    },
+    close_gdb_session: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "owned-cleanup",
+        resource: (input) => input.session_id,
+        run: (input) => manager.close(input.session_id),
+      },
+    },
+  })) satisfies Bind<GdbToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation: (({ browser, loadFailure }, retention) => {
@@ -1388,6 +1489,88 @@ const SERVICE_TOOL_BINDINGS = {
       },
     },
   })) satisfies Bind<FridaInstrumentationService>,
+  // Opening a target orders itself in the session, so it runs outside
+  // analysis admission; a failed open reports the selection at failure.
+  binaryTarget: ((session) => ({
+    open_binary: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const snapshotPath = input.snapshot_path;
+        const opened = await session.open(input.path, {
+          signal,
+          ...openBinaryTargetSelection(input),
+          ...(input.provider_id === undefined
+            ? {}
+            : { providerId: input.provider_id }),
+          ...(snapshotPath === undefined
+            ? {}
+            : {
+                // Read inside the open's turn: calls issued after it must not
+                // overtake a file read that precedes its place in the order.
+                loadSnapshot: () =>
+                  session.readAnalysisSnapshot(snapshotPath, signal),
+              }),
+        });
+        return opened.ok
+          ? ok(binaryTargetSummary(opened.value))
+          : err(
+              new DetailedFailure(opened.error, {
+                selection_at_failure: opened.selection,
+                target_at_open_completion: opened.targetAtCompletion,
+                provider_id_at_open_completion: opened.providerIdAtCompletion,
+              }),
+            );
+      },
+    },
+    open_bundle_resources: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const opened = await session.openBundleResources(input.path, {
+          signal,
+        });
+        return opened.ok
+          ? ok({
+              caller_path: opened.value.callerPath,
+              canonical_path: opened.value.canonicalPath,
+              info_plist_path: opened.value.infoPlistPath,
+              layout: opened.value.layout,
+              executable_sha256: opened.value.executableSha256,
+            })
+          : opened;
+      },
+    },
+  })) satisfies Bind<BinarySessionPort>,
+  // Context reads query the analysis admission grants for the call.
+  analysisContext: ((_options: Readonly<Record<string, never>>) => ({
+    get_navigation_context: {
+      admission: "sdk",
+      query: (input, analysis, { signal }) =>
+        getNavigationContext(analysis, input, signal),
+    },
+    inspect_address_context: {
+      admission: "sdk",
+      query: async (input, analysis, { signal }) => {
+        const inspected = await inspectAddressContext(analysis, input, signal);
+        if (!inspected.ok) return inspected;
+        const context = inspected.value;
+        // An oversized context drops its largest Evidence facets first.
+        return ok(
+          new ReducibleValue(context, (failure, budgetBytes) =>
+            omitContextEvidenceForDelivery(context, failure, budgetBytes),
+          ),
+        );
+      },
+    },
+  })) satisfies Bind<Readonly<Record<string, never>>>,
+  // Process capture runs under session admission and records its Evidence
+  // and residual unknowns in the session itself.
+  processCapture: ((options) => ({
+    capture_process_scenario: {
+      admission: "sdk",
+      analyze: (input, _analysis, request) =>
+        captureSessionProcessScenario(options, input, request),
+    },
+  })) satisfies Bind<ProcessSessionCaptureOptions>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
