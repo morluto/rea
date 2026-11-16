@@ -506,20 +506,33 @@ it("selects the tests a pull request affects and runs everything when it cannot 
   });
   // Above the cap, selection gives way to the complete suite.
   const many = Array.from(
-    { length: 151 },
+    { length: 401 },
     (_, index) => `tests/composition/many${String(index)}.test.ts`,
   );
   const wide = await change(directory, many);
   expect(await classify(directory, isolated, wide)).toMatchObject({
     testSelection: {
       mode: "full",
-      reason: "151 affected test files exceed the 150-file selection cap",
+      reason: "401 affected test files exceed the 400-file selection cap",
     },
   });
   const capped = await change(directory, many.slice(0, 81), "// edited\n");
   expect(await classify(directory, wide, capped)).toMatchObject({
     testSelection: { mode: "selected" },
     testShards: ["1/3", "2/3", "3/3"],
+  });
+});
+
+it("routes license inventories to docs checks and keeps blame-ignore edits formatting-only", async () => {
+  expect(await classifyPaths([".git-blame-ignore-revs"])).toMatchObject({
+    code: false,
+    docs: false,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["licenses/npm-dependencies.txt"])).toMatchObject({
+    code: true,
+    docs: true,
   });
 });
 
