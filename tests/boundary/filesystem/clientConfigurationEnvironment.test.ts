@@ -222,47 +222,61 @@ it.skipIf(process.platform !== "win32").each([
   },
 );
 
-it("preserves a lowercase explicit Kimi schema profile instead of inserting a conflicting default", async () => {
-  const home = await createTestTempDirectory("rea-kimi-case-");
-  await mkdir(join(home, ".kimi-code"));
-  const configPath = join(home, ".kimi-code/mcp.json");
-  await writeFile(
-    configPath,
-    JSON.stringify({
-      mcpServers: {
-        rea: {
-          command: staleOwnedCommand[0],
-          args: staleOwnedCommand.slice(1),
-          env: { rea_mcp_input_schema_profile: "compact" },
+// Windows folds environment-key case; the full-profile refusal is Windows-only.
+for (const profile of ["compact", "full"] as const) {
+  it.skipIf(profile === "full" && process.platform !== "win32")(
+    `preserves a lowercase Kimi schema profile only when supported: ${profile}`,
+    async () => {
+      const home = await createTestTempDirectory("rea-kimi-case-");
+      await mkdir(join(home, ".kimi-code"));
+      const configPath = join(home, ".kimi-code/mcp.json");
+      const original = JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: staleOwnedCommand[0],
+            args: staleOwnedCommand.slice(1),
+            env: { rea_mcp_input_schema_profile: profile },
+          },
         },
-      },
-    }),
+      });
+      await writeFile(configPath, original);
+      const client = {
+        name: "kimi",
+        registrationProfile: supportedClientRegistrationProfile("kimi"),
+        format: "kimi",
+        configPath,
+      } as const;
+      const command = currentClientRegistrationCommand();
+      const result = await configureClientConfiguration(client, {}, command);
+      if (profile === "full") {
+        expect(result).toEqual({ status: "failed", reason: "readback" });
+        expect(await readFile(configPath, "utf8")).toBe(original);
+        await expect(access(`${configPath}.rea.backup`)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        return;
+      }
+      expect(result, JSON.stringify(result)).toMatchObject({
+        status: "configured",
+      });
+      expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+      const parsed = parseClientConfiguration(
+        await readFile(configPath, "utf8"),
+        "kimi",
+      );
+      expect(effectiveClientServer(parsed, "rea")).toHaveProperty("env", {
+        rea_mcp_input_schema_profile: profile,
+      });
+      const statuses = await readClientRegistrationStatuses(home, command[1], {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      });
+      expect(statuses.find(({ client }) => client === "kimi")).toMatchObject({
+        state: "aligned",
+      });
+    },
   );
-  const client = {
-    name: "kimi",
-    registrationProfile: supportedClientRegistrationProfile("kimi"),
-    format: "kimi",
-    configPath,
-  } as const;
-  const command = currentClientRegistrationCommand();
-  expect(await configureClientConfiguration(client, {}, command)).toMatchObject(
-    { status: "configured" },
-  );
-  const parsed = parseClientConfiguration(
-    await readFile(configPath, "utf8"),
-    "kimi",
-  );
-  expect(effectiveClientServer(parsed, "rea")).toHaveProperty("env", {
-    rea_mcp_input_schema_profile: "compact",
-  });
-  const statuses = await readClientRegistrationStatuses(home, command[1], {
-    platform: HOST_PLATFORM.platform,
-    environment: {},
-  });
-  expect(statuses.find(({ client }) => client === "kimi")).toMatchObject({
-    state: "aligned",
-  });
-});
+}
 
 it
   .skipIf(process.platform !== "win32")

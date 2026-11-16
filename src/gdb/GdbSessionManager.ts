@@ -36,7 +36,7 @@ import {
   type LaunchUnavailableFailure,
 } from "../process/classifyProviderOutcome.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { isUtf8 } from "node:buffer";
 import { readlink, realpath, stat } from "node:fs/promises";
@@ -198,6 +198,7 @@ interface PendingCommand {
   readonly command: string;
   readonly evidenceCommand: string;
   readonly lines: string[];
+  openRawRecord: boolean;
   outputBytes: number;
   /** Caller output uses the setting. Startup and detach replies use the control budget. */
   readonly outputBudgetBytes: number;
@@ -380,6 +381,7 @@ interface GdbSession {
   readonly bufferChunks: Buffer[];
   bufferTail: Buffer | undefined;
   bufferTailBytes: number;
+  openRawRecord: boolean;
   bufferBytes: number;
   discardingOversizedStreamRecord: boolean;
   invalidUtf8Observed: boolean;
@@ -753,6 +755,7 @@ export class GdbSessionManager {
       closeRequested: false,
       pending: new Map(),
       lines: [],
+      openRawRecord: false,
       bufferChunks: [],
       bufferTail: undefined,
       bufferTailBytes: 0,
@@ -1643,8 +1646,11 @@ export class GdbSessionManager {
       }
       session.promptTail = prompt.slice(-4);
     }
-    const lines: { readonly value: string; readonly invalidUtf8: boolean }[] =
-      [];
+    const lines: {
+      readonly value: string;
+      readonly invalidUtf8: boolean;
+      readonly unterminated?: boolean;
+    }[] = [];
     let offset = 0;
     let framingFailure: string | undefined;
     while (offset < data.byteLength) {
@@ -1706,10 +1712,29 @@ export class GdbSessionManager {
       session.bufferTailBytes = 0;
       session.bufferBytes = 0;
       if (invalidUtf8) session.invalidUtf8Observed = true;
-      if (line.length > 0) lines.push({ value: line, invalidUtf8 });
+      if (line.length > 0 || (lines.length === 0 && session.openRawRecord))
+        lines.push({ value: line, invalidUtf8 });
       offset = newline + 1;
     }
-    for (const { value: line } of lines) {
+    // A prompt may have no LF and span chunks. Frame it before sending any
+    // query so its bytes cannot prefix that query's result on the next receive.
+    if (
+      session.bufferBytes === 6 &&
+      session.bufferChunks.length === 0 &&
+      session.bufferTail
+        ?.subarray(0, session.bufferTailBytes)
+        .equals(Buffer.from("(gdb) "))
+    ) {
+      session.bufferTail = undefined;
+      session.bufferTailBytes = 0;
+      session.bufferBytes = 0;
+      lines.push({ value: "(gdb) ", invalidUtf8: false, unterminated: true });
+    }
+    for (const { value, unterminated } of lines) {
+      // Protocol prompt framing must not invent a newline in raw Evidence.
+      const line =
+        (session.openRawRecord ? (session.lines.pop() ?? "") : "") + value;
+      session.openRawRecord = unterminated === true;
       if (Buffer.byteLength(line, "utf8") > MAX_RECENT_MI_LINE_BYTES) {
         session.lines.push(truncateUtf8RecordPrefix(line));
         session.recentRecordsTruncated = true;
@@ -1719,20 +1744,31 @@ export class GdbSessionManager {
       session.lines.splice(0, session.lines.length - 256);
       session.recentRecordsTruncated = true;
     }
-    for (const { value: line, invalidUtf8 } of lines) {
+    for (const { value: line, invalidUtf8, unterminated } of lines) {
       for (const pending of session.pending.values()) {
-        const lineBytes = Buffer.byteLength(line, "utf8") + 1;
+        const previous = pending.openRawRecord
+          ? pending.lines.at(-1)
+          : undefined;
+        const lineBytes =
+          Buffer.byteLength(line, "utf8") + (previous === undefined ? 1 : 0);
+        pending.openRawRecord = false;
         if (
           pending.outputBytes + lineBytes <= pending.outputBudgetBytes &&
-          pending.lines.length < MAX_COMMAND_OUTPUT_RECORDS
+          (previous !== undefined ||
+            pending.lines.length < MAX_COMMAND_OUTPUT_RECORDS)
         ) {
-          pending.lines.push(line);
+          if (previous === undefined) pending.lines.push(line);
+          else pending.lines[pending.lines.length - 1] = previous + line;
+          pending.openRawRecord = unterminated === true;
           pending.outputBytes += lineBytes;
           pending.outputInvalidUtf8 ||= invalidUtf8;
         } else {
           if (pending.outputBytes + lineBytes > pending.outputBudgetBytes)
             pending.outputLimits.add("command_bytes");
-          if (pending.lines.length >= MAX_COMMAND_OUTPUT_RECORDS)
+          if (
+            previous === undefined &&
+            pending.lines.length >= MAX_COMMAND_OUTPUT_RECORDS
+          )
             pending.outputLimits.add("command_records");
         }
       }
@@ -1747,7 +1783,8 @@ export class GdbSessionManager {
             pending.terminalRecord === undefined &&
             pending.completionToken === undefined
           ) {
-            pending.completionToken = session.nextToken++;
+            // Shared shell stdout can forge a prompt and predict sequential tokens.
+            pending.completionToken = randomInt(2 ** 32, 2 ** 48 - 1);
             this.#writeMiRequest(
               session,
               pending.completionToken,
@@ -1791,7 +1828,8 @@ export class GdbSessionManager {
           // ^running and *stopped describe inferior execution, not completion
           // of an outer CLI command such as a multi-run command file. GDB
           // processes this read-only query after returning to its command loop.
-          pending.completionToken = session.nextToken++;
+          // Shared shell stdout can forge a prompt and predict sequential tokens.
+          pending.completionToken = randomInt(2 ** 32, 2 ** 48 - 1);
           this.#writeMiRequest(
             session,
             pending.completionToken,
@@ -2090,7 +2128,9 @@ export class GdbSessionManager {
       this.#failProtocol(session, "input-stream-failure", message);
       return Promise.reject(new Error(message));
     }
-    const token = session.nextToken++;
+    const token = command.startsWith("-interpreter-exec console ")
+      ? randomInt(2 ** 32, 2 ** 48 - 1)
+      : session.nextToken++;
     const acceptedDeadline = accepted?.deadline ?? this.#commandDeadline;
     const acceptedOutput = command.startsWith("-interpreter-exec console ")
       ? (accepted?.output ?? this.#commandOutput)
@@ -2203,6 +2243,7 @@ export class GdbSessionManager {
         },
         cleanup,
         timer,
+        openRawRecord: false,
         outputBytes: 0,
         outputBudgetBytes: acceptedOutput.value,
         outputLimits: new Set(),
