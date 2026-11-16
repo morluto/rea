@@ -1,21 +1,32 @@
+import type { Logger } from "pino";
+
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   retainSavedAnalysisSnapshot,
   type SavedAnalysisSnapshot,
 } from "../domain/savedAnalysisSnapshot.js";
-import {
-  reportOperationEnd,
-  reportOperationStart,
-} from "./operationProgress.js";
-import { err, ok } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisCleanupRetry } from "../domain/analysisErrorRecovery.js";
-import type { Result } from "../domain/result.js";
-import { mcpProgressReporter } from "./mcpProgress.js";
-import type { LifecycleToolRegistration } from "./registerSessionTools.js";
-import { logToolExecution } from "./toolLogging.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+
+/**
+ * The session whose target the lifecycle tools close or reset, and the
+ * adapter-owned resources that close with it.
+ */
+export interface SessionLifecycleOptions {
+  readonly session: BinarySessionPort;
+  readonly logger: Logger;
+  readonly artifactResources: ArtifactResourceScope;
+  readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
+}
 
 /** Expected lifecycle failures keep the same typed result when a child rejects. */
 const closeResult = async <Value>(
@@ -29,22 +40,24 @@ const closeResult = async <Value>(
   }
 };
 
-/** This tool retries the session and process-capture cleanup it retains. */
-const CLOSE_RETRY: AnalysisCleanupRetry = { operation: "close_binary" };
+/** close_binary retries the session and process-capture cleanup it retains. */
+export const CLOSE_RETRY: AnalysisCleanupRetry = { operation: "close_binary" };
 
 /** The process-capture scope keeps failed leases for the next close_binary. */
 const retainedProcessCleanup = (error: AnalysisError): AnalysisError =>
   error.cleanupIncomplete ? error.bindCleanupRetry(CLOSE_RETRY) : error;
 
-/** Register provider cleanup and optional pre-close snapshot persistence. */
-export const registerCloseLifecycleTool = ({
-  server,
-  session,
-  logger,
-  closeContract,
-  closeProcessResources,
-}: LifecycleToolRegistration): void => {
-  const closeWithResources = async <Value>(
+/**
+ * Close the session together with the process-capture resources it owns.
+ * Both settle; a failed resource cleanup is kept for the next close_binary,
+ * and a saved snapshot stays reported when only the resources failed.
+ */
+export const closeWithProcessResources =
+  ({
+    logger,
+    closeProcessResources,
+  }: Pick<SessionLifecycleOptions, "logger" | "closeProcessResources">) =>
+  async <Value>(
     closeSession: () => Promise<Result<Value, AnalysisError>>,
     savedSnapshot?: (value: Value) => SavedAnalysisSnapshot,
   ): Promise<Result<Value, AnalysisError>> => {
@@ -92,46 +105,50 @@ export const registerCloseLifecycleTool = ({
         : retainSavedAnalysisSnapshot(retained, savedSnapshot(closed.value)),
     );
   };
-  server.registerTool(
-    closeContract.name,
-    toolRegistrationOptions(closeContract),
-    async (input, context) => {
-      const progress = mcpProgressReporter(context);
-      const snapshotPath = input.snapshot_path;
-      if (snapshotPath === undefined) {
-        // Enqueue the lifecycle transition before awaiting progress transport so
-        // a later open request cannot overtake this close.
-        const closing = logToolExecution(logger, closeContract.name, () =>
-          closeWithResources(() =>
-            session.close({ progress, cleanupRetry: CLOSE_RETRY }),
-          ),
-        );
-        await reportOperationStart(progress, closeContract.name);
-        const closed = await closing;
-        await reportOperationEnd(progress, closeContract.name, closed.ok);
-        return server.delivery.toCallToolResult(closed, closeContract);
-      }
-      const closing = logToolExecution(logger, closeContract.name, () =>
-        closeWithResources(
-          () =>
-            session.closeWithSnapshot(snapshotPath, input.overwrite, {
-              progress,
-              cleanupRetry: CLOSE_RETRY,
-            }),
-          (receipt) => receipt,
+
+/**
+ * Retry the adapter-owned cleanup a reset joins under the session's drain.
+ * Retry keeps the shared artifact scope open for the next investigation.
+ */
+export const resetCleanupRetry =
+  (
+    {
+      artifactResources,
+      closeProcessResources,
+    }: Pick<
+      SessionLifecycleOptions,
+      "artifactResources" | "closeProcessResources"
+    >,
+    operation: string,
+  ) =>
+  async (): Promise<Result<null, AnalysisError>> => {
+    const [process, artifacts] = await Promise.all([
+      closeProcessResources(),
+      artifactResources.retryCleanup().then(
+        () => ok(null),
+        (cause: unknown) => {
+          const observation = ArtifactReaderFailure.cleanupObservation(
+            cause,
+            "MCP artifact resources",
+          );
+          const error = new ProviderCleanupError(
+            "rea",
+            observation.resources,
+            { reason: observation.reason },
+            { cause, operation },
+          );
+          bindArtifactFileCleanup(cause, error);
+          return err(error);
+        },
+      ),
+    ]);
+    if (!process.ok && !artifacts.ok)
+      return err(
+        analysisErrorWithCleanupDependencies(
+          process.error,
+          artifacts.error,
+          operation,
         ),
       );
-      await reportOperationStart(
-        progress,
-        closeContract.name,
-        "saving snapshot; closing provider",
-      );
-      const closed = await closing;
-      await reportOperationEnd(progress, closeContract.name, closed.ok);
-      return server.delivery.toCallToolResult(
-        closed.ok ? ok({ ...closed.value }) : closed,
-        closeContract,
-      );
-    },
-  );
-};
+    return process.ok ? artifacts : process;
+  };

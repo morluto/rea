@@ -204,6 +204,16 @@ import {
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { retainedSummaryDelivery } from "./retainedSummaryDelivery.js";
 import {
+  CLOSE_RETRY,
+  closeWithProcessResources,
+  resetCleanupRetry,
+  type SessionLifecycleOptions,
+} from "./sessionLifecycle.js";
+import {
+  reportOperationEnd,
+  reportOperationStart,
+} from "./operationProgress.js";
+import {
   readSessionStatus,
   type SessionStatusToolOptions,
 } from "./sessionStatusTool.js";
@@ -1610,6 +1620,60 @@ const SERVICE_TOOL_BINDINGS = {
         captureSessionProcessScenario(options, input, request),
     },
   })) satisfies Bind<ProcessSessionCaptureOptions>,
+  // Close and reset order themselves in the session, so they run outside
+  // analysis admission; process-capture and artifact cleanup settle with them.
+  sessionLifecycle: ((options) => {
+    const { session } = options;
+    const close = closeWithProcessResources(options);
+    return {
+      close_binary: {
+        admission: "sdk",
+        value: async (input, { progress }) => {
+          const snapshotPath = input.snapshot_path;
+          if (snapshotPath === undefined) {
+            // Enqueue the transition before awaiting progress transport so a
+            // later open request cannot overtake this close.
+            const closing = close(() =>
+              session.close({ progress, cleanupRetry: CLOSE_RETRY }),
+            );
+            await reportOperationStart(progress, "close_binary");
+            const closed = await closing;
+            await reportOperationEnd(progress, "close_binary", closed.ok);
+            return closed;
+          }
+          const closing = close(
+            () =>
+              session.closeWithSnapshot(snapshotPath, input.overwrite, {
+                progress,
+                cleanupRetry: CLOSE_RETRY,
+              }),
+            (receipt) => receipt,
+          );
+          await reportOperationStart(
+            progress,
+            "close_binary",
+            "saving snapshot; closing provider",
+          );
+          const closed = await closing;
+          await reportOperationEnd(progress, "close_binary", closed.ok);
+          return closed.ok ? ok({ ...closed.value }) : closed;
+        },
+      },
+      // The session owns admission, checkpoint publication and completion.
+      reset_investigation: {
+        admission: "sdk",
+        value: (input, { signal }) =>
+          session.resetInvestigation({
+            ...(input.save_path === undefined
+              ? {}
+              : { savePath: input.save_path }),
+            overwrite: input.overwrite,
+            signal,
+            retryCleanup: resetCleanupRetry(options, "reset_investigation"),
+          }),
+      },
+    };
+  }) satisfies Bind<SessionLifecycleOptions>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
