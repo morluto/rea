@@ -324,6 +324,34 @@ const checkEntryPlacement = (store: BinaryReader, entry: IndexEntry): void => {
     );
 };
 
+const isStringType = (type: number): boolean =>
+  type === RPM_TYPE.string ||
+  type === RPM_TYPE.stringArray ||
+  type === RPM_TYPE.i18nString;
+
+/**
+ * Refuse an entry whose declared count cannot fit in the bytes stored after
+ * its offset, without reading or allocating its value. Fixed-width values need
+ * size * count bytes, BIN needs count bytes, and each string needs at least its
+ * NUL byte. Run before any resource budget so an impossible extent reads as
+ * malformed input, not as a limit the caller could raise.
+ */
+const checkStoredExtent = (store: BinaryReader, entry: IndexEntry): void => {
+  checkEntryPlacement(store, entry);
+  const remaining = store.bytes.length - entry.offset;
+  const size = TYPE_SIZE[entry.type];
+  const minimum =
+    size !== undefined
+      ? size * entry.count
+      : entry.type === RPM_TYPE.bin || isStringType(entry.type)
+        ? entry.count
+        : 0;
+  if (minimum > remaining)
+    fail(`RPM tag ${String(entry.tag)} value leaves the data store.`, {
+      field: `tag ${String(entry.tag)}`,
+    });
+};
+
 /**
  * Check that an entry's whole value lies inside the data store without
  * materializing it, for tags the report does not read.
@@ -333,31 +361,16 @@ const checkEntryExtent = (
   entry: IndexEntry,
   scan: { remaining: number },
 ): void => {
-  checkEntryPlacement(store, entry);
-  const bytes = store.bytes;
-  const remaining = bytes.length - entry.offset;
-  const leaves = (): never =>
-    fail(`RPM tag ${String(entry.tag)} value leaves the data store.`, {
-      field: `tag ${String(entry.tag)}`,
-    });
-  const size = TYPE_SIZE[entry.type];
-  if (size !== undefined) {
-    if (size * entry.count > remaining) leaves();
-    return;
-  }
-  if (entry.type === RPM_TYPE.bin) {
-    if (entry.count > remaining) leaves();
-    return;
-  }
-  if (
-    entry.type === RPM_TYPE.string ||
-    entry.type === RPM_TYPE.stringArray ||
-    entry.type === RPM_TYPE.i18nString
-  ) {
+  checkStoredExtent(store, entry);
+  if (isStringType(entry.type)) {
+    const bytes = store.bytes;
+    const leaves = (): never =>
+      fail(`RPM tag ${String(entry.tag)} value leaves the data store.`, {
+        field: `tag ${String(entry.tag)}`,
+      });
     // Each string needs at least one NUL byte, so one entry's scan is bounded
     // by the store. Entries that share store bytes would rescan them, so all
     // unread entries together may scan the store only once.
-    if (entry.count > remaining) leaves();
     let cursor = entry.offset;
     for (let index = 0; index < entry.count; index += 1) {
       const nul = bytes.indexOf(0, cursor);
@@ -710,7 +723,12 @@ const parseHeader = (
         `RPM ${label} header repeats tag ${String(entry.tag)}, so its value is ambiguous.`,
         { offset: at, field: `${label} tag ${String(entry.tag)}` },
       );
-    if (label === "main") checkPerFileCount(entry, maxFiles);
+    if (label === "main") {
+      // Placement and impossible stored extents are malformed input, so they
+      // are refused before the file budget, which only guards allocation.
+      checkStoredExtent(store, entry);
+      checkPerFileCount(entry, maxFiles);
+    }
     values.set(entry.tag, decodeEntry(store, entry));
   }
   return {

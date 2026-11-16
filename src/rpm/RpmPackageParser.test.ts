@@ -593,6 +593,42 @@ it("refuses a per-file array above the file budget before building its rows", ()
   }
 });
 
+it.each([
+  [
+    "FILEMODES",
+    { tag: RPM_TAG.fileModes, type: RPM_TYPE.int16, int16: [0o100644] },
+  ],
+  [
+    "BASENAMES",
+    { tag: RPM_TAG.baseNames, type: RPM_TYPE.stringArray, strings: ["a"] },
+  ],
+])(
+  "refuses a %s count its stored bytes cannot hold as malformed, not a file budget",
+  (_, tag) => {
+    const bytes = encodeRpmPackage({
+      headerTags: [
+        { tag: RPM_TAG.name, type: RPM_TYPE.string, string: "rows" },
+        { tag: RPM_TAG.version, type: RPM_TYPE.string, string: "1" },
+        { tag: RPM_TAG.release, type: RPM_TYPE.string, string: "1" },
+        { tag: RPM_TAG.arch, type: RPM_TYPE.string, string: "noarch" },
+        // Above the default max_files, with one stored value.
+        { ...tag, count: 2_000_000 },
+      ],
+    });
+    expect(2_000_000).toBeGreaterThan(defaults.max_files);
+    try {
+      parse(bytes);
+      throw new Error("expected malformed extent refusal");
+    } catch (cause) {
+      expect(cause).not.toBeInstanceOf(RpmPackageCapacityFailure);
+      expect(cause).toBeInstanceOf(ParseFailureError);
+      if (!(cause instanceof ParseFailureError)) return;
+      expect(cause.kind).toBe("malformed");
+      expect(cause.message).toMatch(/value leaves the data store/u);
+    }
+  },
+);
+
 it("refuses file paths that expand past the read budget through a shared directory", () => {
   const directory = `/${"d".repeat(1023)}`;
   const baseNames = Array.from(
