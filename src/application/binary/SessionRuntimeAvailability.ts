@@ -1,7 +1,7 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import type { Result } from "../../domain/result.js";
-import type { CapabilityDescriptor } from "../AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../../ports/AnalysisProvider.js";
 
 /** Failures of the provider adapter or process rather than of one request. */
 const PROVIDER_WIDE_FAILURES: ReadonlySet<string> = new Set([
@@ -31,9 +31,7 @@ type RoutedOperation = Pick<
 >;
 
 /** Reason recorded for an operation's own refusal or provider-wide failure. */
-export const runtimeFailureReason = (
-  failure: AnalysisError,
-): string | undefined => {
+const runtimeFailureReason = (failure: AnalysisError): string | undefined => {
   if (failure._tag === "AnalysisCapabilityUnavailableError")
     return failure.userMessage ?? failure.message;
   return PROVIDER_WIDE_FAILURES.has(failure._tag)
@@ -42,7 +40,7 @@ export const runtimeFailureReason = (
 };
 
 /** Explain unavailability inferred for an operation no request failed for. */
-export const inferredUnavailabilityReason = (
+const inferredUnavailabilityReason = (
   providerId: string,
   failure: Pick<ProviderFailure, "operation" | "reason">,
 ): string =>

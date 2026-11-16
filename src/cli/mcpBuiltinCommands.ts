@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
 
 import {
   adaptCliOutputArgumentsForIncur,
@@ -15,18 +15,14 @@ import type { CliInstance } from "./types.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 
-/** Pinned Incur 0.6.1 `mcp` builtin subcommands; Incur does not export them. */
-export const MCP_BUILTIN_SUBCOMMANDS = new Map([
+/** Named MCP commands shared by completion and unknown-command guidance. */
+export const MCP_SUBCOMMANDS = new Map([
   [
     "add",
     {
       description: "Register as MCP server",
       alias: { command: "c" },
-      options: z.object({
-        agent: z.string().optional(),
-        command: z.string().optional(),
-        noGlobal: z.boolean().optional(),
-      }),
+      options: mcpRegistrationOptionsSchema,
     },
   ],
   ["doctor", { description: "Validate MCP server startup and tool listing" }],
@@ -70,7 +66,7 @@ export const reportUnknownMcpSubcommand = (
     // Incur shows group help for an empty token and owns flag-shaped globals.
     !subcommand ||
     subcommand.startsWith("-") ||
-    MCP_BUILTIN_SUBCOMMANDS.has(subcommand) ||
+    MCP_SUBCOMMANDS.has(subcommand) ||
     // Incur serves these builtins before its `mcp` subcommand branch. An
     // output flag's value is data, even when it is spelled like a builtin.
     incurArguments.some(
@@ -84,7 +80,7 @@ export const reportUnknownMcpSubcommand = (
   if (!output.formatExplicit || !output.validation.ok) return false;
   const sensitive = declaredSensitiveValues(command);
   const text = (value: string): string => redactExplicitText(value, sensitive);
-  const suggestion = [...MCP_BUILTIN_SUBCOMMANDS.keys()].find((candidate) =>
+  const suggestion = [...MCP_SUBCOMMANDS.keys()].find((candidate) =>
     candidate.startsWith(subcommand.toLowerCase()),
   );
   const corrected = arguments_.map((token, index) =>

@@ -375,11 +375,15 @@ test("dispatch reverses origin completion; client and capture may arrive in othe
 test("cleanup verifies and retires a separately owned producer group", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-http3-group-"));
   const runId = randomUUID();
-  const child = spawn("/usr/bin/sleep", ["60"], {
-    detached: true,
-    env: { ...process.env, REA_PROCESS_RUN_ID: runId },
-    stdio: "ignore",
-  });
+  const child = spawn(
+    process.execPath,
+    ["--eval", "setInterval(() => {}, 1000)"],
+    {
+      detached: true,
+      env: { ...process.env, REA_PROCESS_RUN_ID: runId },
+      stdio: "ignore",
+    },
+  );
   let primaryError;
   let cleaned = false;
   try {

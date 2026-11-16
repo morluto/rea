@@ -69,11 +69,10 @@ const service = (value: BinaryHardening = report()) =>
 it("returns derived Evidence for a multi-field ELF row", async () => {
   const value = report();
   const result = await service(value).inspect({ path: value.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "derived",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: value,
   });
   expect(result.value.limitations).toEqual([...BINARY_HARDENING_LIMITATIONS]);
@@ -102,8 +101,7 @@ it("labels one Mach-O slice as a universal image and omits derived confidence", 
   if (!result.ok) throw result.error;
   expect(result.value.confidence).toBe("observed");
   expect(result.value.subject).toMatchObject({
-    format: "mach-o-universal",
-    architecture: "arm64",
+    identity: { format: "mach-o-universal", architecture: "arm64" },
   });
   expect(result.value.locations).toEqual([
     { kind: "artifact-path", path: value.artifact.path },
@@ -139,8 +137,7 @@ it("omits architecture when more than one slice is present", async () => {
   const result = await service(value).inspect({ path: value.artifact.path });
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
-    format: "mach-o-universal",
-    architecture: null,
+    identity: { format: "mach-o-universal", architecture: null },
   });
 });
 
@@ -305,7 +302,6 @@ it("keeps sibling Mach-O slices when one range is empty or past EOF", async () =
     ],
   });
   const result = await service(value).inspect({ path: value.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     images: [
@@ -354,7 +350,6 @@ it("keeps a sibling when a failed slice declares an offset past 2^32", async () 
     ],
   });
   const result = await service(value).inspect({ path: value.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.locations).toEqual([
     { kind: "artifact-path", path: value.artifact.path },

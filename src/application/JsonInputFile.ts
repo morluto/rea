@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
@@ -21,14 +22,15 @@ import streamArray from "stream-json/streamers/stream-array.js";
 import {
   assertRegularFileActive,
   RegularFileChangedError,
+  RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
 import {
   RegularFileReadFailure,
   withRegularFile,
   type RegularFileReadOptions,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   JSON_BYTE_ORDER_MARK_MESSAGE,
   JSON_INPUT_RESOURCE_REMEDIATION,
@@ -112,8 +114,61 @@ const withJsonInputPipeline = async <Value>(
   else signal.addEventListener("abort", cancel, { once: true });
   try {
     return await run(controller.signal);
+  } catch (cause: unknown) {
+    if (
+      controller.signal.aborted &&
+      controller.signal.reason instanceof JsonInputCancellationFailure &&
+      isOwnedJsonPipelineCancellation(cause, controller.signal.reason)
+    )
+      throw controller.signal.reason;
+    throw cause;
   } finally {
     signal.removeEventListener("abort", cancel);
+  }
+};
+
+/** Node may combine its owned abort with a cooperative read cancellation. */
+const isOwnedJsonPipelineCancellation = (
+  cause: unknown,
+  cancellation: JsonInputCancellationFailure,
+): boolean => {
+  const pending = [cause];
+  const seen = new Set<AggregateError>();
+  let owned = false;
+  try {
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (
+        current === cancellation ||
+        (current instanceof Error &&
+          current.name === "AbortError" &&
+          "code" in current &&
+          current.code === "ABORT_ERR" &&
+          current.cause === cancellation)
+      ) {
+        owned = true;
+        continue;
+      }
+      if (
+        current instanceof RegularFileOperationCancelled &&
+        current.reason === cancellation.reason
+      )
+        continue;
+      if (!(current instanceof AggregateError) || seen.has(current))
+        return false;
+      const failures: unknown = current.errors;
+      if (!Array.isArray(failures)) return false;
+      const count = failures.length;
+      if (!Number.isSafeInteger(count) || count <= 0) return false;
+      // Cyclic or repeatedly shared aggregate graphs leave ownership unproven.
+      seen.add(current);
+      for (let index = 0; index < count; index += 1)
+        pending.push(failures[index]);
+    }
+    return owned;
+  } catch {
+    // Unreadable aggregate contents do not authorize replacing the failure.
+    return false;
   }
 };
 
@@ -663,7 +718,7 @@ async function* decodedChunks(
   observe?: (bytes: Uint8Array) => void,
   physicalRead: JsonInputPhysicalReadObservation = {},
 ): AsyncGenerator<string> {
-  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const decoder = strictUtf8Decoder("preserve");
   let leading = true;
   const checked = (text: string): string => {
     if (leading && text.length > 0) {

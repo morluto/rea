@@ -1,7 +1,7 @@
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
-import { Client } from "@modelcontextprotocol/client";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
-import type { AndroidAnalysisExecution } from "../application/android/AndroidAnalysisPort.js";
+import { OwnedMcpClient } from "../process/OwnedMcpClient.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { AndroidAnalysisExecution } from "../ports/android/AndroidAnalysisPort.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import {
   type AndroidMappingSource,
@@ -13,8 +13,9 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -32,7 +33,7 @@ import {
   readAndroidJniLibraries,
   type AndroidJniLibraries,
 } from "./AndroidJniLibraries.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { JadxMcpTransport, type JadxLauncher } from "./JadxMcpTransport.js";
 import {
@@ -44,11 +45,15 @@ import {
   parseJadxJson,
 } from "./JadxProtocol.js";
 import {
-  JADX_BRIDGE_IDENTITY,
+  type JadxBridgeIdentity,
   JADX_RELEASE,
   JADX_PROVIDER_IDENTITY,
   JADX_LIMITATIONS,
+  JADX_HEAP_REMEDIATION,
 } from "./JadxRelease.js";
+
+const JADX_REPORTED_FAILURE_REMEDIATION =
+  "jadx is running and reported this failure for the selected input, so provider readiness checks cannot repair it. Review details.diagnostics.reason and adjust the input or request if applicable. Repeating the unchanged request is not expected to succeed.";
 
 type JadxCall = {
   readonly operation: string;
@@ -63,7 +68,10 @@ type JadxCallObservation = {
 /** One owned engine connection; its wire protocol stays inside the Android adapter. */
 export class JadxSession {
   readonly transport: JadxMcpTransport;
-  readonly #client = new Client({ name: "rea-android-adapter", version: "1" });
+  readonly #client = new OwnedMcpClient({
+    name: "rea-android-adapter",
+    version: "1",
+  });
   #loaded: ReturnType<typeof jadxLoadSchema.parse> | undefined;
   #connected = false;
   #partialContext:
@@ -73,6 +81,7 @@ export class JadxSession {
         readonly target: BinaryTarget;
         readonly jarHash: string;
         readonly bridgeHash: string;
+        readonly bridgeIdentity: JadxBridgeIdentity;
       }
     | undefined;
   #observedCalls: JadxCallObservation[] = [];
@@ -99,6 +108,8 @@ export class JadxSession {
     readonly snapshot: string;
     readonly jarHash: string;
     readonly bridgeHash: string;
+    /** Identity read from the packaged bridge before the child was launched. */
+    readonly bridgeIdentity: JadxBridgeIdentity;
     readonly signal: AbortSignal;
     /** Selected whole-operation deadline; also bounds each upstream call. */
     readonly timeoutMs: number;
@@ -115,6 +126,7 @@ export class JadxSession {
       target,
       jarHash,
       bridgeHash: context.bridgeHash,
+      bridgeIdentity: context.bridgeIdentity,
     };
     this.#observedCalls = [];
     this.#jniObservation = undefined;
@@ -158,14 +170,12 @@ export class JadxSession {
       const server = this.#client.getServerVersion();
       this.#serverName = server?.name ?? null;
       this.#serverVersion = server?.version ?? null;
-      if (
-        server?.name !== JADX_BRIDGE_IDENTITY.name ||
-        server.version !== JADX_BRIDGE_IDENTITY.version
-      )
+      const expected = context.bridgeIdentity;
+      if (server?.name !== expected.name || server.version !== expected.version)
         throw new AnalysisCapabilityUnavailableError(
           "jadx",
           request.operation,
-          `Expected ${JADX_BRIDGE_IDENTITY.name} ${JADX_BRIDGE_IDENTITY.version}; server reported ${server?.name ?? "unknown"} ${server?.version ?? "unknown"}.`,
+          `Expected ${expected.name} ${expected.version}; server reported ${server?.name ?? "unknown"} ${server?.version ?? "unknown"}.`,
         );
       const tools = this.#tools(request, target, signal, timeoutMs);
       const runtime = jadxRuntimeSchema.parse(
@@ -259,9 +269,7 @@ export class JadxSession {
                               ...jadxOperationTimeoutGuidance(timeoutMs),
                             },
                           )
-                        : new AnalysisCancelledError(request.operation, {
-                            cause: reason,
-                          }),
+                        : cancelledBy(request.operation, carriedReason(reason)),
                   });
                   if (
                     value.inventory.status === "complete" &&
@@ -330,8 +338,8 @@ export class JadxSession {
       provider_facts: {
         jar_sha256: context.jarHash,
         bridge_sha256: context.bridgeHash,
-        bridge_name: JADX_BRIDGE_IDENTITY.name,
-        bridge_version: JADX_BRIDGE_IDENTITY.version,
+        bridge_name: context.bridgeIdentity.name,
+        bridge_version: context.bridgeIdentity.version,
         server_name: this.#serverName,
         server_version: this.#serverVersion,
         engine_version: this.#engineVersion,
@@ -406,7 +414,7 @@ export class JadxSession {
                 retryable: false,
                 remediationAction:
                   failure.memory_area === "heap"
-                    ? "Increase REA_JADX_HEAP_MIB (MiB) in the environment that starts REA, within the host or container memory budget. Review JAVA_TOOL_OPTIONS and other JVM heap overrides. The observed heap is this run's limit, not the heap the APK requires."
+                    ? JADX_HEAP_REMEDIATION
                     : "Review the JVM allocation failure and the host or container memory limits. The observed maximum heap does not establish which memory region was exhausted; increasing heap alone may not help.",
                 diagnostics: {
                   upstream_operation: name,
@@ -426,7 +434,11 @@ export class JadxSession {
               },
             ]);
         }
+        // jadx answered, so its own reply, not provider readiness, explains
+        // the failure; doctor cannot repair a reported per-request error.
         throw new ProviderAdapterError("jadx", request.operation, {
+          userMessage: `jadx reported an error for ${name} that REA did not classify; its reason is in details.diagnostics.reason.`,
+          remediationAction: JADX_REPORTED_FAILURE_REMEDIATION,
           diagnostics: {
             upstream_operation: name,
             reason: text,

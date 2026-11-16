@@ -2,9 +2,9 @@ import type { Stats } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -13,10 +13,12 @@ import {
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import { asarNodeSchema } from "../artifacts/AsarNode.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  admitAsarHeader,
+  asarHeaderAdmissionFailure,
+} from "../resources/index.js";
+import { asarNodeSchema } from "../domain/asarNode.js";
 import {
   regularFileState,
   sameRegularFileState,
@@ -24,13 +26,11 @@ import {
 } from "../filesystem/RegularFile.js";
 
 import {
-  admitAsarHeader,
-  asarHeaderAdmissionFailure,
-} from "../artifacts/AsarHeader.js";
-import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isRecord } from "../domain/isRecord.js";
 
 type ElectronFileOperation =
   | "inspect_electron_page"
@@ -64,8 +64,7 @@ export class ElectronFileScope {
     } catch (cause: unknown) {
       if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
         throw cause;
-      if (signal?.aborted === true)
-        throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
       throw cause;
     }
   }
@@ -122,9 +121,7 @@ export const mapElectronFileAuthorizationFailure = (
     (physicalPrimary instanceof ArtifactReaderFailure &&
       physicalPrimary.reason === "cancelled");
   const primary = hasCancellation
-    ? new AnalysisCancelledError(operation, {
-        cause: cancellationReason,
-      })
+    ? cancelledBy(operation, carriedReason(cancellationReason))
     : physicalPrimary instanceof AnalysisError
       ? physicalPrimary
       : physicalPrimary === undefined
@@ -142,11 +139,11 @@ export const mapElectronFileAuthorizationFailure = (
   if (diagnostics !== undefined)
     (primary ?? cleanup).retainDiagnostics(diagnostics);
   if (primary === undefined) return cleanup;
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     operation,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };
@@ -320,7 +317,7 @@ const asarFiles = async (
       if (!sameRegularFileState(identity, afterRead))
         throw new Error("ASAR identity changed during header read");
       const parsed: unknown = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(json),
+        decodeStrictUtf8(json, "strip-signature"),
       );
       if (!isRecord(parsed) || !isRecord(parsed.files))
         throw new Error("ASAR header has no file tree");
@@ -373,9 +370,6 @@ const isAsarRegularFile = (
     parsed.data.link === undefined
   );
 };
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const throwIfAborted = (signal?: AbortSignal): void => {
   assertArtifactReadActive(signal);

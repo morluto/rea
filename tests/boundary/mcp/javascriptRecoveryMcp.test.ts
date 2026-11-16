@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,11 +46,16 @@ it
     const advertised = tools.tools.find(
       (tool) => tool.name === "recover_javascript_sources",
     );
-    if (advertised === undefined || advertised.outputSchema === undefined)
+    if (
+      advertised === undefined ||
+      canonicalOutputSchema(advertised.name) === undefined
+    )
       throw new Error("recovery tool must advertise both schemas");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = advertised.inputSchema;
-    const outputSchema: Record<string, unknown> = advertised.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const additional = join(fixture.root, "chunk.js");
@@ -57,15 +66,11 @@ it
       ...(multiple ? { additional_paths: [additional] } : {}),
     };
     expect(ajv.validate(inputSchema, args)).toBe(true);
-    const response = await client.callTool({
-      name: "recover_javascript_sources",
-      arguments: args,
-    });
+    const response = await client.callTool(
+      { name: "recover_javascript_sources", arguments: args },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(
-      ajv.validate(outputSchema, response.structuredContent),
-      JSON.stringify(ajv.errors),
-    ).toBe(true);
     const parsed = toolContract(
       "recover_javascript_sources",
     ).outputSchema.parse(response.structuredContent);

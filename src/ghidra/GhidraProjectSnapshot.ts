@@ -1,4 +1,5 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
@@ -13,11 +14,11 @@ import {
   sep,
 } from "node:path";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,
@@ -30,7 +31,7 @@ import type { GhidraProjectSelection } from "../config/ghidraExistingProject.js"
 import { ghidraProgramNameSchema } from "../config/ghidraExistingProject.js";
 
 /** Reason for a selected project whose content no longer matches its committed profile. */
-export const GHIDRA_PROJECT_PROFILE_MISMATCH =
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
   "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 
 /** Classify file cancellation/cleanup before the generic provider boundary. */
@@ -229,7 +230,7 @@ const pathsOverlap = (first: string, second: string): boolean => {
       rel === "" ||
       (!isAbsolute(rel) &&
         rel !== ".." &&
-        !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+        !rel.startsWith(`..${HOST_PLATFORM.platform === "win32" ? "\\" : "/"}`))
     );
   };
   return contains(first, second) || contains(second, first);

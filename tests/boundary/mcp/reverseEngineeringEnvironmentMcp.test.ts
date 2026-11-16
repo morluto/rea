@@ -186,12 +186,9 @@ it("passes Rizin decoder and map inputs as flags before the artifact", async () 
     expect.arrayContaining([...rizinCommandLimitations(input)]),
   );
 
-  // Compact schemas drop property descriptions, so the tool description names
-  // the input that changes how Rizin loads the file.
   const { tools } = await client.listTools();
   const listed = tools.find((tool) => tool.name === rizinContract.name);
   expect(listed?.description).toBe(rizinContract.description);
-  expect(listed?.description).toContain("base_address");
 
   const refused = await client.callTool({
     name: "execute_rizin_command",

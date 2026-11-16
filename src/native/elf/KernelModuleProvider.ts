@@ -1,28 +1,21 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  type StableArtifactSnapshot,
+  readStableArtifact,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { KernelModulePort } from "../../application/binaryDiagnostics/KernelModulePort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { KernelModulePort } from "../../ports/binaryDiagnostics/KernelModulePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_KERNEL_MODULE_ENTRIES,
@@ -31,10 +24,7 @@ import {
 } from "../../domain/native/kernelModule.js";
 import { err, ok } from "../../domain/result.js";
 import { KERNEL_MODULE_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  BinaryFormatFailure,
-  BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import { parseKernelModule } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
@@ -57,9 +47,10 @@ export class KernelModuleProvider implements KernelModulePort {
   }
 
   async inspect(input: InspectKernelModuleInput, options?: ExecutionOptions) {
+    let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
-        const snapshot = await readStableArtifact(
+        snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
           options?.signal,
@@ -79,7 +70,7 @@ export class KernelModuleProvider implements KernelModulePort {
         );
       });
     } catch (cause) {
-      return err(kernelModuleFailure(cause, input));
+      return err(kernelModuleFailure(cause, input, snapshot));
     }
   }
 }
@@ -118,42 +109,14 @@ const kernelModuleFailurePrimary = (
         ),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ]);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      {
-        cause,
-      },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -188,32 +151,15 @@ const kernelModuleFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, input.path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected kernel module could not be read (${String(cause.code)}): ${input.path}.`,
-        },
-      ]);
-  }
+  const fileFailure = projectSelectedArtifactFileFailure(
+    cause,
+    OPERATION,
+    input.path,
+    "kernel module",
+  );
+  if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
     origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
@@ -228,6 +174,7 @@ const kernelModuleFailurePrimary = (
 const kernelModuleFailure = (
   cause: unknown,
   input: InspectKernelModuleInput,
+  snapshot?: StableArtifactSnapshot,
 ) => {
   const primary = kernelModuleFailurePrimary(
     artifactFilePrimaryFacts(cause),
@@ -239,5 +186,6 @@ const kernelModuleFailure = (
     input.path,
     KERNEL_MODULE_PROVIDER.id,
     OPERATION,
+    snapshot,
   );
 };

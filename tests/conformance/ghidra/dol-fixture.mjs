@@ -4,6 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -103,7 +104,7 @@ export function convertElfToDol(elf, { bss }) {
  * The fixture is never executed.
  */
 export async function buildGameCubeDolFixture(directory) {
-  const compiler = process.env.REA_PPC_CLANG ?? "clang";
+  const compiler = fixtureCommand(FIXTURE_TOOLS.ppcClang);
   const target = "powerpc-unknown-linux-gnu";
   const here = (path) => fileURLToPath(new URL(path, import.meta.url));
   const sources = [

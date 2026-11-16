@@ -6,7 +6,7 @@ import { assertHistoricalPidAccess } from "../../../scripts/verify/recorded-cras
 const node = "/fixture/node";
 const nodeExec = 'execve("/fixture/node", ["node", "rea.mjs"], 0x7fff) = 0';
 const psExec =
-  'execve("/usr/bin/ps", ["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0';
+  'execve("/usr/bin/ps", ["/usr/bin/ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0';
 const parent = (...events: readonly string[]) => ({
   pid: 1200,
   text: [nodeExec, ...events].join("\n"),
@@ -17,7 +17,6 @@ const check = (
   const facts = collectOwnershipTraceFacts({
     traces,
     nodeExecutable: node,
-    psExecutables: new Set(["/usr/bin/ps"]),
   });
   return traces.flatMap((trace) =>
     assertHistoricalPidAccess({
@@ -83,9 +82,14 @@ it("rejects provider-style reads outside the ps child and identity-only caller",
   ).toThrow("non-inventory lookup");
 });
 
-it("does not trust a ps command with different arguments or failed exec", () => {
+it("does not trust a ps command with different arguments, argv[0], path or failed exec", () => {
   for (const text of [
-    'execve("/usr/bin/ps", ["ps", "-ef"], 0x7fff) = 0',
+    // The selected absolute argv[0] with other arguments.
+    'execve("/usr/bin/ps", ["/usr/bin/ps", "-ef"], 0x7fff) = 0',
+    // A bare argv[0] with otherwise exact inventory arguments.
+    'execve("/usr/bin/ps", ["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0',
+    // A ps outside the fixed system locations.
+    psExec.replaceAll("/usr/bin/ps", "/opt/tools/ps"),
     psExec.replace(" = 0", " = -1 EACCES"),
   ])
     expect(() =>

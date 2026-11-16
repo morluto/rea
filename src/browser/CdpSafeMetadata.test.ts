@@ -2,7 +2,7 @@ import { MIMEType } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { safeResponseMetadata as projectResponseMetadata } from "./CdpSafeMetadata.js";
-import { readCdpResponseFacts } from "./CdpNetworkEventFacts.js";
+import { readCdpResponseReceived } from "./CdpNetworkEventFacts.js";
 import type { UnknownRecord } from "./CdpCaptureValues.js";
 
 /** Admit each raw response fixture through the production field owner. */
@@ -12,7 +12,7 @@ const safeResponseMetadata = (
   response: UnknownRecord,
   allowedOrigins: ReadonlySet<string>,
 ) => {
-  const facts = readCdpResponseFacts(response);
+  const facts = readCdpResponseReceived({ requestId, response }).response;
   if (facts === undefined)
     throw new Error("Expected a response fixture record");
   return projectResponseMetadata(requestId, url, facts, allowedOrigins);
@@ -399,6 +399,34 @@ describe("safe CDP response metadata CSP sources", () => {
       nonce_count: 0,
       hash_count: 0,
     });
+  });
+
+  it("counts only complete CSP3 nonce and hash sources", () => {
+    const captured = safeResponseMetadata(
+      "request-csp-nonce",
+      `${origin}/api`,
+      {
+        headers: {
+          "Content-Security-Policy":
+            "script-src 'nonce-YQ==' 'nonce-@@@' 'nonce-truncated 'sha256-' 'sha384-abc=' 'sha512-abcd===' 'self'",
+        },
+      },
+      new Set([origin]),
+    );
+
+    expect(captured.response.csp).toEqual({
+      directives: [
+        {
+          name: "script-src",
+          sources: [{ kind: "keyword", value: "'self'" }],
+        },
+      ],
+      nonce_count: 1,
+      hash_count: 1,
+    });
+    const serialized = JSON.stringify(captured);
+    for (const secret of ["YQ", "@@@", "truncated", "sha384-abc", "abcd"])
+      expect(serialized).not.toContain(secret);
   });
 });
 

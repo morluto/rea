@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveCliJsonPaths } from "./cliJsonInput.js";
+import { resolveCliJsonPaths } from "./cli/cliJsonInput.js";
 import { electronActiveObservationInputSchema } from "./domain/javascript/electronActiveObservation.js";
 
 const paths = [
@@ -123,7 +123,7 @@ describe("CLI JSON path normalization", () => {
       expect.objectContaining({
         path: ["executable_path"],
         code: "invalid_format",
-        message: expect.stringContaining("absolute local filesystem path"),
+        format: "regex",
       }),
     ]);
   });

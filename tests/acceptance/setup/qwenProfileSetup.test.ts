@@ -86,5 +86,4 @@ cliTest(
       code: "ENOENT",
     });
   },
-  120_000,
 );

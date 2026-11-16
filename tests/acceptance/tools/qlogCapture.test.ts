@@ -5,10 +5,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it as runtimeTest } from "vitest";
 import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
-} from "../../../src/browser/history/CaptureRelease.js";
-import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+  CAPTURE_DECODER_HAS_MEMORY_BOUND as hasMemoryBound,
+  CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
+} from "../../fixtures/captureDecoderLimits.js";
+import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webNetworkCaptureSchema,
@@ -17,12 +17,10 @@ import {
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
 
 const execute = promisify(execFile);
-const hasMemoryBound =
-  NODE_CAPTURE_HEAP_ENFORCED ||
-  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null;
-const it = runtimeTest.skipIf(!hasMemoryBound);
+const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
 const event = {
   name: "transport:packet_sent",
@@ -309,9 +307,9 @@ it("pages original trace-scoped facts after source deletion without conflating s
         }),
       ),
     ).toMatchObject({ error: { code: "invalid_request" } });
-}, 60_000);
+});
 
-runtimeTest.runIf(!hasMemoryBound)(
+runtimeTest.runIf(!hasMemoryBound && runtimeSupported)(
   "refuses qlog when this runtime cannot enforce a decoder memory bound",
   async () => {
     const { call } = await connectLocalToolsMcp();
@@ -420,7 +418,7 @@ it("runs built CLI and real stdio SDK with exact evidence parity, selection, ret
     error: { code: "invalid_request" },
   });
   expect(JSON.stringify(invalid)).not.toContain("mysecret");
-}, 60_000);
+});
 
 it("fails whole-capture validation before selection and survives malformed, unsupported and oversized qlog", async () => {
   const root = await createTestTempDirectory("rea-qlog-errors-");
@@ -513,7 +511,12 @@ it("fails whole-capture validation before selection and survives malformed, unsu
       typeof failed.stdout !== "string"
     )
       throw new Error("CLI failure omitted JSON output");
-    expect(JSON.parse(failed.stdout)).toMatchObject(expected);
+    // The CLI names the capture by its argument, otherwise as MCP does.
+    expect(
+      issuesByContractField(JSON.parse(failed.stdout), {
+        capturePath: "capture_path",
+      }),
+    ).toMatchObject(expected);
   }
   await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   expect(
@@ -527,9 +530,11 @@ it("fails whole-capture validation before selection and survives malformed, unsu
   await writeFile(path, qlog([event]));
   await client.ping();
   await expectRecoveredCapture(call, path);
-}, 60_000);
+});
 
-runtimeTest.skipIf(process.versions.bun !== undefined || !hasMemoryBound)(
+runtimeTest.skipIf(
+  process.versions.bun !== undefined || !hasMemoryBound || !runtimeSupported,
+)(
   "contains actual qlog decoder heap exhaustion and keeps MCP usable",
   async () => {
     const root = await createTestTempDirectory("rea-qlog-capacity-");
@@ -567,5 +572,4 @@ runtimeTest.skipIf(process.versions.bun !== undefined || !hasMemoryBound)(
     await client.ping();
     await expectRecoveredCapture(call, path);
   },
-  60_000,
 );

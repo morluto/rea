@@ -26,15 +26,16 @@ export const compareFunctions = (
   const dimensions = compareDimensions(left, right, {
     links,
     providersDiffer,
-    sameEntry: match.method === "same-entry",
+    sameIdentity:
+      match.method === "same-entry" || match.method === "same-evidence",
     coordinateContext,
   });
   const changes = dimensions.filter(({ status }) => status !== "unchanged");
   return functionComparisonResultSchema.parse({
     status: overallStatus(dimensions, match.status),
     function_match: match,
-    left_subject_sha256: left.subject.digest.sha256,
-    right_subject_sha256: right.subject.digest.sha256,
+    left_subject_sha256: left.target.sha256,
+    right_subject_sha256: right.target.sha256,
     summary: summarize(dimensions),
     dimensions,
     changes,

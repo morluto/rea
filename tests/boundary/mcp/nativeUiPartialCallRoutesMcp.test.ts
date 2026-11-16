@@ -4,9 +4,9 @@ import { z } from "zod";
 import type {
   AnalysisExecution,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -409,8 +409,8 @@ it.each(["unavailable", "output"] as const)(
         resolution: "unresolved",
         reason:
           failure === "unavailable"
-            ? "This analysis is unavailable for the current target. Choose another analysis or target."
-            : expect.stringContaining("unreadable result"),
+            ? expect.stringMatching(/unavailable.*target/iu)
+            : expect.stringContaining("result REA could not read"),
         limitations: expect.arrayContaining([
           "The provider could not complete callee enumeration.",
         ]),
@@ -767,7 +767,7 @@ it("reports malformed partial CallReference as unreadable route evidence", async
     expect.objectContaining({
       relation: "provider_call",
       resolution: "unresolved",
-      reason: expect.stringContaining("unreadable result"),
+      reason: expect.stringContaining("result REA could not read"),
     }),
   );
 });

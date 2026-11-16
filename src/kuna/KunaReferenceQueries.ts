@@ -1,8 +1,6 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisResourceConstraintError,
-} from "../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { FunctionDossier } from "../domain/native/functionDossier.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
@@ -95,20 +93,20 @@ export class KunaReferenceQueries {
     if (this.#graphFailure !== undefined) return err(this.#graphFailure);
     if (this.#graph === undefined) {
       if (this.#pendingGraph?.signal.aborted === true) {
-        const retired = await this.work.wait(
+        const retired = await this.work.retire(
           this.#pendingGraph,
           signal,
           operation,
         );
-        if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
-          return retired;
-        if (signal?.aborted === true)
-          return err(
-            new AnalysisCancelledError(operation, { cause: signal?.reason }),
-          );
+        if (!retired.ok) return retired;
         return this.#loadGraph(installation, operation, signal);
       }
       if (this.#pendingGraph === undefined) {
+        // Read in the requesting operation's snapshot, refused as a value.
+        const deadline = readRuntimeSetting(() =>
+          kunaProjectDeadline(installation.configuration),
+        );
+        if (!deadline.ok) return deadline;
         const pending = this.work.start<KunaCallGraph>(
           (producerSignal) =>
             this.work.scan(
@@ -121,7 +119,7 @@ export class KunaReferenceQueries {
                   "--functions",
                   "",
                 ],
-                deadline: kunaProjectDeadline(installation.configuration),
+                deadline: deadline.value,
               },
               new KunaCallGraphReader(),
               producerSignal,
@@ -172,6 +170,18 @@ export class KunaReferenceQueries {
           },
         };
       });
+    const calleeDiscovery =
+      node.kind === "data"
+        ? {
+            discovery: {
+              callees: {
+                status: "partial" as const,
+                reason:
+                  "Kuna classifies this graph node as data and does not analyze it as a function body.",
+              },
+            },
+          }
+        : {};
     return ok({
       callers: identities(graph.callers.get(address) ?? []),
       callees: identities(graph.callees.get(address) ?? []),
@@ -191,8 +201,9 @@ export class KunaReferenceQueries {
             limitations: [
               "Kuna reports indirect calls in this function without every target; additional callees remain unknown.",
             ],
+            ...calleeDiscovery,
           }
-        : { status: "complete" },
+        : { status: "complete", ...calleeDiscovery },
       source: this.#source(graph, node),
     });
   }
@@ -208,6 +219,7 @@ export class KunaReferenceQueries {
       has_indirect_calls: graph.hasIndirectCalls,
       function: {
         address: node.address,
+        kind: node.kind,
         has_indirect_calls: node.hasIndirectCalls,
         forwards_to: node.forwardsTo,
         forwarding_target_in_graph:
@@ -229,13 +241,8 @@ export class KunaReferenceQueries {
     }
     let pending = this.#pendingXrefs.get(address);
     if (pending?.signal.aborted === true) {
-      const retired = await this.work.wait(pending, signal, "xrefs");
-      if (!retired.ok && !(retired.error instanceof AnalysisCancelledError))
-        return retired;
-      if (signal?.aborted === true)
-        return err(
-          new AnalysisCancelledError("xrefs", { cause: signal?.reason }),
-        );
+      const retired = await this.work.retire(pending, signal, "xrefs");
+      if (!retired.ok) return retired;
       return this.incoming(installation, address, signal);
     }
     if (pending === undefined) {
@@ -246,15 +253,20 @@ export class KunaReferenceQueries {
             "capacity",
             "The session's native reference-query queue is full; await an existing query before starting another.",
             { limit_queries: PENDING_XREF_QUERIES },
+            { measuredExhaustion: true },
           ),
         );
+      const deadline = readRuntimeSetting(() =>
+        kunaProjectDeadline(installation.configuration),
+      );
+      if (!deadline.ok) return deadline;
       pending = this.work.start<KunaIncomingReferences>(
         async (producerSignal) => {
           const run = await this.work.run({
             installation,
             operation: "xrefs",
             arguments: (input) => ["xrefs", input, "--to", address, "--json"],
-            deadline: kunaProjectDeadline(installation.configuration),
+            deadline: deadline.value,
             outputBytes: KUNA_XREF_OUTPUT_BYTES,
             signal: producerSignal,
           });

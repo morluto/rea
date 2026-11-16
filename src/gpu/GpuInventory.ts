@@ -1,3 +1,11 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
+import type {
+  GpuCodeObjectsInput,
+  GpuCodeObjects,
+  GpuObject,
+  GpuKernel,
+} from "../domain/gpu/gpuCodeObjects.js";
 import {
   CCOB_MAGIC,
   CLANG_BUNDLE_MAGIC,
@@ -11,23 +19,17 @@ import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
-import type {
-  GpuCodeObjectsInput,
-  GpuCodeObjects,
-  GpuObject,
-  GpuKernel,
-} from "../domain/gpu/gpuCodeObjects.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-  BinaryStringReadLimitFailure,
-} from "../native/metadata/BinaryContainer.js";
+  isBinaryStringReadLimit,
+} from "../domain/binaryContainer.js";
 import {
   readElfSectionDirectory,
   readPeSectionDirectory,
   type NativeSectionDirectory,
-} from "../native/metadata/NativeSectionDirectory.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+} from "../domain/native/nativeSectionDirectory.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -64,7 +66,7 @@ export class GpuInventory {
     "Static declarations only; no GPU execution, SASS disassembly, host launch correlation or runtime compatibility was verified.",
     "Object IDs are positional identities scoped to artifact.sha256. Locations inside decoded objects name their containing object; they are not file offsets.",
   ];
-  discovery: "complete" | "partial" = "complete";
+  discovery: KnownCoverageStatus = "complete";
   examined_sections = 0;
   unknown_section_names = 0;
   #factBytes = 0;
@@ -194,10 +196,7 @@ export class GpuInventory {
             continue;
           }
           if (!isGpuSection(section.name)) continue;
-          if (
-            !section.file_backed ||
-            (directory.format === "elf" && (section.flags & 0x800n) !== 0n)
-          ) {
+          if (!section.file_backed || section.compressed) {
             this.discovery = "partial";
             const message = `GPU section ${section.index} has no supported uncompressed file range`;
             this.#retain(message);
@@ -290,18 +289,14 @@ export class GpuInventory {
   }
   #retainFailure(row: GpuObject, cause: unknown): void {
     if (cause instanceof GpuReportCapacityFailure) throw cause;
-    if (
-      !(cause instanceof BinaryFormatFailure) &&
-      !(cause instanceof BinaryResourceFailure)
-    )
-      throw cause;
-    row.inspection =
-      cause instanceof BinaryResourceFailure ||
-      cause instanceof BinaryStringReadLimitFailure
-        ? "capacity"
-        : cause.kind === "unsupported"
-          ? "unsupported"
-          : "malformed";
+    const capacity =
+      cause instanceof BinaryResourceFailure || isBinaryStringReadLimit(cause);
+    if (!capacity && !(cause instanceof BinaryFormatFailure)) throw cause;
+    row.inspection = capacity
+      ? "capacity"
+      : cause.kind === "unsupported"
+        ? "unsupported"
+        : "malformed";
     this.#objectLimitations(row, [cause.message]);
   }
   async #payload(
@@ -368,10 +363,7 @@ export class GpuInventory {
         const content = bytes.subarray(0, length);
         let text: string;
         try {
-          text = new TextDecoder("utf-8", {
-            fatal: true,
-            ignoreBOM: true,
-          }).decode(content);
+          text = decodeStrictUtf8(content, "preserve");
         } catch {
           return rejectGpu("PTX is not valid UTF-8 text");
         }

@@ -1,8 +1,18 @@
+import { isRecord } from "#dist/domain/isRecord.js";
+
+/** @typedef {ReturnType<typeof parseManagedAppManifest>} ManagedAppManifest */
+/** @typedef {ManagedAppManifest["methods"][number]} ManagedAppManifestMethod */
+/** @typedef {NonNullable<ManagedAppManifest["application_graph"]>} ManagedAppManifestGraph */
+
+/**
+ * Parse a caller-selected managed app manifest into its checked expectations.
+ * @param {unknown} rawManifest
+ */
 export function parseManagedAppManifest(rawManifest) {
   const manifest = object(rawManifest, "manifest");
   const target = object(manifest.target, "manifest.target");
   const methods = array(manifest.methods, "manifest.methods");
-  ensure(manifest.methods.length > 0, "manifest.methods must not be empty");
+  ensure(methods.length > 0, "manifest.methods must not be empty");
   return {
     label: optionalString(manifest.label, "manifest.label"),
     target: {
@@ -29,6 +39,7 @@ export function parseManagedAppManifest(rawManifest) {
   };
 }
 
+/** @param {unknown} rawGraph */
 function parseManagedAppManifestGraph(rawGraph) {
   if (rawGraph === undefined) return undefined;
   const graph = object(rawGraph, "manifest.application_graph");
@@ -61,6 +72,10 @@ function parseManagedAppManifestGraph(rawGraph) {
   };
 }
 
+/**
+ * @param {unknown} rawTrace
+ * @param {number} index
+ */
 function parseManagedAppManifestTrace(rawTrace, index) {
   const prefix = `manifest.application_graph.feature_traces[${String(index)}]`;
   const trace = object(rawTrace, prefix);
@@ -76,7 +91,9 @@ function parseManagedAppManifestTrace(rawTrace, index) {
   );
   const minMatchedSeeds = trace.min_matched_seeds ?? 1;
   ensure(
-    Number.isInteger(minMatchedSeeds) && minMatchedSeeds > 0,
+    typeof minMatchedSeeds === "number" &&
+      Number.isInteger(minMatchedSeeds) &&
+      minMatchedSeeds > 0,
     `${prefix}.min_matched_seeds must be a positive integer`,
   );
   return {
@@ -89,6 +106,10 @@ function parseManagedAppManifestTrace(rawTrace, index) {
   };
 }
 
+/**
+ * @param {unknown} rawMethod
+ * @param {number} index
+ */
 function parseManagedAppManifestMethod(rawMethod, index) {
   const prefix = `manifest.methods[${String(index)}]`;
   const method = object(rawMethod, prefix);
@@ -112,19 +133,31 @@ function parseManagedAppManifestMethod(rawMethod, index) {
   };
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ * @returns {{ readonly [key: string]: unknown }}
+ */
 function object(value, name) {
-  ensure(
-    value !== null && typeof value === "object" && !Array.isArray(value),
-    `${name} must be an object`,
-  );
+  ensure(isRecord(value), `${name} must be an object`);
   return value;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ * @returns {readonly unknown[]}
+ */
 function array(value, name) {
   ensure(Array.isArray(value), `${name} must be an array`);
   return value;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ * @returns {string}
+ */
 function string(value, name) {
   ensure(
     typeof value === "string" && value.length > 0,
@@ -133,25 +166,42 @@ function string(value, name) {
   return value;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ */
 function optionalString(value, name) {
   if (value === undefined) return undefined;
   return string(value, name);
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ * @returns {number}
+ */
 function nonNegativeInteger(value, name) {
   ensure(
-    Number.isInteger(value) && value >= 0,
+    typeof value === "number" && Number.isInteger(value) && value >= 0,
     `${name} must be a non-negative integer`,
   );
   return value;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ */
 function digest(value, name) {
   const text = string(value, name);
   ensure(/^[a-f0-9]{64}$/u.test(text), `${name} must be a lowercase sha256`);
   return text;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ */
 function optionalCliMetadataGuid(value, name) {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -165,12 +215,20 @@ function optionalCliMetadataGuid(value, name) {
   return text;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ */
 function metadataToken(value, name) {
   const text = string(value, name);
   ensure(/^0x[0-9a-f]{8}$/u.test(text), `${name} must be a metadata token`);
   return text;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} name
+ */
 function methodToken(value, name) {
   const token = metadataToken(value, name);
   ensure(
@@ -180,12 +238,21 @@ function methodToken(value, name) {
   return token;
 }
 
+/**
+ * The MethodDef row a checked method token names.
+ * @param {string} token
+ */
 export function methodTokenRow(token) {
   const row = Number.parseInt(token.slice(4), 16);
   ensure(row > 0, `method token ${token} has an invalid row id`);
   return row;
 }
 
+/**
+ * @param {unknown} condition
+ * @param {string} message
+ * @returns {asserts condition}
+ */
 export function ensure(condition, message) {
   if (!condition)
     throw new Error(`managed app manifest verification failed: ${message}`);

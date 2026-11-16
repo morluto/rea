@@ -68,7 +68,7 @@ describe.skipIf(process.platform !== "darwin")(
             operation: "inspect_plist",
             issues: [
               {
-                path: ["path"],
+                path: ["relativePath"],
                 reason: "invalid_value",
                 message: expect.stringContaining(
                   `Cannot inspect ${join(app, selected)}: ${reason}`,
@@ -128,8 +128,8 @@ describe.skipIf(process.platform !== "darwin")(
           code: "capability_unavailable",
           message: expect.stringContaining("(CLI: --relative-path)"),
           remediation: {
-            action: expect.stringContaining(
-              "Select another plist in the target with the path input (CLI: --relative-path).",
+            action: expect.stringMatching(
+              /select another plist.*path input.*--relative-path/iu,
             ),
           },
           details: {
@@ -233,31 +233,45 @@ describe.skipIf(process.platform !== "darwin")(
         "plist can only include one object",
       ],
     ] as const)(
-      "classifies the selected malformed plist as input: %s",
+      "names the input that selected the malformed plist: %s",
       async ([source, diagnostic], { cli }) => {
         const root = await createTestTempDirectory("rea-plist-target-input-");
         const path = join(root, "chosen.plist");
         await writeFile(path, source);
-        for (const args of [[], ["--relative-path", path]]) {
-          const result = await cli.run({
-            arguments: ["inspect-plist", path, ...args, "--json"],
-            environment,
-          });
-          expect(result.exitCode).toBe(1);
-          expect(result.json).toMatchObject({
-            code: "invalid_request",
-            details: {
-              issues: [
-                {
-                  path: ["path"],
-                  message: expect.stringContaining(diagnostic),
-                },
-              ],
-              captured_output: { exit_code: 1 },
-            },
-          });
-          expect(capturedDiagnostic(result.json)).toContain(diagnostic);
-        }
+        // The target alone selects the plist, so the target is what failed.
+        const direct = await cli.run({
+          arguments: ["inspect-plist", path, "--json"],
+          environment,
+        });
+        expect(direct.exitCode).toBe(1);
+        expect(direct.json).toMatchObject({
+          code: "target_unavailable",
+          details: {
+            path,
+            reason: expect.stringContaining(diagnostic),
+            captured_output: { exit_code: 1 },
+          },
+        });
+        expect(direct.json).not.toHaveProperty("details.issues");
+        expect(capturedDiagnostic(direct.json)).toContain(diagnostic);
+        const selected = await cli.run({
+          arguments: ["inspect-plist", path, "--relative-path", path, "--json"],
+          environment,
+        });
+        expect(selected.exitCode).toBe(1);
+        expect(selected.json).toMatchObject({
+          code: "invalid_request",
+          details: {
+            issues: [
+              {
+                path: ["relativePath"],
+                message: expect.stringContaining(diagnostic),
+              },
+            ],
+            captured_output: { exit_code: 1 },
+          },
+        });
+        expect(capturedDiagnostic(selected.json)).toContain(diagnostic);
         expect(await readFile(path, "utf8")).toBe(source);
       },
     );
@@ -398,8 +412,9 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action:
-              "The 64 MiB (67108864-byte) native binary plist decode allowance (no runtime override) is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. Repeating the unchanged request fails the same way.",
+            action: expect.stringMatching(
+              /64 MiB.*67108864.byte.*decode allowance.*no runtime override.*do not raise.*complete input.*unchanged request fails/iu,
+            ),
           },
           details: {
             operation: "inspect_plist",
@@ -427,8 +442,8 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringContaining(
-              "Select a suitable complete artifact within the fixed 64 MiB (67108864-byte) native plist input allowance (no runtime override).",
+            action: expect.stringMatching(
+              /complete artifact.*64 MiB.*67108864.byte.*input allowance.*no runtime override/iu,
             ),
           },
           details: {

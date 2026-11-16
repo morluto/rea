@@ -1,13 +1,11 @@
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { describe, expect, it } from "vitest";
 import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
   type PeLoadConfigField,
 } from "../../domain/native/peLoadConfig.js";
-import {
-  parsePeLoadConfig,
-  PeLoadConfigLimitFailure,
-} from "./PeLoadConfigParser.js";
+import { parsePeLoadConfig } from "./PeLoadConfigParser.js";
 import {
   peLoadConfigImage,
   peManySectionsImage,
@@ -33,6 +31,10 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     const report = await parse({ bits });
     expect(peLoadConfigSchema.safeParse(report).success).toBe(true);
     expect(report.tls?.callbacks).toHaveLength(3);
+    // The callback array starts at file offset 0x800 and includes its null slot.
+    expect(report.tls?.callback_array_locations).toEqual([
+      { offset: 0x800, bytes: bits === 32 ? 16 : 32 },
+    ]);
     expect(report.tls?.callbacks[0]).toMatchObject({
       rva: 0x2000,
       file_offset: 0x1600,
@@ -47,6 +49,35 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     expect(report.load_config?.inferences[0]?.evidence_kind).toBe("inferred");
     expect(report.load_config?.se_handler_count).toBe(bits === 32 ? 2 : null);
   });
+  it.each([
+    [0x2100, 0x2200, 0x1700],
+    [0x2180, 0x2280, null],
+    [0x2200, 0x2300, null],
+  ] as const)(
+    "retains a TLS template at [%s, %s) without requiring file backing",
+    async (start, end, fileOffset) => {
+      const bytes = peLoadConfigImage({
+        bits,
+        zeroFillCallback: true,
+        rawDataRange: [start, end],
+      });
+      const base = bits === 64 ? 0x180000000n : 0x10000000n;
+      const report = await parsePeLoadConfig(
+        bytes,
+        { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+        inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+      );
+      expect(report.tls).toMatchObject({
+        start_address_of_raw_data: `0x${(base + BigInt(start)).toString(16)}`,
+        end_address_of_raw_data: `0x${(base + BigInt(end)).toString(16)}`,
+        raw_data_size: 256,
+        raw_data_file_offset: fileOffset,
+        raw_data_section: ".text",
+      });
+      expect(report.tls?.callbacks).toHaveLength(1);
+      expect(report.load_config?.guard_flags?.raw).toBe(0x500);
+    },
+  );
   it("honors Size even when directory bytes contain newer fields", async () => {
     const report = await parse({
       bits,
@@ -66,9 +97,9 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     expect(
       (await parse({ bits, callbackCount: 1 }, 1)).examined_callbacks,
     ).toBe(1);
-    await expect(parse({ bits }, 1)).rejects.toBeInstanceOf(
-      PeLoadConfigLimitFailure,
-    );
+    await expect(parse({ bits }, 1)).rejects.toMatchObject({
+      failure: { kind: "limit", limit: { name: "callbacks", maximum: 1 } },
+    });
   });
   it("reports absent directories", async () => {
     expect(await parse({ bits, tls: false, loadConfig: false })).toMatchObject({
@@ -127,14 +158,17 @@ it("preserves pointer precision and unknown flag bits", async () => {
 
 it("honors cancellation before parsing", async () => {
   const bytes = peLoadConfigImage();
-  await expect(
-    parsePeLoadConfig(
-      bytes,
-      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-      AbortSignal.abort(),
-    ),
-  ).rejects.toThrow();
+  const reason = { caller: "before PE load config parsing" };
+  const failure = await parsePeLoadConfig(
+    bytes,
+    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+    inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    AbortSignal.abort(reason),
+  ).catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({ reason: "cancelled" });
+  if (!(failure instanceof ArtifactReaderFailure)) throw failure;
+  expect(failure.cause).toBe(reason);
 });
 
 it("retains a callback in virtual-only section storage with unknown file offset", async () => {

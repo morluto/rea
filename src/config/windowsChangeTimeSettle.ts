@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
+import {
+  DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS,
+  DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
+  DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
+  MAXIMUM_WINDOWS_CHANGE_TIME_DRIFT_MS,
+  MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
+  MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
+} from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -19,18 +28,18 @@ interface WindowsChangeTimeBound {
  */
 export const WINDOWS_CHANGE_TIME_DRIFT_MS = {
   setting: "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
-  defaultValue: 2_000,
+  defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_DRIFT_MS,
   floor: 1,
-  maximum: 60_000,
+  maximum: MAXIMUM_WINDOWS_CHANGE_TIME_DRIFT_MS,
   unit: "ms",
 } as const satisfies WindowsChangeTimeBound;
 
 /** Delay between ChangeTime observations. Unset keeps the 25 ms poll. */
 export const WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = {
   setting: "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
-  defaultValue: 25,
+  defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   floor: 1,
-  maximum: 1_000,
+  maximum: MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   unit: "ms",
 } as const satisfies WindowsChangeTimeBound;
 
@@ -40,9 +49,9 @@ export const WINDOWS_CHANGE_TIME_SETTLE_POLL_MS = {
  */
 export const WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS = {
   setting: "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
-  defaultValue: 40,
+  defaultValue: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   floor: 1,
-  maximum: 1_000,
+  maximum: MAXIMUM_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   unit: "polls",
 } as const satisfies WindowsChangeTimeBound;
 
@@ -55,30 +64,20 @@ export interface WindowsChangeTimeSettingFailure {
   readonly floor: number;
   readonly maximum: number;
   readonly unit: "ms" | "polls";
-  readonly restartRequired: true;
+  readonly update_mode: "runtime";
 }
 
 /** Effective settle budget and whether each part came from the default or a setting. */
 export interface WindowsChangeTimeSettleLimits {
   readonly driftMs: number;
-  readonly driftSource: "default" | "setting";
+  readonly driftSource: "default" | "setting" | "runtime";
   readonly pollMs: number;
-  readonly pollSource: "default" | "setting";
+  readonly pollSource: "default" | "setting" | "runtime";
   readonly maxPolls: number;
-  readonly maxPollsSource: "default" | "setting";
+  readonly maxPollsSource: "default" | "setting" | "runtime";
 }
 
-export const DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS: WindowsChangeTimeSettleLimits =
-  {
-    driftMs: WINDOWS_CHANGE_TIME_DRIFT_MS.defaultValue,
-    driftSource: "default",
-    pollMs: WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.defaultValue,
-    pollSource: "default",
-    maxPolls: WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.defaultValue,
-    maxPollsSource: "default",
-  };
-
-export const windowsChangeTimeSettingFailure = (
+const windowsChangeTimeSettingFailure = (
   bound: WindowsChangeTimeBound,
   currentValue: string,
 ): WindowsChangeTimeSettingFailure => ({
@@ -89,14 +88,14 @@ export const windowsChangeTimeSettingFailure = (
   floor: bound.floor,
   maximum: bound.maximum,
   unit: bound.unit,
-  restartRequired: true,
+  update_mode: "runtime",
 });
 
-/** Name the rejected value, its source, the allowed range, and the required restart. */
-export const windowsChangeTimeSettingMessage = (
+/** Name the rejected value, its source, and the allowed range. */
+const windowsChangeTimeSettingMessage = (
   failure: WindowsChangeTimeSettingFailure,
 ): string =>
-  `The effective ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). Set ${failure.setting} in the environment that starts REA to a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}, then restart REA.`;
+  `The supplied ${failure.setting} value is ${failure.currentValue} ${failure.unit} (source ${failure.source}; default ${String(failure.defaultValue)} ${failure.unit}, floor ${String(failure.floor)} ${failure.unit}, maximum ${String(failure.maximum)} ${failure.unit}). windows change-time settings can be changed at runtime with update_analysis_settings. The launch seed ${failure.setting} must be a positive decimal integer from ${String(failure.floor)} to ${String(failure.maximum)}. The rejected value is not active.`;
 
 const inRange = (bound: WindowsChangeTimeBound, value: string): boolean => {
   if (!decimalInteger.test(value)) return false;
@@ -110,11 +109,13 @@ export const windowsChangeTimeSettingSchema = (bound: WindowsChangeTimeBound) =>
     .string()
     .superRefine((value, context) => {
       if (inRange(bound, value)) return;
+      const failure = windowsChangeTimeSettingFailure(bound, value);
       context.addIssue({
         code: "custom",
-        message: windowsChangeTimeSettingMessage(
-          windowsChangeTimeSettingFailure(bound, value),
-        ),
+        message: windowsChangeTimeSettingMessage(failure),
+        params: {
+          update_mode: failure.update_mode,
+        },
       });
     })
     .transform(Number);
@@ -127,6 +128,14 @@ export const windowsChangeTimeSettlePollMsSchema =
 export const windowsChangeTimeSettleMaxPollsSchema =
   windowsChangeTimeSettingSchema(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS);
 
+const WINDOWS_CHANGE_TIME_OVERRIDES = {
+  [WINDOWS_CHANGE_TIME_DRIFT_MS.setting]: "windows.change_time_drift_ms",
+  [WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.setting]:
+    "windows.change_time_settle_poll_ms",
+  [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.setting]:
+    "windows.change_time_settle_max_polls",
+} as const;
+
 const readBound = (
   bound: WindowsChangeTimeBound,
   environment: Readonly<Record<string, string | undefined>>,
@@ -135,11 +144,15 @@ const readBound = (
   const value = environment[bound.setting];
   if (value === undefined) return undefined;
   const parsed = windowsChangeTimeSettingSchema(bound).safeParse(value);
-  if (!parsed.success) {
-    failures.push(windowsChangeTimeSettingFailure(bound, value));
+  if (parsed.success) return parsed.data;
+  const override =
+    WINDOWS_CHANGE_TIME_OVERRIDES[
+      bound.setting as keyof typeof WINDOWS_CHANGE_TIME_OVERRIDES
+    ];
+  if (currentAnalysisOperationSnapshot()?.overrides[override] !== undefined)
     return undefined;
-  }
-  return parsed.data;
+  failures.push(windowsChangeTimeSettingFailure(bound, value));
+  return undefined;
 };
 
 /** Resolve the settle budget from one environment. Invalid values are refused. */
@@ -170,6 +183,7 @@ export const resolveWindowsChangeTimeSettle = (
           settings: failures.map((failure) => ({
             setting: failure.setting,
             constraint: windowsChangeTimeSettingMessage(failure),
+            update_mode: failure.update_mode,
           })),
         },
       ),
@@ -184,16 +198,21 @@ export const resolveWindowsChangeTimeSettle = (
   });
 };
 
-/**
- * Describe the effective budget. Admission still returns the last observation
- * when the poll budget runs out; these settings only change how long it waits.
- */
-export const windowsChangeTimeSettleRecovery = (
+/** Apply the accepted operation snapshot. An explicit caller budget is left alone. */
+export const applyWindowsChangeTimeSnapshot = (
   limits: WindowsChangeTimeSettleLimits,
-): string =>
-  [
-    `The effective ${WINDOWS_CHANGE_TIME_DRIFT_MS.setting} value is ${String(limits.driftMs)} ms (source ${limits.driftSource}; default ${String(WINDOWS_CHANGE_TIME_DRIFT_MS.defaultValue)} ms, floor ${String(WINDOWS_CHANGE_TIME_DRIFT_MS.floor)} ms, maximum ${String(WINDOWS_CHANGE_TIME_DRIFT_MS.maximum)} ms).`,
-    `The effective ${WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.setting} value is ${String(limits.pollMs)} ms (source ${limits.pollSource}; default ${String(WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.defaultValue)} ms, floor ${String(WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.floor)} ms, maximum ${String(WINDOWS_CHANGE_TIME_SETTLE_POLL_MS.maximum)} ms).`,
-    `The effective ${WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.setting} value is ${String(limits.maxPolls)} polls (source ${limits.maxPollsSource}; default ${String(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.defaultValue)} polls, floor ${String(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.floor)} polls, maximum ${String(WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS.maximum)} polls).`,
-    "Set them in the environment that starts REA, then restart REA. They do not change Windows ChangeTime itself.",
-  ].join(" ");
+): WindowsChangeTimeSettleLimits => {
+  const overrides = currentAnalysisOperationSnapshot()?.overrides;
+  if (overrides === undefined) return limits;
+  const driftMs = overrides["windows.change_time_drift_ms"];
+  const pollMs = overrides["windows.change_time_settle_poll_ms"];
+  const maxPolls = overrides["windows.change_time_settle_max_polls"];
+  return {
+    driftMs: driftMs ?? limits.driftMs,
+    driftSource: driftMs === undefined ? limits.driftSource : "runtime",
+    pollMs: pollMs ?? limits.pollMs,
+    pollSource: pollMs === undefined ? limits.pollSource : "runtime",
+    maxPolls: maxPolls ?? limits.maxPolls,
+    maxPollsSource: maxPolls === undefined ? limits.maxPollsSource : "runtime",
+  };
+};

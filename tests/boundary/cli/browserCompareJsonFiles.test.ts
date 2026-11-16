@@ -9,7 +9,6 @@ import { createWebScreenshotArtifact } from "../../../src/domain/webScreenshot.j
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
 // Linux limits one argument to 128 KiB and macOS all arguments to 1 MiB.
 const COMMAND_LINE_LIMIT_BYTES = 1024 * 1024;
 
@@ -66,7 +65,6 @@ describe("browser comparison JSON file inputs", () => {
         normalized_result: { status: "identical", changed_pixels: 0 },
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 
   cliTest(
@@ -88,21 +86,52 @@ describe("browser comparison JSON file inputs", () => {
       });
       expect(invalidArtifact.exitCode, invalidArtifact.stderr).toBe(1);
       expect(invalidArtifact.signal).toBeNull();
+      // The contract refuses the decoded artifact before analysis.
       expect(invalidArtifact.json).toMatchObject({
-        error: "Browser observation failed",
         code: "invalid_request",
         details: {
           operation: "compare_web_screenshots",
           issues: [
             {
-              path: ["before"],
+              path: ["beforeJson"],
               message: "Screenshot artifact digest or size mismatch",
             },
           ],
         },
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  cliTest(
+    "refuses inline text that is not JSON under its CLI key and keeps a missing file's own failure",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-screenshot-json-");
+      const valid = JSON.stringify(createWebScreenshotArtifact(noisePng(2, 2)));
+      const malformed = await cli.run({
+        arguments: ["compare-web-screenshots", valid, "{", "--json"],
+        environment: process.env,
+      });
+      expect(malformed.exitCode, malformed.stderr).toBe(1);
+      expect(malformed.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_screenshots",
+          issues: [
+            expect.objectContaining({
+              path: ["afterJson"],
+              reason: "invalid_format",
+            }),
+          ],
+        },
+      });
+      const missing = join(root, "missing.json");
+      const absent = await cli.run({
+        arguments: ["compare-web-screenshots", missing, valid, "--json"],
+        environment: process.env,
+      });
+      expect(absent.exitCode, absent.stderr).toBe(1);
+      expect(absent.json).toMatchObject({ input_path: missing });
+    },
   );
 
   cliTest(
@@ -110,7 +139,6 @@ describe("browser comparison JSON file inputs", () => {
     async ({ cli }) => {
       await assertPngInputErrorProjections(cli);
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 
   cliTest(
@@ -140,7 +168,6 @@ describe("browser comparison JSON file inputs", () => {
         input_reason: "read-failed",
       });
     },
-    INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
 

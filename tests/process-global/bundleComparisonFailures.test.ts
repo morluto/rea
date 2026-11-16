@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,10 +13,10 @@ import {
   readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "../../src/application/EvidenceBundleFiles.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedStagedOutput } from "../../src/filesystem/OwnedStagedOutput.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
 import * as bundleComparison from "../../src/domain/bundleComparison.js";
 import * as bundleSummary from "../../src/domain/evidenceRecordSummary.js";
 import { bundleComparisonResultSchema } from "../../src/domain/bundleComparison.js";
@@ -222,7 +223,7 @@ it.each(unexpectedBundleFailures)(
     );
     const { bundle } = await validBundleFile(directory);
     const existing = evidenceDomain.createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",
@@ -565,3 +566,22 @@ it.each(["before-commit", "after-commit", "cleanup-retry"])(
     }
   },
 );
+
+it("reports an unconfirmed read cleanup after a completed comparison as cleanup_incomplete", async () => {
+  const directory = await createTestTempDirectory("rea-bundle-close-failure-");
+  const { path, bundle } = await validBundleFile(directory);
+  const close = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockRejectedValueOnce(new Error("injected scope close failure"));
+  onTestFinished(() => close.mockRestore());
+  const result = await compareEvidenceBundlesCommand({
+    leftPath: path,
+    rightPath: path,
+  });
+  if (result.ok) throw new Error("Expected an unconfirmed cleanup");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  // The completed comparison stays with the cleanup failure.
+  expect(result.error.diagnostics).toMatchObject({
+    completed_result: bundleComparison.compareBundles(bundle, bundle),
+  });
+});

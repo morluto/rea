@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
@@ -35,7 +35,7 @@ const scenarios = [
     name: "trace_application_feature",
     input: JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
     sourceIds: [application.evidence_id],
-    facts: { summary: { matched_seeds: 1, traced_nodes: 1 } },
+    facts: { summary: { matched_seeds: 1, traced_nodes: 2, traced_edges: 1 } },
   },
   {
     name: "trace_javascript_semantics",

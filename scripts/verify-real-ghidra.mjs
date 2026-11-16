@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
+import { verifyProjectCoverage } from "./verify-real-ghidra-project-coverage.mjs";
+
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -31,6 +32,11 @@ import {
   verifyInventoryOperations,
 } from "./verify-real-ghidra-inventory.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  onceConfirmed,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.mjs";
 import { verifyGhidraRelocationSymbols } from "./lib/real-ghidra-relocation-symbols.mjs";
 
@@ -73,7 +79,12 @@ const expectedNativeTarget = nativeFixtureTarget(
   process.platform,
   process.arch,
 );
-const fixtureRoot = await mkdtemp(join(tmpdir(), "rea-ghidra-fixtures-"));
+// Ghidra children read and write under the root; a plain root admits them on every host.
+const fixtures = await VerifierFixture.open({
+  prefix: "rea-ghidra-fixtures-",
+  private: false,
+});
+const fixtureRoot = fixtures.path;
 const sourcePath = fileURLToPath(
   new URL("../tests/conformance/ghidra/inventory.c", import.meta.url),
 );
@@ -121,7 +132,7 @@ for (const [command, role] of toolchain) {
     );
   }
 }
-try {
+await withVerifierFixture(fixtures, async () => {
   const common = ["-O0", "-g", "-fno-inline"];
   if (expectedNativeTarget.format === "elf") common.push("-fno-pie", "-no-pie");
   await exec(compiler, [...common, sourcePath, "-o", debugPath]);
@@ -320,6 +331,10 @@ try {
   const customPath = process.env.GHIDRA_TARGET_PATH;
   const custom =
     customPath === undefined ? null : await verifyTarget(customPath, "custom");
+  const projectCoverage =
+    !crossFormat && !aarch64JumpTableOnly && process.platform !== "win32"
+      ? await verifyProjectCoverage(verifierRun)
+      : null;
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -340,13 +355,12 @@ try {
       ? (crossResults[0]?.native_api_cli ?? null)
       : jumpTable.native_api_cli,
     native_value_e2e: debug.native_values,
+    selected_project_coverage: projectCoverage,
     relocation_symbols: relocationSymbols,
     custom_target: custom === null ? null : summary(custom),
     cleanup: "complete",
   };
-} finally {
-  await rm(fixtureRoot, { recursive: true, force: true });
-}
+});
 process.stdout.write(
   `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
 );
@@ -514,6 +528,14 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
     profileDigest: profile.value.profile.digest,
   });
 
+  // The fixture root is removed only after this client confirms it closed;
+  // a failed close is retried by the fixture's release.
+  const closeClient = fixtures.releaseAfter(
+    onceConfirmed(async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    }),
+  );
   let runtimeCoordinates;
   let primaryFailure;
   try {
@@ -608,14 +630,16 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
     primaryFailure = cause;
     throw cause;
   } finally {
-    const closed = await client.close();
-    if (!closed.ok)
+    try {
+      await closeClient();
+    } catch (closeFailure) {
       throw primaryFailure === undefined
-        ? closed.error
+        ? closeFailure
         : new AggregateError(
-            [primaryFailure, closed.error],
+            [primaryFailure, closeFailure],
             "Ghidra verification and cleanup failed",
           );
+    }
     if (runtimeCoordinates !== undefined)
       await assertCleanup(runtimeCoordinates);
   }

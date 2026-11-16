@@ -1,4 +1,7 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
+import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
+import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
 import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
 import { inspectBinaryHardeningInputSchema } from "../../src/domain/native/binaryHardening.js";
@@ -84,9 +87,9 @@ import {
   mapArtifactFileFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../../src/artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
+} from "../../src/resources/ArtifactFileOperation.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
+import { translateArtifactFailure } from "../../src/resources/index.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import {
   OwnedRegularFileOperationFailure,
@@ -94,8 +97,8 @@ import {
   regularFileCancellation,
 } from "../../src/filesystem/OwnedRegularFile.js";
 import { RegularFileOperationCancelled } from "../../src/filesystem/RegularFile.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../../src/artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
+import { readStableArtifact } from "../../src/resources/readStableArtifact.js";
 import { ArtifactAnalysisResources } from "../../src/process/ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "../../src/process/LinuxResourceLimits.js";
 import { LocalWebSourceLocationArtifacts } from "../../src/browser/assets/WebSourceLocationArtifacts.js";
@@ -104,30 +107,38 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../fixtures/webSourceLocation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { GoBinaryProvider } from "../../src/go/GoBinaryProvider.js";
 import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
+import { NativeInitializersProvider } from "../../src/native/initializers/NativeInitializersProvider.js";
+import { ElfUnwindRangesProvider } from "../../src/native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
+import { KernelBuildConfigProvider } from "../../src/native/elf/KernelBuildConfigProvider.js";
 import { PeCertificatesProvider } from "../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../src/native/pe/PeImportsProvider.js";
+import { WindowsShortcutProvider } from "../../src/native/windows/WindowsShortcutProvider.js";
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
+import { inspectNativeInitializersInputSchema } from "../../src/domain/native/nativeInitializers.js";
+import { inspectElfUnwindRangesInputSchema } from "../../src/domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
+import { inspectKernelBuildConfigInputSchema } from "../../src/domain/native/kernelBuildConfig.js";
 import { inspectPeCertificatesInputSchema } from "../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../src/domain/native/peImports.js";
+import { inspectWindowsShortcutInputSchema } from "../../src/domain/native/windowsShortcut.js";
 import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeExports.js";
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
 import { ggufFixture } from "../fixtures/model/model.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createRustImage } from "../fixtures/rust/image.js";
@@ -179,7 +190,7 @@ it.each(
     const web = new LocalWebSourceLocationArtifacts({
       load: () => Promise.resolve(ok(script)),
     });
-    const resources = new ArtifactAnalysisResources(
+    const resources = createArtifactAnalysisResources(
       "selected-test",
       "inspect_signal_recording",
       readStableArtifact,
@@ -286,7 +297,7 @@ const expectIl2cppSource = (
   expect(source.operation).toBe("observe_il2cpp_metadata_source");
   expect(source.subject).toMatchObject({
     local_path: path,
-    digest: { sha256 },
+    identity: { sha256 },
   });
   expect(source.normalized_result).toEqual({
     artifact: { path, sha256, bytes: bytes.length },
@@ -377,7 +388,9 @@ it.each(
     [
       name,
       makeProvider,
-      new ArtifactReaderFailure("integrity", "source replacement"),
+      new ArtifactReaderFailure("integrity", "source replacement", {
+        integrityCheck: "container-identity",
+      }),
       AnalysisArtifactChangedError,
     ] as const,
     [
@@ -430,6 +443,7 @@ it.each(staticProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "controlled source replacement",
+      { integrityCheck: "container-identity" },
     );
     fault.readFailure = { cause: primary };
     const controller = new AbortController();
@@ -468,6 +482,7 @@ it("clears the Python pyc cleanup flag once a retained descriptor closes", async
   const primary = new ArtifactReaderFailure(
     "integrity",
     "controlled source replacement",
+    { integrityCheck: "container-identity" },
   );
   fault.readFailure = { cause: primary };
   try {
@@ -523,7 +538,7 @@ it.each([
       if (result.ok) throw new Error("Expected finalization failure");
       const evidence = parseEvidence(result.error.partialObservation);
       expect(evidence.operation).toBe("inspect_model_artifact");
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       expect(evidence.normalized_result).toMatchObject({
         artifact: { path, sha256: null, read_scope: "header" },
         tensors: [{ name: "weight" }, { name: "quant" }],
@@ -869,7 +884,7 @@ it.each([
       foreignPath,
     );
     const foreignPartial = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "foreign", name: "foreign owner", version: null },
       {
         operation: "inspect_artifact",
@@ -998,12 +1013,17 @@ it.each([
 const stableArtifactProviders = [
   ...staticProviders,
   ["ELF notes", () => new ElfNotesProvider()],
+  ["native initializers", () => new NativeInitializersProvider()],
+  ["ELF unwind ranges", () => new ElfUnwindRangesProvider()],
   ["Apple IPS", () => new AppleIpsProvider()],
   ["kernel module", () => new KernelModuleProvider()],
+  ["kernel build config", () => new KernelBuildConfigProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
+  ["release exposure", () => new ReleaseExposureReader()],
   ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
+  ["Windows shortcut", () => new WindowsShortcutProvider()],
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
 ] as const;
@@ -1029,6 +1049,16 @@ const inspectFileFailure = (
       inspectElfNotesInputSchema.parse({ path }),
       options,
     );
+  if (provider instanceof NativeInitializersProvider)
+    return provider.inspect(
+      inspectNativeInitializersInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof ElfUnwindRangesProvider)
+    return provider.inspect(
+      inspectElfUnwindRangesInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof AppleIpsProvider)
     return provider.inspect(
       inspectAppleIpsInputSchema.parse({ path }),
@@ -1037,6 +1067,11 @@ const inspectFileFailure = (
   if (provider instanceof KernelModuleProvider)
     return provider.inspect(
       inspectKernelModuleInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof KernelBuildConfigProvider)
+    return provider.inspect(
+      inspectKernelBuildConfigInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof PeCertificatesProvider)
@@ -1059,6 +1094,11 @@ const inspectFileFailure = (
       inspectPeImportsInputSchema.parse({ path }),
       options,
     );
+  if (provider instanceof WindowsShortcutProvider)
+    return provider.inspect(
+      inspectWindowsShortcutInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof NativeExportsProvider)
     return provider.inspect(
       inspectNativeExportsInputSchema.parse({ path }),
@@ -1074,6 +1114,8 @@ const inspectFileFailure = (
       inspectPeResourcesInputSchema.parse({ path }),
       options,
     );
+  if (provider instanceof ReleaseExposureReader)
+    return provider.inspect({ path }, options, () => undefined);
   return provider.inspect({ path }, options);
 };
 
@@ -1105,7 +1147,9 @@ it.each(
       expect(result.error._tag).toBe(
         expectedTag ??
           (provider instanceof ElfNotesProvider ||
+          provider instanceof ElfUnwindRangesProvider ||
           provider instanceof KernelModuleProvider ||
+          provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
           provider instanceof PeResourcesProvider
             ? "ArtifactOperationError"
@@ -1136,6 +1180,7 @@ it.each(fileFailureProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "original source replacement",
+      { integrityCheck: "container-identity" },
     );
     try {
       const nested = await scope

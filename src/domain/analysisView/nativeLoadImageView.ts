@@ -198,7 +198,7 @@ const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
   };
 };
 
-/** Query the owner's parsed historical observations without reopening the target. */
+/** Query the owner's parsed observations without reopening the target. */
 export const projectNativeLoadImageView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -278,7 +278,7 @@ export const projectNativeLoadImageView = (
           sections: "sections" in report ? report.sections.length : null,
         },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
 
   const selected =
@@ -292,19 +292,8 @@ export const projectNativeLoadImageView = (
           : undefined
         : observed[view.collection];
   const page = selected === undefined ? undefined : selectRows(selected, view);
-  const symbolUnrecorded =
-    view.collection === "relocations" &&
-    (view.fields === undefined ||
-      view.fields.some((field: string) => field === "symbol")) &&
-    (page?.rows.some(({ record }) => !("symbol" in record)) ?? false);
   return ok({
     ...shared,
-    unknowns: symbolUnrecorded
-      ? [
-          ...shared.unknowns,
-          "The relocation symbol was not recorded for at least one selected row.",
-        ]
-      : shared.unknowns,
     kind: "native-load-image" as const,
     verification_status: report.status,
     view,

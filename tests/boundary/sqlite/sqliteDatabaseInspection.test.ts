@@ -321,8 +321,7 @@ it("keeps unrelated catalog names outside the selected-table reply budget", asyn
   ).toThrowError(
     expect.objectContaining({
       reason: "selection",
-      message:
-        "Selected ordinary table does not exist with that exact name: absent",
+      message: expect.stringMatching(/ordinary table.*exact name.*absent/i),
     }),
   );
   for (const schema_scope of ["inventory", "database"] as const)
@@ -680,6 +679,283 @@ it("samples above 1000 rows and safe integer limits within the byte budget", asy
       truncated: row_limit < 1002,
     });
   }
+});
+
+it("pages a rowid table in rowid order without repeating or dropping rows", async () => {
+  const path = await createDatabase(`CREATE TABLE items(value TEXT);
+    INSERT INTO items(value) VALUES ('a'), ('b'), ('c'), ('d'), ('e');`);
+  const first = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+  });
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 0,
+    returned_rows: 2,
+    truncated: true,
+    next_row_offset: 2,
+  });
+  const second = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+    row_offset: first.rows?.next_row_offset ?? 0,
+  });
+  expect(second.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 2,
+    returned_rows: 2,
+    truncated: true,
+    next_row_offset: 4,
+  });
+  const last = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+    row_offset: second.rows?.next_row_offset ?? 0,
+  });
+  expect(last.rows).toMatchObject({
+    row_offset: 4,
+    returned_rows: 1,
+    truncated: false,
+    next_row_offset: null,
+  });
+  // Reading every page once must reproduce the table exactly: asserting only
+  // counts and offsets would pass even if a page repeated the first rows.
+  expect(
+    [first, second, last].flatMap((page) =>
+      (page.rows?.values ?? []).map((row) =>
+        row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+      ),
+    ),
+  ).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
+});
+
+it.each(["UTF-16le", "UTF-16be"] as const)(
+  "orders a %s WITHOUT ROWID table by its decoded primary key",
+  async (encoding) => {
+    const path = await createDatabase(
+      `PRAGMA encoding='${encoding}'; CREATE TABLE keyed(k INTEGER, label TEXT, PRIMARY KEY(k)) WITHOUT ROWID; INSERT INTO keyed VALUES (2, 'b'), (1, 'a');`,
+    );
+    const result = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "keyed",
+      row_limit: 20,
+    });
+    expect(result.rows).toMatchObject({ order: "primary_key" });
+    expect(
+      result.rows?.values.map((row) =>
+        row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+      ),
+    ).toEqual([
+      ["1", "a"],
+      ["2", "b"],
+    ]);
+  },
+);
+
+it("orders by a free rowid spelling when a virtual generated column shadows one", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE generated(name TEXT, rowid TEXT GENERATED ALWAYS AS (name || '!') VIRTUAL);
+    INSERT INTO generated(name) VALUES ('b'), ('a');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "generated",
+    columns: ["name"],
+    row_limit: 20,
+  });
+  // Rowid order is insertion order, which the generated expression reverses.
+  expect(result.rows).toMatchObject({ order: "rowid" });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["b"], ["a"]]);
+});
+
+it("does not decode an unselected malformed primary-key name on a rowid table", async () => {
+  // `key` is the declared primary key, but a rowid table orders by an alias, so
+  // its name never reaches ORDER BY. A selection that omits it must stay
+  // readable even when the stored name is not valid UTF-8.
+  const path = await createApplicationDatabase(
+    `CREATE TABLE wide("key" INTEGER PRIMARY KEY, label TEXT);
+     INSERT INTO wide("key", label) VALUES (1, 'a'), (2, 'b');`,
+    (bytes) => {
+      const marker = Buffer.from('"key"');
+      const offset = bytes.indexOf(marker);
+      if (offset < 0 || bytes.indexOf(marker, offset + 1) !== -1)
+        throw new Error("Expected unique authored key marker");
+      bytes[offset + 1] = 0xff;
+    },
+  );
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "wide",
+    schema_scope: "inventory",
+    columns: ["label"],
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "rowid" });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["a"], ["b"]]);
+});
+
+it("orders a WITHOUT ROWID table by its primary key, including DESC direction and collation", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE ordered(k INTEGER, label TEXT COLLATE NOCASE, PRIMARY KEY(k DESC, label)) WITHOUT ROWID;
+    CREATE INDEX ordered_label ON ordered(label);
+    INSERT INTO ordered VALUES (1, 'b'), (3, 'a'), (2, 'c'), (3, 'd');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "ordered",
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "primary_key", truncated: false });
+  // k DESC, then label in its declared NOCASE order for equal keys.
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([
+    ["3", "a"],
+    ["3", "d"],
+    ["2", "c"],
+    ["1", "b"],
+  ]);
+});
+
+it("keeps repeated primary-key terms in the order the index states them", async () => {
+  // PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC) is a valid composite
+  // key; collapsing the two terms to one column would advertise a unique order
+  // the key does not establish and read the offset window out of order.
+  const path = await createDatabase(`
+    CREATE TABLE repeated(a TEXT, PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC)) WITHOUT ROWID;
+    INSERT INTO repeated VALUES ('A'), ('a'), ('B');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "repeated",
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "primary_key" });
+  // BINARY order over the whole key: A (65), B (66), then a (97). Dropping the
+  // first term would sort by NOCASE DESC instead and put B first.
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["A"], ["B"], ["a"]]);
+});
+
+it("orders by the first rowid spelling the table leaves unshadowed", async () => {
+  // Declaring `rowid` makes that spelling resolve to the stored column, so
+  // ORDER BY rowid would sort by a non-unique value instead of the row id.
+  const path =
+    await createDatabase(`CREATE TABLE shadowed(rowid TEXT, value TEXT);
+    INSERT INTO shadowed(rowid, value) VALUES ('z', 'first'), ('a', 'second'), ('z', 'third');`);
+  const first = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 2,
+  });
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 0,
+    truncated: true,
+    next_row_offset: 2,
+  });
+  expect(
+    first.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([
+    ["z", "first"],
+    ["a", "second"],
+  ]);
+  const second = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 2,
+    row_offset: first.rows?.next_row_offset ?? 0,
+  });
+  // The page continues in insertion order rather than re-sorting by the text
+  // column that shadows `rowid`.
+  expect(
+    second.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["z", "third"]]);
+});
+
+it("does not publish a next offset the row-offset rule would refuse", async () => {
+  const path = await createDatabase(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 1,
+  });
+  expect(result.rows).toMatchObject({
+    order: "unspecified",
+    truncated: true,
+    next_row_offset: null,
+  });
+});
+
+it("discovers a WITHOUT ROWID primary key the inventory projection omits", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE keyed(k INTEGER, label TEXT, PRIMARY KEY(k)) WITHOUT ROWID;
+    INSERT INTO keyed VALUES (2, 'b'), (1, 'a');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "keyed",
+    schema_scope: "inventory",
+    columns: ["label"],
+    row_limit: 1,
+  });
+  expect(result.rows).toMatchObject({
+    order: "primary_key",
+    columns: ["label"],
+    truncated: true,
+    next_row_offset: 1,
+  });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["a"]]);
+});
+
+it("refuses a row offset when the table shadows rowid and declares no primary key", async () => {
+  const path = await createDatabase(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  expect(
+    inspectSqliteDatabaseSnapshot(path, { path, table: "shadowed" }).rows,
+  ).toMatchObject({
+    order: "unspecified",
+    row_offset: 0,
+    next_row_offset: null,
+  });
+  expect(() =>
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "shadowed",
+      row_offset: 1,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      // The refusal is about the caller's offset, not the selected table.
+      reason: "row-offset",
+      message: expect.stringContaining("row_offset"),
+    }),
+  );
 });
 
 nativeTest.skipIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(

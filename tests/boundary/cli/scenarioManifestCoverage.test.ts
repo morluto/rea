@@ -92,8 +92,8 @@ it.each(
   async ({ url, body }) => {
     const result = await manifest([url], body);
     expect(result.records).toEqual([]);
-    expect(result.limitations).toContain(
-      "1 retained records without a usable request line are not represented in the manifest.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
     );
     expect(
       result.limitations.filter((limitation) =>

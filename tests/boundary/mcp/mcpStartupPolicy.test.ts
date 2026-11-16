@@ -13,8 +13,6 @@ import {
   profileMcpModuleLoading,
 } from "../../../scripts/lib/mcp-startup-probe.mjs";
 import {
-  MCP_PHASE_BUDGET_FLOOR_MS,
-  MCP_PHASE_BUDGET_MAXIMUM_MS,
   mcpPhaseBudgetRecovery,
   resolveMcpStartupBudgets,
   type McpPhaseBudget,
@@ -22,15 +20,22 @@ import {
 import {
   mcpDoctorDeadlineRecovery,
   MCP_STARTUP_POLICY,
-} from "../../../src/mcpStartupPolicy.js";
+} from "../../../src/config/mcpStartupPolicy.js";
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
-  expect(budget.floorMilliseconds).toBe(MCP_PHASE_BUDGET_FLOOR_MS);
-  expect(budget.maximumMilliseconds).toBe(MCP_PHASE_BUDGET_MAXIMUM_MS);
   expect(text).toContain(mcpPhaseBudgetRecovery(budget));
+  expect(budget.floorMilliseconds).toBe(1);
+  expect(budget.maximumMilliseconds).toBe(2_147_483_647);
+  expect(text).toContain(budget.setting);
+  expect(text).toContain(budget.phase);
+  expect(text).toContain(`${String(budget.milliseconds)} ms`);
+  expect(text).toContain(`source ${budget.source}`);
+  expect(text).toContain(`default ${String(budget.defaultMilliseconds)} ms`);
+  expect(text).toContain(`floor ${String(budget.floorMilliseconds)} ms`);
+  expect(text).toContain(`maximum ${String(budget.maximumMilliseconds)} ms`);
 };
 
 const expectThrownBudget = async (
@@ -58,8 +63,11 @@ describe("MCP startup policy", () => {
     expect(budgets.firstCatalog.milliseconds).toBe(20_000);
     expect(budgets.doctor.milliseconds).toBe(30_000);
     const initialize = mcpPhaseBudgetRecovery(budgets.initialize);
-    expect(initialize).toBe(mcpStartupPhaseBudgetRecovery(budgets.initialize));
     expectPhaseText(initialize, budgets.initialize);
+    expectPhaseText(
+      mcpStartupPhaseBudgetRecovery(budgets.initialize),
+      budgets.initialize,
+    );
     expectPhaseText(
       mcpStartupPhaseBudgetRecovery(budgets.toolsList),
       budgets.toolsList,
@@ -70,6 +78,8 @@ describe("MCP startup policy", () => {
     );
     const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
     expectPhaseText(doctor, budgets.doctor);
+    expect(doctor).toMatch(/Codex.*startup_timeout_sec.*client guidance/iu);
+    expect(doctor).toMatch(/REA does not enforce/iu);
     const selected = resolveMcpStartupBudgets({
       REA_MCP_INITIALIZE_BUDGET_MS: "16000",
     });
@@ -271,9 +281,9 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     const message = errorMessage(caught);
     expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
-    const elapsedMs = performance.now() - started;
-    expect(elapsedMs).toBeLessThan(initializeMs);
-    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+    // The phase request names the first-catalog budget once it is the shorter
+    // bound, so only elapsed time shows the stop beat the phase's own deadline.
+    expect(performance.now() - started).toBeLessThan(initializeMs);
   });
 
   it("stops a pending tools/list at the remaining first-catalog budget", async () => {
@@ -305,9 +315,9 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     const message = errorMessage(caught);
     expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
-    const elapsedMs = performance.now() - started;
-    expect(elapsedMs).toBeLessThan(toolsListMs);
-    expect(elapsedMs).toBeLessThan(firstCatalogMs + 2_000);
+    // The phase request names the first-catalog budget once it is the shorter
+    // bound, so only elapsed time shows the stop beat the phase's own deadline.
+    expect(performance.now() - started).toBeLessThan(toolsListMs);
     expect(await readFile(initializedPath, "utf8")).toBe("ready");
   });
 

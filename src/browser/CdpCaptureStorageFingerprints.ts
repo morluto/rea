@@ -20,14 +20,14 @@ type StorageFingerprint =
 export interface CapturedStorageItems {
   readonly items: readonly {
     readonly key: string;
-    readonly value: string;
+    readonly value: string | undefined;
   }[];
   readonly complete: boolean;
 }
 
 export interface CapturedCache {
   readonly name: string;
-  readonly id: string;
+  readonly id: string | undefined;
 }
 
 interface StorageFingerprintContext {
@@ -106,7 +106,7 @@ const addStorageItems = (
       scope,
       identity: item.key,
       value: item.value,
-      complete: true,
+      complete: item.value !== undefined,
     });
 };
 
@@ -117,21 +117,17 @@ const addCookies = async (
   run.limitations.push(
     "Cookie fingerprints cover cookies applicable to the current main-frame URL, not every path on its origin.",
   );
-  const raw = await optionalCdpCommand(
+  const reply = await optionalCdpCommand(
     run.context,
     "Network.getCookies",
     { urls: [pageUrl] },
     run.limitations,
   );
-  if (raw === undefined) {
+  if (!reply.ok) {
     run.state.complete = false;
     return;
   }
-  const cookieValues = recordValue(raw)?.cookies;
-  if (!Array.isArray(cookieValues)) {
-    run.state.complete = false;
-    return;
-  }
+  const cookieValues = reply.value.cookies;
   const cookies = recordsValue(cookieValues);
   if (cookies.length !== cookieValues.length) run.state.complete = false;
   for (const cookie of cookies) {
@@ -139,12 +135,7 @@ const addCookies = async (
     const value = cdpStringValue(cookie.value);
     const domain = cdpStringValue(cookie.domain);
     const path = cdpStringValue(cookie.path);
-    if (
-      name === undefined ||
-      value === undefined ||
-      domain === undefined ||
-      path === undefined
-    ) {
+    if (name === undefined || domain === undefined || path === undefined) {
       run.state.complete = false;
       continue;
     }
@@ -163,7 +154,7 @@ const addCookies = async (
         ...(partitionOpaque ? { partition_opaque: true } : {}),
       },
       value,
-      complete: !partitionOpaque,
+      complete: value !== undefined && !partitionOpaque,
     });
   }
 };
@@ -174,34 +165,25 @@ const addIndexedDb = async (
   names: readonly string[],
 ): Promise<void> => {
   for (const databaseName of names) {
-    const raw = await optionalCdpCommand(
+    const reply = await optionalCdpCommand(
       run.context,
       "IndexedDB.requestDatabase",
       { securityOrigin: origin, databaseName },
       run.limitations,
     );
-    const database = recordValue(recordValue(raw)?.databaseWithObjectStores);
-    if (raw === undefined || database === undefined) {
+    if (!reply.ok) {
       run.state.complete = false;
       continue;
     }
-    if (cdpStringValue(database.name) !== databaseName) {
-      run.state.complete = false;
-      continue;
-    }
-    if (!Array.isArray(database.objectStores)) {
+    const database = reply.value.databaseWithObjectStores;
+    if (database.name !== databaseName) {
       run.state.complete = false;
       continue;
     }
     const stores = recordsValue(database.objectStores);
     if (stores.length !== database.objectStores.length)
       run.state.complete = false;
-    const version =
-      typeof database.version === "number" &&
-      Number.isSafeInteger(database.version) &&
-      database.version >= 0
-        ? database.version
-        : undefined;
+    const { version } = database;
     if (version === undefined) {
       const limitation =
         "An IndexedDB schema fingerprint is incomplete because its database version is unavailable, invalid, or outside exact integer precision.";
@@ -215,7 +197,6 @@ const addIndexedDb = async (
         version: version ?? null,
         object_stores: stores.map(indexedDbStoreSchema),
       },
-      projectionVersion: 2,
       complete:
         version !== undefined &&
         stores.length === database.objectStores.length &&
@@ -295,7 +276,7 @@ const addIndexedDbRecords = async (
 ): Promise<void> => {
   let skipCount = 0;
   while (true) {
-    const raw = await optionalCdpCommand(
+    const reply = await optionalCdpCommand(
       run.context,
       "IndexedDB.requestData",
       {
@@ -307,18 +288,11 @@ const addIndexedDbRecords = async (
       },
       run.limitations,
     );
-    const result = recordValue(raw);
-    if (raw === undefined || result === undefined) {
+    if (!reply.ok) {
       run.state.complete = false;
       return;
     }
-    if (
-      !Array.isArray(result.objectStoreDataEntries) ||
-      typeof result.hasMore !== "boolean"
-    ) {
-      run.state.complete = false;
-      return;
-    }
+    const result = reply.value;
     const examinedCount = result.objectStoreDataEntries.length;
     const entries = recordsValue(result.objectStoreDataEntries);
     if (entries.length !== result.objectStoreDataEntries.length)
@@ -340,7 +314,7 @@ const addIndexedDbRecords = async (
           key !== undefined && primaryKey !== undefined && value !== undefined,
       });
     }
-    if (result.hasMore !== true) return;
+    if (!result.hasMore) return;
     if (
       examinedCount === 0 ||
       skipCount > Number.MAX_SAFE_INTEGER - examinedCount
@@ -357,34 +331,31 @@ const addCaches = async (
   caches: readonly CapturedCache[],
 ): Promise<void> => {
   for (const cache of caches) {
+    const cacheId = cache.id;
+    if (cacheId === undefined) {
+      run.state.complete = false;
+      continue;
+    }
     let skipCount = 0;
     let returnCount: number | undefined;
     while (returnCount === undefined || skipCount < returnCount) {
-      const raw = await optionalCdpCommand(
+      const reply = await optionalCdpCommand(
         run.context,
         "CacheStorage.requestEntries",
-        { cacheId: cache.id, skipCount, pageSize: STORAGE_ENTRY_PAGE_SIZE },
+        { cacheId, skipCount, pageSize: STORAGE_ENTRY_PAGE_SIZE },
         run.limitations,
       );
-      const result = recordValue(raw);
-      if (raw === undefined || result === undefined) {
+      if (!reply.ok) {
         run.state.complete = false;
         break;
       }
-      if (
-        !Array.isArray(result.cacheDataEntries) ||
-        typeof result.returnCount !== "number" ||
-        !Number.isSafeInteger(result.returnCount) ||
-        result.returnCount < 0
-      ) {
-        run.state.complete = false;
-        break;
-      }
+      const result = reply.value;
       const examinedCount = result.cacheDataEntries.length;
       const entries = recordsValue(result.cacheDataEntries);
       if (entries.length !== result.cacheDataEntries.length)
         run.state.complete = false;
-      for (const entry of entries) await addCacheEntry(run, cache, entry);
+      for (const entry of entries)
+        await addCacheEntry(run, { name: cache.name, id: cacheId }, entry);
       returnCount = result.returnCount;
       if (skipCount + examinedCount >= returnCount) break;
       if (
@@ -401,7 +372,7 @@ const addCaches = async (
 
 const addCacheEntry = async (
   run: FingerprintRun,
-  cache: CapturedCache,
+  cache: { readonly name: string; readonly id: string },
   entry: Readonly<Record<string, unknown>>,
 ): Promise<void> => {
   const requestURL = cdpStringValue(entry.requestURL);
@@ -427,14 +398,15 @@ const addCacheEntry = async (
     run.state.complete = false;
     return;
   }
-  const raw = await optionalCdpCommand(
+  const reply = await optionalCdpCommand(
     run.context,
     "CacheStorage.requestCachedResponse",
     { cacheId: cache.id, requestURL, requestHeaders },
     run.limitations,
   );
-  const body = cdpStringValue(recordValue(recordValue(raw)?.response)?.body);
-  const decoded = body === undefined ? undefined : decodePaddedBase64(body);
+  const decoded = reply.ok
+    ? decodePaddedBase64(reply.value.response.body)
+    : undefined;
   const complete = decoded !== undefined;
   if (!complete) run.state.complete = false;
   addFingerprint(run.state, {
@@ -452,21 +424,22 @@ const addFingerprint = (
     readonly identity: unknown;
     readonly value: unknown;
     readonly complete: boolean;
-    readonly projectionVersion?: 2;
   },
 ): void => {
-  state.items.push({
-    scope: input.scope,
+  const fingerprint = {
     identity_sha256: digest(input.identity),
     value_sha256: input.value === undefined ? null : digest(input.value),
-    ...(input.projectionVersion === undefined
-      ? {}
-      : { projection_version: input.projectionVersion }),
     complete:
       input.complete &&
       stableValueComplete(input.identity) &&
       stableValueComplete(input.value),
-  });
+  };
+  // The IndexedDB schema projection includes the database version.
+  state.items.push(
+    input.scope === "indexed_db_schema"
+      ? { ...fingerprint, scope: input.scope, projection_version: 2 }
+      : { ...fingerprint, scope: input.scope },
+  );
 };
 
 const STORAGE_ENTRY_PAGE_SIZE = 1_000;

@@ -1,17 +1,16 @@
+import { fakeGdbStartupPreamble } from "../providers/gdbTestHelpers.js";
 import { randomUUID } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
-import { silentLogger } from "../../../src/logger.js";
-import { registerGdbTools } from "../../../src/server/registerGdbTools.js";
-import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { gdbMcpServer } from "../../fixtures/debuggerMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 it.skipIf(process.platform === "win32").each(["kill", "detach"])(
   "retains a valid GDB session through disposition refusal and explicit %s recovery",
@@ -21,6 +20,7 @@ it.skipIf(process.platform === "win32").each(["kill", "detach"])(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 import { createInterface } from 'node:readline';
 let live = false;
 process.stdout.write('(gdb)\\n');
@@ -55,17 +55,8 @@ createInterface({ input: process.stdin }).on('line', line => {
       environment: { REA_GDB_COMMAND: provider },
     });
     onTestFinished(() => manager.closeAll());
-    const server = new McpServer({
-      name: "gdb-disposition-test",
-      version: "1",
-    });
+    const server = gdbMcpServer("gdb-disposition-test", manager);
     onTestFinished(() => server.close());
-    registerGdbTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
-    );
     const client = new Client({ name: "gdb-disposition-test", version: "1" });
     onTestFinished(() => client.close());
     const [clientTransport, serverTransport] =
@@ -89,8 +80,8 @@ createInterface({ input: process.stdin }).on('line', line => {
         name: "close_gdb_session",
         arguments: { session_id: sessionId },
       });
-      expect(refusal.isError).toBe(true);
-      expect(refusal.structuredContent).toMatchObject({
+      const refused = parseMcpToolError(refusal);
+      expect(refused).toMatchObject({
         error: {
           code: "capability_unavailable",
           category: "unavailable",
@@ -103,9 +94,7 @@ createInterface({ input: process.stdin }).on('line', line => {
           },
         },
       });
-      expect(JSON.stringify(refusal.structuredContent)).not.toContain(
-        "invalid_value",
-      );
+      expect(JSON.stringify(refused)).not.toContain("invalid_value");
       expect(manager.status(sessionId)?.state).toBe("ready");
     }
     const disposed = await client.callTool({
@@ -126,7 +115,7 @@ createInterface({ input: process.stdin }).on('line', line => {
       name: "close_gdb_session",
       arguments: { session_id: randomUUID() },
     });
-    expect(unknown.structuredContent).toMatchObject({
+    expect(parseMcpToolError(unknown)).toMatchObject({
       error: { code: "invalid_request", category: "invalid_input" },
     });
   },

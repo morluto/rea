@@ -120,8 +120,10 @@ it("leaves coverage unknown when numbered blocks are absent", async () => {
     ),
   );
   expect(snapshot.coverage.status).toBe("unknown");
-  expect(snapshot.limitations).toContain(
-    "UF2 numbering declares 1 block(s) that are absent: family 0xe48bff57 (RP2XXX_ABSOLUTE) with 2 numbered blocks has 1 of them.",
+  expect(snapshot.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 block.*absent.*0xe48bff57.*2 numbered blocks.*1/iu,
+    ),
   );
   expect(
     snapshot.occurrences

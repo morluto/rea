@@ -1,16 +1,28 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { STARTUP_OWNER_CLOSED } from "../process/SharedStartupAttempt.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { RetainedResourceScope } from "./AnalysisProvider.js";
+import { access, realpath, stat } from "node:fs/promises";
+import { posix, win32 } from "node:path";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "../ports/DoctorProviderInspection.js";
 import {
   inspectNativeAnalysisConfiguration,
   type NativeAnalysisConfigurationInspection,
@@ -28,13 +40,13 @@ import {
   execFileOutputFailure,
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { installedCaskAppdir, probeHomebrew } from "./homebrew.js";
-import { readMacHopperRenamedLauncherCandidates } from "./MacHopperPaths.js";
+import { readMacHopperRenamedLauncherCandidates } from "../hopperPaths/MacHopperPaths.js";
 import {
   inspectLinuxHopperLauncher,
   linuxSharedLibrariesAvailable,
@@ -49,7 +61,7 @@ import {
   type InstalledSkillIdentity,
   type SkillPathIssue,
 } from "./SetupSkill.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
@@ -67,47 +79,14 @@ import {
   scopeDoctorChecks,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
+import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
+import type {
+  DesktopBuildFacts,
+  DesktopBuildFactsInput,
+  OwnedProviderSetting,
+} from "../ports/DesktopBuildHost.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
-/** One actionable environment diagnostic. */
-export interface DoctorCheck {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly classification:
-    | "healthy"
-    | "missing_dependency"
-    | "runtime_failure"
-    | "unsupported_host"
-    | "unsupported_target"
-    | "missing_analysis_engine"
-    | "unknown"
-    | "config_drift";
-  readonly detail?: string;
-  readonly details?: Readonly<Record<string, JsonValue>>;
-  readonly remediation?: string;
-}
-
-/** One provider-owned check projected without importing its adapter types. */
-export interface DoctorProviderCheck {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly code: string | null;
-  readonly detail: string;
-  readonly remediation: string | null;
-  readonly classification: Exclude<DoctorCheck["classification"], "healthy">;
-  readonly details?: Readonly<Record<string, JsonValue>>;
-}
-
-/** Read-only provider inspection supplied by an outer composition adapter. */
-export interface DoctorProviderInspection {
-  readonly id: string;
-  readonly configured: boolean;
-  readonly available: boolean;
-  readonly providerVersion: string | null;
-  /** Validated discoveries used as registration defaults. Setup preserves
-   * caller-selected configuration separately from these readiness facts. */
-  readonly registrationEnvironment: Readonly<Record<string, string>>;
-  readonly checks: readonly DoctorProviderCheck[];
-}
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
   readonly signal?: AbortSignal;
@@ -136,10 +115,13 @@ export interface DoctorHost {
   brewHopperPath(): Promise<string | undefined>;
   /** Renamed `Hopper*.app` launchers; consulted only where macOS bundles are probed. */
   manualHopperPaths(): Promise<readonly string[]>;
-  providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
+  providerInspections?(
+    clients: readonly string[],
+  ): Promise<readonly DoctorProviderInspection[]>;
   /** Resolve a parsed upstream request budget from the effective client environment. */
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
-  installationPaths?(): Promise<readonly string[]>;
+  /** `rea` launchers in PATH order, each with the installation it resolves to. */
+  installationLaunchers?(): Promise<readonly DoctorInstallationLauncher[]>;
   /** Undefined checks installed skill roots; explicit selections stay scoped. */
   installedSkillIdentity?(
     clientIds: readonly string[] | undefined,
@@ -148,8 +130,16 @@ export interface DoctorHost {
   clientRegistrations?(
     selectedClientIds?: readonly string[],
     providerSettings?: Readonly<Record<string, string>>,
+    ownedProviderSetting?: OwnedProviderSetting,
+    observeProviderSetting?: (
+      client: string,
+      name: string,
+      value: string,
+    ) => void,
   ): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
+  /** Desktop build host facts; read only when that scope is selected. */
+  desktopBuildFacts?(clientIds: readonly string[]): Promise<DesktopBuildFacts>;
 }
 
 /** Structured result returned by the read-only doctor workflow. */
@@ -240,11 +230,7 @@ export const runDoctorOwned = async (
               { operation: "doctor" },
             )
           : cleanup;
-      throw analysisErrorWithCleanupFailure(
-        cause,
-        cleanupError,
-        "doctor",
-      ).bindCleanupDependencies([cause, cleanupError]);
+      throw analysisErrorWithCleanupDependencies(cause, cleanupError, "doctor");
     }
     if (cleanup !== undefined)
       throw new AggregateError(
@@ -256,8 +242,7 @@ export const runDoctorOwned = async (
   }
   const cleanup = await closeDoctorHost(host);
   if (cleanup === undefined && report.healthy && host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", {
-      cause: host.signal.reason,
+    throw cancelledBy("doctor", host.signal, {
       diagnostics: { doctor_report: jsonValueSchema.parse(report) },
     });
   return cleanup === undefined
@@ -270,14 +255,13 @@ const inspectDoctor = async (
   host: DoctorHost,
   requestedScope?: DoctorScope,
 ): Promise<DoctorReport> => {
-  if (host.signal?.aborted)
-    throw new AnalysisCancelledError("doctor", { cause: host.signal.reason });
+  if (host.signal?.aborted) throw cancelledBy("doctor", host.signal);
   const scope = normalizeDoctorScope(requestedScope, target);
   const {
     checks: diagnosticChecks,
     hopperPath,
     providerInspections,
-  } = await collectDoctorDiagnostics(target, host);
+  } = await collectDoctorDiagnostics(target, host, scope.clients);
   const hopperAvailable =
     hopperPath !== undefined &&
     diagnosticChecks
@@ -295,6 +279,7 @@ const inspectDoctor = async (
     ...identity.checks,
     ...registrationAdvisoryChecks(identity.value.registrations),
     ...registrationEnvironmentChecks(identity.value.registrations, selections),
+    ...(await selectedDesktopBuildChecks(host, scope, identity.value.skill)),
   ];
   const providers = {
     hopperAvailable,
@@ -367,10 +352,31 @@ const providerSettingSelections = (
       ]),
 ];
 
+/** Render what the registration comparison established without inferring its effective environment. */
+const registrationEnvironmentDetail = (
+  client: string,
+  {
+    unrecorded,
+    differing,
+    unresolved,
+  }: NonNullable<ClientRegistrationStatus["provider_settings"]>,
+): string =>
+  [
+    `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
+    ...(unrecorded.length === 0
+      ? []
+      : [`Its registration does not record ${unrecorded.join(", ")}.`]),
+    ...(differing.length === 0
+      ? []
+      : [`It records other values for ${differing.join(", ")}.`]),
+    ...(unresolved.length === 0
+      ? []
+      : [`REA could not resolve its ${unresolved.join(", ")}.`]),
+  ].join(" ");
+
 /**
- * A healthy provider check describes this terminal, not the server a client
- * starts. Report what the registration's file leaves out without gating health:
- * the client may still pass the setting on, which doctor cannot observe.
+ * Report what the registration's file leaves out without gating health:
+ * doctor cannot observe the environment the client actually passes on.
  */
 const registrationEnvironmentChecks = (
   registrations: readonly ClientRegistrationStatus[],
@@ -385,18 +391,7 @@ const registrationEnvironmentChecks = (
         name: `registration_environment:${client}`,
         ok: true,
         classification: "unknown" as const,
-        detail: [
-          `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
-          ...(unrecorded.length === 0
-            ? []
-            : [`Its registration does not record ${unrecorded.join(", ")}.`]),
-          ...(differing.length === 0
-            ? []
-            : [`It records other values for ${differing.join(", ")}.`]),
-          ...(unresolved.length === 0
-            ? []
-            : [`REA could not resolve its ${unresolved.join(", ")}.`]),
-        ].join(" "),
+        detail: registrationEnvironmentDetail(client, settings),
         details: {
           effective_environment: "unknown",
           providers: selections
@@ -417,7 +412,7 @@ const closeDoctorHost = async (
     return await host.close?.();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    return `Doctor host cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    return `Doctor host cleanup failed: ${errorMessage(cause)}`;
   }
 };
 
@@ -455,7 +450,7 @@ const collectDoctorIdentity = async (
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
-  const installationPaths = (await host.installationPaths?.()) ?? [];
+  const launchers = (await host.installationLaunchers?.()) ?? [];
   const registrations =
     (await host.clientRegistrations?.(
       scope.clients,
@@ -497,8 +492,8 @@ const collectDoctorIdentity = async (
           "Call binary_session in the active client to inspect the running server identity; a registration whose saved scope omits the session family cannot report it, so include session through rea setup --tool-families and restart first.",
       },
       installations: {
-        paths: installationPaths,
-        state: installationState(installationPaths),
+        paths: launchers.map(({ path }) => path),
+        state: installationState(launchers),
       },
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
@@ -595,10 +590,41 @@ const registrationCheck = (
   remediation: registration.remediation,
 });
 
+/** A PATH launcher and the installation identity its host resolved it to. */
+export interface DoctorInstallationLauncher {
+  readonly path: string;
+  readonly installation: string;
+}
+
 const installationState = (
-  paths: readonly string[],
-): DoctorIdentity["installations"]["state"] =>
-  paths.length === 0 ? "unknown" : paths.length === 1 ? "single" : "multiple";
+  launchers: readonly DoctorInstallationLauncher[],
+): DoctorIdentity["installations"]["state"] => {
+  const installations = new Set(
+    launchers.map(({ installation }) => installation),
+  );
+  return installations.size === 0
+    ? "unknown"
+    : installations.size === 1
+      ? "single"
+      : "multiple";
+};
+
+/**
+ * One installation is one launcher directory after symlink resolution. npm
+ * writes `rea`, `rea.cmd` and `rea.ps1` side by side on Windows, where `where`
+ * lists each and directory spelling is case-insensitive; PATH can also reach
+ * one launcher through a symlinked directory. An unresolvable launcher keeps
+ * its listed path rather than joining another installation.
+ */
+const launcherInstallation = async (
+  path: string,
+  platform: NodeJS.Platform,
+): Promise<string> => {
+  const resolved = await realpath(path).catch(() => path);
+  return platform === "win32"
+    ? win32.dirname(resolved).toLowerCase()
+    : posix.dirname(resolved);
+};
 
 /** Optional outer-adapter diagnostics composed without reversing dependencies. */
 export interface SystemDoctorHostOptions {
@@ -610,6 +636,7 @@ export interface SystemDoctorHostOptions {
   readonly providerInspections?: (
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
+    clients: readonly string[],
   ) => Promise<readonly DoctorProviderInspection[]>;
   readonly resolveProviderRequestBudget?: (
     provider: Parameters<ProviderRequestBudgetResolver>[0],
@@ -621,6 +648,9 @@ export interface SystemDoctorHostOptions {
     resourceScope: RetainedResourceScope,
     signal: AbortSignal,
   ) => Promise<DoctorCheck>;
+  readonly desktopBuildFacts?: (
+    input: DesktopBuildFactsInput,
+  ) => Promise<DesktopBuildFacts>;
 }
 
 /** Create diagnostics backed by the current process and host commands. */
@@ -633,8 +663,8 @@ export const systemDoctorHost = (
     options.signal === undefined
       ? controller.signal
       : AbortSignal.any([options.signal, controller.signal]);
-  const platform = options.platform ?? process.platform;
-  const architecture = options.architecture ?? process.arch;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
+  const architecture = options.architecture ?? HOST_PLATFORM.architecture;
   const environment = options.environment ?? process.env;
   const nativeConfiguration = inspectNativeAnalysisConfiguration(
     snapshotEnvironment(environment, platform),
@@ -654,8 +684,7 @@ export const systemDoctorHost = (
           signal: inspectionSignal,
         });
         if (inspectionSignal.aborted)
-          throw new AnalysisCancelledError("doctor", {
-            cause: inspectionSignal.reason,
+          throw cancelledBy("doctor", inspectionSignal, {
             capturedOutput: {
               stdout: output.stdout,
               stderr: output.stderr,
@@ -670,12 +699,13 @@ export const systemDoctorHost = (
       } catch (cause: unknown) {
         if (cause instanceof ExecFileOutputCancelledError) {
           const output = execFileOutputFailure(cause);
-          throw new AnalysisCancelledError("doctor", {
-            cause: cause.cause,
-            ...(output === undefined
+          throw cancelledBy(
+            "doctor",
+            carriedReason(cause.cause),
+            output === undefined
               ? {}
-              : { capturedOutput: execFileFailureCapturedOutput(output) }),
-          });
+              : { capturedOutput: execFileFailureCapturedOutput(output) },
+          );
         }
         throw cause;
       }
@@ -704,7 +734,7 @@ export const systemDoctorHost = (
             resourceScope,
             inspectionSignal,
           );
-  return {
+  const host: DoctorHost = {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     platform,
     architecture,
@@ -809,9 +839,13 @@ export const systemDoctorHost = (
     ...(options.providerInspections === undefined
       ? {}
       : {
-          providerInspections: () =>
+          providerInspections: (clients) =>
             resources.run(() =>
-              options.providerInspections!(resourceScope, inspectionSignal),
+              options.providerInspections!(
+                resourceScope,
+                inspectionSignal,
+                clients,
+              ),
             ),
         }),
     ...(resolveProviderRequestBudget === undefined
@@ -831,13 +865,19 @@ export const systemDoctorHost = (
         return undefined;
       }
     },
-    async installationPaths() {
+    async installationLaunchers() {
       try {
         const command = platform === "win32" ? "where" : "which";
         const arguments_ = platform === "win32" ? ["rea"] : ["-a", "rea"];
-        return uniqueLines(
+        const paths = uniqueLines(
           (await hostExecFileOutput(command, arguments_, commandEnvironment))
             .stdout,
+        );
+        return await Promise.all(
+          paths.map(async (path) => ({
+            path,
+            installation: await launcherInstallation(path, platform),
+          })),
         );
       } catch (cause: unknown) {
         if (cause instanceof AnalysisCancelledError) throw cause;
@@ -855,7 +895,7 @@ export const systemDoctorHost = (
         resources,
       ),
     close: async () => {
-      controller.abort(STARTUP_OWNER_CLOSED);
+      controller.abort(OwnerCancellation.startupOwnerClosed);
       try {
         await resources.close();
         return undefined;
@@ -874,12 +914,21 @@ export const systemDoctorHost = (
         throw failure;
       }
     },
-    clientRegistrations: (selectedClientIds, providerSettings) =>
+    clientRegistrations: (
+      selectedClientIds,
+      providerSettings,
+      ownedProviderSetting,
+      observeProviderSetting,
+    ) =>
       readClientRegistrationStatuses(homeDirectory, undefined, {
         platform,
         environment,
         resources,
         ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+        ...(ownedProviderSetting === undefined ? {} : { ownedProviderSetting }),
+        ...(observeProviderSetting === undefined
+          ? {}
+          : { observeProviderSetting }),
         ...(providerSettings === undefined
           ? {}
           : {
@@ -895,6 +944,24 @@ export const systemDoctorHost = (
             }),
       }),
   };
+  const readFacts = options.desktopBuildFacts;
+  return readFacts === undefined
+    ? host
+    : {
+        ...host,
+        desktopBuildFacts: (clientIds) =>
+          resources.run(() =>
+            readFacts({
+              environment,
+              platform,
+              signal: inspectionSignal,
+              resources,
+              run: hostExecFileOutput,
+              clientIds,
+              registrations: host.clientRegistrations!,
+            }),
+          ),
+      };
 };
 
 const readMacosVersion = async (

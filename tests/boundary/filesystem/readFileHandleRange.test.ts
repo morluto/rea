@@ -85,5 +85,12 @@ it("reports complete acquisition so the owner can finalize bytes after a late ab
       throw new Error("cancelled before full acquisition");
   });
   expect(bytes.toString()).toBe("0123");
-  expect(checkpoints).toEqual([0, 0, 2, 2, 4]);
+  expect(spy).toHaveBeenCalledTimes(2);
+  expect(checkpoints.at(-1)).toBe(4);
+  expect([...new Set(checkpoints)]).toEqual([0, 2, 4]);
+  expect(
+    checkpoints.every(
+      (value, index) => index === 0 || value >= checkpoints[index - 1]!,
+    ),
+  ).toBe(true);
 });

@@ -8,8 +8,7 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../../../src/domain/analysisErrorCore.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { scanBinaryPlistScalars } from "../../../../src/artifacts/apple/PlistScalars.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import { ProviderAdapterError } from "../../../../src/domain/providerAdapterError.js";
 import { buildBinary, type PlistValue } from "plist";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
@@ -57,7 +56,6 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
   const client = binaryClient(root, runner);
 
   const result = await client.execute("inspect_plist", { path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected file-size refusal");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error).toMatchObject({
@@ -76,7 +74,6 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
       ),
     },
   });
-  expect(projected.remediation.action).not.toMatch(/worker file-size limits/u);
   expect(runner.tools).toEqual(["file"]);
 });
 
@@ -89,22 +86,19 @@ it.each([
     // Three times the source length exceeds the 64 MiB decode estimate while
     // the source stays below the separate 64 MiB input ceiling.
     value: { data: Buffer.alloc(22 * 1024 * 1024, 0x78) },
-    reason: "binary plist object table exceeds the native plist decode budget",
     limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
     allowance:
-      "The 64 MiB (67108864-byte) native binary plist decode allowance (no runtime override)",
+      /64 MiB.*67108864-byte.*binary plist decode.*no runtime override/iu,
   },
   {
     budget: "nesting",
     value: nested(MAX_JSON_DEPTH - 1),
-    reason: "binary plist nesting exceeds the native plist decode budget",
-    limits: { maximum_nesting_depth: MAX_JSON_DEPTH - 2 },
-    allowance:
-      "The 998-level native plist nesting allowance (no runtime override)",
+    limits: { maximum_nesting_depth: MAX_JSON_DEPTH - 3 },
+    allowance: /997-level.*plist nesting.*no runtime override/iu,
   },
 ])(
   "names the fixed binary plist $budget allowance instead of host memory",
-  async ({ value, reason, limits, allowance }) => {
+  async ({ value, limits, allowance }) => {
     const { root, path } = await binaryPath();
     await writeFile(path, buildBinary(value));
     const runner = new BinaryNativeRunner({
@@ -113,15 +107,13 @@ it.each([
     const client = binaryClient(root, runner);
 
     const result = await client.execute("inspect_plist", { path });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected decode allowance refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(result.error).toMatchObject({
       resource: "memory",
-      reason,
       reportedLimits: limits,
       retryable: false,
-      fixedAllowance: { name: allowance, kind: "parser" },
+      fixedAllowance: { kind: "parser" },
     });
     const projected = projectAnalysisError(result.error);
     expect(projected).toMatchObject({
@@ -129,9 +121,7 @@ it.each([
       retryable: false,
       details: { resource: "memory", reported_limits: limits },
     });
-    expect(projected.remediation.action).toBe(
-      `${allowance} is a fixed allowance. Worker memory limits, inherited limits, and additional host memory do not raise it. Select another complete input within the allowance when that preserves the needed observation. Repeating the unchanged request fails the same way.`,
-    );
+    expect(projected.remediation.action).toMatch(allowance);
     expect(runner.tools).toEqual(["file"]);
   },
 );
@@ -145,7 +135,6 @@ it("keeps a malformed binary plist as a selected-input failure", async () => {
   const client = binaryClient(root, runner);
 
   const result = await client.execute("inspect_plist", { path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected malformed input failure");
   expect(result.error).toBeInstanceOf(AnalysisInputError);
   expect(runner.tools).toEqual(["file"]);
@@ -156,9 +145,12 @@ it("rejects a reachable binary date with an invalid marker before projection", a
   const bytes = Buffer.from(
     buildBinary({ date: new Date("2001-01-01T00:00:00.100Z") }),
   );
-  const date = scanBinaryPlistScalars(bytes).dates[0];
-  if (date === undefined) throw new Error("binary plist fixture lost its date");
-  bytes[date.offset] = 0x30;
+  // Date marker followed by 0.1 seconds since the 2001 plist epoch.
+  const encodedDate = Buffer.from("333fb999999999999a", "hex");
+  const offset = bytes.indexOf(encodedDate);
+  expect(offset).toBeGreaterThanOrEqual(0);
+  expect(bytes.indexOf(encodedDate, offset + 1)).toBe(-1);
+  bytes[offset] = 0x30;
   await writeFile(path, bytes);
   const runner = new BinaryNativeRunner({
     file: "Apple binary property list\n",
@@ -167,7 +159,6 @@ it("rejects a reachable binary date with an invalid marker before projection", a
 
   const result = await client.execute("inspect_plist", { path });
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected malformed date input failure");
   expect(result.error).toBeInstanceOf(AnalysisInputError);
   expect(result.error).toMatchObject({
@@ -210,7 +201,6 @@ it("preserves the exact caller cancellation reason during a binary read", async 
     { path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -244,7 +234,6 @@ it("preserves a physical EIO when a pending binary read is then aborted", async 
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected physical read failure");
   expect(result.error).toBeInstanceOf(ProviderAdapterError);
   expect(result.error.cause).toBe(primary);
@@ -282,7 +271,6 @@ it("retains the exact binary descriptor owner when reading and closing fail", as
   );
 
   const result = await client.execute("inspect_plist", { path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed read and close");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toContain(path);

@@ -28,7 +28,17 @@ const ZIP64_ENTRIES_SENTINEL = 0xffff;
 /** "APK Sig Block 42" — the 16-byte block magic (JAR/APK signing block spec). */
 const BLOCK_MAGIC = "APK Sig Block 42";
 /** A single pair is at least 12 bytes (uint64 length + uint32 id); cap the count. */
-const MAX_PAIRS = 4096;
+export const APK_SIGNING_BLOCK_MAX_PAIRS = 4096;
+
+/** Validate one size-prefixed pair without reading or allocating its value. */
+export const apkSigningPairEnd = (
+  length: bigint,
+  offset: number,
+  end: number,
+): number | undefined => {
+  if (length < 4n || length > BigInt(end - offset - 8)) return undefined;
+  return offset + 8 + Number(length);
+};
 
 /** Well-known APK Signing Block pair IDs. */
 export const APK_BLOCK_ID = {
@@ -42,6 +52,7 @@ export const APK_BLOCK_ID = {
 export type ApkSigningBlockError =
   | { readonly kind: "not-a-zip"; readonly detail: string }
   | { readonly kind: "zip64-unsupported"; readonly detail: string }
+  | { readonly kind: "multi-disk-unsupported"; readonly detail: string }
   | {
       /** A ZIP whose end-of-central-directory is damaged or inconsistent. */
       readonly kind: "malformed-zip";
@@ -101,14 +112,41 @@ const hasLocalFileHeader = (bytes: Uint8Array): boolean =>
   bytes[2] === 0x03 &&
   bytes[3] === 0x04;
 
+interface CentralDirectory {
+  readonly offset: number;
+  readonly size: number;
+  readonly entries: number;
+  readonly end: number;
+}
+
+/** Admit a classic directory only when its offset describes this selected disk. */
+const classicDirectory = (
+  eocd: ZipEndOfCentralDirectory,
+): Result<CentralDirectory, ApkSigningBlockError> => {
+  if (eocd.disk !== 0 || eocd.directoryDisk !== 0)
+    return err({
+      kind: "multi-disk-unsupported",
+      detail: `classic EOCD names disk ${String(eocd.disk)} and central-directory disk ${String(eocd.directoryDisk)}`,
+    });
+  if (eocd.entriesOnDisk !== eocd.totalEntries)
+    return err({
+      kind: "malformed-zip",
+      offset: eocd.offset + 8,
+      detail: "single-disk ZIP entry counts disagree",
+    });
+  return ok({
+    offset: eocd.directoryOffset,
+    size: eocd.directorySize,
+    entries: eocd.totalEntries,
+    end: eocd.offset,
+  });
+};
+
 /** Resolve the central-directory offset, following a Zip64 EOCD when present. */
 const centralDirectoryOffset = (
   bytes: Uint8Array,
   eocd: ZipEndOfCentralDirectory,
-): Result<
-  { offset: number; size: number; entries: number; end: number },
-  ApkSigningBlockError
-> => {
+): Result<CentralDirectory, ApkSigningBlockError> => {
   const dv = view(bytes);
   const {
     offset: eocdOffset,
@@ -120,7 +158,7 @@ const centralDirectoryOffset = (
     offset === ZIP64_SENTINEL ||
     size === ZIP64_SENTINEL ||
     entries === ZIP64_ENTRIES_SENTINEL;
-  if (!saturated) return ok({ offset, size, entries, end: eocdOffset });
+  if (!saturated) return classicDirectory(eocd);
   // Zip64: a locator precedes the EOCD, pointing at the Zip64 EOCD record.
   const locator = eocdOffset - 20;
   if (
@@ -130,7 +168,7 @@ const centralDirectoryOffset = (
     // Exactly 65,535 entries saturates the count without Zip64; that archive
     // is still described completely by its 32-bit EOCD fields.
     if (offset !== ZIP64_SENTINEL && size !== ZIP64_SENTINEL)
-      return ok({ offset, size, entries, end: eocdOffset });
+      return classicDirectory(eocd);
     return err({
       kind: "malformed-zip",
       offset: eocdOffset,
@@ -175,6 +213,15 @@ const centralDirectoryOffset = (
       kind: "malformed-zip",
       offset: recordOffset,
       detail: "invalid Zip64 EOCD signature",
+    });
+  // The size excludes the signature and size field. Check the declared
+  // body before using its fixed fields to locate the central directory.
+  const recordSize = dv.getBigUint64(recordOffset + 4, true);
+  if (recordSize < 44n || recordSize > BigInt(locator - recordOffset - 12))
+    return err({
+      kind: "malformed-zip",
+      offset: recordOffset + 4,
+      detail: "invalid Zip64 EOCD record size",
     });
   const z64Offset = u64(dv, recordOffset + 48);
   const z64Size = u64(dv, recordOffset + 40);
@@ -311,17 +358,21 @@ export const locateApkSigningBlock = (
   const pairsEnd = cdOffset - 24; // stop before trailing size + magic
   while (cursor < pairsEnd) {
     const length = u64(dv, cursor);
-    if (length === null || length < 4 || cursor + 8 + length > pairsEnd + 0)
+    const next =
+      length === null
+        ? undefined
+        : apkSigningPairEnd(BigInt(length), cursor, pairsEnd);
+    if (length === null || next === undefined)
       return err({
         kind: "malformed-block",
         offset: cursor,
         detail: "pair length out of range",
       });
-    if (pairs.length >= MAX_PAIRS)
+    if (pairs.length >= APK_SIGNING_BLOCK_MAX_PAIRS)
       return err({
         kind: "budget-exceeded",
         resource: "signing-block-pairs",
-        limit: MAX_PAIRS,
+        limit: APK_SIGNING_BLOCK_MAX_PAIRS,
       });
     const id = dv.getUint32(cursor + 8, true);
     const valueStart = cursor + 12;
@@ -329,7 +380,7 @@ export const locateApkSigningBlock = (
       id,
       value: bytes.subarray(valueStart, valueStart + (length - 4)),
     });
-    cursor += 8 + length;
+    cursor = next;
   }
   return ok({ blockStart, pairs });
 };

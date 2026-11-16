@@ -1,5 +1,5 @@
 import { withCommandCancellation } from "./cli/commandCancellation.js";
-import { parseCliJsonInput } from "./cliJsonInput.js";
+import { parseCliJsonInput } from "./cli/cliJsonInput.js";
 import { analysisInputErrorFromIssues } from "./domain/inputIssueProjection.js";
 import { bundleComparisonInputSchema } from "./domain/bundleComparison.js";
 import { Cli, z } from "incur";
@@ -11,7 +11,7 @@ import {
 } from "./application/EvidenceBundleCommands.js";
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "pino";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
+import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { AnalysisError } from "./domain/analysisErrorBase.js";
@@ -23,7 +23,8 @@ export const registerEvidenceCommands = (
   logger: Logger,
 ): void => {
   cli.command(CLI_COMMANDS.evidenceImport, {
-    description: "Validate and import a bounded local Evidence bundle",
+    description:
+      "Validate a standalone Evidence bundle and count records and Unknown revisions; does not retain them in an MCP session",
     args: z.object({
       path: localPathStringSchema.describe("Evidence bundle JSON path"),
     }),

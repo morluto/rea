@@ -55,15 +55,24 @@ const singleDefaultOptions: readonly {
   { command: "inspect-signal-decoders", options: ["--offset"] },
 ];
 
-const optionLine = (
-  help: string,
-  option: string,
-): string | undefined => {
+const optionLine = (help: string, option: string): string | undefined => {
   const line = help
     .split(/\r?\n/u)
     .find((candidate) => candidate.trimStart().startsWith(`${option} `));
   return line?.trim();
 };
+
+it("explains standalone Evidence import in command help", async () => {
+  const { stdout, exitCode } = await serve(createCli({}), [
+    "evidence-import",
+    "--help",
+  ]);
+  expect(exitCode).toBe(0);
+  const help = stdout.replace(/\s+/gu, " ");
+  expect(help).toMatch(/validat.*bundle/iu);
+  expect(help).toMatch(/unknown revisions/iu);
+  expect(help).toMatch(/does not retain.*mcp session/iu);
+});
 
 describe("CLI help default annotations", () => {
   it("states each schema-owned option default exactly once", async () => {
@@ -80,7 +89,9 @@ describe("CLI help default annotations", () => {
         }
         const statements = line.match(/default/giu)?.length ?? 0;
         if (statements !== 1)
-          repeated.push(`${command} ${option}: ${statements} default statements`);
+          repeated.push(
+            `${command} ${option}: ${statements} default statements`,
+          );
       }
     }
     expect(repeated).toEqual([]);

@@ -3,7 +3,10 @@ import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "./analysisErrorCore.js";
-import { knownArgumentMistakeGuidance } from "./inputArgumentGuidance.js";
+import {
+  knownArgumentMistakeGuidance,
+  knownViewMistakeGuidance,
+} from "./inputArgumentGuidance.js";
 
 const isRootArgument = (path: readonly unknown[]): boolean =>
   path.length === 0 || (path.length === 1 && path[0] === "input");
@@ -61,21 +64,6 @@ export const projectInputIssues = (
 const projectionBudgetExceeded = Symbol(
   "input issue projection budget exceeded",
 );
-
-/** Bound representation expansion before constructing projected diagnostics. */
-export const projectInputIssuesWithinBudget = (
-  issues: readonly z.core.$ZodIssue[],
-  input: unknown,
-  budgetBytes: number,
-  operation?: string,
-): readonly AnalysisInputIssue[] | undefined => {
-  return projectInputIssueGroupsWithinBudget(
-    issues,
-    input,
-    budgetBytes,
-    operation,
-  )?.flat();
-};
 
 /** Field diagnostics that fit a byte allowance, plus what was dropped. */
 export interface BoundedInputIssues {
@@ -152,6 +140,18 @@ export const projectInputIssueGroupsWithinBudget = (
   }
 };
 
+const chargeUnionProjection = (
+  issue: Extract<z.core.$ZodIssue, { code: "invalid_union" }>,
+  charge: (amount: number) => void,
+): void => {
+  for (const branch of issue.errors) charge(32 + 32 * branch.length);
+  if ("options" in issue && Array.isArray(issue.options))
+    for (const value of issue.options)
+      charge(typeof value === "string" ? 6 * value.length + 32 : 32);
+  if ("discriminator" in issue && typeof issue.discriminator === "string")
+    charge(6 * issue.discriminator.length + 16);
+};
+
 const chargeProjection = (
   issue: z.core.$ZodIssue,
   budget: { remaining: number },
@@ -172,12 +172,15 @@ const chargeProjection = (
     charge(cost);
   }
   charge(6 * issue.message.length);
-  if (issue.code === "invalid_union") {
-    for (const branch of issue.errors) charge(32 + 32 * branch.length);
-    if ("options" in issue && Array.isArray(issue.options))
-      for (const value of issue.options)
-        charge(typeof value === "string" ? 6 * value.length + 32 : 32);
-  }
+  const viewGuidance = knownViewMistakeGuidance(
+    operation,
+    input,
+    issue.path.flatMap((part) =>
+      typeof part === "string" || typeof part === "number" ? [part] : [],
+    ),
+  );
+  if (viewGuidance !== undefined) charge(6 * viewGuidance.message.length);
+  if (issue.code === "invalid_union") chargeUnionProjection(issue, charge);
   if (issue.code === "invalid_key") charge(32 * issue.issues.length);
   if (issue.code === "unrecognized_keys")
     for (const key of issue.keys) {
@@ -238,6 +241,354 @@ const projectUnrecognizedKeyIssues = (
     };
   });
 
+const CANDIDATE_DISCRIMINATOR_KEYS: readonly string[] = [
+  "kind",
+  "type",
+  "setting",
+  "collection",
+  "projection",
+  "facet",
+  "format",
+  "source",
+  "action",
+  "mode",
+];
+
+const candidateDiscriminatorKeys = (
+  targetValue: object,
+  budget?: { remaining: number },
+): readonly string[] => {
+  const targetRecord = targetValue as Record<string, unknown>;
+  const keys: string[] = [];
+  for (const k of CANDIDATE_DISCRIMINATOR_KEYS) {
+    if (Object.hasOwn(targetRecord, k)) {
+      if (budget !== undefined) {
+        budget.remaining -= 32;
+        if (budget.remaining < 0) throw projectionBudgetExceeded;
+      }
+      keys.push(k);
+    }
+  }
+  let otherKeys = 0;
+  for (const key in targetRecord) {
+    if (!Object.hasOwn(targetRecord, key)) continue;
+    if ((CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(key))
+      continue;
+    if (otherKeys >= 32) break;
+    if (budget !== undefined) {
+      budget.remaining -= 32;
+      if (budget.remaining < 0) throw projectionBudgetExceeded;
+    }
+    keys.push(key);
+    otherKeys++;
+  }
+
+  return keys;
+};
+
+const branchAcceptsKey = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+  budget?: { remaining: number },
+): boolean => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
+  for (const err of branchErrors) {
+    if (err.path.length === 1 && err.path[0] === key) return false;
+    if (err.code === "unrecognized_keys" && err.path.length === 0) {
+      for (const rejectedKey of err.keys) {
+        if (budget !== undefined) {
+          budget.remaining -= 4;
+          if (budget.remaining < 0) throw projectionBudgetExceeded;
+        }
+        if (rejectedKey === key) return false;
+      }
+    }
+    if (err.code === "invalid_union" && err.path.length === 0) {
+      const anyNestedAccepts = err.errors.some((nested) =>
+        branchAcceptsKey(nested, key, budget),
+      );
+      if (!anyNestedAccepts) return false;
+    }
+  }
+  return true;
+};
+
+const branchHasNonValueKeyIssue = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+  budget?: { remaining: number },
+): boolean => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
+  for (const err of branchErrors) {
+    if (
+      err.path.length === 1 &&
+      err.path[0] === key &&
+      err.code !== "invalid_value"
+    ) {
+      return true;
+    }
+    if (err.code === "invalid_union" && err.path.length === 0) {
+      const anyNested = err.errors.some((nested) =>
+        branchHasNonValueKeyIssue(nested, key, budget),
+      );
+      if (anyNested) return true;
+    }
+  }
+  return false;
+};
+
+const branchHasDirectKeyIssue = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+  code: z.core.$ZodIssue["code"],
+  budget?: { remaining: number },
+): boolean => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
+  for (const err of branchErrors) {
+    if (err.path.length === 1 && err.path[0] === key && err.code === code) {
+      return true;
+    }
+    if (err.code === "invalid_union" && err.path.length === 0) {
+      const anyNested = err.errors.some((nested) =>
+        branchHasDirectKeyIssue(nested, key, code, budget),
+      );
+      if (anyNested) return true;
+    }
+  }
+  return false;
+};
+
+const extractIssueExpectedValues = (
+  issue: z.core.$ZodIssue,
+): readonly unknown[] => {
+  if (issue.code === "invalid_value") {
+    if ("values" in issue && Array.isArray(issue.values)) return issue.values;
+    if ("options" in issue && Array.isArray(issue.options))
+      return issue.options;
+    if ("expected" in issue && issue.expected !== undefined)
+      return [issue.expected];
+  }
+  return [];
+};
+
+const collectKeyExpectedValues = (
+  branchErrors: readonly z.core.$ZodIssue[],
+  key: string,
+  budget?: { remaining: number },
+): readonly unknown[] => {
+  if (budget !== undefined) {
+    budget.remaining -= 16;
+    if (budget.remaining < 0) throw projectionBudgetExceeded;
+  }
+  const result: unknown[] = [];
+  for (const err of branchErrors) {
+    if (err.path.length === 1 && err.path[0] === key) {
+      const expected = extractIssueExpectedValues(err);
+      if (budget !== undefined && expected.length > 0) {
+        budget.remaining -= 16 * expected.length;
+        if (budget.remaining < 0) throw projectionBudgetExceeded;
+      }
+      result.push(...expected);
+    } else if (err.code === "invalid_union" && err.path.length === 0) {
+      for (const nested of err.errors) {
+        result.push(...collectKeyExpectedValues(nested, key, budget));
+      }
+    }
+  }
+  return result;
+};
+
+const chargeExpectedValuesBudget = (
+  path: readonly (string | number)[],
+  uniqueExpected: readonly unknown[],
+  budget?: { remaining: number },
+): void => {
+  if (budget === undefined) return;
+  budget.remaining -= 32 + 8 * (path.length + 1);
+  for (const item of uniqueExpected) {
+    budget.remaining -= typeof item === "string" ? 6 * item.length + 32 : 32;
+  }
+  if (budget.remaining < 0) throw projectionBudgetExceeded;
+};
+
+const resolveUnionDiscriminatorDiagnostic = (
+  currentErrors: readonly (readonly z.core.$ZodIssue[])[],
+  path: readonly (string | number)[],
+  candidateKeys: readonly string[],
+  budget?: { remaining: number },
+): readonly AnalysisInputIssue[] | "preserve" | undefined => {
+  for (const key of candidateKeys) {
+    if (!(CANDIDATE_DISCRIMINATOR_KEYS as readonly string[]).includes(key)) {
+      continue;
+    }
+    const allBranchesReject = currentErrors.every(
+      (branch) => !branchAcceptsKey(branch, key, budget),
+    );
+    if (!allBranchesReject) continue;
+
+    const anyBranchHasNonValue = currentErrors.some((branch) =>
+      branchHasNonValueKeyIssue(branch, key, budget),
+    );
+    if (anyBranchHasNonValue) return "preserve";
+
+    const anyBranchHasInvalidValue = currentErrors.some((branch) =>
+      branchHasDirectKeyIssue(branch, key, "invalid_value", budget),
+    );
+    if (!anyBranchHasInvalidValue) continue;
+
+    const allExpected = currentErrors.flatMap((branch) =>
+      collectKeyExpectedValues(branch, key, budget),
+    );
+    const uniqueExpected = [...new Set(allExpected.filter(isSafeExpected))];
+    if (uniqueExpected.length === 0) continue;
+    chargeExpectedValuesBudget(path, uniqueExpected, budget);
+    return [
+      {
+        path: [...path, key],
+        reason: "invalid_value",
+        expected: uniqueExpected,
+      },
+    ];
+  }
+  return undefined;
+};
+
+const narrowUnionBranches = (
+  errors: readonly (readonly z.core.$ZodIssue[])[],
+  targetValue: object,
+  budget?: { remaining: number },
+  keysToCheck?: readonly string[],
+): readonly (readonly z.core.$ZodIssue[])[] => {
+  let currentErrors = errors;
+  const candidateKeys =
+    keysToCheck ?? candidateDiscriminatorKeys(targetValue, budget);
+  for (const key of candidateKeys) {
+    const matchingBranches = currentErrors.filter((branch) =>
+      branchAcceptsKey(branch, key, budget),
+    );
+    if (
+      matchingBranches.length === 0 &&
+      currentErrors.some((branch) =>
+        branchHasNonValueKeyIssue(branch, key, budget),
+      )
+    )
+      break;
+    if (
+      matchingBranches.length > 0 &&
+      matchingBranches.length < currentErrors.length
+    ) {
+      currentErrors = matchingBranches;
+      if (currentErrors.length === 1) break;
+    }
+  }
+  return currentErrors;
+};
+
+interface UnionProjectionContext {
+  readonly input: unknown;
+  readonly projectChildIssue: (
+    child: z.core.$ZodIssue,
+  ) => readonly AnalysisInputIssue[];
+  readonly budget?: { remaining: number } | undefined;
+}
+
+const projectUnionIssue = (
+  issue: Extract<z.core.$ZodIssue, { code: "invalid_union" }>,
+  path: readonly (string | number)[],
+  context: UnionProjectionContext,
+): readonly AnalysisInputIssue[] => {
+  const { input, projectChildIssue, budget } = context;
+  if (issue.errors.length === 0) {
+    const targetPath =
+      "discriminator" in issue &&
+      typeof issue.discriminator === "string" &&
+      path.at(-1) !== issue.discriminator
+        ? [...path, issue.discriminator]
+        : path;
+    const expected =
+      "options" in issue && Array.isArray(issue.options)
+        ? issue.options.filter(isSafeExpected)
+        : undefined;
+    return [
+      {
+        path: targetPath,
+        reason:
+          valueAtPath(input, targetPath) === undefined
+            ? "missing_argument"
+            : "invalid_value",
+        ...(expected === undefined ? {} : { expected }),
+      },
+    ];
+  }
+
+  const targetValue = valueAtPath(input, path);
+  let activeErrors: readonly (readonly z.core.$ZodIssue[])[] = issue.errors;
+  if (
+    typeof targetValue === "object" &&
+    targetValue !== null &&
+    !Array.isArray(targetValue)
+  ) {
+    const candidateKeys = candidateDiscriminatorKeys(targetValue, budget);
+    let narrowed = narrowUnionBranches(
+      issue.errors,
+      targetValue,
+      budget,
+      candidateKeys.filter((key) => CANDIDATE_DISCRIMINATOR_KEYS.includes(key)),
+    );
+    if (narrowed.length > 1) {
+      const discriminator = resolveUnionDiscriminatorDiagnostic(
+        narrowed,
+        path,
+        candidateKeys,
+        budget,
+      );
+      if (discriminator !== undefined && discriminator !== "preserve")
+        return discriminator;
+      if (discriminator !== "preserve") {
+        const payloadNarrowed = narrowUnionBranches(
+          narrowed,
+          targetValue,
+          budget,
+          candidateKeys,
+        );
+        if (
+          payloadNarrowed.length > 1 &&
+          payloadNarrowed.length < narrowed.length
+        ) {
+          const secondary = resolveUnionDiscriminatorDiagnostic(
+            payloadNarrowed,
+            path,
+            candidateKeys,
+            budget,
+          );
+          if (secondary !== undefined && secondary !== "preserve")
+            return secondary;
+        }
+        narrowed = payloadNarrowed;
+      }
+    }
+
+    activeErrors = narrowed;
+  }
+
+  return uniqueIssues(
+    activeErrors.flatMap((branch) =>
+      branch.flatMap((branchIssue) =>
+        projectChildIssue(nestedIssue(issue, branchIssue, budget)),
+      ),
+    ),
+  );
+};
+
 const projectIssue = (
   issue: z.core.$ZodIssue,
   input: unknown,
@@ -248,36 +599,15 @@ const projectIssue = (
   const path = issue.path.flatMap((part) =>
     typeof part === "string" || typeof part === "number" ? [part] : [],
   );
+  const viewGuidance = knownViewMistakeGuidance(operation, input, path);
   // Branch issue paths are relative to the union; branches often agree.
   if (issue.code === "invalid_union") {
-    // Unmatched discriminators and ambiguous unions have no branch issues.
-    // Keep their outer failure instead of flattening it into an empty list.
-    if (issue.errors.length === 0) {
-      const expected =
-        "options" in issue ? issue.options?.filter(isSafeExpected) : undefined;
-      return [
-        {
-          path,
-          reason:
-            valueAtPath(input, path) === undefined
-              ? "missing_argument"
-              : "invalid_value",
-          ...(expected === undefined ? {} : { expected }),
-        },
-      ];
-    }
-    return uniqueIssues(
-      issue.errors.flatMap((branch) =>
-        branch.flatMap((branchIssue) =>
-          projectIssue(
-            nestedIssue(issue, branchIssue, budget),
-            input,
-            budget,
-            operation,
-          ),
-        ),
-      ),
-    );
+    return projectUnionIssue(issue, path, {
+      input,
+      projectChildIssue: (child) =>
+        projectIssue(child, input, budget, operation),
+      budget,
+    });
   }
   if (issue.code === "invalid_key")
     return issue.issues.flatMap((keyIssue) =>
@@ -299,12 +629,15 @@ const projectIssue = (
             ? "missing_argument"
             : "invalid_type",
         expected: safeExpected(issue.expected),
+        ...(viewGuidance !== undefined
+          ? { message: viewGuidance.message }
+          : {}),
       },
     ];
   if (issue.code === "too_small")
-    return [boundedIssue(path, "minimum", numericBound(issue.minimum))];
+    return [boundedIssue(path, "minimum", numericBound(issue.minimum), issue)];
   if (issue.code === "too_big")
-    return [boundedIssue(path, "maximum", numericBound(issue.maximum))];
+    return [boundedIssue(path, "maximum", numericBound(issue.maximum), issue)];
   if (issue.code === "invalid_format")
     return [
       {
@@ -322,22 +655,70 @@ const projectIssue = (
         path,
         reason: "invalid_value",
         expected: issue.values.filter(isSafeExpected),
+        ...(viewGuidance !== undefined
+          ? { message: viewGuidance.message }
+          : {}),
       },
     ];
   return [
     {
       path,
       reason: "invalid_value",
-      ...(issue.message.length > 0 ? { message: issue.message } : {}),
+      ...(viewGuidance !== undefined
+        ? { message: viewGuidance.message }
+        : issue.message.length > 0
+          ? { message: issue.message }
+          : {}),
     },
   ];
 };
 
+const mergeExpectedValues = (
+  first: unknown,
+  second: unknown,
+): (string | number | boolean | null)[] => [
+  ...new Set(
+    [
+      ...(Array.isArray(first) ? first : [first]),
+      ...(Array.isArray(second) ? second : [second]),
+    ].filter(isSafeExpected),
+  ),
+];
+
 const uniqueIssues = (
   issues: readonly AnalysisInputIssue[],
-): AnalysisInputIssue[] => [
-  ...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values(),
-];
+): AnalysisInputIssue[] => {
+  const merged: AnalysisInputIssue[] = [];
+  const invalidValueIndexByPath = new Map<string, number>();
+  const seenSerializedKeys = new Set<string>();
+
+  for (const issue of issues) {
+    const pathKey = JSON.stringify(issue.path);
+    if (issue.reason === "invalid_value" && issue.expected !== undefined) {
+      const existingIndex = invalidValueIndexByPath.get(pathKey);
+      if (existingIndex !== undefined) {
+        const existing = merged[existingIndex];
+        if (existing !== undefined) {
+          merged[existingIndex] = {
+            ...existing,
+            expected: mergeExpectedValues(existing.expected, issue.expected),
+            ...((existing.message ?? issue.message)
+              ? { message: existing.message ?? issue.message }
+              : {}),
+          };
+          continue;
+        }
+      }
+      invalidValueIndexByPath.set(pathKey, merged.length);
+    }
+    const fullKey = JSON.stringify(issue);
+    if (!seenSerializedKeys.has(fullKey)) {
+      seenSerializedKeys.add(fullKey);
+      merged.push(issue);
+    }
+  }
+  return merged;
+};
 
 const valueAtPath = (input: unknown, path: readonly PropertyKey[]): unknown => {
   let current = input;
@@ -360,12 +741,21 @@ const isSafeExpected = (
 const safeExpected = (value: unknown) =>
   isSafeExpected(value) ? value : "schema-defined value";
 
+/**
+ * `minimum` and `maximum` are inclusive, as in JSON Schema. An exclusive bound
+ * keeps the schema's own message instead of naming a value it rejects.
+ */
 const boundedIssue = (
   path: readonly (string | number)[],
   key: "minimum" | "maximum",
   value: number | undefined,
+  issue: { readonly inclusive?: boolean; readonly message: string },
 ): AnalysisInputIssue => ({
   path,
   reason: "out_of_range",
-  ...(value === undefined ? {} : { [key]: value }),
+  ...(value === undefined
+    ? {}
+    : issue.inclusive === false
+      ? { message: issue.message }
+      : { [key]: value }),
 });

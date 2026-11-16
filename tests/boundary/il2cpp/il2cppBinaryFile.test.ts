@@ -1,10 +1,13 @@
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   openImageSteps,
   readUInt32,
+  requireIl2cppBinaryImage,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { expect, it } from "vitest";
 import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
@@ -51,8 +54,39 @@ const expectedAddress = (value: bigint | "no-body" | "unknown") =>
       }
     : { state: value, address: null, rva: null };
 const expectedAddresses = FIXTURE_METHOD_ADDRESSES.map(expectedAddress);
-const link = (bytes: Buffer, architecture?: string) =>
-  linkIl2cppBinary(bytes, metadata, facts, architecture);
+
+// The provider selects a universal slice before linking, as here.
+const link = (bytes: Buffer, architecture?: Il2cppBinaryArchitecture) =>
+  linkIl2cppBinary(
+    requireIl2cppBinaryImage(
+      "inspect_il2cpp_metadata",
+      "/GameAssembly.dylib",
+      bytes,
+      architecture,
+    ).bytes,
+    metadata,
+    facts,
+  );
+it.each([183, 62])(
+  "links past unrelated ABS64 and GLOB_DAT records on ELF machine %d",
+  (machine) => {
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      symbolDefinition: { value: FIXTURE_BINARY_BASE + 0xe00n },
+      unresolvedRelocations: [
+        ...[0xe00, 0xe08, 0xe10].map((offset) => ({
+          offset,
+          kind: machine === 183 ? 257 : 1,
+        })),
+        ...[0xe20, 0xe28, 0xe30].map((offset) => ({
+          offset,
+          kind: machine === 183 ? 1025 : 6,
+        })),
+      ],
+    });
+    expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+  },
+);
 // A type-table fallback needs the metadata to reference most of the table, as
 // real builds do; referencing type 3 requires all four fixture entries.
 const wholeTable = {
@@ -61,15 +95,28 @@ const wholeTable = {
 };
 const linkWholeTable = (bytes: Buffer) =>
   linkIl2cppBinary(bytes, metadata, wholeTable);
-const failure = (bytes: Buffer, architecture?: string) => {
+const failure = (bytes: Buffer) => {
   try {
-    link(bytes, architecture);
+    link(bytes);
   } catch (cause) {
     if (cause instanceof Il2cppBinaryFormatFailure)
       return { reason: cause.reason, kind: cause.kind };
     throw cause;
   }
   throw new Error("expected a link failure");
+};
+/** The input a slice selection asks the caller to correct, and why. */
+const selectionIssue = (
+  bytes: Buffer,
+  architecture?: Il2cppBinaryArchitecture,
+) => {
+  try {
+    link(bytes, architecture);
+  } catch (cause) {
+    if (cause instanceof AnalysisInputError) return cause.issues[0];
+    throw cause;
+  }
+  throw new Error("expected a selection failure");
 };
 const addElfLoadAlias = (
   bytes: Buffer,
@@ -213,7 +260,14 @@ it("does not infer universal Mach-O identity from a FAT-shaped non-Mach-O table"
     reason: "unsupported-container",
     kind: "unsupported",
   });
-  expect(failure(bytes, "arm64").reason).toBe("slice-not-found");
+  // The message names IL2CPP's field and value, never the shared spelling.
+  const issue = selectionIssue(bytes, "arm64");
+  expect(issue).toMatchObject({
+    path: ["binary_architecture"],
+    reason: "invalid_value",
+  });
+  expect(issue?.message).toContain("binary_architecture arm64");
+  expect(issue?.message).not.toMatch(/(?<!binary_)architecture arm64/u);
 });
 
 it("requires an explicit slice of a universal Mach-O and reads only that slice", () => {
@@ -222,13 +276,57 @@ it("requires an explicit slice of a universal Mach-O and reads only that slice",
     { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
     { cpu: 0x0100000c, bytes: thin },
   ]);
-  expect(failure(universal)).toEqual({
-    reason: "slice-selection-required",
-    kind: "unsupported",
+  expect(selectionIssue(universal)).toMatchObject({
+    path: ["binary_architecture"],
+    reason: "invalid_value",
+    message: expect.stringContaining("select one architecture"),
   });
   expect(link(universal, "arm64").method_addresses).toEqual(expectedAddresses);
-  expect(failure(universal, "ppc64").reason).toBe("slice-not-found");
-  expect(failure(thin, "arm64").reason).toBe("slice-not-found");
+  expect(selectionIssue(thin, "arm64")).toMatchObject({
+    path: ["binary_architecture"],
+  });
+});
+
+it("selects an exact arm64 subtype beside arm64e and names only IL2CPP selectors", () => {
+  const arm64 = createIl2cppBinaryFixture();
+  const arm64e = createIl2cppBinaryFixture();
+  arm64e.writeUInt32LE(2, 8);
+  const universal = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: arm64e },
+    { cpu: 0x0100000c, bytes: arm64 },
+  ]);
+  // Match each FAT declaration to the CPU subtype in its slice header.
+  universal.writeUInt32BE(2, 8 + 4);
+  expect(link(universal, "arm64").method_addresses).toEqual(expectedAddresses);
+  // arm64e is not an IL2CPP value, so no selector is offered for that slice.
+  expect(
+    requireIl2cppBinaryImage(
+      "inspect_il2cpp_metadata",
+      "/GameAssembly.dylib",
+      universal,
+      "arm64",
+    ).limitations,
+  ).toEqual([
+    expect.stringContaining(
+      "arm64 (subtype 0x2) at file offset 4096 (no binary_architecture value selects it)",
+    ),
+  ]);
+});
+
+it("rejects a universal Mach-O whose slices overlap before selecting one", () => {
+  const universal = createUniversalFixture([
+    { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
+    { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+  ]);
+  expect(link(universal, "arm64").method_addresses).toEqual(expectedAddresses);
+  // Stretch the first slice into the second one.
+  const first = universal.readUInt32BE(8 + 8);
+  const second = universal.readUInt32BE(8 + 20 + 8);
+  universal.writeUInt32BE(second - first + 16, 8 + 12);
+  expect(selectionIssue(universal, "arm64")).toMatchObject({
+    path: ["binary_path"],
+    reason: "invalid_format",
+  });
 });
 
 it.each(["thin", "universal"] as const)(
@@ -370,10 +468,16 @@ it("refuses an image name repeated past the search bound", () => {
   // The Mach-O segment covers the original size; widen it to the new tail.
   flooded.writeBigUInt64LE(BigInt(flooded.length), 64);
   flooded.writeBigUInt64LE(BigInt(flooded.length), 80);
-  expect(failure(flooded)).toEqual({
-    reason: "native-index-capacity",
-    kind: "capacity",
-  });
+  expect(() => link(flooded)).toThrow(
+    expect.objectContaining({
+      reason: "native-index-capacity",
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "il2cpp-binary",
+        limit: { name: "native-index-capacity", maximum: 65536 },
+      }),
+    }),
+  );
 });
 
 it.each([
@@ -697,6 +801,33 @@ it("says why no MetadataRegistration or inferred type table was accepted", () =>
   expect(
     message(createIl2cppBinaryFixture({ metadataRegistration: false })),
   ).toContain("no single code-loaded run of Il2CppType pointers");
+});
+
+it("ignores an unrelated unaligned Mach-O bind during module-array fallback", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.fill(0, 0x600, 0x610);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  const linked = link(bytes);
+  expect(linked.code_gen_modules_field).toBeNull();
+  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+  expect(linked.method_addresses).toEqual(expectedAddresses);
+});
+
+it("ignores an unrelated unaligned Mach-O bind during type-table fallback", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.fill(0, 0x800, 0x880);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(linkWholeTable(bytes).types_count).toBe(4);
 });
 
 it("does not let a dyld-bound slot's placeholder decide the type-table run", () => {
@@ -1075,17 +1206,11 @@ it("guards a shared generic expansion before concatenating unchecked text", () =
   }
   bytes.writeBigUInt64LE(prior, 0x900);
   const stopped = new Error("type text admission");
-  const steps = linkIl2cppBinarySteps(
-    bytes,
-    expanded.metadata,
-    expanded.link,
-    undefined,
-    {
-      beforeText: (size) => {
-        if (size > 1024) throw stopped;
-      },
+  const steps = linkIl2cppBinarySteps(bytes, expanded.metadata, expanded.link, {
+    beforeText: (size) => {
+      if (size > 1024) throw stopped;
     },
-  );
+  });
   expect(() => {
     for (;;) {
       if (steps.next().done) break;
@@ -1115,6 +1240,11 @@ it.each([0n, FIXTURE_BINARY_BASE + 0x210n])(
     expect(linked.method_addresses[4]).toEqual(expectedAddress("no-body"));
   },
 );
+
+it("ignores unrelated unaligned Mach-O binds while finding module records", () => {
+  const linked = link(createIl2cppDyldBindFixture(0n, 0x704));
+  expect(linked.method_addresses).toEqual(expectedAddresses);
+});
 
 it("keeps unbound Mach-O method words classified from their values", () => {
   const linked = link(createIl2cppBinaryFixture());
@@ -1146,10 +1276,7 @@ it.each([
 ] as const)(
   "uses the four-byte count span for a dyld bind at %s",
   (slot, raw, expected) => {
-    const steps = openImageSteps(
-      createIl2cppDyldBindFixture(raw, slot),
-      undefined,
-    );
+    const steps = openImageSteps(createIl2cppDyldBindFixture(raw, slot));
     let step = steps.next();
     while (!step.done) step = steps.next();
     expect(readUInt32(step.value, FIXTURE_BINARY_BASE + 0x600n)).toBe(expected);
@@ -1212,6 +1339,29 @@ it.each([
   },
 );
 
+it.each([
+  ["an x86-64 TLS descriptor", 62, 36, undefined],
+  ["an AArch64 TLS descriptor", 183, 1031, undefined],
+  ["an x86-64 COPY of a pointer-sized symbol", 62, 5, 8n],
+  ["an x86-64 COPY of a 24-byte symbol", 62, 5, 24n],
+  ["an AArch64 COPY of a 24-byte symbol", 183, 1024, 24n],
+] as const)(
+  "fails closed on %s instead of reading the bytes it writes as stored words",
+  (_, machine, kind, symbolSize) => {
+    // The write starts at 0x2f8, eight bytes below the method pointer at
+    // 0x300, which a two-word write or a 24-byte copy runs through.
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      unresolvedRelocations: [{ offset: 0x2f8, kind }],
+      ...(symbolSize === undefined ? {} : { symbolSize }),
+    });
+    expect(failure(bytes)).toEqual({
+      reason: "unsupported-pointer-encoding",
+      kind: "unsupported",
+    });
+  },
+);
+
 it("reads a relative relocation into a zero-filled pointer array as a known value", () => {
   const bytes = createElfFixture(createIl2cppBinaryFixture(), {
     zeroFilledTable: true,
@@ -1234,13 +1384,19 @@ it("refuses an ambiguous architecture instead of choosing the first FAT slice", 
     { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
     { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
   ]);
-  expect(failure(bytes, "arm64").reason).toBe("ambiguous-slice-selection");
+  expect(selectionIssue(bytes, "arm64")).toMatchObject({
+    path: ["binary_architecture"],
+    message: expect.stringContaining("no slice was selected"),
+  });
 });
 it("checks the observed slice header against the caller-selected FAT architecture", () => {
   const bytes = createUniversalFixture([
     { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
   ]);
-  expect(failure(bytes, "amd64").reason).toBe("malformed-container");
+  expect(selectionIssue(bytes, "amd64")).toMatchObject({
+    path: ["binary_path"],
+    reason: "invalid_format",
+  });
 });
 it.each([1, 0x80000000])(
   "checks the complete FAT CPU subtype including capability bits (%i)",
@@ -1248,7 +1404,10 @@ it.each([1, 0x80000000])(
     const thin = createIl2cppBinaryFixture();
     thin.writeUInt32LE(subtype, 8);
     const bytes = createUniversalFixture([{ cpu: 0x0100000c, bytes: thin }]);
-    expect(failure(bytes, "arm64").reason).toBe("malformed-container");
+    expect(selectionIssue(bytes, "arm64")).toMatchObject({
+      path: ["binary_path"],
+      reason: "invalid_format",
+    });
     bytes.writeUInt32BE(subtype, 12);
     expect(link(bytes, "arm64").method_addresses).toEqual(expectedAddresses);
   },
@@ -1310,7 +1469,7 @@ const linkGeneric = (
   bytes = createIl2cppBinaryFixture({ genericMethods: options }),
 ) => {
   const decoded = genericFacts(version);
-  return linkIl2cppBinary(bytes, decoded.metadata, decoded.link, undefined, {
+  return linkIl2cppBinary(bytes, decoded.metadata, decoded.link, {
     genericInstances: true,
   });
 };
@@ -1366,7 +1525,6 @@ it("admits every generic row and issue before retention", () => {
     createIl2cppBinaryFixture({ genericMethods: { firstSpecMethod: 9 } }),
     decoded.metadata,
     decoded.link,
-    undefined,
     {
       genericInstances: true,
       onRow: (row) => rows.push(row),
@@ -1379,7 +1537,9 @@ it("admits every generic row and issue before retention", () => {
   expect(rows).toContainEqual({
     row: 0,
     address: at(0xb80n),
-    message: "method spec 0 names method 9 outside the 5 metadata methods",
+    message: expect.stringMatching(
+      /method spec 0.*method 9.*5 metadata methods/i,
+    ),
   });
   // A refused budget check stops before any generic row is retained.
   const refused: unknown[] = [];
@@ -1388,7 +1548,6 @@ it("admits every generic row and issue before retention", () => {
       createIl2cppBinaryFixture({ genericMethods: {} }),
       decoded.metadata,
       decoded.link,
-      undefined,
       {
         genericInstances: true,
         onRow: (row) => refused.push(row),
@@ -1420,8 +1579,8 @@ it("reports entries past the 64-bit address space at their table row", () => {
     at(0xbd0n),
     at(0xbe0n),
   ]);
-  expect(specs.issues[1]!.message).toBe(
-    "method spec 1 lies outside the 64-bit address space from methodSpecs at 0xffffffffffffffff",
+  expect(specs.issues[1]!.message).toMatch(
+    /method spec 1.*64-bit address space.*methodSpecs.*0xffffffffffffffff/i,
   );
   const slots = linkGeneric({ genericMethodPointers: top }).generic_methods!;
   expect(slots.instances.map((row) => row.state)).toEqual([
@@ -1432,8 +1591,9 @@ it("reports entries past the 64-bit address space at their table row", () => {
   expect(slots.issues).toContainEqual({
     row: 1,
     address: at(0xbd4n),
-    message:
-      "genericMethodPointers slot 1 lies outside the 64-bit address space from genericMethodPointers at 0xffffffffffffffff",
+    message: expect.stringMatching(
+      /genericMethodPointers.*slot 1.*64-bit address space.*0xffffffffffffffff/i,
+    ),
   });
 });
 
@@ -1523,7 +1683,6 @@ it("refuses generic linking when the type table was inferred", () => {
         ...decoded.link,
         returnTypes: Int32Array.from(decoded.link.returnTypes, () => 3),
       },
-      undefined,
       { genericInstances: true },
     ),
   ).toThrow(
@@ -1551,7 +1710,9 @@ it("keeps contradicting rows unknown and reports the record address", () => {
       {
         row: 0,
         address: at(0xb80n),
-        message: "method spec 0 names method 9 outside the 5 metadata methods",
+        message: expect.stringMatching(
+          /method spec 0.*method 9.*5 metadata methods/i,
+        ),
       },
     ],
   });
@@ -1561,8 +1722,9 @@ it("keeps contradicting rows unknown and reports the record address", () => {
       {
         row: 0,
         address: at(0xb80n),
-        message:
-          "method spec 0 names generic instances 2 and -1, outside the 2 readable genericInsts",
+        message: expect.stringMatching(
+          /method spec 0.*generic instances 2 and -1.*2 readable genericInsts/i,
+        ),
       },
     ],
   });
@@ -1573,7 +1735,12 @@ it("keeps contradicting rows unknown and reports the record address", () => {
       {
         row: 0,
         address: at(0xd00n),
-        message: `genericMethodPointers slot 0 points outside unambiguous executable file data at 0x${outside.toString(16)}`,
+        message: expect.stringMatching(
+          new RegExp(
+            `genericMethodPointers.*slot 0.*outside.*executable.*0x${outside.toString(16)}`,
+            "i",
+          ),
+        ),
       },
     ],
   });
@@ -1591,33 +1758,35 @@ it("keeps contradicting rows unknown and reports the record address", () => {
     {
       row: 0,
       address: at(0xbc0n),
-      message:
-        "method spec 0 is shared by 2 genericMethodTable rows, including row 2",
+      message: expect.stringMatching(
+        /method spec 0.*2 genericMethodTable rows.*row 2/i,
+      ),
     },
     {
       row: 2,
       address: at(0xbc0n + 32n),
-      message:
-        "method spec 0 is shared by 2 genericMethodTable rows, including row 0",
+      message: expect.stringMatching(
+        /method spec 0.*2 genericMethodTable rows.*row 0/i,
+      ),
     },
   ]);
 });
 
-it.each<[string, GenericMethodFixtureOptions, string]>([
+it.each<[string, GenericMethodFixtureOptions, RegExp]>([
   [
     "class arguments for a type without a generic container",
     { firstSpecMethod: 2 },
-    "method spec 0 gives type 1 1 generic arguments, but it declares 0",
+    /method spec 0.*type 1.*1 generic arguments.*declares 0/i,
   ],
   [
     "class arguments that disagree with the container's count",
     { firstSpecClass: 1 },
-    "method spec 0 gives type 3 2 generic arguments, but it declares 1",
+    /method spec 0.*type 3.*2 generic arguments.*declares 1/i,
   ],
   [
     "method arguments for a method without a generic container",
     { firstSpecMethodInstance: 0 },
-    "method spec 0 gives method 3 1 generic arguments, but it declares 0",
+    /method spec 0.*method 3.*1 generic arguments.*declares 0/i,
   ],
 ])("keeps a method spec with %s unnamed", (_, options, message) => {
   const generic = linkGeneric(options).generic_methods!;
@@ -1625,7 +1794,9 @@ it.each<[string, GenericMethodFixtureOptions, string]>([
   expect(generic.instances.slice(1)).toEqual(
     FIXTURE_GENERIC_INSTANCES.slice(1),
   );
-  expect(generic.issues).toEqual([{ row: 0, address: at(0xb80n), message }]);
+  expect(generic.issues).toEqual([
+    { row: 0, address: at(0xb80n), message: expect.stringMatching(message) },
+  ]);
 });
 
 it("keeps a method spec unnamed when its owner's container is out of range", () => {
@@ -1640,7 +1811,6 @@ it("keeps a method spec unnamed when its owner's container is out of range", () 
     createIl2cppBinaryFixture({ genericMethods: {} }),
     decoded.metadata,
     link,
-    undefined,
     { genericInstances: true },
   ).generic_methods!;
   expect(generic.instances).toEqual([
@@ -1652,8 +1822,9 @@ it("keeps a method spec unnamed when its owner's container is out of range", () 
     {
       row: 2,
       address: at(0xb80n + 24n),
-      message:
-        "method spec 2 gives method 4 1 generic arguments, but its generic container 99 is out of range",
+      message: expect.stringMatching(
+        /method spec 2.*method 4.*1 generic arguments.*container 99.*out of range/i,
+      ),
     },
   ]);
 });
@@ -1677,7 +1848,9 @@ it("keeps a generic slot with an unresolved relocation unknown", () => {
     {
       row: 1,
       address: at(0xd08n),
-      message: "genericMethodPointers slot 1 has an unresolved relocation",
+      message: expect.stringMatching(
+        /genericMethodPointers.*slot 1.*unresolved relocation/i,
+      ),
     },
   ]);
 });
@@ -1694,7 +1867,9 @@ it("keeps the other generic rows when one pointer slot is unmapped", () => {
     {
       row: 2,
       address: at(0x1000n),
-      message: "genericMethodPointers slot 2 is not file mapped",
+      message: expect.stringMatching(
+        /genericMethodPointers.*slot 2.*not file mapped/i,
+      ),
     },
   ]);
 });
@@ -1735,7 +1910,7 @@ const linkLowBase = (
   const decoded = genericFacts(31);
   return drain(
     linkGenericMethodsSteps(
-      drain(openImageSteps(fixture.bytes, undefined)),
+      drain(openImageSteps(fixture.bytes)),
       decoded.metadata,
       decoded.link,
       fixture.modulesField,
@@ -1778,7 +1953,9 @@ it("treats a zero-filled method spec as unobserved, not as method 0", () => {
   expect(generic.issues.map(({ row, message }) => ({ row, message }))).toEqual(
     [0, 1, 2].map((row) => ({
       row,
-      message: `method spec ${row} is not file backed`,
+      message: expect.stringMatching(
+        new RegExp(`method spec ${row}.*not file backed`, "i"),
+      ),
     })),
   );
 });
@@ -1813,7 +1990,6 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
         createIl2cppBinaryFixture({ genericMethods: {} }),
         decoded.metadata,
         decoded.link,
-        undefined,
         {
           genericInstances: true,
           beforeText: (bytes) => {
@@ -1821,6 +1997,8 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
               throw new Il2cppBinaryFormatFailure(
                 "native-type-text-capacity",
                 "budget",
+                1,
+                "bytes",
               );
             tableChecked = bytes === 3 * minimumGenericRow;
           },
@@ -1833,7 +2011,10 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
   })();
   expect(tableChecked).toBe(true);
   expect(failure).toBeInstanceOf(Il2cppBinaryFormatFailure);
-  expect((failure as Il2cppBinaryFormatFailure).kind).toBe("capacity");
+  expect((failure as Il2cppBinaryFormatFailure).failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "native-type-text-capacity", maximum: 1 },
+  });
 });
 
 it.each([0, 8, 16])(
@@ -1902,3 +2083,209 @@ it.each([183, 62])(
     expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
   },
 );
+
+it.each([0x700, 0x704])(
+  "does not claim a unique module when a bind at %s may change a competing name pointer",
+  (slot) => {
+    const bytes = createIl2cppDyldBindFixture(0n, slot);
+    const duplicate = createIl2cppBinaryFixture({ duplicateModule: true });
+    duplicate.copy(bytes, 0x700, 0x700, 0x718);
+    if (slot === 0x700) bytes.writeBigUInt64LE(0n, slot);
+    else bytes.writeUInt32LE(0, slot);
+    expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("does not claim a unique type table when a bound word may complete a competing table", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.copy(bytes, 0x700, 0x900, 0x920);
+  bytes.writeBigUInt64LE(0n, 0x700);
+  bytes.fill(0, 0x800, 0x880);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(() => linkWholeTable(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("retains a unique module array when an isolated bound word cannot form a competing two-module array", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.fill(0, 0x600, 0x610);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(bytes.readBigUInt64LE(0x6f8)).toBe(0n);
+  expect(bytes.readBigUInt64LE(0x708)).toBe(0n);
+  const linked = link(bytes);
+  expect(linked.code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+});
+
+it("does not treat a repeated possible module as a competing array", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x70c);
+  bytes.fill(0, 0x600, 0x610);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x400n, 0x700);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x400n, 0x708);
+  bytes.writeUInt32LE(0, 0x70c);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x500]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(link(bytes).code_gen_modules_array).toBe(FIXTURE_BINARY_BASE + 0x500n);
+});
+
+it("does not claim a unique module array when an ELF unresolved relocation may form a second code-referenced array", () => {
+  const image = createIl2cppBinaryFixture({
+    codeRegistration: false,
+    codeReference: true,
+  });
+  image.writeBigUInt64LE(0n, 0x700);
+  image.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x440n, 0x708);
+  image.set([0x48, 0x8d, 0x05], 0xc20);
+  image.writeInt32LE(0x700 - (0xc20 + 7), 0xc23);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim a unique module when an ELF unresolved relocation may name a second record", () => {
+  const image = createIl2cppBinaryFixture({ duplicateModule: true });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim unique registration when competing ELF count has unresolved relocation", () => {
+  const image = createIl2cppBinaryFixture({ duplicateCodeRegistration: true });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x680, kind: 10 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it("does not claim unique metadata registration when competing ELF count is unresolved", () => {
+  const image = createIl2cppBinaryFixture({
+    duplicateMetadataRegistration: true,
+  });
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 10 }],
+  });
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+it.each([
+  [0x708, 10],
+  [0x710, 1],
+])(
+  "does not claim unique module with unresolved competing field %s",
+  (offset, kind) => {
+    const image = createIl2cppBinaryFixture({ duplicateModule: true });
+    const bytes = createElfFixture(image, {
+      machine: 62,
+      unresolvedRelocations: [{ offset, kind }],
+    });
+    expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("rejects a possible ELF module when its known count disproves the record", () => {
+  const image = createIl2cppBinaryFixture({ duplicateModule: true });
+  image.writeUInt32LE(123, 0x708);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x700, kind: 1 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("rejects a possible ELF code registration when its known array is invalid", () => {
+  const image = createIl2cppBinaryFixture({ duplicateCodeRegistration: true });
+  image.writeBigUInt64LE(0n, 0x688);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x680, kind: 10 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("rejects a possible ELF metadata registration when its known type pointer is invalid", () => {
+  const image = createIl2cppBinaryFixture({
+    duplicateMetadataRegistration: true,
+  });
+  image.writeBigUInt64LE(0n, 0x8b8);
+  const bytes = createElfFixture(image, {
+    machine: 62,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 10 }],
+  });
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("still uses the ELF type-table fallback when an uncertain metadata candidate is disproven", () => {
+  const image = createIl2cppBinaryFixture({
+    metadataRegistration: false,
+    adrpAdd: [[0xc20, 0x900]],
+  });
+  image.writeUInt32LE(4, 0x8e0);
+  image.writeBigUInt64LE(0n, 0x8b8);
+  const bytes = createElfFixture(image, {
+    machine: 183,
+    unresolvedRelocations: [{ offset: 0x8d0, kind: 258 }],
+  });
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});
+
+it("does not treat bound data with a known invalid kind as a competing type table", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x700);
+  bytes.fill(0, 0x800, 0x880);
+  for (let offset = 0x750; offset < 0x770; offset += 8)
+    bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x700n, offset);
+  createIl2cppBinaryFixture({ adrpAdd: [[0xc20, 0x900]] }).copy(
+    bytes,
+    0xc20,
+    0xc20,
+    0xc28,
+  );
+  expect(linkWholeTable(bytes).types_count).toBe(4);
+});
+
+it.each([2, 3])(
+  "binds a partially known module name to its own image count %s",
+  (count) => {
+    const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+    const duplicate = createIl2cppBinaryFixture({ duplicateModule: true });
+    duplicate.copy(bytes, 0x700, 0x700, 0x718);
+    bytes.writeUInt32LE(0, 0x704);
+    bytes.writeUInt32LE(count, 0x708);
+    // BIND_TYPE_TEXT_ABSOLUTE32 owns only the upper half of the name pointer.
+    bytes[0xf00 + 2 + Buffer.byteLength("_FixtureMethod") + 1] = 0x52;
+    if (count === 2)
+      expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+    else expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+  },
+);
+
+it("does not mix masked image count and pointer extent when count is unresolved", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0xff0n, 0x710);
+  expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+});
+
+it("retains an unresolved matching image count when its method array could fit", () => {
+  const bytes = createIl2cppDyldBindFixture(0n, 0x704);
+  bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
+  bytes.writeBigUInt64LE(bytes.readBigUInt64LE(0x410), 0x710);
+  expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});

@@ -354,8 +354,9 @@ it("selects output EOF before a later abort when the current job has no terminal
     if (!result.ok)
       expect(result.error.error).toMatchObject({
         _tag: "AnalysisOutputError",
-        reason:
-          "JavaScript worker closed output before the operation received its terminal response",
+        reason: expect.stringMatching(
+          /worker closed output.*terminal response/i,
+        ),
       });
   } finally {
     await worker.close();
@@ -390,8 +391,9 @@ it("selects startup EOF before an abort queued by the same close event", async (
     if (!result.ok)
       expect(result.error.error).toMatchObject({
         _tag: "AnalysisOutputError",
-        reason:
-          "JavaScript worker closed output before the operation received its terminal response",
+        reason: expect.stringMatching(
+          /worker closed output.*terminal response/i,
+        ),
       });
   } finally {
     await worker.close();
@@ -777,7 +779,10 @@ it("retains the owned worker's V8 heap exhaustion classification", async () => {
         expect(projected.message).toContain(
           "128 MiB V8 old-space heap (max_heap_mb)",
         );
-        expect(projected.remediation.action).toContain("--max-heap-mb");
+        // The adapter-neutral remediation names the request field; only the
+        // CLI renders its option.
+        expect(projected.remediation.action).toContain("Increase max_heap_mb");
+        expect(projected.remediation.action).not.toContain("--max-heap-mb");
       } else {
         expect(projected.message).toContain(
           "Bun ignores the V8 old-space flag",

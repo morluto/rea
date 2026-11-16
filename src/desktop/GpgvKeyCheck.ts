@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import {
   dearmorPublicKeys,
   isArmoredKey,
@@ -174,5 +177,6 @@ export const withGpgvKeyCheck = async <Value>(
       throw resources.cleanupFailure(outcome, [removed]);
   }
   if (outcome.kind === "failed") throw outcome.cause;
+  assertArtifactReadActive(signal);
   return outcome.value;
 };

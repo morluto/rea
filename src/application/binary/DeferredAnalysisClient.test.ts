@@ -1,11 +1,14 @@
 import { expect, it } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../../tests/support/lifecycleHarness.js";
 import { DeferredAnalysisClient } from "../../providers/DeferredAnalysisClient.js";
 import {
   createAnalysisExecution,
   type AnalysisClient,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisAccessDeniedError,
@@ -17,6 +20,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { resolvedAnalysisError } from "../../domain/analysisErrorBase.js";
 import { err, ok } from "../../domain/result.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const identity = { id: "controlled", name: "Controlled client", version: "1" };
 
@@ -64,13 +68,6 @@ it.each([
     }
   },
 );
-const gate = <T = void>() => {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((finish) => {
-    resolve = finish;
-  });
-  return { promise, resolve };
-};
 const child = (
   close: AnalysisClient["close"] = async () => ok(null),
 ): AnalysisClient => ({
@@ -151,33 +148,27 @@ it.each([
 );
 
 it("keeps a shared creation alive for an interested peer", async () => {
-  const entered = gate(),
-    loading = gate<AnalysisClient>();
+  const creation = phaseGate<void, AnalysisClient>();
   let observed: AbortSignal | undefined,
     creates = 0,
     closes = 0;
   const client = new DeferredAnalysisClient(async (signal) => {
     creates++;
     observed = signal;
-    entered.resolve();
-    return loading.promise;
+    return creation.hold();
   }, identity.id);
   const controller = new AbortController(),
     reason = { request: "one peer leaves" };
   const first = client.execute("health", {}, { signal: controller.signal });
   const second = client.execute("health", {});
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(
-      entered.promise,
-      first,
-      "shared client creation",
-    );
+    await creation.reached(first, "shared client creation");
     controller.abort(reason);
     const cancelled = await first;
     if (cancelled.ok) throw new Error("Expected peer cancellation");
     expect(cancelled.error.cause).toBe(reason);
     expect(observed?.aborted).toBe(false);
-    loading.resolve(
+    creation.release(
       child(async () => {
         closes++;
         return ok(null);
@@ -189,7 +180,7 @@ it("keeps a shared creation alive for an interested peer", async () => {
     expect(closes).toBe(1);
   }, [
     () => controller.abort(),
-    () => loading.resolve(child()),
+    () => creation.release(child()),
     async () => {
       await Promise.allSettled([first, second]);
     },
@@ -201,15 +192,12 @@ it("keeps a shared creation alive for an interested peer", async () => {
 });
 
 it("joins a late acquired client's final cleanup before cancellation settles", async () => {
-  const entered = gate(),
-    loading = gate<AnalysisClient>(),
-    closeEntered = gate(),
-    closing = gate();
+  const creation = phaseGate<void, AnalysisClient>(),
+    childClose = phaseGate();
   let closes = 0,
     settled = false;
   const client = new DeferredAnalysisClient(async () => {
-    entered.resolve();
-    return loading.promise;
+    return creation.hold();
   }, identity.id);
   const controller = new AbortController(),
     reason = { request: "late acquisition" };
@@ -220,21 +208,20 @@ it("joins a late acquired client's final cleanup before cancellation settles", a
       return result;
     });
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered.promise, pending, "client creation");
+    await creation.reached(pending, "client creation");
     controller.abort(reason);
-    loading.resolve(
+    creation.release(
       child(async () => {
         closes++;
-        closeEntered.resolve();
-        await closing.promise;
+        await childClose.hold();
         return ok(null);
       }),
     );
-    await awaitAcknowledgement(closeEntered.promise, pending, "client cleanup");
+    await childClose.reached(pending, "client cleanup");
     expect(settled).toBe(false);
     expect(client.operationHealthSnapshot()?.state).toBe("idle");
     expect(client.reuseReadiness()).toBe("blocked");
-    closing.resolve();
+    childClose.release();
     const result = await pending;
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error.cause).toBe(reason);
@@ -243,8 +230,8 @@ it("joins a late acquired client's final cleanup before cancellation settles", a
     expect(closes).toBe(1);
   }, [
     () => controller.abort(),
-    () => loading.resolve(child()),
-    () => closing.resolve(),
+    () => creation.release(child()),
+    () => childClose.release(),
     async () => {
       await pending;
     },
@@ -255,17 +242,162 @@ it("joins a late acquired client's final cleanup before cancellation settles", a
   ]);
 });
 
+it("waits for abandoned creation cleanup before sharing a fresh client", async () => {
+  const creation = phaseGate<void, AnalysisClient>(),
+    childClose = phaseGate();
+  let creates = 0;
+  const client = new DeferredAnalysisClient(async () => {
+    creates++;
+    if (creates > 1) return child();
+    return creation.hold();
+  }, identity.id);
+  const controller = new AbortController();
+  const reason = { request: "first caller" };
+  const first = client.execute("health", {}, { signal: controller.signal });
+  let second: ReturnType<AnalysisClient["execute"]> | undefined;
+  let third: ReturnType<AnalysisClient["execute"]> | undefined;
+  await withVerifierCleanup(async () => {
+    await creation.reached(first, "client creation");
+    controller.abort(reason);
+    creation.release(
+      child(async () => {
+        await childClose.hold();
+        return ok(null);
+      }),
+    );
+    await childClose.reached(first, "client cleanup");
+    second = client.execute("health", {});
+    third = client.execute("health", {});
+    expect(creates).toBe(1);
+    childClose.release();
+    const cancelled = await first;
+    if (cancelled.ok) throw new Error("Expected first caller cancellation");
+    expect(cancelled.error.cause).toBe(reason);
+    expect((await second).ok).toBe(true);
+    expect((await third).ok).toBe(true);
+    expect(creates).toBe(2);
+  }, [
+    () => controller.abort(),
+    () => creation.release(child()),
+    () => childClose.release(),
+    async () => {
+      await Promise.allSettled([first, second, third]);
+    },
+    async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
+});
+
+it.each(["caller", "close", "cleanup", "physical"] as const)(
+  "preserves %s while a new caller waits for abandoned creation",
+  async (outcome) => {
+    const entered = phaseArrival(),
+      aborted = phaseArrival(),
+      acquisition = phaseGate(),
+      release = phaseGate();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const physical = new ProviderAdapterError(
+      identity.id,
+      "create_analysis_client",
+      { diagnostics: { reason: "physical fixture fault" } },
+    );
+    let creates = 0;
+    let denied = outcome === "cleanup";
+    const client = new DeferredAnalysisClient(async (signal) => {
+      creates++;
+      signal.addEventListener("abort", () => aborted.arrive(), { once: true });
+      entered.arrive();
+      if (outcome === "physical") {
+        await release.hold();
+        throw physical;
+      }
+      await acquisition.hold();
+      return child(async () => {
+        await release.hold();
+        return denied
+          ? err(
+              new ProviderCleanupError(identity.id, ["controlled child"], {
+                reason: "close refused",
+              }),
+            )
+          : ok(null);
+      });
+    }, identity.id);
+    const first = client.execute(
+      "health",
+      {},
+      { signal: firstController.signal },
+    );
+    let second: ReturnType<AnalysisClient["execute"]> | undefined;
+    let closing: ReturnType<AnalysisClient["close"]> | undefined;
+    await withVerifierCleanup(async () => {
+      await entered.reached(first, "client creation");
+      firstController.abort("first caller");
+      await aborted.reached(first, "creation abort");
+      if (outcome !== "physical") {
+        acquisition.release();
+        await release.reached(first, "client cleanup");
+      }
+      second = client.execute(
+        "analyze_function",
+        {},
+        {
+          signal: secondController.signal,
+        },
+      );
+      if (outcome === "caller") secondController.abort("second caller");
+      if (outcome === "close") closing = client.close();
+      release.release();
+      const result = await second;
+      if (result.ok) throw new Error("Expected interrupted creation");
+      if (outcome === "caller") {
+        expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+        expect(result.error.cause).toBe("second caller");
+      } else if (outcome === "close") {
+        expect(result.error).toMatchObject({
+          diagnostics: { reason: "client_closed" },
+        });
+        expect((await closing)?.ok).toBe(true);
+      } else if (outcome === "cleanup") {
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources).toContain("controlled child");
+      } else {
+        expect(result.error).toMatchObject({
+          diagnostics: { reason: "physical fixture fault" },
+        });
+        expect(result.error.cause).toBe(physical);
+      }
+      expect((await first).ok).toBe(false);
+      expect(creates).toBe(1);
+    }, [
+      () => firstController.abort(),
+      () => secondController.abort(),
+      () => acquisition.release(),
+      () => release.release(),
+      async () => {
+        await Promise.allSettled([first, second, closing]);
+      },
+      async () => {
+        denied = false;
+        const closed = await client.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
+  },
+);
+
 it("keeps a producer-authored physical failure primary even when it is the caller's abort reason", async () => {
-  const entered = gate(),
-    finishing = gate();
+  const creation = phaseGate();
   const physical = new ProviderAdapterError(
     identity.id,
     "create_analysis_client",
     { diagnostics: { reason: "physical fixture fault" } },
   );
   const client = new DeferredAnalysisClient(async () => {
-    entered.resolve();
-    await finishing.promise;
+    await creation.hold();
     throw physical;
   }, identity.id);
   const controller = new AbortController();
@@ -275,9 +407,9 @@ it("keeps a producer-authored physical failure primary even when it is the calle
     { signal: controller.signal },
   );
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered.promise, pending, "client creation");
+    await creation.reached(pending, "client creation");
     controller.abort(physical);
-    finishing.resolve();
+    creation.release();
     const result = await pending;
     if (result.ok) throw new Error("Expected physical failure");
     expect(result.error).toMatchObject({
@@ -292,7 +424,7 @@ it("keeps a producer-authored physical failure primary even when it is the calle
     expect(projectAnalysisError(result.error).code).toBe("execution_failure");
   }, [
     () => controller.abort(),
-    () => finishing.resolve(),
+    () => creation.release(),
     async () => {
       await pending;
     },
@@ -364,7 +496,7 @@ it("retains a failed prerequisite owner without creating a native client", async
         close: async () => {
           releases++;
           if (denied) throw cleanup;
-          cleanup.resolveCleanup();
+          releaseOwnedCleanup(cleanup);
         },
       },
       "controlled prerequisite",
@@ -410,7 +542,7 @@ it("retries only unresolved prerequisite and native owners across mixed cleanup 
         close: async () => {
           prerequisites++;
           if (denyPrerequisite) throw prerequisiteFailure;
-          prerequisiteFailure.resolveCleanup();
+          releaseOwnedCleanup(prerequisiteFailure);
         },
       },
       "mixed prerequisite",
