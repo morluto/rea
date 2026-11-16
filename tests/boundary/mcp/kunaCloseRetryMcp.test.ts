@@ -9,7 +9,6 @@ import { analysisErrorRemediationAction } from "../../../src/domain/analysisErro
 import { cleanupRetryRemediation } from "../../../src/domain/analysisErrorRecovery.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
@@ -60,7 +59,7 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
   const program = join(fixture.root, "program.elf");
   await writeFile(program, elfProgram());
   const targetBytes = await readFile(program);
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const close = vi.spyOn(session, "close");
   try {
     const opened = await call("open_binary", { path: program });
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
@@ -70,9 +69,11 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     await expect.poll(() => exportsOf(fixture.kuna)).toHaveLength(1);
 
     const failed = parseMcpToolError(await call("close_binary"));
-    const delivered = delivery.mock.calls.at(-1)?.[0];
-    if (delivered === undefined || delivered.ok)
-      throw new Error("Expected the typed close failure at delivery");
+    const closeResult = close.mock.results.at(-1);
+    if (closeResult?.type !== "return")
+      throw new Error("Expected the session close result");
+    const closed = await closeResult.value;
+    if (closed.ok) throw new Error("Expected the typed session close failure");
     expect(failed.error).toMatchObject({
       code: "cleanup_incomplete",
       retryable: false,
@@ -86,7 +87,7 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     });
     // The owner's guidance stays first; the retry offer is appended once.
     expect(failed.error.remediation.action).toBe(
-      `${analysisErrorRemediationAction(delivered.error)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
+      `${analysisErrorRemediationAction(closed.error)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
     );
     const pendingStatus = await sessionStatus(client);
     expect(pendingStatus).toMatchObject({
@@ -130,7 +131,7 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     expect(await readdir(join(fixture.cacheRoot, "staging"))).toEqual([]);
     expect(Buffer.compare(await readFile(program), targetBytes)).toBe(0);
   } finally {
-    delivery.mockRestore();
+    close.mockRestore();
     unproven.release();
     await client.close();
     await server.close();
