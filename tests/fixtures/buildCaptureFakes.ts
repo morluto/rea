@@ -47,6 +47,22 @@ interface BuildTaskAtEnd {
   readonly end_checkpoint: string;
 }
 
+let exportSchemaPromise: Promise<string> | undefined;
+
+/** The export schema is independent of each capture and safe to reuse in this fixture module. */
+const exportSchema = async (): Promise<string> => {
+  exportSchemaPromise ??= (async () => {
+    const schema = await serveCli([
+      "export-desktop-application",
+      "--schema",
+      "--json",
+    ]);
+    expect(schema.exitCode, schema.stdout).toBe(0);
+    return schema.stdout;
+  })();
+  return exportSchemaPromise;
+};
+
 /**
  * What the real CLI writes for a capture made between seed and end, by
  * default `seedEndCapture`: the draft, and the export with BUILD_TASK, or
@@ -90,13 +106,8 @@ const realCliOutputs = async (
   if (install?.downloadInstall !== undefined)
     await writeFile(download, JSON.stringify(install.downloadInstall));
   const withheld = join(work, "withheld");
-  const schema = await serveCli([
-    "export-desktop-application",
-    "--schema",
-    "--json",
-  ]);
-  expect(schema.exitCode, schema.stdout).toBe(0);
-  await writeFile(join(work, "schema.json"), schema.stdout);
+  const schema = await exportSchema();
+  await writeFile(join(work, "schema.json"), schema);
   const draft = await serveCli([
     "describe-desktop-application-task",
     capture,
