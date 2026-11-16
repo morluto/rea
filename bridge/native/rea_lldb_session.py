@@ -476,13 +476,13 @@ class ReaLldbSessionDaemon:
                 if state not in (lldb.eStateExited, lldb.eStateDetached):
                     if self.is_attached:
                         err = self.process.Detach()
-                        if err.Fail():
+                        if err is not None and hasattr(err, "Fail") and err.Fail():
                             target_state = "unknown"
                         else:
                             target_state = "detached"
                     else:
                         err = self.process.Kill()
-                        if err.Fail():
+                        if err is not None and hasattr(err, "Fail") and err.Fail():
                             target_state = "unknown"
                         else:
                             target_state = "terminated"

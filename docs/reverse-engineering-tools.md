@@ -101,6 +101,7 @@ Session status retains up to 64 recent protocol frames. Each history entry keeps
 Persistent Apple Silicon LLDB sessions, including the MCP workflow and the one-shot `rea debug-with-lldb` CLI, are available on macOS (Darwin arm64). REA utilizes the host LLDB Python framework (`LLDB.framework/Resources/Python` via Xcode or CommandLineTools) and the native `SBDebugger` runtime.
 
 On supported Apple Silicon macOS hosts, four MCP tools manage the session lifecycle:
+
 - `start_lldb_session`: Initializes the daemon and optionally launches a local Mach-O binary (`path`) or attaches to a running process by PID (`pid`). Specifying both `path` and `pid` is rejected. ASLR is disabled by default (`disable_aslr: true`) to ensure deterministic memory layout across turns. Initial breakpoints may be specified by symbol, selector, or hex address.
 - `lldb_command`: Executes an unrestricted LLDB console command (e.g. `register read x0 x1`, `thread backtrace`, `memory read`, `po expr`) with thread timeout containment. Output is collected up to 2 MiB, safely truncated with `output_truncated: true` if exceeded, and returned as signed `rea.debugger.console-observation` Evidence.
 - `lldb_session_status`: Queries live inferior state (`process_state`, `pid`, `target`) directly from the active debugger instance.

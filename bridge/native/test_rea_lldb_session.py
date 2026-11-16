@@ -72,9 +72,23 @@ if not hasattr(fake_lldb, "SBDebugger"):
         def flush(self):
             pass
 
+    class MockSBError:
+        def __init__(self, fail=False, message=""):
+            self._fail = fail
+            self._message = message
+
+        def Fail(self):
+            return self._fail
+
+        def Success(self):
+            return not self._fail
+
+        def GetCString(self):
+            return self._message
+
     fake_lldb.SBDebugger = MockSBDebugger
     fake_lldb.SBCommandReturnObject = MockSBCommandReturnObject
-    fake_lldb.SBError = lambda: types.SimpleNamespace(Success=lambda: True, GetCString=lambda: "")
+    fake_lldb.SBError = MockSBError
     fake_lldb.eStateExited = 10
     fake_lldb.eStateDetached = 11
 
@@ -112,7 +126,7 @@ class ReaLldbSessionDaemonTests(unittest.TestCase):
         class MockProcess:
             def IsValid(self): return True
             def GetState(self): return 5 # Running
-            def Kill(self): pass
+            def Kill(self): return fake_lldb.SBError()
         daemon.process = MockProcess()
         res = daemon.close()
         self.assertEqual(res["status"], "closed")
@@ -124,11 +138,35 @@ class ReaLldbSessionDaemonTests(unittest.TestCase):
         class MockProcess:
             def IsValid(self): return True
             def GetState(self): return 5 # Running
-            def Detach(self): pass
+            def Detach(self): return fake_lldb.SBError()
         daemon.process = MockProcess()
         res = daemon.close()
         self.assertEqual(res["status"], "closed")
         self.assertEqual(res["target_state"], "detached")
+
+    def test_daemon_close_lifecycle_kill_failed(self):
+        daemon = session_module.ReaLldbSessionDaemon()
+        daemon.is_attached = False
+        class MockProcess:
+            def IsValid(self): return True
+            def GetState(self): return 5 # Running
+            def Kill(self): return fake_lldb.SBError(fail=True, message="kill permission denied")
+        daemon.process = MockProcess()
+        res = daemon.close()
+        self.assertEqual(res["status"], "failed")
+        self.assertEqual(res["target_state"], "unknown")
+
+    def test_daemon_close_lifecycle_detach_failed(self):
+        daemon = session_module.ReaLldbSessionDaemon()
+        daemon.is_attached = True
+        class MockProcess:
+            def IsValid(self): return True
+            def GetState(self): return 5 # Running
+            def Detach(self): return fake_lldb.SBError(fail=True, message="detach failed")
+        daemon.process = MockProcess()
+        res = daemon.close()
+        self.assertEqual(res["status"], "failed")
+        self.assertEqual(res["target_state"], "unknown")
 
 
     def test_bounded_pipe_capture_limits_and_truncates(self):
