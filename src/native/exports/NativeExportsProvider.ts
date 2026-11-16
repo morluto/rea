@@ -91,13 +91,15 @@ const limitRecovery = (
   switch (limit) {
     case "rows":
       return fixedAllowanceOptions(
-        `The ${String(maximum)}-entry native export inventory allowance`,
+        "The native export inventory allowance",
         "count",
+        { limit: maximum, unit: "entries" },
       );
     case "retained_text":
       return fixedAllowanceOptions(
-        `The ${String(maximum)}-byte native export retained-text allowance`,
+        "The native export retained-text allowance",
         "bytes",
+        { limit: maximum, unit: "bytes" },
       );
     case null:
       return fixedAllowanceOptions(
