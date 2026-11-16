@@ -275,8 +275,6 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
       const response = await call("inspect_sqlite_database", { path });
       const mcpError = parseMcpToolError(response).error;
       expect(mcpError).toMatchObject(expectedError);
-      expect(mcpError.details).not.toHaveProperty("related_cli_flags");
-      expect(JSON.stringify(mcpError)).not.toContain("--column");
     },
   );
 }
@@ -1302,7 +1300,11 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
         table: "t",
         ...(columns === undefined ? {} : { columns }),
       });
-      expect(parseMcpToolError(response).error).toMatchObject(expectedError);
+      const mcpError = parseMcpToolError(response).error;
+      expect(mcpError).toMatchObject(expectedError);
+      // MCP names the related fields only; flags are the CLI's spelling.
+      expect(mcpError.details).not.toHaveProperty("related_cli_flags");
+      expect(JSON.stringify(mcpError)).not.toContain("--column");
     }
     const base = await cli.run({
       arguments: [
