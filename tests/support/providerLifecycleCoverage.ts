@@ -1985,6 +1985,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "unreal-pak": inProcess(
+    covered(
+      test(
+        "tests/acceptance/unrealPakCli.test.ts",
+        "returns identical complete pak indexes through CLI and MCP and pages a retained summary after removal",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/unreal/unrealPakProvider.test.ts",
+        "keeps the decoded report when cancellation arrives after a complete read",
+      ),
+    ),
+  ),
   "wabt-artifact": {
     ownership: "process",
     stages: {
