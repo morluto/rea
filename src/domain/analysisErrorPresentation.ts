@@ -73,10 +73,10 @@ export const MCP_TRANSPORT_EVIDENCE_LINKS =
   "Request fewer rows with get_evidence_bundle detail: links, a smaller limit or an exact evidence_id filter, then follow next_offset.";
 
 const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE =
-  "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.";
+  "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission; when the client disclaims TCC responsibility for its child processes, macOS holds REA's runtime (node/bun) responsible instead.";
 
 const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
-  "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
+  "First identify which process macOS actually holds responsible: a client that launches MCP servers through a TCC-disclaiming helper (for example Claude Desktop's disclaimer helper) hands responsibility to REA's runtime, so the client never appears under System Settings > Privacy & Security > Automation and allowing it cannot help. In that case start REA from a client that keeps TCC responsibility, such as Claude Code or Terminal. Otherwise allow the application that starts REA under System Settings > Privacy & Security > Automation; a hardened-runtime client also needs the com.apple.security.automation.apple-events entitlement before macOS will prompt, so ask its developer to add it. Retrying from the same unauthorized launch will not succeed until authorization changes.";
 
 /** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
