@@ -164,3 +164,18 @@ export async function verifyPortableInventory(directory, files) {
     `Portable inventory is missing ${missing.size} expected file(s).`,
   );
 }
+
+/** Require the exact file set and every declared size and SHA-256. */
+export async function verifyPortableContents(directory, files) {
+  await verifyPortableInventory(directory, files);
+  for (const file of files) {
+    const observed = await hashPortableFile(
+      join(directory, file.path),
+      file.size,
+    );
+    if (observed.sha256 !== file.sha256)
+      throw new Error(
+        `Portable file digest mismatch: ${file.path}; expected ${file.sha256}, observed ${observed.sha256}`,
+      );
+  }
+}

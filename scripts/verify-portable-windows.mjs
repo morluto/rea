@@ -2,15 +2,14 @@
 
 import assert from "node:assert/strict";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parse as parseToml } from "smol-toml";
 import {
-  hashPortableFile,
   readPortableManifest,
-  verifyPortableInventory,
+  verifyPortableContents,
 } from "./lib/portable-inventory.mjs";
 import {
   executePortableBatchHelp,
@@ -28,25 +27,20 @@ const reportStage = (stage) =>
   console.error(`[portable verification] ${stage}`);
 reportStage("inventory and SHA-256");
 const manifest = await readPortableManifest(join(directory, "portable.json"));
-await verifyPortableInventory(directory, manifest.files);
-for (const file of manifest.files) {
-  const path = resolve(directory, file.path);
-  const within = relative(directory, path);
-  if (isAbsolute(within) || within === ".." || within.startsWith("..\\"))
-    throw new Error(
-      `Inventory path is outside the portable directory: ${file.path}`,
-    );
-  const observed = await hashPortableFile(path, file.size);
-  assert.equal(observed.sha256, file.sha256, file.path);
-}
+await verifyPortableContents(directory, manifest.files);
 
+// This root is the child's TEMP/TMP, not a private runtime. A private root
+// keeps a DELETE handle open and would block the analysis worker from creating
+// its own PrivateRuntimeRoot beneath it on Windows.
 const fixture = await VerifierFixture.open({
   prefix: "rea-portable-verification-",
+  private: false,
 });
 const workspace = fixture.path;
 const node = join(directory, "runtime/node.exe");
 const entry = join(directory, "app/scripts/rea.mjs");
 let complete = false;
+let nodeSocketConnectionsDenied = false;
 try {
   const sample = join(workspace, "sample %REA_PORTABLE_PROBE% & !NAME! 中文");
   await mkdir(sample);
@@ -76,6 +70,24 @@ try {
     REA_PORTABLE_PROBE: "expanded-probe",
     NO_COLOR: "1",
   };
+  // Prove the preload actually reaches a child before reporting its protection.
+  reportStage("Node network guard negative control");
+  await assert.rejects(
+    execute(node, ["-e", 'require("node:net").connect(1, "127.0.0.1")'], {
+      cwd: workspace,
+      env: environment,
+      timeout: 30_000,
+      maxBuffer: 64 * 1024,
+    }),
+    (cause) => {
+      assert.match(
+        cause.stderr,
+        /Portable verification forbids Node network connections/u,
+      );
+      return true;
+    },
+  );
+  nodeSocketConnectionsDenied = true;
   // Invoke the full script path through inbox Windows PowerShell (including 5.1).
   // The artifact is local test output; bypass policy only in this child process.
   const powershellExecutable =
@@ -297,7 +309,9 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
     const transport = new StdioClientTransport({
       ...invocation,
       env: environment,
-      stderr: "pipe",
+      // Inherit rather than pipe: an unread stderr pipe can fill and block the
+      // MCP child while the verifier waits for a protocol reply.
+      stderr: "inherit",
     });
     try {
       await client.connect(transport);
@@ -358,7 +372,9 @@ console.log(
     cli: true,
     mcp: true,
     offlineDoctor: true,
-    nodeSocketConnections: "denied",
+    nodeSocketConnections: nodeSocketConnectionsDenied
+      ? "denied"
+      : "unverified",
     externalProviders: "not exercised",
   }),
 );

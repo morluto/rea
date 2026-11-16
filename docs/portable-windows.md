@@ -49,9 +49,10 @@ official Node.js Windows x64 archive for the version in `.nvmrc`, then extract i
 The builder consumes that local distribution and does not download Node.
 
 ```powershell
+$nodeVersion = (Get-Content .nvmrc).Trim()
 npm ci
 npm run build:cached
-npm run package:portable:windows -- --node-directory C:\build\node-v24.18.0-win-x64 --output-directory C:\build\rea-portable
+npm run package:portable:windows -- --node-directory "C:\build\node-v$nodeVersion-win-x64" --output-directory C:\build\rea-portable
 ```
 
 The output directory must not already exist. A failed build leaves its partial

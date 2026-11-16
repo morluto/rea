@@ -1,4 +1,4 @@
-import { mkdir, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import * as fsPromises from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { expect, it, vi } from "vitest";
 import {
   hashPortableFile,
   readPortableManifest,
+  verifyPortableContents,
   verifyPortableInventory,
 } from "../../scripts/lib/portable-inventory.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -45,6 +46,21 @@ it("rejects an unexpected file size", async () => {
     "Portable file size mismatch",
   );
   await unlink(path);
+});
+
+it("rejects a listed file whose bytes changed without a size change", async () => {
+  const { root } = await fixture();
+  const path = join(root, "runtime/node.exe");
+  const expected = await hashPortableFile(path);
+  const files = [{ path: "runtime/node.exe", ...expected }];
+  await expect(verifyPortableContents(root, files)).resolves.toBeUndefined();
+  const changed = Buffer.from(await readFile(path));
+  const last = changed.length - 1;
+  changed[last] = (changed[last] ?? 0) ^ 0xff;
+  await writeFile(path, changed);
+  await expect(verifyPortableContents(root, files)).rejects.toThrow(
+    "Portable file digest mismatch: runtime/node.exe",
+  );
 });
 
 it("bounds portable manifest bytes and file entries before inventory work", async () => {
