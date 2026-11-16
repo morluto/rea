@@ -16,10 +16,13 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -33,10 +36,8 @@ import {
   inspectMavenPomInputSchema,
   type InspectMavenPomInput,
 } from "../../domain/mavenPom/mavenPomQuery.js";
-import {
-  MavenPomRetainedFactsLimitError,
-  parseMavenPom,
-} from "../../domain/mavenPom/parseMavenPom.js";
+import { parseMavenPom } from "../../domain/mavenPom/parseMavenPom.js";
+import { ParseFailureError, decodeLimit } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   parseXmlDocument,
@@ -57,7 +58,6 @@ const inputFailure = (message: string, cause?: unknown) =>
     [{ path: ["path"], reason: "invalid_format", message }],
   );
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const UTF16LE = new TextDecoder("utf-16le", { fatal: true });
 const UTF16BE = new TextDecoder("utf-16be", { fatal: true });
 const SUPPORTED_MODEL_VERSION = "4.0.0";
@@ -70,14 +70,14 @@ const SUPPORTED_MODEL_VERSION = "4.0.0";
  * implement.
  */
 const decodeXmlText = (bytes: Buffer): Result<string, string> => {
-  const decoder =
-    bytes[0] === 0xff && bytes[1] === 0xfe
-      ? UTF16LE
-      : bytes[0] === 0xfe && bytes[1] === 0xff
-        ? UTF16BE
-        : UTF8;
   try {
-    return ok(decoder.decode(bytes));
+    // The WHATWG decoder this replaced stripped a leading BOM, which is the
+    // strip-signature policy rather than content-preserving UTF-8.
+    if (bytes[0] === 0xff && bytes[1] === 0xfe)
+      return ok(UTF16LE.decode(bytes));
+    if (bytes[0] === 0xfe && bytes[1] === 0xff)
+      return ok(UTF16BE.decode(bytes));
+    return ok(decodeStrictUtf8(bytes, "strip-signature"));
   } catch {
     return err(
       "not valid UTF-8 XML text (only UTF-8 and byte-order-marked UTF-16 are supported)",
@@ -111,21 +111,11 @@ const decodePom = (
   });
   if (!document.ok && document.error instanceof XmlDocumentNodeLimitError)
     return err(
-      new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        document.error.message,
-        {
-          xml_nodes: document.error.nodes,
-          max_xml_nodes: document.error.maxNodes,
-        },
-        {
-          cause: document.error,
-          retryable: false,
-          remediationAction:
-            "Select a POM within the XML node allowance; paging does not change it.",
-        },
-      ),
+      parseLimitConstraint(operation, "memory", document.error, {
+        retryable: false,
+        remediationAction:
+          "Select a POM within the XML node allowance; paging does not change it.",
+      }),
     );
   if (!document.ok)
     return err(inputFailure(document.error.message, document.error));
@@ -160,25 +150,41 @@ const decodePom = (
   try {
     return ok(parseMavenPom(document.value, artifact));
   } catch (cause: unknown) {
-    if (!(cause instanceof MavenPomRetainedFactsLimitError)) throw cause;
+    if (!(cause instanceof ParseFailureError) || cause.kind !== "limit")
+      throw cause;
     return err(
-      new AnalysisResourceConstraintError(
-        operation,
-        "memory",
-        cause.message,
-        {
-          retained_facts_bytes: cause.retainedBytes,
-          max_retained_facts_bytes: cause.maxRetainedBytes,
-        },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            "Select a POM whose declarations fit max_file_bytes; the retained-facts allowance is not adjustable and paging does not change it.",
-        },
-      ),
+      parseLimitConstraint(operation, "memory", cause, {
+        retryable: false,
+        remediationAction:
+          "Select a POM whose declarations fit max_file_bytes; the retained-facts allowance is not adjustable and paging does not change it.",
+      }),
     );
   }
+};
+
+/**
+ * A file read the artifact reader refused at one of its own allowances. The
+ * reader names the bound it enforced, so the refusal is built here from that
+ * fact instead of restating it beside the constructor.
+ */
+const fileReadLimitFailure = (
+  cause: ArtifactReaderFailure,
+  input: InspectMavenPomInput,
+): AnalysisError => {
+  const boundary = cause.boundary ?? "file-size";
+  return parseLimitConstraint(
+    operation,
+    "memory",
+    decodeLimit("maven-pom", cause.message, {
+      name: boundary === "file-size" ? "max_file_bytes" : boundary,
+      maximum: input.max_file_bytes,
+    }),
+    {
+      retryable: false,
+      remediationAction:
+        "Select a POM within max_file_bytes; paging does not change this file admission.",
+    },
+  );
 };
 
 const readFailure = (
@@ -191,9 +197,10 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(
         operation,
@@ -201,19 +208,7 @@ const readFailure = (
         cause.message,
         { cause },
       );
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        cause.boundary ?? "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            "Select a POM within max_file_bytes; paging does not change this file admission.",
-        },
-      );
+    if (cause.reason === "limit") return fileReadLimitFailure(cause, input);
     if (cause.reason === "path" || cause.reason === "format")
       return inputFailure(cause.message, cause);
   }

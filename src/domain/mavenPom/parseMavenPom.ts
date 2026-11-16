@@ -1,5 +1,6 @@
 import type { Document, Element, Node } from "@xmldom/xmldom";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { decodeLimit } from "../parseFailure.js";
 import {
   MAVEN_POM_LIMITATIONS,
   MAVEN_POM_MAX_RETAINED_BYTES,
@@ -159,26 +160,18 @@ interface Collector {
   retainedBytes: number;
 }
 
-/** Raised when declarations expand past the advertised retained-facts allowance. */
-export class MavenPomRetainedFactsLimitError extends Error {
-  constructor(
-    readonly retainedBytes: number,
-    readonly maxRetainedBytes: number,
-  ) {
-    super(
-      `Retained POM declarations need at least ${retainedBytes} bytes, above the ${maxRetainedBytes}-byte allowance.`,
-    );
-    this.name = "MavenPomRetainedFactsLimitError";
-  }
-}
-
 /** Charge bytes without allocating a serialized copy of the fact. */
 const charge = (collector: Collector, bytes: number): void => {
   collector.retainedBytes += bytes;
   if (collector.retainedBytes > MAVEN_POM_MAX_RETAINED_BYTES)
-    throw new MavenPomRetainedFactsLimitError(
-      collector.retainedBytes,
-      MAVEN_POM_MAX_RETAINED_BYTES,
+    throw decodeLimit(
+      "maven-pom",
+      `Retained POM declarations need at least ${collector.retainedBytes} bytes, above the ${MAVEN_POM_MAX_RETAINED_BYTES}-byte allowance.`,
+      {
+        name: "maven-pom-retained-facts-bytes",
+        maximum: MAVEN_POM_MAX_RETAINED_BYTES,
+        required: collector.retainedBytes,
+      },
     );
 };
 
