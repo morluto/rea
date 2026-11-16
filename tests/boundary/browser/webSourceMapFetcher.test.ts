@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 import { describe, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -808,17 +808,14 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
 
 describe("source-map response cancellation", () => {
   it("cancels a pending response reader on caller abort", async () => {
-    let markPullStarted: (() => void) | undefined;
-    const pullStarted = new Promise<void>((resolve) => {
-      markPullStarted = resolve;
-    });
+    const pullStart = phaseArrival();
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("{"));
       },
       pull() {
-        markPullStarted?.();
+        pullStart.arrive();
       },
       cancel() {
         cancelled = true;
@@ -831,11 +828,7 @@ describe("source-map response cancellation", () => {
     });
 
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(
-        pullStarted,
-        pending,
-        "source-map response pull",
-      );
+      await pullStart.reached(pending, "source-map response pull");
       controller.abort(abortReason);
       const result = await pending;
       expect(result.ok).toBe(false);
@@ -854,17 +847,14 @@ describe("completed source-map cancellation", () => {
   it.each([null, { stopped: "caller" }, new AnalysisCancelledError("test")])(
     "retains a completed map when a later response is cancelled with reason %s",
     async (reason) => {
-      let markPullStarted: (() => void) | undefined;
-      const pullStarted = new Promise<void>((resolve) => {
-        markPullStarted = resolve;
-      });
+      const pullStart = phaseArrival();
       let cancelled = false;
       const secondBody = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("{"));
         },
         pull() {
-          markPullStarted?.();
+          pullStart.arrive();
         },
         cancel() {
           cancelled = true;
@@ -903,11 +893,7 @@ describe("completed source-map cancellation", () => {
       );
 
       await withVerifierCleanup(async () => {
-        await awaitAcknowledgement(
-          pullStarted,
-          pending,
-          "second source-map response pull",
-        );
+        await pullStart.reached(pending, "second source-map response pull");
         controller.abort(reason);
         const result = await pending;
         expect(result.ok).toBe(false);
@@ -1689,7 +1675,7 @@ describe("web source-map collection", () => {
     expect(result.items).toHaveLength(requests.length);
   });
 
-  it("includes source-map text above the former per-map byte budget", async () => {
+  it("includes source-map text above 8 MiB", async () => {
     const content = "x".repeat(8 * 1_024 * 1_024 + 1);
     const map = JSON.stringify({
       version: 3,

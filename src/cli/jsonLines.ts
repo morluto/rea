@@ -1,10 +1,9 @@
-import type { Filter } from "incur";
-
 import { err, ok, type Result } from "../domain/result.js";
 
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
+import type { OutputFilterPath } from "./outputFilter.js";
 
 /** Reserved control-record marker, not an advertised external JSON Schema. */
 export const JSON_LINES_PROTOCOL = "jsonl/v1";
@@ -147,7 +146,7 @@ const describe = ({ path, shape }: Observation): string =>
 
 /** Caller-visible key paths, before any slice, selected by --filter-output. */
 const selectionPaths = (
-  paths: ReturnType<typeof Filter.parse> | undefined,
+  paths: readonly OutputFilterPath[] | undefined,
 ): string[][] => {
   const selected = new Map<string, string[]>();
   for (const path of paths ?? []) {
@@ -201,7 +200,7 @@ interface JsonLinesOptions {
   readonly source?: unknown;
   readonly filter?: string;
   /** Parsed --filter-output paths, used only to name the refused selection. */
-  readonly filterPaths?: ReturnType<typeof Filter.parse>;
+  readonly filterPaths?: readonly OutputFilterPath[];
   readonly fullOutput?: boolean;
 }
 

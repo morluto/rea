@@ -4,10 +4,13 @@ import {
   type SwiftContextReader,
 } from "./AppleSwiftNominalTypes.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
-import type { PointerResolution } from "./AppleMachoFixups.js";
-import type { Segment, Section } from "./AppleMachoSelection.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
-import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
+import type { Segment, Section } from "../domain/apple/appleMachoSelection.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import {
+  issue,
+  type FacetDecodeFacts,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 import {
   decodeSwiftConformanceTypeReference,
   requiredSwiftRelativeTarget,

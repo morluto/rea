@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { WindowsPrivateRuntime } from "../../src/windows/WindowsPrivateRuntime.js";
-import { PrivateRuntimeRootUnavailableError } from "../../src/process/PrivateRuntimeRootUnavailableError.js";
+import { PrivateRuntimeRootUnavailableError } from "../../src/domain/privateRuntimeRootUnavailableError.js";
 
 const { nativeCall } = vi.hoisted(() => ({ nativeCall: vi.fn() }));
 vi.mock("../../src/windows/WindowsNativeLoader.js", async (original) => ({

@@ -9,6 +9,7 @@ import {
   localInputReferences,
   recursiveReferences,
 } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 
 // The generated catalog is built on the POSIX build host; live advertisement
@@ -25,7 +26,10 @@ it("ships input schemas without local references in the generated catalog", () =
 
 it("generates the catalog the MCP server advertises", async () => {
   const server = new McpServer({ name: "generated-catalog", version: "0" });
-  const client = new Client({ name: "generated-catalog", version: "0" });
+  const client = new Client(
+    { name: "generated-catalog", version: "0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   for (const contract of TOOL_CONTRACTS)

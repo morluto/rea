@@ -4,7 +4,6 @@ import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
-import { classifyBinaryTargetFilesystemFailure } from "../application/BinaryTargetResolver.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -13,9 +12,9 @@ import {
   bindRegularFileCleanup,
   withRegularFileCompletion,
   type RegularFileReadOptions,
-} from "../application/RegularFileRead.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+} from "../process/RegularFileRead.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
@@ -28,6 +27,8 @@ import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../domain/managed/managedInspect
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 interface ManagedSourceObservation {
   readonly byteLength: number;
@@ -78,7 +79,17 @@ const managedSnapshotCapacityError = (
     { max_snapshot_bytes: maxBytes },
     {
       retryable: false,
-      remediationAction: `Increase max_snapshot_bytes above ${String(maxBytes)} bytes on the next inspection (CLI --max-snapshot-bytes) to admit the complete selected file. No REA restart is required. Metadata representation, transport and host memory limits remain independent; repeating the unchanged request cannot raise this budget.`,
+      remediationAction: `Increase max_snapshot_bytes above ${String(maxBytes)} bytes on the next inspection to admit the complete selected file. No REA restart is required. Metadata representation, transport and host memory limits remain independent; repeating the unchanged request cannot raise this budget.`,
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_snapshot_bytes",
+        effective_value: maxBytes,
+        unit: "bytes",
+        minimum: 1,
+        maximum: Number.MAX_SAFE_INTEGER,
+        default_value: DEFAULT_MANAGED_SNAPSHOT_BYTES,
+        applies_at: "next_call",
+      },
     },
   );
 
@@ -101,7 +112,7 @@ export const readManagedSnapshot = async (
       signal?.throwIfAborted();
       return {
         byteLength: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes,
       };
     },
@@ -270,11 +281,7 @@ export const managedCleanupError = (
         failure.retainPartialObservation(observation);
     }
     return failure instanceof AnalysisError
-      ? analysisErrorWithCleanupFailure(
-          failure,
-          cleanup,
-          operation,
-        ).bindCleanupDependencies([failure, cleanup])
+      ? analysisErrorWithCleanupDependencies(failure, cleanup, operation)
       : cleanup;
   }
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
@@ -297,11 +304,7 @@ export const managedCleanupError = (
         ),
         { partialObservation: cause.partialObservation },
       );
-      return analysisErrorWithCleanupFailure(
-        cancelled,
-        error,
-        operation,
-      ).bindCleanupDependencies([cancelled, error]);
+      return analysisErrorWithCleanupDependencies(cancelled, error, operation);
     }
     return error;
   }

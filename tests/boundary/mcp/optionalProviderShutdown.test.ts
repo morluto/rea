@@ -1,11 +1,9 @@
 import { afterAll, expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../../fixtures/binarySession.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createBrowserObservationProvider } from "../../../src/composition/browserObservation.js";
 import { createJavaScriptRuntimeObservationProvider } from "../../../src/composition/javascriptRuntimeObservation.js";
 import { run } from "../../../src/main.js";
@@ -30,8 +28,7 @@ for (const path of [
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 it("refuses eager server publication after the shutdown snapshot and completed close", async () => {
-  const closingHandle = createDeferred<void>();
-  const releaseHandle = createDeferred<void>();
+  const transportClose = phaseGate();
   const acquired: ReturnType<typeof createServer>[] = [];
   let publish: (() => unknown) | undefined;
   let shutdown: (() => Promise<void>) | undefined;
@@ -53,8 +50,7 @@ it("refuses eager server publication after the shutdown snapshot and completed c
           return {
             close: async () => {
               transportCloses++;
-              closingHandle.resolve();
-              await releaseHandle.promise;
+              await transportClose.hold();
             },
           };
         },
@@ -69,16 +65,16 @@ it("refuses eager server publication after the shutdown snapshot and completed c
     if (shutdown === undefined || publish === undefined)
       throw new Error("Runtime ownership hooks were not installed");
     closing = shutdown();
-    await closingHandle.promise;
+    await transportClose.reached(closing, "transport close");
     expect(publish).toThrow("MCP connection is closed");
-    releaseHandle.resolve();
+    transportClose.release();
     await closing;
     expect(publish).toThrow("MCP connection is closed");
     await shutdown();
     expect(transportCloses).toBe(1);
     expect(acquired).toHaveLength(1);
   } finally {
-    releaseHandle.resolve();
+    transportClose.release();
     await closing;
     await shutdown?.();
     for (const server of acquired) await server.close();

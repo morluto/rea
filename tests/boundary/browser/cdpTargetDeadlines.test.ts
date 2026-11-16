@@ -718,7 +718,12 @@ it("applies caller-selected discovery_timeout_ms to browser-socket discovery", a
     expect(projected.remediation?.action).toContain(
       `Increase discovery_timeout_ms above ${String(discoveryTimeoutMs)}`,
     );
-    expect(projected.remediation?.action).toContain("--discovery-timeout-ms");
+    expect(projected.remediation?.action).not.toContain("--");
+    expect(projected.details?.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "discovery_timeout_ms",
+      effective_value: discoveryTimeoutMs,
+    });
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   } finally {
     await provider.close();
@@ -761,7 +766,12 @@ it("applies caller-selected discovery_timeout_ms to HTTP discovery independently
     expect(projected.message).toContain(
       `${String(discoveryTimeoutMs)} ms discovery_timeout_ms`,
     );
-    expect(projected.remediation?.action).toContain("--discovery-timeout-ms");
+    expect(projected.remediation?.action).not.toContain("--");
+    expect(projected.details?.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "discovery_timeout_ms",
+      effective_value: discoveryTimeoutMs,
+    });
     expect(projected.remediation?.action).toContain(
       "command_timeout_ms does not raise it",
     );

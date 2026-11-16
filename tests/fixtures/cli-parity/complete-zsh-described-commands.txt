@@ -1,0 +1,9 @@
+$ COMPLETE=zsh rea -- rea inspect-pe-
+exit: 0
+--- stdout
+inspect-pe-load-config:Inspect PE TLS callbacks and load configuration without executing the image
+inspect-pe-certificates:Inspect PE Authenticode certificate table identities without verifying signatures
+inspect-pe-imports:Inspect PE import and delay-load table identities without executing the image
+inspect-pe-resources:Inspect PE resource identities, payload ranges, hashes and icon-group relationships<end>
+--- stderr
+<end>

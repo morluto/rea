@@ -858,7 +858,12 @@ describe("execFileOutput failure metadata", () => {
 });
 
 describe("execFileOutput cancellation provenance", () => {
-  it.each([null, "caller stopped", new Error("caller stopped")] as const)(
+  it.each([
+    null,
+    Number.NaN,
+    "caller stopped",
+    new Error("caller stopped"),
+  ] as const)(
     "retains producer cancellation and exact %s reason",
     async (reason) => {
       const controller = new AbortController();
@@ -879,6 +884,82 @@ describe("execFileOutput cancellation provenance", () => {
       if (!(failure instanceof Error))
         throw new Error("Expected owned cancellation");
       expect(failure.cause).toBe(reason);
+    },
+  );
+  it.each([
+    null,
+    Number.NaN,
+    "caller stopped",
+    new Error("caller stopped"),
+  ] as const)(
+    "reports execFile's own abort with exact %s reason",
+    async (reason) => {
+      const controller = new AbortController();
+      const execution = execFileOutput(
+        process.execPath,
+        ["-e", "setInterval(() => {}, 1000)"],
+        { signal: controller.signal },
+      ).catch((cause: unknown) => cause);
+      controller.abort(reason);
+      const failure: unknown = await execution;
+      expect(failure).toMatchObject({
+        _tag: "ExecFileOutputCancelledError",
+        code: "ABORT_ERR",
+      });
+      if (!(failure instanceof Error))
+        throw new Error("Expected owned cancellation");
+      expect(failure.cause).toBe(reason);
+    },
+  );
+  it.skipIf(process.platform === "win32").each([null, "caller stopped"])(
+    "keeps a successful exit when the caller aborts with %s while a descendant holds the pipes",
+    async (reason) => {
+      const directory = await createTestTempDirectory("rea-exec-late-abort-");
+      const exited = join(directory, "exited");
+      const release = join(directory, "release");
+      // The descendant inherits the pipes and holds them until released.
+      const descendant = [
+        'const fs = require("node:fs");',
+        `const poll = setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) clearInterval(poll); }, 10);`,
+        "setTimeout(() => clearInterval(poll), 30000).unref();",
+      ].join("\n");
+      // The launcher exits on its own, leaving the descendant running.
+      const script = [
+        'const { spawn } = require("node:child_process");',
+        'const fs = require("node:fs");',
+        `spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: ["ignore", "inherit", "inherit"] }).unref();`,
+        'process.stdout.write("done", () => {',
+        `  fs.writeFileSync(${JSON.stringify(exited)}, "");`,
+        "  process.exit(0);",
+        "});",
+      ].join("\n");
+      const controller = new AbortController();
+      const execution = execFileOutput(process.execPath, ["-e", script], {
+        signal: controller.signal,
+      });
+      const settled = execution.then(
+        () => "settled",
+        () => "settled",
+      );
+      try {
+        expect(await waitForFile(exited)).toBe(true);
+        // The direct child has exited; its descendant still holds the pipes,
+        // so the command has not completed when the caller aborts.
+        expect(
+          await Promise.race([
+            settled,
+            new Promise((resolve) => setTimeout(resolve, 100, "pending")),
+          ]),
+        ).toBe("pending");
+        controller.abort(reason);
+      } finally {
+        // Join the command even when a readiness assertion failed, so the
+        // descendant sees the release before the temporary directory goes.
+        await writeFile(release, "");
+        await settled;
+      }
+      const result = await execution;
+      expect(result.stdout).toBe("done");
     },
   );
   it("keeps a completed command failure when its consumer later aborts", async () => {

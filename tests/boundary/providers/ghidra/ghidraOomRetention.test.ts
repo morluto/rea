@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { parseConfig } from "../../../../src/config/parseConfig.js";
-import { analysisErrorProjectionSchema } from "../../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { elf } from "../../../../src/domain/binaryTarget.fixture.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
