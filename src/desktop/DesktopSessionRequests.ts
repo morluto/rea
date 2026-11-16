@@ -1,6 +1,6 @@
 import type { Interface } from "node:readline";
 
-import type { SessionRequest } from "./DesktopApplicationSession.js";
+import type { SessionRequest } from "../ports/DesktopApplicationSession.js";
 
 const QUEUE_PAUSE = 16;
 const QUEUE_RESUME = 4;

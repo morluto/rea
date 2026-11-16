@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
@@ -109,7 +110,7 @@ const resealed = (
     unknown
   >;
   edit(result);
-  return createEvidence(undefined, evidence.provider, {
+  return createEvidence(unknownTarget("not-observed"), evidence.provider, {
     operation,
     parameters: structuredClone(evidence.parameters),
     result: result as never,
@@ -279,12 +280,16 @@ describe("loadEnvironmentSource payload attribution", () => {
       "inspect_web_network_capture",
       "capture_browser_scenario",
     ]) {
-      const capture = createEvidence(undefined, fixture.capture.provider, {
-        operation,
-        parameters: {},
-        result: {},
-        confidence: "observed",
-      });
+      const capture = createEvidence(
+        unknownTarget("not-observed"),
+        fixture.capture.provider,
+        {
+          operation,
+          parameters: {},
+          result: {},
+          confidence: "observed",
+        },
+      );
       for (const command of ["environment-serve", "environment-export"]) {
         const loaded = loadEnvironmentSource(
           citing(fixture.manifest, capture),

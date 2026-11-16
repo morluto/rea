@@ -10,6 +10,7 @@ import type { Result } from "../domain/result.js";
 
 import { nativeCallEventSchema } from "../domain/native/nativeCallObservation.js";
 import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface ParsedLldbJournal {
   readonly events: ReturnType<typeof nativeCallEventSchema.parse>[];
@@ -238,7 +239,7 @@ export const readLldbObservationJournal = (
           : []),
         ...(read.status === "read-failure"
           ? [
-              `The observation journal read failed after ${String(bytesRead)} bytes: ${errorReason(read.cause)}`,
+              `The observation journal read failed after ${String(bytesRead)} bytes: ${errorMessage(read.cause)}`,
             ]
           : []),
       ],
@@ -275,7 +276,7 @@ export const readPartialCapture = (
           : []),
         ...(read.status === "read-failure"
           ? [
-              `A target output capture read failed after ${String(bytesRead)} bytes: ${errorReason(read.cause)}`,
+              `A target output capture read failed after ${String(bytesRead)} bytes: ${errorMessage(read.cause)}`,
             ]
           : []),
       ],
@@ -284,6 +285,3 @@ export const readPartialCapture = (
       ? { ...value, status: read.status, readFailure: read.cause }
       : { ...value, status: read.status };
   });
-
-const errorReason = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

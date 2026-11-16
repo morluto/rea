@@ -224,7 +224,7 @@ export async function verifyProjectCoverage(run) {
         assert.equal(
           direct.analysis_profile.parameters
             .selected_project_relationship_coverage,
-          selected ? "prior-analysis-unknown-v1" : undefined,
+          selected ? "prior-analysis-unknown" : undefined,
         );
         for (const [start, goal, direction] of [
           [caller, leaf, "forward"],
@@ -315,7 +315,7 @@ export async function verifyProjectCoverage(run) {
           assert.equal(
             snapshot.binding.analysis_profile.parameters
               .selected_project_relationship_coverage,
-            "prior-analysis-unknown-v1",
+            "prior-analysis-unknown",
           );
           const profile = snapshot.binding.analysis_profile;
           const oldParameters = { ...profile.parameters };

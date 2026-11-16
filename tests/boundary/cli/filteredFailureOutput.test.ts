@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Writable } from "node:stream";
 
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { expect, it } from "vitest";
 
@@ -10,7 +11,7 @@ import {
   createCliResultOutput,
   streamCliCommandResults,
 } from "../../../src/cli/cliResultOutput.js";
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 

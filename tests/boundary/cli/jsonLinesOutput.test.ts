@@ -1,6 +1,7 @@
 import { Writable } from "node:stream";
 
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 

@@ -1,4 +1,4 @@
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../resources/ArtifactFileOperation.js";
 import { parseEvidence } from "../domain/evidence.js";
 import { fstatSync } from "node:fs";
 import type { FileHandle } from "node:fs/promises";

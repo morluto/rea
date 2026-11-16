@@ -1,5 +1,6 @@
 import type { FileSnapshotPartialObservation } from "../fileSnapshotObservation.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -264,7 +265,7 @@ const typeMismatchSchema = z.strictObject({
 });
 
 const coverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   reason: z.string().min(1).nullable(),
   threads: uint,
   frames: uint,

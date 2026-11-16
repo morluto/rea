@@ -87,6 +87,8 @@ jobs:
       website: ${{ steps.plan.outputs.website }}
       matrix: ${{ steps.plan.outputs.matrix }}
       test_selection: ${{ steps.plan.outputs.test_selection }}
+      test_mode: ${{ steps.plan.outputs.test_mode }}
+      test_shards: ${{ steps.plan.outputs.test_shards }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -294,7 +296,8 @@ jobs:
   test-source:
     name: Source tests
     needs: changes
-    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier == 'fast'
+    # A selected PR subset runs its source tests in the selected test jobs.
+    if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -330,14 +333,10 @@ jobs:
       # every shard's diagnostics and coverage. Passing PRs run the full suite.
       fail-fast: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}
       matrix:
-        # Fast feedback uses one source group and twelve built groups. Shards
-        # are balanced by recorded duration, but hosted runner speed varies,
-        # so the slowest shard sets the critical path: at eight shards it ran
-        # 24% above the mean shard. Smaller shards bound that excess at a few
-        # percent more runner time. Classification, build, and report merge
-        # sit outside these jobs. Full qualification retains six complete
-        # shards with coverage.
-        shard: ${{ fromJSON(needs.changes.outputs.tier == 'fast' && '["1/12","2/12","3/12","4/12","5/12","6/12","7/12","8/12","9/12","10/12","11/12","12/12"]' || '["1/6","2/6","3/6","4/6","5/6","6/6"]') }}
+        # scripts/ci/test-selection.mjs owns the shard counts: twelve fast
+        # built shards, six full-qualification shards with coverage, or one
+        # job per group of a selected PR subset.
+        shard: ${{ fromJSON(needs.changes.outputs.test_shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -357,10 +356,17 @@ jobs:
         env:
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
       - name: Run built-dependent tests for fast feedback
-        if: needs.changes.outputs.tier == 'fast'
+        if: needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full'
         run: npm run test:built -- --reporter=default --reporter=blob --shard=${{ matrix.shard }}
         env:
           VITEST_BLOB_LABEL: built
+          REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
+      - name: Run the tests this pull request affects
+        if: needs.changes.outputs.test_mode == 'selected'
+        run: node scripts/ci/test-group.mjs selected "${MATRIX_SHARD}" --reporter=default --reporter=blob
+        env:
+          MATRIX_SHARD: ${{ matrix.shard }}
+          CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
@@ -608,7 +614,7 @@ jobs:
         if: needs.changes.outputs.code == 'true' && !cancelled()
         env:
           SHARD_RESULT: ${{ needs.test-shard.result }}
-          SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' }}
+          SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
           MERGE_RESULT: ${{ needs.changes.outputs.tier == 'full' && steps.merge.outcome || steps.merge-fast.outcome }}
           CI_VERIFY_TEST_INVENTORY: "true"
@@ -624,7 +630,6 @@ jobs:
             test-results.json
             test-timings.json
             coverage/
-            .cache/ci-test-selection/report.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
@@ -653,7 +658,7 @@ jobs:
         env:
           CODE_REQUIRED: ${{ needs.changes.outputs.code }}
           SHARD_RESULT: ${{ needs.test-shard.result }}
-          SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' }}
+          SOURCE_REQUIRED: ${{ needs.changes.outputs.tier == 'fast' && needs.changes.outputs.test_mode == 'full' }}
           SOURCE_RESULT: ${{ needs.test-source.result }}
         run: |
           if [ "${CODE_REQUIRED}" = "true" ]; then

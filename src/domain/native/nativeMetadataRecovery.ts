@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { nativeAotReasonSchema } from "./nativeAotReason.js";
 
 const address = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -9,7 +10,7 @@ export const nativeMetadataRecoverySchema = z.strictObject({
   format: z.literal("dotnet-nativeaot"),
   /** Identifies parser-only facts without claiming Ghidra defined a DataType. */
   source: z.enum(["analysis-database", "read-only-derived-overlay"]).optional(),
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   header_address: address,
   format_major: z.int().nonnegative(),
   format_minor: z.int().nonnegative(),
@@ -51,7 +52,7 @@ export type NativeMetadataRecovery = z.infer<
 export const nativeMetadataRecoverySummarySchema = z.strictObject({
   format: z.literal("dotnet-nativeaot"),
   analysis_mode: z.literal("read-only-derived-overlay").optional(),
-  status: z.enum(["complete", "partial", "not_applicable"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "not_applicable"]),
   // The read-only parser publishes a code. The optional Ghidra extension
   // still sends the historical string on not_applicable, unsupported, and
   // failed image summaries. Both shapes remain valid at this boundary.
