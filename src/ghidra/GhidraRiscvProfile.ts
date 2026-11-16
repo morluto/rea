@@ -33,26 +33,35 @@ export const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
   "ilp32-prototype-v1": { abi: "ilp32", prototype: "__rea_ilp32" },
 };
 
+/** Admitted load models for each lane. */
+export type GhidraRiscvLoadModel = "exec" | "pie";
+
 /** One admitted ELF class and declared float ABI. */
 export interface GhidraRiscvLane {
   readonly elfClass: 32 | 64;
   readonly floatAbi: RiscvFloatAbi;
+  readonly loadModels: readonly GhidraRiscvLoadModel[];
   /** Absent: Ghidra's stock double-float model applies unchanged. */
   readonly callingConvention?: GhidraRiscvCallingConvention;
 }
 
 /** Every class and float ABI pair the Ghidra lane admits; others are refused. */
 export const GHIDRA_RISCV_LANES: readonly GhidraRiscvLane[] = [
-  { elfClass: 64, floatAbi: "double" },
-  { elfClass: 32, floatAbi: "double" },
-  { elfClass: 32, floatAbi: "soft", callingConvention: "ilp32-prototype-v1" },
+  { elfClass: 64, floatAbi: "double", loadModels: ["exec", "pie"] },
+  { elfClass: 32, floatAbi: "double", loadModels: ["exec", "pie"] },
+  {
+    elfClass: 32,
+    floatAbi: "soft",
+    loadModels: ["exec"],
+    callingConvention: "ilp32-prototype-v1",
+  },
 ];
 
 /** Lane ids are built from their fields, so a new ABI or load model adds a value. */
 export const ghidraRiscvSupportLane = (lane: {
   readonly elfClass: 32 | 64;
   readonly floatAbi: RiscvFloatAbi;
-  readonly loadModel?: "exec" | "pie";
+  readonly loadModel?: GhidraRiscvLoadModel;
 }): string =>
   `elf${lane.elfClass}-${lane.loadModel ?? "exec"}-le-${lane.floatAbi}-float-generic-v1`;
 
@@ -180,6 +189,10 @@ export const ghidraRiscvUnsupportedReason = (
     } images need separate load verification.`;
   const lane = ghidraRiscvLane(metadata);
   if (lane === undefined) return ghidraRiscvFloatAbiRefusal(metadata);
+  const loadModel: GhidraRiscvLoadModel =
+    metadata.type === ET_DYN ? "pie" : "exec";
+  if (!lane.loadModels.includes(loadModel))
+    return `This Ghidra RISC-V ${lane.floatAbi}-float lane supports fixed-address ET_EXEC only; position-independent executables (PIE) need separate load verification.`;
   const unsupportedFlags = (metadata.flags & ~EF_RISCV_DECLARED_BITS) >>> 0;
   if (unsupportedFlags !== 0)
     return `RISC-V e_flags declares bits outside the verified lane (0x${unsupportedFlags.toString(16)}); reserved or newer declarations are not treated as compatible with this profile.`;

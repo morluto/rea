@@ -285,6 +285,19 @@ const registerRiscvPieAdmissionCases = () => {
     });
   });
 
+  it("refuses soft-float position-independent executables (PIE)", () => {
+    const pieSoft = ilp32(C3_ARCH, { type: 3, hasInterpreter: true });
+    const support = ghidra().inspectTargetSupport(pieSoft);
+    expect(support).toMatchObject({
+      status: "unsupported",
+      code: "architecture_unsupported",
+      reason:
+        "This Ghidra RISC-V soft-float lane supports fixed-address ET_EXEC only; position-independent executables (PIE) need separate load verification.",
+    });
+    expect(ghidraRiscvCallingConvention(pieSoft)).toBeUndefined();
+    expect(ghidraPinnedLanguage(pieSoft)).toBeUndefined();
+  });
+
   it("admits a valid RISC-V PIE whose program headers start beyond 4096 and end past 65536", async () => {
     const testFile = join(installDir, "pie-high-phoff.elf");
     const fileSize = 75000;
@@ -328,6 +341,10 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     [{ type: 3, hasInterpreter: false }, "shared libraries without PT_INTERP"],
     [{ type: 1 }, "relocatable"],
     [{ type: 0xffa0 }, "e_type 65440"],
+    [
+      { elfClass: 32, flags: 0x1, type: 3, hasInterpreter: true },
+      "soft-float lane supports fixed-address ET_EXEC only",
+    ],
     [{ flags: 0xc }, "EF_RISCV_RVE"],
     [{ flags: 0x14 }, "EF_RISCV_TSO"],
     [{ flags: 0x1 }, "soft-float ABI (lp64) declared by e_flags"],
@@ -468,6 +485,19 @@ describe("RISC-V lane and calling-convention tables", () => {
       "elf32-exec-le-double-float-generic-v1",
       "elf32-exec-le-soft-float-generic-v1",
     ]);
+    expect(
+      GHIDRA_RISCV_LANES.flatMap((lane) =>
+        lane.loadModels.map((loadModel) =>
+          ghidraRiscvSupportLane({ ...lane, loadModel }),
+        ),
+      ),
+    ).toEqual([
+      "elf64-exec-le-double-float-generic-v1",
+      "elf64-pie-le-double-float-generic-v1",
+      "elf32-exec-le-double-float-generic-v1",
+      "elf32-pie-le-double-float-generic-v1",
+      "elf32-exec-le-soft-float-generic-v1",
+    ]);
   });
 
   it("gives every non-double lane one policy and every policy one lane", () => {
@@ -492,8 +522,13 @@ describe("RISC-V lane and calling-convention tables", () => {
       new URL("../../docs/providers/ghidra-riscv.md", import.meta.url),
       "utf8",
     );
-    for (const lane of GHIDRA_RISCV_LANES)
-      expect(docs).toContain(`\`${ghidraRiscvSupportLane(lane)}\``);
+    for (const lane of GHIDRA_RISCV_LANES) {
+      for (const loadModel of lane.loadModels) {
+        expect(docs).toContain(
+          `\`${ghidraRiscvSupportLane({ ...lane, loadModel })}\``,
+        );
+      }
+    }
     for (const id of GHIDRA_RISCV_CALLING_CONVENTION_IDS) {
       const { abi, prototype } = GHIDRA_RISCV_CALLING_CONVENTIONS[id];
       expect(docs).toContain(`Policy \`${id}\`, prototype \`${prototype}\``);
