@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { WEB_RUNTIME_LIMITS } from "../../domain/webRuntime.js";
+import { receiveCdpEvent } from "../CdpConnection.js";
 import { CdpRuntimeRequests } from "./CdpRuntimeRequests.js";
 
 const origin = "https://example.test";
@@ -33,7 +34,11 @@ const event = (
 it("budgets retained request facts independently of discarded POST bodies", () => {
   const requests = new CdpRuntimeRequests(sources);
   requests.ingest(
-    event({ postData: "p".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1) }),
+    receiveCdpEvent(
+      event({
+        postData: "p".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1),
+      }),
+    ),
   );
   const retained = requests.result();
   expect(retained).toHaveLength(1);
@@ -47,9 +52,11 @@ it("budgets retained request facts independently of discarded POST bodies", () =
 it("preserves a typed resource refusal for oversized retained initiator facts", () => {
   const requests = new CdpRuntimeRequests(sources);
   requests.ingest(
-    event(
-      {},
-      { retained: "r".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1) },
+    receiveCdpEvent(
+      event(
+        {},
+        { retained: "r".repeat(WEB_RUNTIME_LIMITS.retainedEventBytes + 1) },
+      ),
     ),
   );
   try {
@@ -71,17 +78,19 @@ it("retains separate occurrences of a reused request identity and raw initiator 
   const requests = new CdpRuntimeRequests(sources);
   for (const timestamp of [0, 1.25]) {
     const request = event({ url: `${origin}/resource-${timestamp}` });
-    requests.ingest({
-      ...request,
-      params: {
-        ...request.params,
-        timestamp,
-        initiator: {
-          type: "parser",
-          vendor_extension: { occurrence: timestamp, labels: ["observed"] },
+    requests.ingest(
+      receiveCdpEvent({
+        ...request,
+        params: {
+          ...request.params,
+          timestamp,
+          initiator: {
+            type: "parser",
+            vendor_extension: { occurrence: timestamp, labels: ["observed"] },
+          },
         },
-      },
-    });
+      }),
+    );
   }
   expect(requests.result()).toEqual(
     [0, 1.25].map((timestamp) =>

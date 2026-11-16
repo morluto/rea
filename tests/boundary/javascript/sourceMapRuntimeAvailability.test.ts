@@ -4,7 +4,7 @@ import {
   runSourceMapCommand,
   type SourceMapCleanupRetention,
 } from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
-import { PrivateRuntimeRootUnavailableError } from "../../../src/process/PrivateRuntimeRootUnavailableError.js";
+import { PrivateRuntimeRootUnavailableError } from "../../../src/domain/privateRuntimeRootUnavailableError.js";
 
 it.each([false, true])(
   "preserves private-runtime retryable=%s through the source-map operation",

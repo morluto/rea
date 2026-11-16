@@ -1,3 +1,5 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   assertProcessOwnershipInspectionActive,
   ProcessOwnershipInspectionCancelled,
@@ -17,15 +19,17 @@ import {
   providerStartupTimeoutSchema,
 } from "../config/providerStartupTimeout.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "../domain/analysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { boundedUtf8Text } from "./boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { createDarwinHelperCache } from "./DarwinHelperCache.js";
 import { snapshotEnvironment } from "./snapshotEnvironment.js";
 import {
@@ -38,6 +42,7 @@ import type {
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const responseSchema = z.strictObject({
   results: z.array(
@@ -183,6 +188,40 @@ export class DarwinProcessOwnershipInspectionError extends Error {
   readonly cleanupFailure: AnalysisError | undefined;
   readonly cancellation: { readonly reason: unknown } | undefined;
 
+  /** Whether helper preparation failed because its compiler hit its deadline. */
+  get compilerTimedOut(): boolean {
+    return this.compilerOutcome?.outcome === "timed_out";
+  }
+
+  /** The compiler deadline and its recovery, when it is known. */
+  get compileTimeout():
+    | {
+        readonly timeoutMs: number;
+        readonly userMessage: string;
+        readonly remediationAction: string;
+        readonly limit: AnalysisControlLimit;
+      }
+    | undefined {
+    const outcome = this.compilerOutcome;
+    if (outcome?.outcome !== "timed_out" || outcome.timeoutMs === undefined)
+      return undefined;
+    return {
+      timeoutMs: outcome.timeoutMs,
+      userMessage: `The macOS process ownership helper compiler reached its REA_SWIFTC_COMPILE_TIMEOUT_MS deadline of ${String(outcome.timeoutMs)} ms.`,
+      remediationAction: swiftcCompileTimeoutRecovery(outcome.timeoutMs),
+      limit: {
+        control_kind: "environment",
+        environment: "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+        effective_value: outcome.timeoutMs,
+        unit: "ms",
+        minimum: 1,
+        maximum: MAX_NODE_TIMER_DELAY_MS,
+        default_value: DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
+        applies_at: "next_startup",
+      },
+    };
+  }
+
   /** Preserve the physical preparation failure while following the exact cleanup owner. */
   withCleanupFailure(
     cleanup: AnalysisError,
@@ -191,10 +230,7 @@ export class DarwinProcessOwnershipInspectionError extends Error {
     const combined =
       this.cleanupFailure === undefined || this.cleanupFailure === cleanup
         ? cleanup
-        : analysisErrorWithCleanupFailure(
-            this.cleanupFailure,
-            cleanup,
-          ).bindCleanupDependencies([this.cleanupFailure, cleanup]);
+        : analysisErrorWithCleanupDependencies(this.cleanupFailure, cleanup);
     return new DarwinProcessOwnershipInspectionError(this.message, {
       ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
       ...(this.compilerOutcome === undefined
@@ -243,8 +279,8 @@ const compilerFailureFacts = (
   | undefined => {
   const failure = execFileOutputFailure(cause);
   if (failure === undefined) return undefined;
-  const stderr = boundedUtf8Text(failure.stderr, MAX_COMPILER_OUTPUT_BYTES);
-  const stdout = boundedUtf8Text(failure.stdout, MAX_COMPILER_OUTPUT_BYTES);
+  const stderr = utf8HeadExcerpt(failure.stderr, MAX_COMPILER_OUTPUT_BYTES);
+  const stdout = utf8HeadExcerpt(failure.stdout, MAX_COMPILER_OUTPUT_BYTES);
   const outcome =
     failure.code === "ETIMEDOUT"
       ? "timed_out"
@@ -313,7 +349,7 @@ const compilerInspectionError = (
     code === "ENOENT"
       ? `macOS process ownership inspection requires the Apple Swift compiler via ${launcher}`
       : `macOS process ownership helper compilation failed via ${launcher}`;
-  const stderr = boundedUtf8Text(outcome?.stderr ?? "", STDERR_EXCERPT_LIMIT);
+  const stderr = utf8HeadExcerpt(outcome?.stderr ?? "", STDERR_EXCERPT_LIMIT);
   const diagnostics = stderr.text.trim();
   const truncated =
     stderr.truncated ||
@@ -327,7 +363,7 @@ const compilerInspectionError = (
   const suffix = diagnostics
     ? `: ${diagnostics}${truncationNote}`
     : outcome === undefined
-      ? `: ${cause instanceof Error ? cause.message : String(cause)}`
+      ? `: ${errorMessage(cause)}`
       : ": no compiler diagnostics were captured";
   return new DarwinProcessOwnershipInspectionError(
     `${prefix} (${description})${suffix}`,
@@ -347,7 +383,8 @@ const compilerInspectionError = (
 interface ProcessReaderRoot {
   readonly path: string;
   cleanupPromise?: Promise<void> | undefined;
-  cleanupAnchor?: ProviderCleanupError | undefined;
+  /** Reported by every removal failure until a retry removes the root. */
+  cleanupRelease?: AnalysisCleanupRelease | undefined;
 }
 
 interface ProcessReaderCompilation {
@@ -439,7 +476,10 @@ export const createDarwinProcessRunTokenReader = (
     kind: "xcrun",
     executable: "/usr/bin/xcrun",
   };
-  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const environment = snapshotEnvironment(
+    options.environment ?? process.env,
+    HOST_PLATFORM.platform,
+  );
   const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs({
     ...options,
     environment,
@@ -485,13 +525,12 @@ export const createDarwinProcessRunTokenReader = (
             },
             { cause, operation: "prepare_owned_process" },
           );
-          if (target.cleanupAnchor === undefined)
-            target.cleanupAnchor = failure;
-          else failure.bindCleanupDependencies([target.cleanupAnchor]);
-          throw failure;
+          throw (target.cleanupRelease ??= new AnalysisCleanupRelease()).bind(
+            failure,
+          );
         }
-        target.cleanupAnchor?.resolveCleanup();
-        target.cleanupAnchor = undefined;
+        target.cleanupRelease?.confirm();
+        target.cleanupRelease = undefined;
         if (root !== target) return;
         root = undefined;
         executable = undefined;
@@ -674,7 +713,7 @@ export const createDarwinProcessRunTokenReader = (
         !operation.aborting
       ) {
         operation.aborting = true;
-        operation.controller.abort();
+        operation.controller.abort(OwnerCancellation.noLongerNeeded);
         const finalized = await operation.promise;
         if (
           waited.kind === "cancelled" &&
@@ -850,7 +889,7 @@ export const createDarwinProcessRunTokenReader = (
       const operation = compilation;
       if (operation !== undefined && !operation.settled) {
         operation.aborting = true;
-        operation.controller.abort();
+        operation.controller.abort(OwnerCancellation.ownerClosed);
         await operation.promise;
       }
       await Promise.allSettled(activeCommands);
@@ -866,10 +905,10 @@ export const createDarwinProcessRunTokenReader = (
         rootCleanup.reason instanceof ProviderCleanupError &&
         cacheCleanup.reason instanceof ProviderCleanupError
       )
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           rootCleanup.reason,
           cacheCleanup.reason,
-        ).bindCleanupDependencies([rootCleanup.reason, cacheCleanup.reason]);
+        );
       if (rootCleanup.status === "rejected") throw rootCleanup.reason;
       if (cacheCleanup.status === "rejected") throw cacheCleanup.reason;
     })().catch((cause: unknown) => {

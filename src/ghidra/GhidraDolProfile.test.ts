@@ -92,9 +92,8 @@ describe("GameCube DOL Ghidra profile", () => {
       loader: "BinaryLoader",
       language_id: "PowerPC:BE:32:default",
       compiler_spec_id: "default",
-      language_selection: "provider-pinned-v1",
+      language_selection: "provider-pinned",
       entry_point: "0x80003100",
-      dol_import: "binary-loader-sections-v2",
     });
     expect(ghidraPinnedLanguage(target)).toEqual(GHIDRA_GAMECUBE_DOL_LANGUAGE);
     expect(ghidraProfileLanguageOverride(parameters)).toEqual(
@@ -132,7 +131,7 @@ describe("GameCube DOL Ghidra profile", () => {
     expect(parameters).toMatchObject({
       language_id: "PowerPC:BE:32:Gekko_Broadway",
       compiler_spec_id: "language-default",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual({
       languageId: "PowerPC:BE:32:Gekko_Broadway",
@@ -154,7 +153,7 @@ describe("GameCube DOL Ghidra profile", () => {
     expect(resolved.value.profile?.parameters).toMatchObject({
       language_id: "PowerPC:BE:32:Gekko_Broadway",
       compiler_spec_id: "default",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
   });
 

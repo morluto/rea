@@ -1,3 +1,4 @@
+import { boundedList } from "../boundedList.js";
 import { z } from "zod";
 
 import { runtimeFile } from "./runtimeFiles.js";
@@ -145,6 +146,7 @@ export const checkpointTaken = (
         (left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
     )
     .map(({ path }) => relative(path));
+  const changedFiles = boundedList(files, MAX_ACKNOWLEDGED_FILES);
   return {
     kind: "checkpoint",
     name: checkpoint.name,
@@ -157,8 +159,8 @@ export const checkpointTaken = (
       (sum, file) => sum + file.size,
       0,
     ),
-    changed_files: files.slice(0, MAX_ACKNOWLEDGED_FILES),
-    more_changed_files: Math.max(0, files.length - MAX_ACKNOWLEDGED_FILES),
+    changed_files: [...changedFiles.items],
+    more_changed_files: changedFiles.omitted,
   };
 };
 

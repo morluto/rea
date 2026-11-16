@@ -5,7 +5,7 @@ import {
 } from "../../process/capture/ProcessSamplingObservation.js";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { readFileSync, rmSync } from "node:fs";
+import { accessSync, readFileSync, rmSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -42,13 +42,17 @@ import * as captureFailures from "./DesktopCaptureFailure.js";
 import * as providerProcess from "../../process/ProviderProcess.js";
 import { systemProcessOwnershipHost } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessOwnershipInspectionCancelled } from "../../process/ProcessInspectionCancellation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,
 } from "../../domain/desktop/desktopCapture.js";
-import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
 import * as desktopSession from "../../desktop/DesktopApplicationSession.js";
+import { createDesktopCaptureProvider } from "../../desktop/DesktopCaptureProvider.js";
+import {
+  DesktopSessionCleanupError,
+  type SessionRequest,
+} from "../../ports/DesktopApplicationSession.js";
 import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
@@ -140,12 +144,22 @@ const installProcessFamily = async (root: string, path: string) => {
       "#!/bin/sh",
       `trap 'rm -f "${windowFile}"; exit 0' TERM`,
       `touch "${windowFile}"`,
-      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; ${loop} ) &`,
-      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; ${loop}' &`,
+      // Install each trap before reporting ready, so the caller can stop deterministically after readiness.
+      `( trap 'touch "${join(root, "group-term")}"; exit 0' TERM; touch "${join(root, "group-ready")}"; ${loop} ) &`,
+      `setsid sh -c 'trap "touch ${join(root, "setsid-term")}; exit 0" TERM; touch "${join(root, "setsid-ready")}"; ${loop}' &`,
+      // Wait for both children to install their traps before writing state.ini.
+      // Fail loudly rather than continue when a child never reports ready.
+      `ready=; for i in $(seq 1 500); do if [ -f "${join(root, "group-ready")}" ] && [ -f "${join(root, "setsid-ready")}" ]; then ready=1; break; fi; sleep 0.01; done; [ -n "$ready" ] || { echo "synthetic children did not report ready" >&2; touch "${join(root, "children-not-ready")}"; exit 97; }`,
       'printf "count=1\\n" > "$HOME/.config/fakeapp/state.ini"',
       loop,
     ].join("\n"),
   );
+};
+
+/** Surface a fake application whose children never got ready, instead of waiting. */
+const failIfChildrenNotReady = (root: string): void => {
+  if (fileExists(join(root, "children-not-ready")))
+    throw new Error("synthetic children did not report ready");
 };
 
 const host = (
@@ -156,6 +170,7 @@ const host = (
   platform,
   environment,
   callerDirectory: environment.HOME ?? "/",
+  desktop: createDesktopCaptureProvider(),
   nextRequest,
   report: async () => {},
 });
@@ -656,7 +671,14 @@ describe.skipIf(process.platform !== "linux")(
       const statePath = join(home, ".config/fakeapp/state.ini");
       let writtenAt: number | undefined;
       const nextRequest = (): SessionRequest | undefined => {
+        failIfChildrenNotReady(root);
+        // Wait for both children to install their traps before issuing the stop.
         if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
+        if (
+          !fileExists(join(root, "group-ready")) ||
+          !fileExists(join(root, "setsid-ready"))
+        )
+          return undefined;
         writtenAt ??= performance.now();
         return performance.now() - writtenAt > 1500
           ? { kind: "stop" }
@@ -683,10 +705,12 @@ describe.skipIf(process.platform !== "linux")(
       await installProcessFamily(root, environment.PATH);
       const statePath = join(home, ".config/fakeapp/state.ini");
       const output = join(root, "out");
-      const nextRequest = (): SessionRequest | undefined =>
-        readFileSyncSafe(statePath) === "count=1\n"
+      const nextRequest = (): SessionRequest | undefined => {
+        failIfChildrenNotReady(root);
+        return readFileSyncSafe(statePath) === "count=1\n"
           ? { kind: "checkpoint", name: "written" }
           : undefined;
+      };
 
       const failed = await captureDesktopApplication(request(output), {
         ...host(environment, nextRequest),
@@ -781,6 +805,15 @@ const readFileSyncSafe = (path: string): string | undefined => {
     return readFileSync(path, "utf8");
   } catch {
     return undefined;
+  }
+};
+
+const fileExists = (path: string): boolean => {
+  try {
+    accessSync(path, 0);
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -1079,7 +1112,7 @@ const sessionInspectionFailure = async (
     stopped.inspectionCleanup === undefined
   )
     throw new Error("Expected actual supervisor-held inspection cleanup");
-  return new desktopSession.DesktopSessionCleanupError(cause, {
+  return new DesktopSessionCleanupError(cause, {
     reason: stopped.reason,
     inspectionCleanup: stopped.inspectionCleanup,
     leases: [
@@ -1109,7 +1142,7 @@ it.for([
     const completed = { value: "caller-selected completed sampling peer" };
     let sourceFailure: unknown = descriptor.failure;
     const captured = captureFixture();
-    let sessionFailure: desktopSession.DesktopSessionCleanupError | undefined;
+    let sessionFailure: DesktopSessionCleanupError | undefined;
     const retainedStores = new Set<DesktopContentStore>();
     let projectedFailure: AnalysisError | undefined;
     vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({

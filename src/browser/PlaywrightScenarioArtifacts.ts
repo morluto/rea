@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 import type { BrowserContext, Page } from "playwright-core";
 
@@ -10,6 +8,7 @@ import {
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const historyValueSchema = z.strictObject({
   length: z.int().min(0),
@@ -36,7 +35,7 @@ const textArtifact = (text: string) => {
   return {
     state: "captured" as const,
     value: {
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256: sha256Hex(bytes),
       bytes: bytes.byteLength,
       text,
     },
@@ -58,7 +57,7 @@ const captureScreenshot = async (
       animations: "disabled",
       caret: "hide",
     });
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     return {
       state: "captured" as const,
       value: {

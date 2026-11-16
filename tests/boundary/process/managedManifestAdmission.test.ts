@@ -239,7 +239,7 @@ it("preserves the resolver failure and retries its exact descriptor before verif
 });
 
 it.each([0x7fff_ffff, 0x8000_0000])(
-  "preserves the former readFile admission boundary before sparse input reads (%i bytes)",
+  "reads a snapshot of max_snapshot_bytes and refuses one byte more before reading (%i bytes)",
   async (size) => {
     const value = await fixture();
     const parsed = await parseBinaryTarget(value.path);

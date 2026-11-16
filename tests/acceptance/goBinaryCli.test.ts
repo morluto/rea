@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { goBinarySchema } from "../../src/domain/go/goBinary.js";
 import { evidenceResultOf } from "../../src/contracts/toolOutputSchemaPrimitives.js";
 import { readFile, writeFile } from "node:fs/promises";
@@ -329,7 +330,7 @@ for (const bits of [32, 64] as const) {
           });
           expect(result.exitCode, result.stderr).toBe(0);
           const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-          expect(evidence.subject?.digest.sha256).toBe(
+          expect(fileIdentity(evidence.subject).sha256).toBe(
             createHash("sha256").update(bytes).digest("hex"),
           );
           expect(evidence.normalized_result.build_info).toMatchObject({
@@ -516,7 +517,7 @@ for (const format of ["elf", "pe", "macho"] as const) {
         const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
         expect(evidence.raw_result).toBeNull();
         expect(evidence.subject?.local_path).toBe(path);
-        expect(evidence.subject?.digest.sha256).toBe(
+        expect(fileIdentity(evidence.subject).sha256).toBe(
           createHash("sha256").update(fixture.bytes).digest("hex"),
         );
         const report = evidence.normalized_result;
@@ -587,7 +588,7 @@ cliTest("preserves MIPS identity in Go CLI Evidence", async ({ cli }) => {
   });
   expect(result.exitCode, result.stderr).toBe(0);
   const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-  expect(evidence.subject?.architecture).toBe("mips");
+  expect(fileIdentity(evidence.subject).architecture).toBe("mips");
   expect(evidence.normalized_result).toMatchObject({
     architecture: "mips",
     bits: 64,
@@ -676,7 +677,7 @@ cliTest(
       code: "invalid_request",
       details: {
         operation: "inspect_go_binary",
-        issues: [{ path: ["max_string_literals"] }],
+        issues: [{ path: ["maxStringLiterals"] }],
       },
     });
 

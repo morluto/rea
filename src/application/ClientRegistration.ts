@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { clientRegistrationSource } from "./ClientRegistrationSource.js";
+import {
+  clientRegistrationSource,
+  gooseEnvironmentField,
+} from "./ClientRegistrationSource.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
@@ -10,7 +13,7 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
-} from "../mcpStartupPolicy.js";
+} from "../config/mcpStartupPolicy.js";
 import {
   clientConfigurationRecordSchema,
   clientRegistrationEntry,
@@ -143,6 +146,8 @@ export const parseClientRegistrationLauncher = (
 export const clientRegistrationOwnership = (
   value: unknown,
   client: SetupClient,
+  /** The REA entry point that owns registrations; update names the new one. */
+  currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
 ): ClientRegistrationCommandIdentity => {
   const parsed = parseClientRegistrationLauncher(value, {
     dialect: client.format ?? "json",
@@ -151,7 +156,7 @@ export const clientRegistrationOwnership = (
   return parsed.ok
     ? classifyClientRegistrationCommand(
         [parsed.value.command, ...parsed.value.args],
-        CURRENT_ENTRYPOINT_PATH,
+        currentCommandPath,
       )
     : "unknown";
 };
@@ -195,7 +200,8 @@ export const parseClientRegistrationPolicy = (
       ? ok(parsed.data)
       : err(registrationError(parsed.error));
   }
-  if (client.format === "opencode") {
+  // Kilo keeps OpenCode's launcher and environment shape.
+  if (client.format === "opencode" || client.format === "kilo") {
     const entry = opencodeLauncherSchema
       .extend({
         environment: jsonRecordSchema(z.string()).optional(),
@@ -204,6 +210,20 @@ export const parseClientRegistrationPolicy = (
       .safeParse(value);
     if (!entry.success) return err(registrationError(entry.error));
     value = entry.data;
+  } else if (client.format === "fx" || client.format === "goose") {
+    // fx's command array and Goose's `cmd` are dialect launcher shapes;
+    // normalize them once through the launcher owner.
+    const launcher = parseClientRegistrationLauncher(value, {
+      dialect: client.format,
+      profile: client.registrationProfile,
+    });
+    if (!launcher.ok) return launcher;
+    const entry = clientConfigurationRecordSchema.safeParse(value);
+    value = {
+      ...(entry.success ? entry.data : {}),
+      command: launcher.value.command,
+      args: launcher.value.args,
+    };
   }
   const source = clientRegistrationSource(value, client.registrationProfile);
   if (source.nested)
@@ -223,6 +243,7 @@ export const parseClientRegistrationPolicy = (
 // defaults and preservation rules are applied below.
 const managedPolicyKeys = new Set([
   "env",
+  "envs",
   "environment",
   "enabled",
   "disabled",
@@ -296,9 +317,15 @@ export const clientRegistrationSourceFacts = (
   return ok({ ...parsed, connectionFields: fields });
 };
 
+const inheritsGooseEnvironmentAlias = (inherited: unknown): boolean =>
+  typeof inherited === "object" &&
+  inherited !== null &&
+  Object.hasOwn(inherited, "env");
+
 /** Explicit launcher replacement preserves policy and native environment, while
  * superseding connection selectors that could keep the old remote transport.
- * Goose's single env alias becomes envs; declaring both remains ambiguous. */
+ * Goose's single env alias becomes envs unless a lower layer declares the
+ * alias; declaring both remains ambiguous. */
 export const replaceClientRegistrationLauncher = (
   target: ClientRegistrationTarget,
   command: readonly string[],
@@ -317,21 +344,10 @@ export const replaceClientRegistrationLauncher = (
             ([key]) => !launcherConnectionKeys.has(key),
           ),
         );
-  if (dialect === "goose" && Object.hasOwn(retained, "env")) {
-    if (Object.hasOwn(retained, "envs"))
-      return err(
-        new ConfigurationError(
-          "Goose environment is ambiguous: keep only envs or its env alias, not both.",
-          {
-            settings: [
-              {
-                setting: "envs",
-                constraint: "env and envs declare the same native field",
-              },
-            ],
-          },
-        ),
-      );
+  const gooseField =
+    dialect === "goose" ? gooseEnvironmentField(retained) : ok("envs");
+  if (!gooseField.ok) return gooseField;
+  if (gooseField.value === "env") {
     const alias = jsonRecordSchema(z.string()).safeParse(retained.env);
     if (!alias.success)
       return err(
@@ -345,8 +361,13 @@ export const replaceClientRegistrationLauncher = (
           ],
         }),
       );
-    retained.envs = alias.data;
-    delete retained.env;
+    // Goose overlays each field separately, so an alias a lower layer also
+    // declares keeps its spelling; `envs` beside it would be ambiguous.
+    if (inheritsGooseEnvironmentAlias(inherited)) retained.env = alias.data;
+    else {
+      retained.envs = alias.data;
+      delete retained.env;
+    }
   }
   const defaults = clientRegistrationEntry(dialect, command, {});
   // Layered native clients inherit policy without copying it into the edited
@@ -357,6 +378,10 @@ export const replaceClientRegistrationLauncher = (
       if (
         !launcherConnectionKeys.has(key) &&
         (Object.hasOwn(inheritedPolicy.data, key) ||
+          // Goose reads its `env` alias as `envs`.
+          (dialect === "goose" &&
+            key === "envs" &&
+            inheritsGooseEnvironmentAlias(inherited)) ||
           (dialect === "opencode" &&
             key === "enabled" &&
             Object.hasOwn(inheritedPolicy.data, "disabled")))

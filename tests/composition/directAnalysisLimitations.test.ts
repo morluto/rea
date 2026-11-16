@@ -2,7 +2,7 @@ import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult
 import { expect, it } from "vitest";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { runDirectAnalysis } from "../../src/application/DirectAnalysis.js";
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { ok } from "../../src/domain/result.js";
 import {
   createBinarySessionTargets,

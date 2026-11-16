@@ -99,7 +99,7 @@ it("keeps rejecting distinct source names that collide on one logical session me
   const path = join(root, "capture.saz");
   await writeFile(path, Buffer.from(await writer.close()));
   await expect(decodeSazCapture(path, [])).rejects.toMatchObject({
-    reason: "format",
+    failure: { kind: "malformed" },
     message: "SAZ contains duplicate archive member names.",
   });
 });

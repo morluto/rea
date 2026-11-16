@@ -17,7 +17,7 @@ database state into a fresh discovery. The default remains ephemeral.
 Use [installation](../getting-started/installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
 [Linux Ghidra launches](../getting-started/installation.md#linux-owned-process-prerequisite) also
-require a procps-compatible `ps` on REA's `PATH` for process ownership checks.
+require a procps-compatible system `ps` for process ownership checks.
 [Windows P0](windows-ghidra-p0.md) has its own admission and lifecycle boundary;
 [NativeAOT observations](ghidra-nativeaot.md) include a built-in read-only PE
 snapshot parser and a separate optional annotation extension. Check the
@@ -32,6 +32,11 @@ catalog remains a read failure; it does not prove that a configured language is
 undefined. Installation `application.properties` has a fixed 1 MiB read allowance
 with no runtime override. The failure retains that allowance and directs recovery
 at the selected installation metadata.
+
+Xtensa ELF files (`EM_XTENSA = 94`) use the header-selected Ghidra import
+language and report the canonical `xtensa` architecture in CLI/MCP results.
+Processor extensions and calling-convention compatibility remain specific to
+the selected Ghidra language; family recognition alone does not establish them.
 
 Retained process diagnostics can report termination by `SIGKILL`; the signal alone
 cannot establish an OOM kill. REA gives neutral recovery guidance and preserves the
@@ -230,8 +235,7 @@ status and limitations state.
 
 Relocation rows retain Ghidra's `symbol` value, including an empty string or
 null when returned by Ghidra. It is a provider observation, not proof of the
-runtime-resolved address. Older Evidence may not have recorded this field;
-a relocation page requesting it reports that uncertainty.
+runtime-resolved address. Every relocation row records the field.
 
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
@@ -313,6 +317,11 @@ client deadline. Transient decompile timeout failures remain uncached so the
 same function can be retried after raising the limit. See the
 [settings design](../design/limits-and-recovery.md) for snapshots, precedence,
 and provider integration.
+
+Every Ghidra analysis profile commits `producer`: the REA release and a SHA-256
+of the packaged bridge scripts. A snapshot replays only under the same
+producer, so after an REA upgrade or a bridge script change an older snapshot is
+refused; open the target without it and save a fresh snapshot.
 
 When `inspect_native_instruction` selects a byte inside a listed instruction,
 `containing_instruction` reports its separate start, length and Ghidra Listing
@@ -438,10 +447,17 @@ offset for that starting address (or null), and containing procedure (or null).
 A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
-with the same target, profile, pattern, mask and bounds to continue. `complete`
-means no further matches remain. `searched.blocks` and `searched.bytes` describe
-the inclusive memory ranges examined for this page, including lookahead for the
-next match. Coverage can overlap between pages; do not sum it as unique memory.
+with the same target, analysis profile or selected project, pattern, mask,
+bounds, and document to continue. A cursor from a different binding is
+rejected. The message names those bound values and states that the cursor does
+not identify which one differs; select the original context or start a new
+search without the cursor. The request matches the input schema, so the error
+carries no `inspect_input_contract` recovery. `details.issues[0].path` is
+`cursor`, and `details.issues[0].observed.differing_component` is `unknown`.
+`complete` means no further matches remain. `searched.blocks` and
+`searched.bytes` describe the inclusive memory ranges examined for this page,
+including lookahead for the next match. Coverage can overlap between pages; do
+not sum it as unique memory.
 `searched.skipped_uninitialized` lists eligible uninitialized blocks on every
 page. These blocks are never searched. Cancellation returns a typed error,
 discards the active Ghidra database, and does not return a successful partial page.

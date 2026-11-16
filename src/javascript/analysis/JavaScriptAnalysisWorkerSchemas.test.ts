@@ -20,17 +20,17 @@ import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSe
 import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterExpansion.js";
 import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
-it("preserves independent static coverage and historical unmeasured facts", () => {
+it("preserves independent static coverage and refuses facts without it", () => {
   const facts = analyzeJavaScriptStaticSource("require(moduleName);");
   expect(
     javaScriptWorkerStaticAnalysisSchema.parse(
       JSON.parse(JSON.stringify(facts)),
     ),
   ).toEqual(facts);
-  const { analysis_coverage: _coverage, ...historical } = facts;
-  expect(javaScriptWorkerStaticAnalysisSchema.parse(historical)).toEqual(
-    historical,
-  );
+  const { analysis_coverage: _coverage, ...unmeasured } = facts;
+  expect(
+    javaScriptWorkerStaticAnalysisSchema.safeParse(unmeasured).success,
+  ).toBe(false);
   expect(
     javaScriptWorkerStaticAnalysisSchema.safeParse({
       ...facts,
