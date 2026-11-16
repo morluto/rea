@@ -5,6 +5,7 @@ import {
   childNodes,
   isManifestElement,
 } from "./AndroidManifestXml.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
 import { createAndroidManifestDetailsReader } from "./AndroidManifestComponentDetails.js";
 import {
   ANDROID_COMPONENT_KINDS,
@@ -149,7 +150,7 @@ const providerAuthorities = (
  */
 export const parseAndroidManifestComponents = (
   manifestText: string,
-  coverage: "complete" | "partial",
+  coverage: KnownCoverageStatus,
   declaredTargetSdk: string | null = null,
   minimumSdk: string | null = null,
 ): AndroidManifestComponentInventory => {

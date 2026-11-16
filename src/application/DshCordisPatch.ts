@@ -6,16 +6,14 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { ClientConfigurationDocument } from "./ClientConfigurationDocument.js";
 import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
 const LAUNCHER_KEYS = new Set(["serverName", "transport", "command", "args"]);
 const SELECTOR_KEYS = new Set(["id", "name"]);
 const isPatchRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  !(value instanceof CordisExpression);
+  isRecord(value) && !(value instanceof CordisExpression);
 
 interface PatchOperation {
   readonly source: unknown;

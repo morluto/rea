@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { CliGuidanceResources } from "../../../src/cli/guidanceCommands.js";
 import { CliJavaScriptAnalysisHost } from "../../../src/cli/javascriptApplicationAnalysis.js";
 

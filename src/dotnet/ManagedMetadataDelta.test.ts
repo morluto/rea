@@ -8,7 +8,7 @@ import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
 import {
   managedFailure,
   managedInspectionInputFailure,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 
 it("keeps minimal EnC delta metadata unsupported instead of assigning standalone identities", () => {
   const { bytes, markerOffset } = managedMetadataDelta();

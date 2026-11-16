@@ -132,6 +132,7 @@ export const placedItemCheck = (
       (left, right) =>
         Math.abs(left.index - here) - Math.abs(right.index - here),
     )
+    // generation-cap: nearby items kept to build a suggestion
     .slice(0, MAX_KEPT)
     .toSorted((left, right) => left.index - right.index)
     .map(({ text }) => ({

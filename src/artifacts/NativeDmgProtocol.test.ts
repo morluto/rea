@@ -1,17 +1,19 @@
-import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { build } from "plist";
 import { expect, it, vi } from "vitest";
 import {
   NativeDmgArtifactReader,
   type NativeDmgHost,
 } from "./NativeDmgArtifactReader.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
+import {
+  translateArtifactFailure,
+  DirectoryArtifactReader,
+} from "../resources/index.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ArtifactReaderTraversal } from "./ArtifactReader.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
+import type { ArtifactReaderTraversal } from "../resources/ArtifactReader.js";
 
 it.skipIf(process.platform === "win32").each([false, true])(
   "preserves mounted-directory coverage alongside readable DMG entries (unknown coverage: %s)",
@@ -153,7 +155,9 @@ it("uses the typed command cancellation owner for injected hosts and preserves p
       code: "EIO",
     });
     const failureCause = cancelled
-      ? new ExecFileOutputCancelledError(reason)
+      ? new OwnedCommandFailure("cancelled", "Command cancelled.", null, null, {
+          cancellation: { reason },
+        })
       : physical;
     const reader = new NativeDmgArtifactReader(
       "/fixture/image.dmg",
@@ -180,5 +184,81 @@ it("uses the typed command cancellation owner for injected hosts and preserves p
     } finally {
       await reader.close();
     }
+  }
+});
+
+it("reports an hdiutil retained while the reader closes, after its own cleanup commands", async () => {
+  let closes = 0;
+  const retained = new ArtifactReaderFailure(
+    "unavailable",
+    "hdiutil cleanup withheld",
+    { cleanup: { reason: "withheld", resources: ["pid:4242"] } },
+  );
+  const host: NativeDmgHost = {
+    run: async () => ({
+      stdout: "",
+      stderr: "hdiutil: verify failed - image not recognized",
+      exitCode: 1,
+    }),
+    // Nothing is retained before close; a command run during close is.
+    close: async () => {
+      closes += 1;
+      if (closes === 2) throw retained;
+    },
+  };
+  const reader = new NativeDmgArtifactReader("/fixture/image.dmg", {}, host);
+  await expect(
+    (async () => {
+      for await (const _entry of reader.entries()) {
+        /* consume */
+      }
+    })(),
+  ).rejects.toMatchObject({ reason: "format" });
+  const refused = await reader.close().catch((cause: unknown) => cause);
+  expect(refused).toBeInstanceOf(ArtifactReaderFailure);
+  expect((refused as ArtifactReaderFailure).cleanup?.resources).toEqual([
+    "pid:4242",
+  ]);
+  await reader.close();
+  expect(closes).toBe(4);
+});
+
+it("classifies a verify exit from its diagnostics when the command's cleanup then failed", async () => {
+  const stderr = "hdiutil: verify failed - image not recognized";
+  const exited = new OwnedCommandFailure(
+    "process",
+    "Command cleanup failed.",
+    {
+      stdout: { text: "", bytes: 0, observedBytes: 0 },
+      stderr: {
+        text: stderr,
+        bytes: stderr.length,
+        observedBytes: stderr.length,
+      },
+      exitCode: 1,
+      signal: null,
+    },
+    "process group still present",
+  );
+  const host: NativeDmgHost = {
+    run: async () => {
+      throw exited;
+    },
+    close: async () => {},
+  };
+  const reader = new NativeDmgArtifactReader("/fixture/image.dmg", {}, host);
+  try {
+    const failure = await (async () => {
+      for await (const _entry of reader.entries()) {
+        /* consume */
+      }
+    })().catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      reason: "format",
+      exitCode: 1,
+      cause: exited,
+    });
+  } finally {
+    await reader.close();
   }
 });

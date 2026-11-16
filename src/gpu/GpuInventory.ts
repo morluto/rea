@@ -1,4 +1,11 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import type { KnownCoverageStatus } from "../domain/coverage.js";
+import type {
+  GpuCodeObjectsInput,
+  GpuCodeObjects,
+  GpuObject,
+  GpuKernel,
+} from "../domain/gpu/gpuCodeObjects.js";
 import {
   CCOB_MAGIC,
   CLANG_BUNDLE_MAGIC,
@@ -12,23 +19,17 @@ import { readCudaFatbinary } from "./CudaFatbinary.js";
 import { decodeGpuPayload, decodeGpuPayloadStream } from "./GpuPayloadCodec.js";
 import { createHash } from "node:crypto";
 import { scheduler } from "node:timers/promises";
-import type {
-  GpuCodeObjectsInput,
-  GpuCodeObjects,
-  GpuObject,
-  GpuKernel,
-} from "../domain/gpu/gpuCodeObjects.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
   isBinaryStringReadLimit,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import {
   readElfSectionDirectory,
   readPeSectionDirectory,
   type NativeSectionDirectory,
-} from "../native/metadata/NativeSectionDirectory.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+} from "../domain/native/nativeSectionDirectory.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -39,11 +40,11 @@ import {
   GpuReportCapacityFailure,
   gpuCount,
   nextGpuContainerOffset,
-  gpuSha256,
   readGpuNativeDirectory,
   rejectGpu,
   type GpuSource,
 } from "./GpuSource.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   readGpuElfKernels,
   readAmdElfMetadata,
@@ -65,7 +66,7 @@ export class GpuInventory {
     "Static declarations only; no GPU execution, SASS disassembly, host launch correlation or runtime compatibility was verified.",
     "Object IDs are positional identities scoped to artifact.sha256. Locations inside decoded objects name their containing object; they are not file offsets.",
   ];
-  discovery: "complete" | "partial" = "complete";
+  discovery: KnownCoverageStatus = "complete";
   examined_sections = 0;
   unknown_section_names = 0;
   #factBytes = 0;
@@ -352,7 +353,7 @@ export class GpuInventory {
           );
         }
       }
-      this.#decoded(row, gpuSha256(bytes), bytes.length);
+      this.#decoded(row, sha256Hex(bytes), bytes.length);
       const decoded = new GpuBufferSource(bytes, row.id);
       if (row.kind === "ptx") {
         // NVIDIA appends NUL alignment padding to an uncompressed PTX entry.
@@ -380,7 +381,7 @@ export class GpuInventory {
         const artifact = {
           id: `${row.id}/ptx`,
           object_id: row.id,
-          sha256: gpuSha256(content),
+          sha256: sha256Hex(content),
           media_type: "text/x-ptx" as const,
           encoding: "utf-8" as const,
           byte_length: content.length,
@@ -679,7 +680,7 @@ export class GpuInventory {
             createHash("md5").update(data).digest().readBigUInt64LE(0) !== hash
           )
             rejectGpu("CCOB truncated MD5 does not match decoded bytes");
-          this.#decoded(row, gpuSha256(data), data.length);
+          this.#decoded(row, sha256Hex(data), data.length);
           await this.inspect(new GpuBufferSource(data, row.id), depth + 1);
           row.inspection = "complete";
         } catch (cause) {

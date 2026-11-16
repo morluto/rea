@@ -32,7 +32,7 @@ import {
   type UninstallHost,
 } from "../../../src/application/Uninstall.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

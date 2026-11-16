@@ -41,6 +41,56 @@ export const JVM_EXHAUSTION_DETAILS: readonly (readonly [
 ];
 
 /**
+ * A JVM whose memory limits REA does not set, as the provider that runs it
+ * names it in recovery advice.
+ */
+export interface ExternalJvm {
+  /** Possessive name of the program, such as "JEB's". */
+  readonly program: string;
+  /** What the JVM does for REA, such as "engine" or "decoder". */
+  readonly role: string;
+  /** How the user raises one JVM option, starting with a capital. */
+  readonly raise: (option: string) => string;
+  /** Where that JVM's memory settings are reviewed. */
+  readonly settings: string;
+  /** How the user lowers native thread demand, starting with a capital. */
+  readonly threads: string;
+  /** How the user selects smaller work, starting in lower case. */
+  readonly smaller: string;
+}
+
+const capitalized = (text: string) =>
+  text.charAt(0).toUpperCase() + text.slice(1);
+const lowered = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+
+/**
+ * Recovery for a reported JVM memory area, naming the option that governs
+ * that area: the heap (-Xmx) for heap and GC overhead, -XX:MaxMetaspaceSize
+ * for metaspace, nothing for an oversized array, and host thread capacity
+ * for native threads.
+ */
+export const externalJvmExhaustionRecovery = (
+  area: RuntimeExhaustionArea | undefined,
+  jvm: ExternalJvm,
+): string => {
+  const heap = jvm.raise("maximum heap (-Xmx)");
+  switch (area) {
+    case "heap":
+      return `REA does not set ${jvm.program} Java heap. ${heap}, or ${jvm.smaller}.`;
+    case "gc-overhead":
+      return `REA does not set ${jvm.program} Java heap. The ${jvm.role} JVM spent nearly all its time collecting garbage; ${lowered(heap)}, or ${jvm.smaller}.`;
+    case "metaspace":
+      return `REA does not set ${jvm.program} class metadata limit. ${jvm.raise("-XX:MaxMetaspaceSize")}; a larger heap (-Xmx) does not raise it.`;
+    case "array-size":
+      return `The ${jvm.role} requested an array larger than the JVM allows; a larger heap (-Xmx) does not lift this limit. ${capitalized(jvm.smaller)}.`;
+    case "native-thread":
+      return `The ${jvm.role} JVM could not create a native thread. ${jvm.threads}; a larger heap (-Xmx) does not help.`;
+    case undefined:
+      return `REA does not set the memory limits of ${jvm.program} JVM. Review the reported out-of-memory line and ${jvm.settings}, or ${jvm.smaller}.`;
+  }
+};
+
+/**
  * The runtime's own memory exhaustion report, observed from every drained
  * byte as output streamed, so a retention budget cannot hide it.
  */

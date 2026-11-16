@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * What `describeValidationFailure` states in prose, as facts a caller can act
@@ -33,8 +34,7 @@ export const firstValidationIssue = (
 
 /** Locate the first schema issue, or keep a thrown constraint message. */
 export const describeValidationFailure = (cause: unknown): string => {
-  if (!(cause instanceof z.ZodError))
-    return cause instanceof Error ? cause.message : String(cause);
+  if (!(cause instanceof z.ZodError)) return errorMessage(cause);
   const [first, ...rest] = cause.issues;
   const location =
     first === undefined || first.path.length === 0

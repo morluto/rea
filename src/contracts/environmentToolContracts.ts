@@ -3,13 +3,19 @@ import {
   exportEnvironmentBundleInputSchema,
 } from "../domain/environmentBundleExport.js";
 import type { ToolContract } from "./toolContractTypes.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, toolEffects } from "./toolEffects.js";
 
 /** Agent environment bundle contracts shared with the environment-build CLI command. */
 export const ENVIRONMENT_TOOL_CONTRACTS = [
   {
     name: "export_environment_bundle",
-    ...toolContractMetadata("export_environment_bundle"),
+    ...toolContractMetadata(
+      "export_environment_bundle",
+      toolEffects({
+        writesFilesystem: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Write an agent environment bundle from capture_browser_scenario Evidence or HAR inspect_web_network_capture Evidence to an absent absolute output_directory whose parent exists. Copies complete capture Evidence, including recorded bodies, and derives replay/state read tools and served/withheld writes with coverage and next-recording hints. Preview the same coverage with inspect_analysis_view kind environment-coverage. dry_run reports without writing but still validates the destination. Uses default template rules, reads only selected Evidence and optional package_tarball, and writes only that directory; no network access. The bundle README explains agentenv use. Destination refusals name this tool; other failures name their export stage.",
     kind: "application",

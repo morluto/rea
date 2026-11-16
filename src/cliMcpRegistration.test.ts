@@ -36,7 +36,7 @@ const CHILD_PROGRAM = `
   }
   const { createCli, closeCliResources } = await import(${JSON.stringify(new URL("./cli.ts", import.meta.url).href)});
   const { resolveMcpRegistrationClients } = await import(${JSON.stringify(new URL("./application/McpRegistrationCatalog.ts", import.meta.url).href)});
-  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("./artifacts/ArtifactResourceScope.ts", import.meta.url).href)});
+  const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("./resources/ArtifactResourceScope.ts", import.meta.url).href)});
   const preflightResources = new ArtifactResourceScope();
   const { parse: parseToml } = await import(${JSON.stringify(pathToFileURL(require.resolve("smol-toml")).href)});
   const { parse: parseYaml } = await import(${JSON.stringify(pathToFileURL(require.resolve("yaml")).href)});

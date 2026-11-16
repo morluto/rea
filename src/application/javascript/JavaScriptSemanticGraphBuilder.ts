@@ -1,3 +1,4 @@
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   createJavaScriptSemanticGraph,
   sealTransferredJavaScriptSemanticGraphSteps,
@@ -137,13 +138,20 @@ export interface JavaScriptSemanticGraphProjection {
     ir: JavaScriptSemanticIr,
     paths?: readonly ElectronCallPath[],
   ) => Generator<void, void>;
+  /**
+   * Seal the graph. `precisionControls` are the `semantic_precision`
+   * budgets that limited its sources; coverage records them beside the
+   * retention ceilings that stopped it.
+   */
   readonly finish: (
     rootArtifactSha256: string,
     applicationGraph: ApplicationGraph,
+    precisionControls?: readonly AnalysisParameterLimit[],
   ) => JavaScriptSemanticGraph;
   readonly finishImmutableSteps: (
     rootArtifactSha256: string,
     applicationGraph: ApplicationGraph,
+    precisionControls?: readonly AnalysisParameterLimit[],
   ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
@@ -276,6 +284,7 @@ export const createJavaScriptSemanticGraphProjection = (
     factory: (input: unknown) => Value,
     rootArtifactSha256: string,
     applicationGraph: ApplicationGraph,
+    precisionControls: readonly AnalysisParameterLimit[] = [],
   ): Value => {
     bindSemanticGraphApplicationNodes(state, applicationGraph);
     if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
@@ -313,6 +322,11 @@ export const createJavaScriptSemanticGraphProjection = (
             nodeCeilingsReached,
           )
         : undefined;
+    const controls = [
+      ...(unknownCeilingCoverage?.controls ?? []),
+      ...(nodeCeilingCoverage?.controls ?? []),
+      ...precisionControls,
+    ];
     const graph = factory({
       schema: "JavaScriptSemanticRelationGraph",
       root_artifact_sha256: rootArtifactSha256,
@@ -342,6 +356,7 @@ export const createJavaScriptSemanticGraphProjection = (
           ...(unknownCeilingCoverage?.limits ?? []),
           ...(nodeCeilingCoverage?.limits ?? []),
         ],
+        ...(controls.length === 0 ? {} : { controls }),
         families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
           family,
           status: semanticFamilyStatus(family),
@@ -521,17 +536,23 @@ export const createJavaScriptSemanticGraphProjection = (
       while (steps.next().done !== true);
     },
     projectFileSteps: projectSourceSteps,
-    finish: (rootArtifactSha256, applicationGraph) =>
+    finish: (rootArtifactSha256, applicationGraph, precisionControls) =>
       finishWith(
         createJavaScriptSemanticGraph,
         rootArtifactSha256,
         applicationGraph,
+        precisionControls,
       ),
-    finishImmutableSteps: (rootArtifactSha256, applicationGraph) =>
+    finishImmutableSteps: (
+      rootArtifactSha256,
+      applicationGraph,
+      precisionControls,
+    ) =>
       finishWith(
         sealTransferredJavaScriptSemanticGraphSteps,
         rootArtifactSha256,
         applicationGraph,
+        precisionControls,
       ),
   };
 };
