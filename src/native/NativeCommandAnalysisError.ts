@@ -218,7 +218,8 @@ export const translateNativeCommandFailure = (
           ...fixedNativeAllowance(
             "The native command output capture allowance",
             "capture",
-            `${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes`,
+            NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
+            "bytes",
           ),
         },
       ),

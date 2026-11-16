@@ -1,5 +1,6 @@
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
+import { excludedValues } from "../schemaConstraints.js";
 import { z } from "zod";
 import {
   androidManifestSplitsSchema,
@@ -65,15 +66,24 @@ export const androidJniLibraryIdentitySchema = z.strictObject({
   compressed_size: count.nullable(),
 });
 /**
- * Why one selected library has no facts. `integrity_check` names the reader
- * check an `integrity` failure violated; Evidence recorded before this field
- * has no check, which means the check is unknown.
+ * Why one selected library has no facts. An `integrity` failure names the
+ * reader check it violated in `integrity_check`; no other kind carries one.
  */
-const androidJniLibraryFailureSchema = z.strictObject({
-  kind: z.string(),
-  message: z.string(),
-  integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS).exactOptional(),
-});
+const androidJniLibraryFailureSchema = z.union([
+  z.strictObject({
+    kind: z.literal("integrity"),
+    message: z.string(),
+    integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS),
+  }),
+  z.strictObject({
+    kind: excludedValues(
+      z.string(),
+      ["integrity"],
+      "an integrity failure names its integrity_check",
+    ),
+    message: z.string(),
+  }),
+]);
 export const androidJniLibrarySchema = androidJniLibraryIdentitySchema.extend({
   abi_compatibility: z.enum(["consistent", "mismatch", "unknown"]),
   byte_order: z.enum(["little", "big"]).nullable(),
