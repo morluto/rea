@@ -6,7 +6,6 @@ import {
   CaptureRedaction,
   isCaptureCredentialHeaderBytes,
 } from "../CaptureRedaction.js";
-import { createHash } from "node:crypto";
 import {
   readStableArtifact,
   completedStableArtifactObservation,
@@ -40,6 +39,7 @@ import {
   type PreparedProtobufBody,
 } from "./ProtobufFraming.js";
 import type { ProtobufDecoding } from "../../../domain/protobufWire.js";
+import { sha256Hex } from "../../../kernel/sha256Hex.js";
 
 const object = (
   value: JsonValue | undefined,
@@ -427,10 +427,7 @@ export const prepareCaptureProtobuf = async (
           `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
         );
       const body = Buffer.from(field.content_base64, "base64");
-      if (
-        body.length !== field.bytes ||
-        createHash("sha256").update(body).digest("hex") !== field.sha256
-      )
+      if (body.length !== field.bytes || sha256Hex(body) !== field.sha256)
         throw new AnalysisInputError("inspect_web_network_capture", undefined, [
           {
             path: ["capture_path"],

@@ -30,6 +30,7 @@ import {
   type PyInstallerCookie,
   type PyInstallerCookieObservation,
 } from "./pyinstaller/CArchiveLayout.js";
+import { pyInstallerReaderFailure } from "./pyinstaller/PyInstallerFailure.js";
 
 /** Completed observations and explicit recognition limits; null alone is examined absence. */
 export interface ArtifactEmbeddedFormatProbeFacts {
@@ -138,8 +139,7 @@ export class ArtifactEmbeddedFormatProbes {
       this.signal,
     );
     abortIfNeeded(this.signal);
-    if (!found.ok)
-      throw new ArtifactReaderFailure(found.error.reason, found.error.message);
+    if (!found.ok) throw pyInstallerReaderFailure(found.error);
     this.#facts = { ...this.#facts, pyInstaller: found.value };
     return found.value.state === "located" ? found.value.cookie : undefined;
   }

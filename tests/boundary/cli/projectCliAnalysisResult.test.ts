@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+  reattributedResourceConstraint,
+} from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
@@ -138,4 +142,44 @@ it("passes through successful data, unbound operations and unknown error values"
     },
   };
   expect(projectCliInputFields(unknown, binding)).toBe(unknown);
+});
+
+it("names related fields and operations by contract identity and renders only this command's flags", () => {
+  const constraint = new AnalysisResourceConstraintError(
+    "inspect_sqlite_database",
+    "memory",
+    "fixture limit",
+    null,
+    {
+      related: {
+        parameters: ["columns", "table", "row_limit"],
+        operations: ["inspect_artifact"],
+      },
+    },
+  );
+  // Re-attribution keeps the inputs the recovery names, as it keeps `limit`.
+  const projected = projectAnalysisError(
+    reattributedResourceConstraint("inspect_sqlite_database", constraint),
+  );
+  expect(projected.details).toMatchObject({
+    related_parameters: ["columns", "table", "row_limit"],
+    related_operations: ["inspect_artifact"],
+  });
+  const sqlite = {
+    operation: "inspect_sqlite_database",
+    fields: {},
+    flags: { columns: "--column", table: "--table" },
+  };
+  // A field the command takes no flag for is left to the contract name.
+  expect(projectCliInputFields(projected, sqlite)).toMatchObject({
+    details: { related_cli_flags: { columns: "--column", table: "--table" } },
+  });
+  // Another command's failure keeps its fields for that command to render.
+  expect(
+    projectCliInputFields(projected, { ...sqlite, operation: "inspect_plist" }),
+  ).toBe(projected);
+  // An error that names nothing projects no related fields.
+  expect(
+    projectAnalysisError(new AnalysisInputError("inspect_plist")).details ?? {},
+  ).not.toHaveProperty("related_parameters");
 });

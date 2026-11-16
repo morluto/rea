@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
@@ -34,7 +34,7 @@ import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
@@ -55,6 +55,7 @@ import {
   type WitnessRecord,
 } from "./DesktopBuildWitnessRecord.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const FRESH =
@@ -100,8 +101,7 @@ const refused = (userMessage: string, remediationAction: string) =>
     conformsToInputContract: true,
   });
 
-const taskDigest = (task: DesktopTask) =>
-  createHash("sha256").update(JSON.stringify(task)).digest("hex");
+const taskDigest = (task: DesktopTask) => sha256Hex(JSON.stringify(task));
 
 /** A retry cannot redirect an ended witness to another folder. */
 const recordDirectoryRefusal = (

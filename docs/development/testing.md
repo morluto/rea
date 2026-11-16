@@ -48,6 +48,20 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
 | `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
 
+`typecheck` also checks the JavaScript verification scripts listed in
+`tsconfig.scripts.json` (`checkJs`, with the main compiler options). Those
+scripts import built modules through the package-private `#dist/*` alias, which
+Node resolves to `./dist/*` at run time and the check resolves to `./src/*`, so a
+domain signature change that breaks a listed script fails `check:fast` without a
+build. To add a script, switch its `../dist/` imports and those of the local
+modules it loads to `#dist/`, add it to the list, and fix what the check
+reports with JSDoc types. Name tool results with the
+`scripts/lib/mcp-verifier-results.mjs` typedefs (`ToolName`,
+`VerifierOperationResult<N>`) so a result reads with its named contract's
+type. `tests/support/analysis-efficiency/android-mapping-retention.mjs` stays
+outside the check: it imports `dist` modules by path from a caller-selected
+checkout at run time, so no import in this tree names their types.
+
 The general source suite above runs on Linux in CI, and Windows CI runs a
 curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).
 A Windows source checkout can fail source tests for reasons unrelated to the
@@ -785,11 +799,14 @@ should assert canonical failure categories and provider-call controls where
 rejection before provider work matters. Do not make today's omission of a
 constraint a compact-profile invariant.
 
-When a file repeatedly validates the same MCP schemas, use
-`createMcpSchemaValidation` for file-owned preparation and clear it in
-`afterAll`. Its content keys include the complete schema, and the SDK provider
-keeps dialect and format validation. Keep sessions and connections scoped to
-each test; share immutable schema preparation through the fixture's validator
+Give every MCP SDK test client the validator from
+`createMcpSchemaValidation` (or use `mcpTest`); the architecture guards count
+clients that keep the SDK default. Compiled validators are shared across the
+worker in a bounded cache keyed by the complete schema, and the SDK provider
+keeps dialect and format validation. A fixture created inline for one client
+is released with that client. When a file holds one fixture for several
+clients, clear it in `afterAll`. Keep sessions and connections scoped to each
+test; share immutable schema preparation through the fixture's validator
 dependency.
 
 Artifact verification uses `artifactMcpCall` for both lifecycle and analysis

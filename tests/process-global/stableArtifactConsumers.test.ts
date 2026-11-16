@@ -390,7 +390,9 @@ it.each(
     [
       name,
       makeProvider,
-      new ArtifactReaderFailure("integrity", "source replacement"),
+      new ArtifactReaderFailure("integrity", "source replacement", {
+        integrityCheck: "container-identity",
+      }),
       AnalysisArtifactChangedError,
     ] as const,
     [
@@ -443,6 +445,7 @@ it.each(staticProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "controlled source replacement",
+      { integrityCheck: "container-identity" },
     );
     fault.readFailure = { cause: primary };
     const controller = new AbortController();
@@ -481,6 +484,7 @@ it("clears the Python pyc cleanup flag once a retained descriptor closes", async
   const primary = new ArtifactReaderFailure(
     "integrity",
     "controlled source replacement",
+    { integrityCheck: "container-identity" },
   );
   fault.readFailure = { cause: primary };
   try {
@@ -1185,6 +1189,7 @@ it.each(fileFailureProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "original source replacement",
+      { integrityCheck: "container-identity" },
     );
     try {
       const nested = await scope

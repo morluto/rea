@@ -3,7 +3,6 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { BinaryOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
@@ -37,6 +36,7 @@ import {
   TARGET_CONTENT_RESULT_META,
   type ToolResultEncoding,
 } from "./toolResultEncoding.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
 export const mcpResponseOverflowProjection = (input: {
@@ -75,18 +75,8 @@ export const mcpResponseOverflowProjection = (input: {
  * Each projection owns a different next step when it exceeds one MCP frame.
  */
 const evidenceBundleProjection = (value: JsonValue): JsonValue | undefined => {
-  const payload =
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "result" in value
-      ? value.result
-      : value;
-  return typeof payload === "object" &&
-    payload !== null &&
-    !Array.isArray(payload)
-    ? payload.kind
-    : undefined;
+  const payload = isRecord(value) && "result" in value ? value.result : value;
+  return isRecord(payload) ? payload.kind : undefined;
 };
 
 /**
@@ -123,14 +113,8 @@ const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
  * `{ result }` envelope; a smaller limit only helps above one.
  */
 const unknownPageItems = (value: JsonValue): number => {
-  const page =
-    typeof value === "object" && value !== null && !Array.isArray(value)
-      ? value.result
-      : undefined;
-  return typeof page === "object" &&
-    page !== null &&
-    !Array.isArray(page) &&
-    Array.isArray(page.items)
+  const page = isRecord(value) ? value.result : undefined;
+  return isRecord(page) && Array.isArray(page.items)
     ? page.items.length
     : Number.POSITIVE_INFINITY;
 };
@@ -212,12 +196,20 @@ export class ToolResultDelivery {
       budgetBytes: number,
     ) => Iterable<JsonValue>,
   ): CallToolResult {
+    // A session tool's result is delivered inside `result`, alternatives too.
+    const shaped = (value: JsonValue): JsonValue =>
+      contract.kind === "session" ? { result: value } : value;
     return result.ok
       ? this.successResult(
-          contract.kind === "session" ? { result: result.value } : result.value,
+          shaped(result.value),
           contract,
           recovery,
-          alternatives,
+          alternatives === undefined
+            ? undefined
+            : function* (failure, budgetBytes) {
+                for (const alternative of alternatives(failure, budgetBytes))
+                  yield shaped(alternative);
+              },
         )
       : this.toErrorToolResult(result.error, contract.returnsTargetContent);
   }
@@ -351,22 +343,18 @@ export class ToolResultDelivery {
     return this.projectedErrorResult(projected, targetContent);
   }
 
-  /** Include the session owner's selection at the end of this open attempt. */
-  toOpenFailureToolResult(
-    failure: Extract<BinaryOpenResult, { ok: false }>,
+  /**
+   * Deliver an error with facts its operation observed alongside it (an
+   * open's selection at failure, say) added to the error's own details.
+   */
+  toDetailedErrorToolResult(
+    error: AnalysisError,
+    details: Readonly<Record<string, JsonValue>>,
     targetContent: boolean,
   ): CallToolResult {
-    const projected = projectAnalysisError(failure.error);
+    const projected = projectAnalysisError(error);
     return this.projectedErrorResult(
-      {
-        ...projected,
-        details: {
-          ...projected.details,
-          selection_at_failure: failure.selection,
-          target_at_open_completion: failure.targetAtCompletion,
-          provider_id_at_open_completion: failure.providerIdAtCompletion,
-        },
-      },
+      { ...projected, details: { ...projected.details, ...details } },
       targetContent,
     );
   }

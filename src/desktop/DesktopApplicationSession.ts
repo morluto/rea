@@ -37,21 +37,18 @@ import {
   sampleProcesses,
   sampleTokenCarriers,
   trackProcess,
-  type WindowMatching,
 } from "./DesktopSessionObservations.js";
-import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
+import type { X11WindowObserver } from "./X11WindowObserver.js";
+import {
+  DesktopSessionCleanupError,
+  type UnresolvedCleanup,
+  type WindowMatching,
+  type WindowSample,
+} from "../ports/DesktopApplicationSession.js";
 
 /** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
-
-/** A cleanup that could not be confirmed, and the exact owners that can retry it. */
-export interface UnresolvedCleanup {
-  readonly reason: string;
-  readonly leases: readonly AnalysisCleanupLease[];
-  /** Failure-time facts remain available after the lease releases its owners. */
-  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
-}
 
 /** The session record and, when cleanup was not verified, what remains owned. */
 export interface DesktopSessionOutcome {
@@ -59,19 +56,6 @@ export interface DesktopSessionOutcome {
   readonly unreleased: UnresolvedCleanup | undefined;
   /** Samples whose window list could not be read; their windows are unknown. */
   readonly unreadableWindowSamples: number;
-}
-
-/** A session failed, and the processes it launched could not all be removed. */
-export class DesktopSessionCleanupError extends Error {
-  constructor(
-    readonly primary: unknown,
-    readonly cleanup: UnresolvedCleanup,
-  ) {
-    super(`desktop session cleanup is incomplete: ${cleanup.reason}`, {
-      cause: primary,
-    });
-    this.name = "DesktopSessionCleanupError";
-  }
 }
 
 /** A line the person or driver sent while the session runs. */

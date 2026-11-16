@@ -25,6 +25,7 @@ import { numberedInOrder } from "./positionalKeys.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf, spellCondition, type Condition } from "./viewSelector.js";
 import { childConditions } from "./selectorCandidates.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -215,11 +216,7 @@ const siblingsOf = (
 };
 
 const attributesOf = ({ attributes }: Record<string, JsonValue>) =>
-  typeof attributes === "object" &&
-  attributes !== null &&
-  !Array.isArray(attributes)
-    ? attributes
-    : {};
+  isRecord(attributes) ? attributes : {};
 
 /** The conditions a sibling's segment selects it by, `@` attributes and `>` children's text. */
 const conditionsOf = (member: string) =>

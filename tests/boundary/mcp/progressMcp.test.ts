@@ -14,6 +14,13 @@ import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const testClient = (name: string) =>
+  new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
 
 describe("ordinary MCP progress and cancellation", () => {
   it("advances MCP progress when provider waiting does not advance completed work", async () => {
@@ -32,7 +39,7 @@ describe("ordinary MCP progress and cancellation", () => {
       },
     };
     const server = createServer({ kind: "fixed", analysis });
-    const client = new Client({ name: "progress-test", version: "1" });
+    const client = testClient("progress-test");
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const progress: {
@@ -81,7 +88,7 @@ describe("ordinary MCP progress and cancellation", () => {
         ),
     };
     const server = createServer({ kind: "fixed", analysis });
-    const client = new Client({ name: "function-progress-test", version: "1" });
+    const client = testClient("function-progress-test");
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const progress: number[] = [];
@@ -130,7 +137,7 @@ describe("ordinary MCP progress and cancellation", () => {
       },
     };
     const server = createServer({ kind: "fixed", analysis });
-    const client = new Client({ name: "cancellation-test", version: "1" });
+    const client = testClient("cancellation-test");
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const controller = new AbortController();

@@ -4,6 +4,8 @@ import {
   execFileBytes,
 } from "../process/ExecFileOutput.js";
 import { probeAdbPathExistence, runAdbCapture } from "./AdbCommand.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../process/ExecFileOutput.js")>()),
@@ -338,32 +340,49 @@ it("reports an adb that never started without claiming an exit code", async () =
   });
 });
 
-it("reports exhausted host capacity rather than an adb protocol failure", async () => {
-  vi.mocked(execFileBytes).mockRejectedValueOnce(
-    Object.assign(new Error("spawn EAGAIN"), {
-      code: "EAGAIN",
-      spawnFailed: true,
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-    }),
-  );
-  const result = await runAdbCapture(
-    "list_adb_devices",
-    { device: "device" },
-    { binary: "/host/adb", pathSource: "environment", environment: {} },
-    ["devices"],
-    { timeoutMs: 100, maxOutputBytes: 1024 },
-    undefined,
-  );
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-      retryable: true,
-      reportedLimits: { spawn_error: "EAGAIN" },
+it.each([
+  ["EAGAIN", "capacity", true, { boundary: "host-capacity" }],
+  // Device commands carry request operands, so the request may shrink too.
+  [
+    "E2BIG",
+    "transport",
+    false,
+    {
+      boundary: "provider-launch",
+      oversized_launch_input: "request_and_environment",
     },
-  });
-});
+  ],
+] as const)(
+  "reports host launch constraint %s through the shared launch owner rather than as an adb protocol failure",
+  async (code, resource, retryable, facts) => {
+    vi.mocked(execFileBytes).mockRejectedValueOnce(
+      Object.assign(spawnFailure(code, "/host/adb"), {
+        spawnFailed: true,
+        stdout: "",
+        stderr: "",
+        signal: null,
+        killed: false,
+      }),
+    );
+    const result = await runAdbCapture(
+      "list_adb_devices",
+      { device: "device" },
+      { binary: "/host/adb", pathSource: "environment", environment: {} },
+      ["devices"],
+      { timeoutMs: 100, maxOutputBytes: 1024 },
+      undefined,
+    );
+    if (result.ok) throw new Error("Expected a launch constraint");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource,
+      retryable,
+      reportedLimits: { spawn_error: code },
+    });
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      details: {
+        diagnostics: { system_code: code, command: "/host/adb", ...facts },
+      },
+    });
+  },
+);

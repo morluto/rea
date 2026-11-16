@@ -67,10 +67,9 @@ const electronBoundarySummarySchema = z.strictObject({
    * sources were not fully examined or reported, for example after the result
    * budget ran out; counts from those sources are unknown, not zero.
    *
-   * Absent when no retained fact names an Electron module, or in evidence
-   * produced before this field existed. Absence is unknown rather than proof
-   * that the application has no Electron surface: unread sources, failed
-   * analysis, and dynamic module names can hide one.
+   * Absent when no retained fact names an Electron module. Absence is unknown
+   * rather than proof that the application has no Electron surface: unread
+   * sources, failed analysis, and dynamic module names can hide one.
    */
   electron_semantics: z.enum(["recovered", "partial", "empty"]).exactOptional(),
 });

@@ -18,6 +18,7 @@ import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDe
 import { createSystemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("publishes valid SDK schemas and records the named module trace without a binary target", async () => {
   const service = new WebSourceLocationService(
@@ -38,7 +39,10 @@ it("publishes valid SDK schemas and records the named module trace without a bin
     { kind: "session", session },
     { webSourceLocation: service },
   );
-  const client = new Client({ name: "module-contract", version: "1" });
+  const client = new Client(
+    { name: "module-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

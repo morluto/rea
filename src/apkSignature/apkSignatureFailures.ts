@@ -145,8 +145,12 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
     `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
     { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
     fixedAllowanceOptions(
-      `The decoded APK signing report allowance of ${String(APK_SIGNATURE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+      "The decoded APK signing report allowance",
       "report",
+      {
+        limit: APK_SIGNATURE_LIMITS.outputBytes,
+        unit: "bytes",
+      },
     ),
   );
 

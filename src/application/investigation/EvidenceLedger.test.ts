@@ -310,7 +310,7 @@ describe("evidence ledger metadata imports", () => {
     expect(ledger.export().records).toHaveLength(10_001);
   });
 
-  it("retains inline evidence larger than the former session byte quota", () => {
+  it("retains an inline Evidence record above 64 MiB", () => {
     const ledger = new EvidenceLedger();
     const record = createEvidence(TARGET, PROVIDER, {
       operation: "health",

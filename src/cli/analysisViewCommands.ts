@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 
 import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
 import { ArtifactResourceScope } from "../resources/index.js";

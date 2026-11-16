@@ -58,7 +58,7 @@ it("retains network cleanup effects in session discovery for lifecycle tools", (
 });
 
 it("keeps retryable IDA effects in composed discovery while preserving unavailability", () => {
-  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false);
+  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false);
   const statusFor = (runtimeUnavailable: boolean) => ({
     open: true,
     kind: "executable",
@@ -99,7 +99,7 @@ it("keeps retryable IDA effects in composed discovery while preserving unavailab
 });
 
 it.each([
-  ["legacy", false],
+  ["native", false],
   ["native", true],
   ["modern", true],
 ] as const)(
@@ -131,7 +131,7 @@ it.each([false, true])(
       kind: "executable",
       capabilities: providerCapabilitySets(
         idaCapabilities(
-          IDA_COMPATIBILITY_PROFILES[showUi ? "legacy" : "modern"],
+          IDA_COMPATIBILITY_PROFILES[showUi ? "native" : "modern"],
           false,
         ),
       ),
@@ -139,8 +139,6 @@ it.each([false, true])(
     const entries = buildCapabilityInventory(input, enabledPolicy);
     for (const name of [
       "procedure_pseudo_code",
-      "procedure_assembly",
-      "read_function_instructions",
       "analyze_function",
       "batch_decompile",
       "decompile_all",
@@ -155,7 +153,13 @@ it.each([false, true])(
         annotations: { open_world: true },
       });
     }
-    for (const name of ["list_procedures", "search_strings", "trace_feature"]) {
+    for (const name of [
+      "procedure_assembly",
+      "read_function_instructions",
+      "list_procedures",
+      "search_strings",
+      "trace_feature",
+    ]) {
       expect(entries.find((entry) => entry.name === name)).toMatchObject({
         effects: { changesUiState: false, accessesNetwork: true },
         annotations: { open_world: true },
@@ -170,7 +174,7 @@ it("omits effects of IDA calls hidden behind unavailable workflow prerequisites"
       open: true,
       kind: "executable",
       capabilities: providerCapabilitySets(
-        idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false),
+        idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false),
       ),
     },
     enabledPolicy,
@@ -197,7 +201,7 @@ it("omits effects of IDA calls hidden behind unavailable workflow prerequisites"
 });
 
 it("advertises reachable IDA calls through native UI tracing", () => {
-  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false);
+  const ida = idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false);
   const source = ida[0];
   if (source === undefined) throw new Error("IDA capability fixture is empty");
   const metadata = {

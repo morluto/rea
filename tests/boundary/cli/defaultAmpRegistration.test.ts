@@ -1,7 +1,8 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { Parser, z } from "incur";
+import { Parser } from "incur";
+import { z } from "zod";
 import { decode } from "@toon-format/toon";
 
 import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";

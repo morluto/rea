@@ -9,8 +9,10 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { incurZodImportCount } from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
   optionalFactDefaultCount,
@@ -212,7 +214,7 @@ check(
   ],
 );
 
-// "Non-null object other than an array" has one owner: src/domain/isRecord.ts.
+// "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
 // A local predicate with that body, under any name, is a copy. The listed files
 // still hold one and may only be removed from the list; a listed file that no
 // longer matches fails so the list shrinks with the code.
@@ -230,7 +232,7 @@ const RECORD_PREDICATE_COPIES = [
   "src/pcap/PcapOutput.ts",
 ];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
-  if (path === "src/domain/isRecord.ts") return false;
+  if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
   return (
     named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
@@ -432,6 +434,22 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// A refusal for a limit a parser stopped at is built from the failure's
+// LimitRef by parseLimitConstraint in src/domain/parseFailureAnalysisError; a
+// hand-built AnalysisResourceConstraintError spells the limit key and reason
+// again beside the parser that named them (#11456). Each migrated producer
+// lowers this count.
+checkCounted(
+  "hand-built resource-constraint refusal (use parseLimitConstraint from src/domain/parseFailureAnalysisError when the cause is a parse limit)",
+  "resource-constraint-constructor",
+  files,
+  /new AnalysisResourceConstraintError\(/gu,
+  [
+    "src/domain/analysisErrorCore.ts",
+    "src/domain/parseFailureAnalysisError.ts",
+  ],
+);
+
 // A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
 // src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
 // class on plain Error hides the limit's name and maximum from both; a limit
@@ -557,6 +575,24 @@ checkCounted(
   files,
   /createHash\(\s*"sha256"\s*\)\s*\.update\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)\s*\.digest\(\s*"hex"\s*\)/gu,
   ["src/kernel/sha256Hex.ts"],
+);
+
+// The isRecord predicate written inline in a condition is a copy of
+// src/kernel/isRecord.ts. Bodies of the named copies in RECORD_PREDICATE_COPIES
+// are counted by that list, not here.
+const inlineRecordCheck =
+  /typeof\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*===\s*["']object["']\s*&&\s*\1\s*!==\s*null\s*&&\s*!Array\.isArray\(\s*\1\s*\)/gu;
+checkCounted(
+  "inline non-array record check (use isRecord from src/kernel/isRecord)",
+  "inline-record-check",
+  files,
+  (content) =>
+    Math.max(
+      0,
+      (content.match(inlineRecordCheck)?.length ?? 0) -
+        recordPredicateCounts(content).bodies,
+    ),
+  ["src/kernel/isRecord.ts"],
 );
 
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
@@ -873,6 +909,18 @@ checkCounted(
   [],
 );
 
+// Schemas import zod directly. incur's `z` is a re-export of the same package;
+// importing it through the CLI framework ties schemas to a dependency REA is
+// removing (#11654). Declarations are read from code tokens, so the text in a
+// comment or string fixture does not count.
+checkCounted(
+  'zod imported through incur (import { z } from "zod")',
+  "incur-zod-reexport",
+  [...files, ...testFiles],
+  (_content, file) => incurZodImportCount(file.source ?? file.content),
+  [],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
@@ -941,6 +989,29 @@ checkCounted(
   }),
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
+);
+
+// The MCP SDK client compiles every listed tool's output schema on its first
+// tool call. With the default Ajv options, REA's catalog costs gigabytes of
+// allocation per client, so test clients take the lazy, reference-preserving
+// validation from tests/fixtures/mcpSchemaValidation (directly, or through
+// tests/support/mcp/mcpFixture). Tests of the SDK default itself stay listed.
+// The counter parses each source, so comments need no stripping here. A
+// client built inside a generated child script is string data, not a call, so
+// it is not read (such scripts run over compiled dist/ modules, which cannot
+// load the TypeScript fixture).
+const mcpClientTestFiles = testFiles.filter((file) =>
+  file.path.startsWith("tests/"),
+);
+checkCounted(
+  "MCP SDK client without shared schema validation in tests (pass createMcpSchemaValidation from tests/fixtures/mcpSchemaValidation or use mcpTest)",
+  "test-mcp-client-default-validation",
+  mcpClientTestFiles,
+  countDefaultValidationClients,
+  [
+    // Checks the SDK default validator itself across catalog refreshes.
+    "tests/boundary/mcp/outputValidatorReuse.test.ts",
+  ],
 );
 
 for (const key of baselineTexts.keys())

@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { ContractCommandContext } from "./contractCommand.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";

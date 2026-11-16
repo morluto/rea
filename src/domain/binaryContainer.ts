@@ -1,3 +1,4 @@
+import type { FixedCeilingFacts } from "./fixedAllowanceRemediation.js";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -56,11 +57,17 @@ export class BinaryMappingFailure extends BinaryFormatFailure {
  * `LimitRef`; it defaults to the boundary when a decoder has only one.
  */
 export class BinaryResourceFailure extends ParseFailureError<"limit"> {
+  /**
+   * @param maximum_bytes The exceeded maximum, in `unit`. Despite its name,
+   *   some producers count entries or values; `unit` says which, and is
+   *   undefined when the producer has not named it.
+   */
   constructor(
     readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
     message: string,
     allowance: string = boundary,
+    readonly unit?: "bytes" | "entries",
   ) {
     super({
       kind: "limit",
@@ -71,6 +78,14 @@ export class BinaryResourceFailure extends ParseFailureError<"limit"> {
     this.name = "BinaryResourceFailure";
   }
 }
+
+/** The exceeded maximum as fixed-ceiling facts; the unit only when its producer named it. */
+export const binaryResourceCeiling = (
+  failure: BinaryResourceFailure,
+): FixedCeilingFacts => ({
+  limit: failure.maximum_bytes,
+  ...(failure.unit === undefined ? {} : { unit: failure.unit }),
+});
 
 /** The failure's allowance when it is one of `allowances`, else `null`. */
 export const binaryResourceAllowance = <Allowance extends string>(
@@ -309,6 +324,8 @@ export class BinaryReader {
         "structure",
         16 * 1024 * 1024,
         `${label} exceeds the 16 MiB structural decoding budget`,
+        "structure",
+        "bytes",
       );
     return this.fileRange(offset, size, label).offset;
   }

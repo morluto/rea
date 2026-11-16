@@ -46,7 +46,7 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { fixedAllowanceOptions as flutterBudget } from "../domain/fixedAllowanceRemediation.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
@@ -88,6 +88,45 @@ const MAX_FLUTTER_ABIS = 32;
 /** A complete AOT image carries exactly one VM and one isolate section. */
 const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+
+/** Each release-fixed Flutter ceiling with the value that refused the input. */
+const FLUTTER_ALLOWANCES = {
+  apkMetadataRead: fixedAllowanceOptions(
+    "The Flutter APK metadata read allowance",
+    "parser",
+    { limit: APK_METADATA_READ_MAX_BYTES, unit: "bytes" },
+  ),
+  abiInventory: fixedAllowanceOptions(
+    "The Flutter ABI inventory allowance",
+    "parser",
+    { limit: MAX_FLUTTER_ABIS, unit: "ABIs" },
+  ),
+  libraryPath: fixedAllowanceOptions(
+    "The Flutter library path allowance",
+    "parser",
+    { limit: MAX_FLUTTER_LIBRARY_PATH_BYTES, unit: "bytes" },
+  ),
+  apkSnapshot: fixedAllowanceOptions(
+    "the Flutter APK snapshot allowance",
+    "input",
+    { limit: APK_MAX_BYTES, unit: "bytes" },
+  ),
+  libraryRead: fixedAllowanceOptions(
+    "the Flutter library read allowance",
+    "input",
+    { limit: LIBRARY_MAX_BYTES, unit: "bytes" },
+  ),
+  cumulativeExtraction: fixedAllowanceOptions(
+    "the Flutter cumulative extraction allowance",
+    "input",
+    { limit: TOTAL_EXTRACTION_MAX_BYTES, unit: "bytes" },
+  ),
+  snapshotHashCandidates: fixedAllowanceOptions(
+    "The Flutter snapshot-hash candidate allowance",
+    "parser",
+    { limit: MAX_SNAPSHOT_HASH_CANDIDATES, unit: "candidates" },
+  ),
+} as const;
 
 /**
  * Stream a local file digest without retaining large files in memory.
@@ -207,16 +246,7 @@ const mapInputFailure = (
       cause,
     });
   if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      cause.message,
-      { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
-      {
-        cause,
-        ...flutterBudget("The Flutter APK metadata read allowance", "parser"),
-      },
-    );
+    return readerLimitFailure(operation, cause);
   return new AnalysisInputError(operation, { cause }, [
     {
       path: ["path"],
@@ -224,6 +254,52 @@ const mapInputFailure = (
       message: inputFailureMessage(path, cause),
     },
   ]);
+};
+
+/**
+ * Report the ZIP reader ceiling that refused the APK. A ceiling the reader
+ * names (the Zstandard decoder window) keeps its name. The archive expansion
+ * budget is derived from the APK's size, and Flutter offers no control that
+ * raises it, so it is fixed for this request. The ZIP reader's remaining limit
+ * is the metadata read budget this provider selects.
+ */
+const readerLimitFailure = (
+  operation: string,
+  cause: ArtifactReaderFailure,
+): AnalysisError => {
+  if (cause.fixedAllowance !== undefined)
+    return new AnalysisResourceConstraintError(
+      operation,
+      cause.boundary === "file-size" ? "file-size" : "memory",
+      cause.message,
+      null,
+      { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
+    );
+  if (cause.readerLimit !== undefined) {
+    const { effective_value: limit, required_value: required } =
+      cause.readerLimit;
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      `The APK's declared member sizes${required === undefined ? "" : ` (${String(required)} bytes)`} exceed its ${String(limit)}-byte expansion allowance.`,
+      { max_expanded_bytes: limit },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          "The Flutter APK expansion allowance (derived from the APK size)",
+          "parser",
+          { limit, unit: cause.readerLimit.unit },
+        ),
+      },
+    );
+  }
+  return new AnalysisResourceConstraintError(
+    operation,
+    "memory",
+    cause.message,
+    { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
+    { cause, ...FLUTTER_ALLOWANCES.apkMetadataRead },
+  );
 };
 
 /** Name a missing or non-file selection instead of blaming package bytes. */
@@ -325,7 +401,9 @@ const collectFlutterLibraries = async (
             max_flutter_abis: MAX_FLUTTER_ABIS,
             max_library_path_bytes: MAX_FLUTTER_LIBRARY_PATH_BYTES,
           },
-          flutterBudget("The Flutter ABI inventory allowance", "parser"),
+          abis.size > MAX_FLUTTER_ABIS
+            ? FLUTTER_ALLOWANCES.abiInventory
+            : FLUTTER_ALLOWANCES.libraryPath,
         );
       libraries.push({
         entry,
@@ -361,7 +439,7 @@ const checkApkSize = (operation: string, bytes: number): void => {
       "file-size",
       `The selected APK exceeds the ${String(APK_MAX_BYTES)}-byte snapshot budget`,
       { max_apk_bytes: APK_MAX_BYTES, observed_bytes: bytes },
-      flutterBudget("the Flutter APK snapshot allowance", "input"),
+      FLUTTER_ALLOWANCES.apkSnapshot,
     );
 };
 
@@ -810,7 +888,7 @@ export class FlutterBuildProvider {
             "file-size",
             `${entry.path} exceeds the library read budget`,
             { max_library_bytes: LIBRARY_MAX_BYTES, entry_path: entry.path },
-            flutterBudget("the Flutter library read allowance", "input"),
+            FLUTTER_ALLOWANCES.libraryRead,
           ),
         );
     }
@@ -831,7 +909,7 @@ export class FlutterBuildProvider {
             max_total_bytes: TOTAL_EXTRACTION_MAX_BYTES,
             declared_total: declaredTotal,
           },
-          flutterBudget("the Flutter cumulative extraction allowance", "input"),
+          FLUTTER_ALLOWANCES.cumulativeExtraction,
         ),
       );
 
@@ -879,7 +957,7 @@ export class FlutterBuildProvider {
                 max_library_bytes: LIBRARY_MAX_BYTES,
                 entry_path: entry.path,
               },
-              flutterBudget("the Flutter library read allowance", "input"),
+              FLUTTER_ALLOWANCES.libraryRead,
             ),
           );
         hash.update(view);
@@ -897,10 +975,7 @@ export class FlutterBuildProvider {
               "file-size",
               `cumulative library extraction across ${String(flutterEntries.length)} entries exceeds the ${String(TOTAL_EXTRACTION_MAX_BYTES)}-byte budget`,
               { max_total_bytes: TOTAL_EXTRACTION_MAX_BYTES },
-              flutterBudget(
-                "the Flutter cumulative extraction allowance",
-                "input",
-              ),
+              FLUTTER_ALLOWANCES.cumulativeExtraction,
             ),
           );
       }
@@ -919,10 +994,7 @@ export class FlutterBuildProvider {
                 max_snapshot_hash_candidates: MAX_SNAPSHOT_HASH_CANDIDATES,
                 entry_path: entry.path,
               },
-              flutterBudget(
-                "The Flutter snapshot-hash candidate allowance",
-                "parser",
-              ),
+              FLUTTER_ALLOWANCES.snapshotHashCandidates,
             ),
           );
         facts.set(abi, {
@@ -1124,7 +1196,7 @@ export class FlutterBuildProvider {
           "file-size",
           `lib/${selected.abi}/libapp.so declares ${String(declared)} bytes, exceeding the ${String(LIBRARY_MAX_BYTES)}-byte read budget`,
           { max_library_bytes: LIBRARY_MAX_BYTES },
-          flutterBudget("the Flutter library read allowance", "input"),
+          FLUTTER_ALLOWANCES.libraryRead,
         ),
       );
     const imagePath = join(snapshot.root, "libapp.so");
@@ -1154,7 +1226,7 @@ export class FlutterBuildProvider {
               "file-size",
               `lib/${selected.abi}/libapp.so exceeds the ${String(LIBRARY_MAX_BYTES)}-byte read budget while streaming`,
               { max_library_bytes: LIBRARY_MAX_BYTES },
-              flutterBudget("the Flutter library read allowance", "input"),
+              FLUTTER_ALLOWANCES.libraryRead,
             ),
           );
         imageHash.update(view);

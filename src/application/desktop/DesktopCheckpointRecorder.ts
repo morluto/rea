@@ -8,7 +8,7 @@ import {
   type DesktopPathState,
   type DesktopWalk,
 } from "../../domain/desktop/desktopStateDiff.js";
-import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
+import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
 import { walkHomeState } from "../../desktop/HomeStateWalker.js";
 
 /** Where each checkpoint walks and which paths count as application state. */
@@ -61,7 +61,7 @@ export class CheckpointRecorder {
 
   constructor(
     readonly scope: CheckpointScope,
-    readonly store: DesktopContentStore,
+    readonly store: CaptureContentStore,
   ) {}
 
   async #retain(

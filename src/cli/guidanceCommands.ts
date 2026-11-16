@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGuidanceSection,

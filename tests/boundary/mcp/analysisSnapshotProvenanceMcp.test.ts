@@ -16,7 +16,7 @@ import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js"
 import { silentLogger } from "../../../src/logger.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
-import { registerEvidenceTools } from "../../../src/server/registerEvidenceTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -141,12 +141,16 @@ for (const missingSource of [false, true])
         session.recordEvidence.bind(session),
         createToolResultDelivery(undefined),
       );
-      registerEvidenceTools(
+      registerServiceTools(
         server,
-        [toolContract("inspect_managed_artifact")],
+        {
+          providerOperations: {
+            contracts: [toolContract("inspect_managed_artifact")],
+            activeTarget: () => session.activeTarget(),
+          },
+        },
         {
           logger: silentLogger,
-          activeTarget: () => session.activeTarget(),
           recordEvidence: session.recordEvidence.bind(session),
           withAdmittedAnalysis: withAdmittedAnalysis({
             kind: "session",

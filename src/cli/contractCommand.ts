@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import type { Logger } from "pino";
 
@@ -59,6 +59,7 @@ import {
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /**
  * Incur adapter for contract commands. The command itself is described in
@@ -1228,9 +1229,7 @@ const readJsonInputs = async (
 
 /** A file failure names the selected path, and a cancellation is its own. */
 const keepsOwnFailure = (error: JsonValue): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  !Array.isArray(error) &&
+  isRecord(error) &&
   ("input_path" in error ||
     (error as { readonly code?: unknown }).code === "cancelled");
 

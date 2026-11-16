@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { Errors, Parser, z } from "incur";
+import { Errors, Parser } from "incur";
+import { z } from "zod";
 
 import { splitIncurBuiltinArguments } from "../cliBuiltinArguments.js";
 import type { CliInstance } from "./types.js";

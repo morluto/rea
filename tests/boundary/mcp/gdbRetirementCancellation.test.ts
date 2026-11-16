@@ -1,11 +1,12 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import type { CallToolResult, McpServer } from "@modelcontextprotocol/server";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";
+import type { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import {
-  registerGdbTools,
-  type GdbToolManager,
-} from "../../../src/server/registerGdbTools.js";
+  registerServiceTools,
+  type GdbToolOptions,
+} from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -57,25 +58,23 @@ it("compares cancellation before dispatch, during retirement, and an uncancelled
     );
     let handler!: (input: unknown, context: unknown) => Promise<CallToolResult>;
     const server = {
+      delivery: createToolResultDelivery(undefined),
       registerTool(name: string, _options: unknown, fn: typeof handler) {
         if (name === "gdb_console") handler = fn;
       },
-    } as unknown as McpServer;
+    } as unknown as EvidenceMcpServer;
     const execute = vi.fn(async () => ok({ evidence }));
     const manager = {
       execute,
       retryCleanupFailures: async () => ok(null),
-    } as unknown as GdbToolManager;
+    } as unknown as GdbToolOptions["manager"];
     const record = vi.fn((value: typeof evidence) =>
       session.recordEvidence(value),
     );
-    registerGdbTools(
+    registerServiceTools(
       server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
-      record,
-      session,
+      { gdb: { manager, session } },
+      { logger: silentLogger, recordEvidence: record },
     );
     const controller = new AbortController();
     const reason = { phase: mode };

@@ -24,7 +24,7 @@ import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
@@ -100,6 +100,7 @@ import {
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
@@ -392,7 +393,7 @@ export class JavaScriptAnalysisWorker {
           this.limits.memberMutationAllowance ??
             DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
         ),
-        text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
+        text_sha256: sha256Hex(file.text.value),
         file: metadata,
         package_type: packageType,
         purpose,
@@ -866,10 +867,7 @@ export class JavaScriptAnalysisWorker {
         },
       );
     const checkpoint = await readFile(path);
-    if (
-      expected !== undefined &&
-      createHash("sha256").update(checkpoint).digest("hex") !== expected.sha256
-    )
+    if (expected !== undefined && sha256Hex(checkpoint) !== expected.sha256)
       throw new AnalysisOutputError(
         OPERATION,
         "JavaScript static checkpoint digest does not match",

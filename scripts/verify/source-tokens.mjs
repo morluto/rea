@@ -16,6 +16,7 @@ const punctuator =
 const expressionKeywords = new Set([
   "await",
   "case",
+  "default",
   "delete",
   "do",
   "else",
@@ -33,17 +34,20 @@ const expressionKeywords = new Set([
 // A parenthesised head after these keywords ends where a statement starts.
 const controlKeywords = new Set(["if", "while", "for", "with"]);
 
-// After a closing bracket, `++`, `--`, an operand or a complete template an
-// expression has ended, so `/` divides. An expression starts after any other
-// punctuator, an expression keyword, the `)` that closes a control head such
-// as `if (…)`, and template text that opens a `${` substitution.
+// After a closing bracket, `++`, `--`, a TypeScript non-null assertion `!`,
+// an operand or a complete template an expression has ended, so `/` divides.
+// An expression starts after any other punctuator, an expression keyword, the
+// `)` that closes a control head such as `if (…)`, and template text that
+// opens a `${` substitution.
 const regexAllowedAfter = (token) =>
   token === undefined ||
   token.opensSubstitution === true ||
   token.keyword === true ||
   token.closesBlock === true ||
   (token.kind === "punct" && token.controlHead === true) ||
-  (token.kind === "punct" && !/^(?:[)\]}]|\+\+|--)$/u.test(token.text));
+  (token.kind === "punct" &&
+    token.nonNullAssertion !== true &&
+    !/^(?:[)\]}]|\+\+|--)$/u.test(token.text));
 
 // A `{` opens a statement block at the start of a statement, after the `)`
 // of a control or function head, an arrow, another brace or `;`, a block
@@ -140,6 +144,38 @@ const wordToken = (source, at) => {
 };
 
 /**
+ * Mark what a word token means for the tokens after it, from the tokens
+ * before it, and track the open parentheses and braces it opens or closes.
+ */
+const markToken = (token, tokens, parens, braces) => {
+  const previous = tokens.at(-1);
+  if (token.text === "(")
+    // `x.if(…)` and `x?.for(…)` are member calls, not control heads.
+    parens.push(
+      previous?.kind === "id" &&
+        controlKeywords.has(previous.text) &&
+        !isMemberAccess(tokens.at(-2)),
+    );
+  else if (token.text === ")" && parens.pop() === true)
+    token.controlHead = true;
+  else if (
+    token.kind === "id" &&
+    expressionKeywords.has(token.text) &&
+    !isMemberAccess(previous)
+  )
+    token.keyword = true;
+  // A `!` after a completed operand is a non-null assertion (`value!`),
+  // which leaves the operand complete; elsewhere it negates.
+  else if (token.text === "!" && !regexAllowedAfter(previous))
+    token.nonNullAssertion = true;
+  if (token.text === "{")
+    braces.push(opensBlock(previous) ? "block" : "object");
+  // After a statement block a new statement starts.
+  else if (token.text === "}" && braces.pop() === "block")
+    token.closesBlock = true;
+};
+
+/**
  * Scans source into code tokens and comments. The scanner reads only the last
  * two tokens, so a caller that needs only comments keeps no more than those.
  */
@@ -187,27 +223,7 @@ const scan = (source, keepTokens) => {
         continue;
       }
       at = start + token.text.length;
-      if (token.text === "(") {
-        const previous = tokens.at(-1);
-        // `x.if(…)` and `x?.for(…)` are member calls, not control heads.
-        parens.push(
-          previous?.kind === "id" &&
-            controlKeywords.has(previous.text) &&
-            !isMemberAccess(tokens.at(-2)),
-        );
-      } else if (token.text === ")" && parens.pop() === true)
-        token.controlHead = true;
-      else if (
-        token.kind === "id" &&
-        expressionKeywords.has(token.text) &&
-        !isMemberAccess(tokens.at(-1))
-      )
-        token.keyword = true;
-      if (token.text === "{")
-        braces.push(opensBlock(tokens.at(-1)) ? "block" : "object");
-      // After a statement block a new statement starts.
-      else if (token.text === "}" && braces.pop() === "block")
-        token.closesBlock = true;
+      markToken(token, tokens, parens, braces);
       tokens.push(token);
       if (!keepTokens && tokens.length > 64) tokens.splice(0, 62);
     }

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
+import {
+  webBundleAnalysisSchema,
+  webBundleCallSiteSchema,
+} from "./webBundleAnalysis.js";
 import { analysisResultLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptRouteSourceFactsSchema } from "./javascript/javascriptRouteFacts.js";
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
@@ -14,6 +17,8 @@ const observationsSchema = z.strictObject({
   endpoints: webBundleAnalysisSchema.shape.observations.shape.endpoints,
   webmcp_declarations:
     webBundleAnalysisSchema.shape.observations.shape.webmcp_declarations,
+  /** Browser requests whose URL argument is not a string literal. */
+  unresolved_endpoints: z.array(webBundleCallSiteSchema),
 });
 
 /**
@@ -112,7 +117,11 @@ export const webBundleScriptAnalysisSchema = z
         "script_key",
       ]);
     });
-    for (const collection of ["routes", "endpoints"] as const)
+    for (const collection of [
+      "routes",
+      "endpoints",
+      "unresolved_endpoints",
+    ] as const)
       result.observations[collection].forEach((finding, index) =>
         checkScriptKey(finding.location.script_key, [
           "observations",
@@ -138,6 +147,7 @@ export const webBundleScriptAnalysisSchema = z
         result.observations.edges.length > 0 ||
         result.observations.routes.length > 0 ||
         result.observations.endpoints.length > 0 ||
+        result.observations.unresolved_endpoints.length > 0 ||
         result.observations.webmcp_declarations.length > 0 ||
         result.inferences.length > 0;
       if (

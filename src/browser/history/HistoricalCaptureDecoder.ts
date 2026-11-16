@@ -46,6 +46,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   cancelledBy,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -256,6 +257,14 @@ export class HistoricalCaptureDecoder {
               message: reply.message,
             },
           ]);
+        // No capture budget raises a ceiling the decoder's reader named.
+        if (reply.reason === "fixed-limit")
+          throw fixedCeilingConstraint(
+            OPERATION,
+            reply.boundary,
+            reply.message,
+            reply.ceiling,
+          );
         const limit = captureLimitForReply(reply.reason);
         if (limit !== undefined) {
           const { parameter, expected } = CAPTURE_LIMITS[limit];

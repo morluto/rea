@@ -776,8 +776,9 @@ const assertContainedDirectory = async (
     throw new ArtifactReaderFailure(
       failureReason,
       "Directory traversal escaped or changed its artifact root",
-      failureReason === "integrity"
-        ? { integrityCheck: "container-identity" }
-        : undefined,
+      {
+        integrityCheck:
+          failureReason === "integrity" ? "container-identity" : undefined,
+      },
     );
 };

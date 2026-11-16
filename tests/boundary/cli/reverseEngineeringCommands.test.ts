@@ -1,6 +1,7 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import pino from "pino";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
 
