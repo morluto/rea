@@ -3,7 +3,14 @@ import { zstdDecompressSync } from "node:zlib";
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 
 import { sha256Hex } from "../../kernel/sha256Hex.js";
-import { hostRangeErrorKind } from "../parseFailure.js";
+import {
+  decodeLimit,
+  hostRangeErrorKind,
+  malformedInput,
+  ParseFailureError,
+  truncatedInput,
+  unsupportedInput,
+} from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
 
 /**
@@ -101,25 +108,16 @@ export const INSTALL_OPERATION_NAMES: Readonly<Record<number, string>> = {
 
 const EXTRACTABLE_TYPES = new Set([0, 6, 14]);
 
+/**
+ * How parsing a payload failed: the shared byte-format failure, so a short
+ * header is `truncated`, an unsupported major version `unsupported`, and a
+ * fixed ceiling `limit`.
+ */
 export type AndroidOtaPayloadParseError =
-  | {
-      readonly _tag: "AndroidOtaPayloadFormatFailure";
-      readonly message: string;
-    }
-  | {
-      readonly _tag: "AndroidOtaPayloadUnsupportedVersion";
-      readonly message: string;
-      readonly majorVersion: string;
-    }
-  | {
-      readonly _tag: "AndroidOtaPayloadCapacityFailure";
-      readonly message: string;
-      readonly limit: {
-        readonly name: string;
-        readonly maximum: number;
-        readonly unit: string;
-      };
-    };
+  | ParseFailureError<"malformed">
+  | ParseFailureError<"truncated">
+  | ParseFailureError<"unsupported">
+  | ParseFailureError<"limit">;
 
 export type AndroidOtaPayloadReconstructError =
   | AndroidOtaPayloadParseError
@@ -139,28 +137,33 @@ export type AndroidOtaPayloadReconstructError =
       readonly message: string;
     };
 
-const malformed = (message: string): AndroidOtaPayloadParseError => ({
-  _tag: "AndroidOtaPayloadFormatFailure",
-  message,
-});
+const ANDROID_OTA_FORMAT = "android-ota-payload";
+
+const malformed = (message: string): AndroidOtaPayloadParseError =>
+  malformedInput(ANDROID_OTA_FORMAT, message);
+
+const truncated = (message: string): AndroidOtaPayloadParseError =>
+  truncatedInput(ANDROID_OTA_FORMAT, message);
 
 const unsupportedVersion = (
   majorVersion: bigint,
-): AndroidOtaPayloadParseError => ({
-  _tag: "AndroidOtaPayloadUnsupportedVersion",
-  message: androidOtaUnsupportedVersion(majorVersion),
-  majorVersion: majorVersion.toString(),
-});
+): AndroidOtaPayloadParseError =>
+  unsupportedInput(
+    ANDROID_OTA_FORMAT,
+    androidOtaUnsupportedVersion(majorVersion),
+    { offset: 4, field: "major_version" },
+  );
 
 const capacity = (
   name: string,
   maximum: number,
   unit: string,
-): AndroidOtaPayloadParseError => ({
-  _tag: "AndroidOtaPayloadCapacityFailure",
-  message: `Android OTA payload ${name} exceeds the fixed ${String(maximum)}-${unit} ceiling`,
-  limit: { name: `Android OTA payload ${name}`, maximum, unit },
-});
+): AndroidOtaPayloadParseError =>
+  decodeLimit(
+    ANDROID_OTA_FORMAT,
+    `Android OTA payload ${name} exceeds the fixed ${String(maximum)}-${unit} ceiling`,
+    { name: `Android OTA payload ${name}`, maximum },
+  );
 
 export const androidOtaUnsupportedVersion = (
   version: bigint | number | string,
@@ -322,14 +325,8 @@ const protobufFailure = (cause: unknown): AndroidOtaPayloadParseError =>
       : "DeltaArchiveManifest protobuf is truncated or malformed",
   );
 
-class ManifestDecodeThrow extends Error {
-  constructor(readonly failure: AndroidOtaPayloadParseError) {
-    super(failure.message);
-  }
-}
-
 const fail = (failure: AndroidOtaPayloadParseError): never => {
-  throw new ManifestDecodeThrow(failure);
+  throw failure;
 };
 
 const unwrap = <T>(result: Result<T, AndroidOtaPayloadParseError>): T => {
@@ -350,9 +347,7 @@ const walk = (
     return ok(undefined);
   } catch (cause: unknown) {
     return err(
-      cause instanceof ManifestDecodeThrow
-        ? cause.failure
-        : protobufFailure(cause),
+      cause instanceof ParseFailureError ? cause : protobufFailure(cause),
     );
   }
 };
@@ -372,7 +367,7 @@ export const parseAndroidOtaHeader = (
     return err(malformed("Android OTA payload magic mismatch: expected CrAU"));
   if (bytes.length < 12)
     return err(
-      malformed(
+      truncated(
         `Android OTA payload header is truncated: ${String(bytes.length)} bytes, expected ${String(ANDROID_OTA_HEADER_V2_BYTES)}`,
       ),
     );
@@ -381,7 +376,7 @@ export const parseAndroidOtaHeader = (
     return err(unsupportedVersion(majorVersion));
   if (bytes.length < ANDROID_OTA_HEADER_V2_BYTES)
     return err(
-      malformed(
+      truncated(
         `Android OTA payload header is truncated: ${String(bytes.length)} bytes, expected ${String(ANDROID_OTA_HEADER_V2_BYTES)}`,
       ),
     );
@@ -410,7 +405,7 @@ export const parseAndroidOtaHeader = (
     return err(malformed("Android OTA payload header extents overflow"));
   if (fileSize < ANDROID_OTA_HEADER_V2_BYTES + size.value)
     return err(
-      malformed(
+      truncated(
         `Android OTA payload manifest is truncated: header declares ${String(size.value)} manifest bytes but the file ends at ${String(fileSize)}`,
       ),
     );
@@ -922,7 +917,7 @@ export const parseAndroidOtaPayload = (
   const manifestEnd = header.value.manifestOffset + header.value.manifestSize;
   if (bytes.length < manifestEnd)
     return err(
-      malformed(
+      truncated(
         `Android OTA payload manifest is truncated: header declares ${String(header.value.manifestSize)} bytes starting at ${String(header.value.manifestOffset)}`,
       ),
     );
@@ -1374,7 +1369,7 @@ export const reconstructAndroidOtaPartition = (
           : readBlob(operation.dataOffset, operation.dataLength);
       if (raw.length !== operation.dataLength)
         return err(
-          malformed(
+          truncated(
             `operation data for ${partition.name} is truncated: expected ${String(operation.dataLength)} bytes`,
           ),
         );

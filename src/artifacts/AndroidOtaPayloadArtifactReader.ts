@@ -292,16 +292,23 @@ const formatFailure = (
 const parseFailure = (
   failure: AndroidOtaPayloadParseError,
 ): ArtifactReaderFailure => {
-  if (failure._tag === "AndroidOtaPayloadCapacityFailure")
-    return new ArtifactReaderFailure("limit", failure.message, {
-      boundary: "capacity",
-      cause: failure,
-    });
-  if (failure._tag === "AndroidOtaPayloadUnsupportedVersion")
-    return new ArtifactReaderFailure("unavailable", failure.message, {
-      cause: failure,
-    });
-  return formatFailure(failure.message, { cause: failure });
+  switch (failure.kind) {
+    case "limit":
+      return new ArtifactReaderFailure("limit", failure.message, {
+        boundary: "capacity",
+        cause: failure,
+      });
+    case "unsupported":
+      return new ArtifactReaderFailure("unavailable", failure.message, {
+        cause: failure,
+      });
+    case "truncated":
+      return new ArtifactReaderFailure("format", failure.message, {
+        cause: failure,
+      });
+    case "malformed":
+      return formatFailure(failure.message, { cause: failure });
+  }
 };
 
 const reconstructFailure = (

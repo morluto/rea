@@ -232,8 +232,7 @@ it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", (
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadCapacityFailure",
-      limit: { maximum: 4096, unit: "byte" },
+      failure: { kind: "limit", limit: { maximum: 4096 } },
     },
   });
 });
@@ -253,10 +252,11 @@ it("refuses distinct operation data past the read budget as a capacity limit", (
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadCapacityFailure",
-      limit: {
-        maximum: ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
-        unit: "byte",
+      failure: {
+        kind: "limit",
+        limit: {
+          maximum: ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
+        },
       },
     },
   });
@@ -271,15 +271,21 @@ it("refuses a v1 header as an unsupported version", () => {
   expect(parseAndroidOtaHeader(bytes, bytes.length)).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadUnsupportedVersion",
-      majorVersion: "1",
+      kind: "unsupported",
+      failure: { field: "major_version" },
     },
   });
 });
 
 it("refuses a bad magic, truncated header, and a truncated manifest", () => {
-  expect(parse(Buffer.from("XXXX")).ok).toBe(false);
-  expect(parse(header({ length: 12 })).ok).toBe(false);
+  expect(parse(Buffer.from("XXXX"))).toMatchObject({
+    ok: false,
+    error: { kind: "malformed" },
+  });
+  expect(parse(header({ length: 12 }))).toMatchObject({
+    ok: false,
+    error: { kind: "truncated" },
+  });
   const full = fullAndroidOtaPayload();
   const parsed = parse(full);
   expect(parsed.ok).toBe(true);
@@ -291,7 +297,7 @@ it("refuses a bad magic, truncated header, and a truncated manifest", () => {
   );
   expect(parse(cut)).toMatchObject({
     ok: false,
-    error: { _tag: "AndroidOtaPayloadFormatFailure" },
+    error: { kind: "truncated" },
   });
 });
 
@@ -365,8 +371,10 @@ it("names the extraction ceiling, not unsupported operations, for a large REPLAC
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadCapacityFailure",
-      limit: { maximum: ANDROID_OTA_MAX_EXTRACT_BYTES, unit: "byte" },
+      failure: {
+        kind: "limit",
+        limit: { maximum: ANDROID_OTA_MAX_EXTRACT_BYTES },
+      },
     },
   });
 });
@@ -389,7 +397,7 @@ it("refuses operation data that overruns the payload blob", () => {
   });
   expect(parse(bytes)).toMatchObject({
     ok: false,
-    error: { _tag: "AndroidOtaPayloadFormatFailure" },
+    error: { kind: "malformed" },
   });
 });
 
@@ -403,7 +411,7 @@ it("refuses a truncated protobuf field in the manifest", () => {
   ]);
   expect(parse(bytes)).toMatchObject({
     ok: false,
-    error: { _tag: "AndroidOtaPayloadFormatFailure" },
+    error: { kind: "malformed" },
   });
 });
 
@@ -416,8 +424,10 @@ it("refuses an oversize manifest and metadata signature as capacity limits", () 
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadCapacityFailure",
-      limit: { maximum: ANDROID_OTA_MAX_MANIFEST_BYTES },
+      failure: {
+        kind: "limit",
+        limit: { maximum: ANDROID_OTA_MAX_MANIFEST_BYTES },
+      },
     },
   });
   expect(
@@ -428,8 +438,10 @@ it("refuses an oversize manifest and metadata signature as capacity limits", () 
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadCapacityFailure",
-      limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+      failure: {
+        kind: "limit",
+        limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+      },
     },
   });
 });
@@ -442,8 +454,10 @@ it("refuses an oversize manifest signatures_size before any signature read", () 
   expect(parse(bytes)).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadCapacityFailure",
-      limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+      failure: {
+        kind: "limit",
+        limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+      },
     },
   });
 });
@@ -515,8 +529,10 @@ it("charges repeated operations on one blob against the reconstruction budget", 
   ).toMatchObject({
     ok: false,
     error: {
-      _tag: "AndroidOtaPayloadCapacityFailure",
-      limit: { maximum: ANDROID_OTA_MAX_EXTRACT_BYTES, unit: "byte" },
+      failure: {
+        kind: "limit",
+        limit: { maximum: ANDROID_OTA_MAX_EXTRACT_BYTES },
+      },
     },
   });
 });
@@ -550,7 +566,7 @@ it("refuses destination extents outside the image and short operation data", () 
   };
   const refused = {
     ok: false,
-    error: { _tag: "AndroidOtaPayloadFormatFailure" },
+    error: { kind: "malformed" },
   };
   expect(
     reconstruct(
