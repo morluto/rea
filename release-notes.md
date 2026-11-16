@@ -448,6 +448,7 @@
 * **cli:** project reconstruction and source-to-bundle documents from their contracts ([#10697](https://github.com/morluto/rea/issues/10697)) ([9be6a96](https://github.com/morluto/rea/commit/9be6a96fd645cf7ab418398b9922c9b27966422e))
 * **cli:** project view-delivery inspectors from their contracts ([#10600](https://github.com/morluto/rea/issues/10600)) ([fa53f70](https://github.com/morluto/rea/commit/fa53f7070ae2fb89cfdebfd7c4332e6dab39231c))
 * **cli:** project WASM inspection and firmware commands from their contracts ([#10648](https://github.com/morluto/rea/issues/10648)) ([a761efd](https://github.com/morluto/rea/commit/a761efda70272fe9d70d0fe6d67531a773ebcdcf))
+* **cli:** read global arguments once with one REA owner ([#11687](https://github.com/morluto/rea/issues/11687)) ([5257a3d](https://github.com/morluto/rea/commit/5257a3d91278387d832aed41c96b8896c2313a46))
 * **cli:** register every command in an REA-owned command table ([#11680](https://github.com/morluto/rea/issues/11680)) ([f14e9a1](https://github.com/morluto/rea/commit/f14e9a1d282a7155c32f260730f5881d2c3e6c83))
 * **cli:** render command help with REA's own help owner ([#11683](https://github.com/morluto/rea/issues/11683)) ([ec1cf3a](https://github.com/morluto/rea/commit/ec1cf3a9bd193371a599ae69b1bc6325b4624b14))
 * **cli:** run one-shot commands through one shared owner ([#10405](https://github.com/morluto/rea/issues/10405)) ([bddbd80](https://github.com/morluto/rea/commit/bddbd80afb8e5e2c5b5d7a0f3906497b5be7e9b5))
