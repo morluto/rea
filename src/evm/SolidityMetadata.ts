@@ -5,6 +5,7 @@ import type {
   SolidityMetadata,
   SolidityMetadataScalar,
 } from "../domain/evm/solidityMetadata.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const PROFILE = "terminal-cbor-scalars-v1";
 const MAX_DEPTH = 64;
@@ -160,10 +161,7 @@ const solidityFailure = (
       },
     };
   return {
-    diagnostic: (cause instanceof Error ? cause.message : String(cause)).slice(
-      0,
-      512,
-    ),
+    diagnostic: errorMessage(cause).slice(0, 512),
   };
 };
 

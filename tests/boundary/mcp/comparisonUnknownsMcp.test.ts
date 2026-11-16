@@ -1,3 +1,4 @@
+import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
@@ -33,13 +34,10 @@ const observeAgain = (
   result = source.normalized_result,
 ) =>
   createEvidence(
-    source.subject === null
-      ? undefined
-      : {
-          path: `/tmp/fixture-${observation}`,
-          sha256: source.subject.digest.sha256,
-          format: source.subject.format,
-        },
+    {
+      ...fileSubjectTarget(source.subject),
+      path: `/tmp/fixture-${observation}`,
+    },
     source.provider,
     {
       predicateType: source.predicate_type,

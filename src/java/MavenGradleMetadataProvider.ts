@@ -1,20 +1,16 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  type StableArtifactSnapshot,
-  readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
+  readStableArtifact,
   stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
+  type StableArtifactSnapshot,
+} from "../resources/index.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";

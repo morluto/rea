@@ -959,6 +959,10 @@ it("refuses mixed terminal observation versions even with PID and port rules dis
       scenario: committed,
       full_scenario_sha256: digestProcessCommitment(committed),
       normalization_sha256: digestProcessCommitment(scenario.normalization),
+      root_process: {
+        state: "unknown",
+        reason: "the fixture launched no process",
+      },
       comparison_contract: contract,
       comparison_contract_sha256: digestProcessCommitment(contract),
     },
@@ -1004,6 +1008,10 @@ it("refuses mixed path normalization versions even with PID and port rules disab
       scenario: committed,
       full_scenario_sha256: digestProcessCommitment(committed),
       normalization_sha256: digestProcessCommitment(scenario.normalization),
+      root_process: {
+        state: "unknown",
+        reason: "the fixture launched no process",
+      },
       comparison_contract: contract,
       comparison_contract_sha256: digestProcessCommitment(contract),
     },

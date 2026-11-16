@@ -437,7 +437,7 @@ try {
         ({ evidence_id }) => evidence_id === partial.evidence_id,
       );
       assert.ok(failed, "Retained failed WASM Evidence missing from bundle");
-      assert.equal(failed.subject.digest.sha256, sha256(invalidBytes));
+      assert.equal(failed.subject.identity.sha256, sha256(invalidBytes));
       assert.equal(
         failed.normalized_result.tool_profile.timeout_ms,
         invalidInput.command_timeout_ms ?? 30_000,

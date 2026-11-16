@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createMavenGradleMetadataService } from "../composition/mavenGradleMetadata.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../contracts/java/mavenGradleMetadataToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -23,7 +22,6 @@ export const registerMavenGradleMetadataCommands = (
       "inspect_maven_gradle_metadata",
     ),
     {
-      command: CLI_COMMANDS.inspectMavenGradleMetadata,
       description:
         "Inspect a Maven POM or Gradle module-metadata document without running Maven or Gradle",
       positionals: ["path"],

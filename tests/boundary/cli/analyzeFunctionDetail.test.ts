@@ -7,7 +7,7 @@ import { expect, it, vi } from "vitest";
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";

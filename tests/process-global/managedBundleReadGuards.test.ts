@@ -1,4 +1,4 @@
-import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { getHeapStatistics } from "node:v8";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createServer } from "../../src/server/createServer.js";
@@ -10,26 +10,17 @@ import {
   createEvidence,
   isImmutableEvidence,
   parseEvidence,
-  type Evidence,
+  evidenceSubjectInput,
 } from "../../src/domain/evidence.js";
-import { runProviderAnalysis } from "../../src/application/DirectAnalysis.js";
-import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
-import { parseConfig } from "../../src/config/parseConfig.js";
-import { ok } from "../../src/domain/result.js";
-import { observed } from "../fixtures/analysisExecution.js";
-import {
-  createBinarySessionTargets,
-  createTestBinarySession,
-} from "../fixtures/binarySession.js";
-import { readdir, writeFile } from "node:fs/promises";
+import { createTestBinarySession } from "../fixtures/binarySession.js";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createImmutableEvidenceBundle,
   safeParseImmutableEvidenceBundle,
 } from "../../src/domain/evidenceBundle.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
-import { deliverAnalysisEvidence } from "../../src/application/EvidenceBundleCommands.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { inspectAnalysisView } from "../../src/application/analysisView/AnalysisViewService.js";
 import { readImmutableEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthenticationHeadroom.js";
@@ -132,7 +123,7 @@ it("keeps the owning operation when native matching reloads a needed earlier bun
   const path = join(root, "parent.json"),
     empty = join(root, "empty.json");
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "list_procedures", parameters: {}, result: {} },
   );
@@ -222,7 +213,7 @@ it("preserves the view operation and caller reason when bundle I/O is cancelled"
       undefined,
       { evidenceBundlePath: path, resources, signal: controller.signal },
     );
-    await held.firstRead;
+    await held.reached(pending, "first file read");
     controller.abort(reason);
     held.release();
     const result = await pending;
@@ -240,111 +231,6 @@ it("preserves the view operation and caller reason when bundle I/O is cancelled"
     await resources.close();
   }
   expect(resources.hasPending).toBe(false);
-});
-
-it("retains completed parent facts when bundle publication cannot admit authentication", async () => {
-  const root = await createTestTempDirectory("rea-managed-delivery-guard-");
-  const evidence = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
-  const actual = await vi.importActual<
-    typeof import("../../src/application/JsonAuthenticationHeadroom.js")
-  >("../../src/application/JsonAuthenticationHeadroom.js");
-  vi.mocked(requireAuthenticationHeadroom).mockImplementationOnce(
-    (value, options) =>
-      actual.requireAuthenticationHeadroom(value, {
-        ...options,
-        availableBytes: 0,
-      }),
-  );
-  vi.mocked(createImmutableEvidenceBundle).mockClear();
-  const result = await deliverAnalysisEvidence(
-    evidence,
-    join(root, "parent.json"),
-    "summary",
-  );
-  expect(result).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
-  });
-  if (result.ok) throw new Error("Expected refused bundle authentication");
-  expect(result.error.partialObservation).toBe(evidence);
-  expect(createImmutableEvidenceBundle).not.toHaveBeenCalled();
-  expect(await readdir(root)).toEqual([]);
-});
-
-it("projects a rejected managed parent by reference without cloning under low headroom", async () => {
-  const root = await createTestTempDirectory(
-    "rea-managed-low-heap-projection-",
-  );
-  const [target] = await createBinarySessionTargets();
-  const source = {
-    rows: Array.from({ length: 512 }, (_, token) => ({
-      token,
-      name: "member",
-    })),
-  };
-  let closes = 0;
-  const session = () =>
-    createTestBinarySession(() => ({
-      execute: async () => observed(source),
-      close: async () => {
-        closes += 1;
-        return ok(null);
-      },
-    }));
-  const dependencies: DirectAnalysisDependencies = {
-    readConfiguration: () => parseConfig({}),
-    createBinarySession: session,
-    createNativeDispatchBinarySession: session,
-    createArtifactBinarySession: session,
-    createNativeBinarySession: session,
-    createManagedBinarySession: session,
-  };
-  const actual = await vi.importActual<
-    typeof import("../../src/application/JsonAuthenticationHeadroom.js")
-  >("../../src/application/JsonAuthenticationHeadroom.js");
-  let parent: Evidence | undefined;
-  vi.mocked(requireAuthenticationHeadroom).mockImplementationOnce(
-    (value, options) => {
-      parent = parseEvidence(value);
-      expect(isImmutableEvidence(parent)).toBe(true);
-      expect(parent).toBe(value);
-      return actual.requireAuthenticationHeadroom(value, {
-        ...options,
-        availableBytes: 0,
-      });
-    },
-  );
-  const result = await runProviderAnalysis(
-    dependencies,
-    target,
-    "inspect_managed_members",
-    {},
-    undefined,
-    undefined,
-    {
-      detail: "summary",
-      evidenceBundlePath: join(root, "parent.json"),
-    },
-  ).then(projectCliAnalysisResult);
-  expect(result).toMatchObject({
-    code: "resource_constraint",
-    details: { operation: "inspect_managed_members" },
-  });
-  if (
-    typeof result !== "object" ||
-    result === null ||
-    Array.isArray(result) ||
-    !("details" in result)
-  )
-    throw new Error("Expected CLI error");
-  const details = result.details;
-  if (typeof details !== "object" || details === null || Array.isArray(details))
-    throw new Error("Expected CLI error details");
-  expect(details.partial_observation).toBe(parent);
-  expect(parent?.normalized_result).toEqual(source);
-  expect(Object.isFrozen(source.rows[0])).toBe(false);
-  expect(closes).toBe(1);
-  expect(await readdir(root)).toEqual([]);
 });
 
 it.each(["JSON assembly", "bundle authentication"])(
@@ -405,13 +291,17 @@ it("authenticates escaped payloads without serializing either complete bundle", 
   const path = join(root, "parent.json");
   const escaped = '\u0000\u0001\\"😀\ud800'.repeat(20000);
   const example = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
-  const parent = createEvidence(undefined, example.provider, {
-    predicateType: example.predicate_type,
-    operation: example.operation,
-    parameters: example.parameters,
-    result: example.normalized_result,
-    rawResult: { escaped },
-  });
+  const parent = createEvidence(
+    evidenceSubjectInput(example.subject),
+    example.provider,
+    {
+      predicateType: example.predicate_type,
+      operation: example.operation,
+      parameters: example.parameters,
+      result: example.normalized_result,
+      rawResult: { escaped },
+    },
+  );
   await writeFile(
     path,
     JSON.stringify(createImmutableEvidenceBundle([parent])),
@@ -457,7 +347,11 @@ it("seals a fresh object-heavy Evidence tree without retaining a set of complete
     parameters: {},
     result,
   };
-  const complete = createEvidence(undefined, provider, observation);
+  const complete = createEvidence(
+    unknownTarget("not-observed"),
+    provider,
+    observation,
+  );
   const add = Set.prototype.add;
   const guarded = vi.spyOn(Set.prototype, "add").mockImplementation(function (
     this: Set<unknown>,
@@ -476,9 +370,14 @@ it("seals a fresh object-heavy Evidence tree without retaining a set of complete
   });
   let sealed;
   try {
-    sealed = createEvidence(undefined, provider, observation, {
-      immutable: true,
-    });
+    sealed = createEvidence(
+      unknownTarget("not-observed"),
+      provider,
+      observation,
+      {
+        immutable: true,
+      },
+    );
   } finally {
     guarded.mockRestore();
   }

@@ -70,7 +70,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { CdpElectronProvider } from "./CdpElectronProvider.js";
 import { V8InspectorProvider } from "../inspector/V8InspectorProvider.js";

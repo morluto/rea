@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -71,7 +72,7 @@ it("uses the latest listed unknown revision when evaluating a boundary", async (
     if (first === undefined || second === undefined)
       throw new Error("Missing fixture Evidence");
     const unknownSource = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "unknown-source", name: "Unknown source", version: "1" },
       {
         operation: "observe_unknown",
@@ -178,7 +179,7 @@ describe("reconstruction coverage inline Evidence", () => {
       if (latest === undefined)
         throw new Error("Expected fixture verifier result");
       const inference = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "weak-proof", name: "Weak proof fixture", version: "1" },
         {
           operation: "infer",
@@ -216,7 +217,7 @@ describe("reconstruction coverage inline Evidence", () => {
     await withCoverageMcp(async ({ client }) => {
       const coverage = currentFixtureCoverage();
       const inference = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "tampered-proof", name: "Tampered proof fixture", version: "1" },
         {
           operation: "infer",

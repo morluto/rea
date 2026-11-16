@@ -192,9 +192,11 @@ cliTest(
       confidence: "observed",
       subject: {
         local_path: path,
-        format: "pe",
-        architecture: "x86_64",
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: {
+          format: "pe",
+          architecture: "x86_64",
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
       },
       normalized_result: {
         artifact: { path, bytes: bytes.length },

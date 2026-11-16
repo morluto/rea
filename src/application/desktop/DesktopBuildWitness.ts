@@ -38,9 +38,8 @@ import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
+} from "../../ports/ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
@@ -55,6 +54,7 @@ import {
   type EndedWitness,
   type WitnessRecord,
 } from "./DesktopBuildWitnessRecord.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const CHECK = "check_build_task";
 const FRESH =
@@ -313,7 +313,7 @@ export class DesktopBuildWitness {
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `Reading the app's state failed: ${errorText(cause)}`,
+              userMessage: `Reading the app's state failed: ${errorMessage(cause)}`,
               cause,
             }),
       );
@@ -586,7 +586,7 @@ export class DesktopBuildWitness {
     } catch (cause: unknown) {
       return err(
         new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-          userMessage: `The witness could not start its recording: ${errorText(cause)}`,
+          userMessage: `The witness could not start its recording: ${errorMessage(cause)}`,
           cause,
         }),
       );

@@ -1,14 +1,14 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   ELF_HARDENING_PROPERTIES,
   MACHO_HARDENING_PROPERTIES,
   PE_HARDENING_PROPERTIES,
   type BinaryHardeningRow,
 } from "../../domain/native/binaryHardening.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,

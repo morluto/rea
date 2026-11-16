@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -5,7 +6,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import {
   EXPECTED_CLEANUP_STOPPED_TRACE,
   failingValueTraceReads,
@@ -291,7 +292,7 @@ it("keeps the stopped trace and source-publication failure together", async () =
   const { port } = failingDiamond({
     "analyze_function:0x2000": childFailure("analyze_function", true),
   });
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "analyze_function",
     parameters: { procedure: "0x1000" },
     result: { source: "observed" },
@@ -368,7 +369,7 @@ it("retains the admitted trace and its completed sources as session Evidence", a
   const retained = session.evidenceForAnalysis(reference.evidence_id);
   expect(retained).toMatchObject({
     operation: "trace_native_values",
-    subject: { format: "dos-com" },
+    subject: { identity: { format: "dos-com" } },
   });
   expect(
     nativeValueTraceSchema.parse(retained?.normalized_result).traversal,

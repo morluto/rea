@@ -1,4 +1,4 @@
-import type { WebRuntimePort } from "./WebRuntimePort.js";
+import type { WebRuntimePort } from "../ports/WebRuntimePort.js";
 import { ok } from "../domain/result.js";
 import type { WebExecution } from "../domain/webExecution.js";
 import type { WebEventListeners } from "../domain/webEventListeners.js";

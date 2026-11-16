@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -13,7 +14,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
@@ -103,7 +104,7 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
   const root = await createTestTempDirectory("rea-unknown-divergent-");
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const records = ["create", "left", "right"].map((operation) =>
-    createEvidence(undefined, provider, {
+    createEvidence(unknownTarget("not-observed"), provider, {
       operation,
       parameters: {},
       result: {},
@@ -263,7 +264,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
     ],
   });
   const captureEvidence = (capture: typeof left) =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},

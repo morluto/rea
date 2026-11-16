@@ -10,7 +10,7 @@ import {
   rustDependencyPayload,
 } from "../../fixtures/rust/image.js";
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
 import { ParseFailureError } from "../../../src/domain/parseFailure.js";
 
@@ -381,6 +381,16 @@ it("retains dependency facts when compiler paths exceed the selected prefix", ()
     status: "partial",
     reason: "max_rustc_hashes",
     effective_limit: 64,
+    limit: {
+      control_kind: "parameter",
+      parameter: "max_rustc_hashes",
+      effective_value: 64,
+      unit: "count",
+      minimum: 1,
+      maximum: Number.MAX_SAFE_INTEGER,
+      default_value: 64,
+      applies_at: "next_call",
+    },
   });
   const recovered = readRustBinaryImage(bytes, 65);
   expect(recovered.rustc_commit?.hashes).toHaveLength(65);

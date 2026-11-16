@@ -588,8 +588,6 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
     cleaned: false,
     reason: "authored census unavailable",
   });
-  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
-  Object.defineProperty(process, "platform", { value: "win32" });
   const terminateTree = vi
     .spyOn(processOwnership, "cleanupWindowsProcessTree")
     .mockResolvedValue({ cleaned: true, signaled: true });
@@ -614,40 +612,37 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
       application as unknown as Awaited<
         ReturnType<typeof import("playwright-core")._electron.launch>
       >,
+    undefined,
+    "win32",
   );
 
-  try {
-    const result = await provider.capture({
-      ...electronActiveObservationInputSchema.parse({
-        executable_path: process.execPath,
-        application_path: process.execPath,
-      }),
-      application_root: dirname(process.execPath),
-    });
+  const result = await provider.capture({
+    ...electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: process.execPath,
+    }),
+    application_root: dirname(process.execPath),
+  });
 
-    if (result.ok) throw new Error("Expected unverified cleanup to fail");
-    expect(terminateTree).not.toHaveBeenCalled();
-    expect(result.error).toMatchObject({
-      _tag: "BrowserObservationError",
-      reason: "cleanup_failed",
-      cleanup: {
-        reason: expect.stringContaining(
-          "process table permission denied; helper cleanup was not proven",
-        ),
-      },
-      partialObservation: {
-        kind: "electron-active-observation",
-        capture: {
-          application: {
-            cleanup: "unverified",
-          },
+  if (result.ok) throw new Error("Expected unverified cleanup to fail");
+  expect(terminateTree).not.toHaveBeenCalled();
+  expect(result.error).toMatchObject({
+    _tag: "BrowserObservationError",
+    reason: "cleanup_failed",
+    cleanup: {
+      reason: expect.stringContaining(
+        "process table permission denied; helper cleanup was not proven",
+      ),
+    },
+    partialObservation: {
+      kind: "electron-active-observation",
+      capture: {
+        application: {
+          cleanup: "unverified",
         },
       },
-    });
-  } finally {
-    if (originalPlatform !== undefined)
-      Object.defineProperty(process, "platform", originalPlatform);
-  }
+    },
+  });
 });
 
 it("retains the initial snapshot when the final state read fails", async () => {

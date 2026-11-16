@@ -10,13 +10,13 @@ import { z } from "zod";
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../application/jeb/JebAnalysisPort.js";
+} from "../ports/jeb/JebAnalysisPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { JebOperation, JebRequest } from "../domain/jeb/jebAnalysis.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
 import {
@@ -50,6 +50,7 @@ import {
   type JebMcpConnection,
   type JebMcpConnectionFactory,
 } from "./JebMcpConnection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const JEB_CONNECTION_REMEDIATION = `Start a JEB client serving MCP (default ${DEFAULT_JEB_MCP_ENDPOINT}) or set REA_JEB_MCP_URL to the running endpoint.`;
 
@@ -619,7 +620,7 @@ export class JebProvider implements JebAnalysisPort {
         return new AnalysisCapabilityUnavailableError(
           "jeb",
           operation,
-          physical instanceof Error ? physical.message : String(physical),
+          errorMessage(physical),
           { cause, diagnostics, userMessage: JEB_CONNECTION_REMEDIATION },
         );
       },

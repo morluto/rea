@@ -20,7 +20,7 @@ import {
 import {
   mcpDoctorDeadlineRecovery,
   MCP_STARTUP_POLICY,
-} from "../../../src/mcpStartupPolicy.js";
+} from "../../../src/config/mcpStartupPolicy.js";
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
