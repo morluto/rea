@@ -20,6 +20,7 @@ import {
 } from "./commandManifests.js";
 import { cliCommands, type CliCommandEntry } from "./commandRegistry.js";
 import { suggestCommand } from "./commandSuggestion.js";
+import { unknownCommandReply } from "./unknownCommandReply.js";
 import { renderFailure } from "./outputEnvelope.js";
 import {
   availableUpdate,
@@ -164,9 +165,8 @@ const llmsAnswer = (
 };
 
 /**
- * `--schema` for a command, or the error for an unknown one. Markdown stays
- * with the dispatcher: it renders the document without Markdown escaping,
- * unlike REA's renderer, and that difference awaits a decision (#11654).
+ * `--schema` for a command, or the error for an unknown one. Known-command
+ * Markdown stays with the dispatcher until the remaining execution migration.
  */
 const schemaAnswer = (
   cli: CliInstance,
@@ -179,10 +179,13 @@ const schemaAnswer = (
       name,
       cliCommands(cli).map((command) => command.name),
     );
-    return answer(
-      `Error: '${name}' is not a command for '${cli.name}'.${suggestion === undefined ? "" : ` Did you mean '${suggestion}'?`}`,
-      1,
-    );
+    const { failure } = unknownCommandReply({
+      name: cli.name,
+      global,
+      commandIndex: 0,
+      suggestion,
+    });
+    return answer(`Error: ${failure.message}`, 1);
   }
   const { format, formatExplicit } = readCliOutputArguments(global);
   if (formatExplicit && format === "md") return undefined;
@@ -205,8 +208,7 @@ interface Invocation {
 /**
  * An unknown command: the closest command name, the corrected invocation and
  * the help command. On a terminal without an explicit format the error is
- * text, followed by the update notice when one is due. Markdown stays with
- * the dispatcher pending the escaping decision on #11654.
+ * text, followed by the update notice when one is due.
  */
 const unknownCommandAnswer = (
   cli: CliInstance,
@@ -215,7 +217,7 @@ const unknownCommandAnswer = (
 ): DiscoveryAnswer | undefined => {
   const controls = readCliOutputArguments(global);
   const format = controls.formatExplicit ? controls.format : "toon";
-  if (format === "md" || format === "csv" || format === "tsv") return undefined;
+  if (format === "csv" || format === "tsv") return undefined;
   const human = stdoutIsTerminal && !controls.formatExplicit;
   const unknown = global.command[0]!;
   const suggestion = suggestCommand(unknown, [
@@ -223,39 +225,26 @@ const unknownCommandAnswer = (
     "completions",
     "mcp",
   ]);
-  const commands = [
-    ...(suggestion === undefined
-      ? []
-      : [
-          {
-            command: `${cli.name} ${global.arguments.map((token) => (token === unknown ? suggestion : token)).join(" ")}`,
-          },
-        ]),
-    {
-      command: `${cli.name} --help`,
-      description: "see all available commands",
-    },
-  ];
   const update = human
     ? availableUpdate(cli.name, PRODUCT_IDENTITY.packageVersion, environment)
     : undefined;
   const notice =
     update === undefined ? [] : updateNoticeCta(cli.name, update).commands;
+  const { command, cta, failure } = unknownCommandReply({
+    name: cli.name,
+    global,
+    commandIndex: 0,
+    suggestion,
+    additionalCommands: notice,
+  });
   return answer(
     renderFailure(
+      failure,
       {
-        code: "COMMAND_NOT_FOUND",
-        message: `'${unknown}' is not a command for '${cli.name}'.${suggestion === undefined ? "" : ` Did you mean '${suggestion}'?`}`,
-      },
-      {
-        command: unknown,
+        command,
         duration: `${Math.round(performance.now() - started)}ms`,
       },
-      {
-        description:
-          commands.length === 1 ? "Suggested command:" : "Suggested commands:",
-        commands: [...commands, ...notice],
-      },
+      cta,
       {
         format,
         human,
