@@ -9,6 +9,7 @@ import {
   ANDROID_OTA_MAGIC,
   ANDROID_OTA_MAX_EXTENTS_TOTAL,
   ANDROID_OTA_MAX_EXTRACT_BYTES,
+  ANDROID_OTA_MAX_GROUP_PARTITION_NAMES,
   ANDROID_OTA_MAX_MANIFEST_BYTES,
   ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
   ANDROID_OTA_MAX_SIGNATURE_BYTES,
@@ -490,6 +491,41 @@ it("refuses manifest extents past the total extent budget as a capacity limit", 
       failure: {
         kind: "limit",
         limit: { maximum: ANDROID_OTA_MAX_EXTENTS_TOTAL },
+      },
+    },
+  });
+});
+
+it("refuses group partition names past the manifest-wide budget as a capacity limit", () => {
+  const group = (names: number) => {
+    const writer = new BinaryWriter()
+      .tag(1, WireType.LengthDelimited)
+      .string("super");
+    for (let index = 0; index < names; index += 1)
+      writer.tag(3, WireType.LengthDelimited).string("");
+    return writer.finish();
+  };
+  const half = ANDROID_OTA_MAX_GROUP_PARTITION_NAMES / 2;
+  const metadata = new BinaryWriter()
+    .tag(1, WireType.LengthDelimited)
+    .bytes(group(half))
+    .tag(1, WireType.LengthDelimited)
+    .bytes(group(half + 1))
+    .finish();
+  const manifest = new BinaryWriter()
+    .tag(15, WireType.LengthDelimited)
+    .bytes(metadata)
+    .finish();
+  const bytes = Buffer.concat([
+    header({ manifestSize: BigInt(manifest.length) }),
+    Buffer.from(manifest),
+  ]);
+  expect(parse(bytes)).toMatchObject({
+    ok: false,
+    error: {
+      failure: {
+        kind: "limit",
+        limit: { maximum: ANDROID_OTA_MAX_GROUP_PARTITION_NAMES },
       },
     },
   });

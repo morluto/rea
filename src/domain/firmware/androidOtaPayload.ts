@@ -48,6 +48,7 @@ export const ANDROID_OTA_MAX_EXTENTS_TOTAL = 1_048_576;
 export const ANDROID_OTA_MAX_SIGNATURE_BYTES = 1024 * 1024;
 export const ANDROID_OTA_MAX_SIGNATURES = 64;
 export const ANDROID_OTA_MAX_GROUPS = 256;
+export const ANDROID_OTA_MAX_GROUP_PARTITION_NAMES = 4096;
 export const ANDROID_OTA_MAX_APEX = 4096;
 export const ANDROID_OTA_MAX_EXTRACT_BYTES = 32 * 1024 * 1024;
 export const ANDROID_OTA_MAX_OPERATION_DATA_BYTES = 32 * 1024 * 1024;
@@ -475,6 +476,7 @@ interface ManifestDraft {
   hasDynamicMetadata: boolean;
   apex: AndroidOtaApexInfo[];
   operationTotal: number;
+  groupPartitionNameTotal: { count: number };
 }
 
 const emptyPartitionInfo = (): PartitionInfoDraft => ({
@@ -671,6 +673,7 @@ const decodePartition = (
 
 const decodeGroup = (
   bytes: Uint8Array,
+  partitionNameTotal: { count: number },
 ): Result<GroupDraft, AndroidOtaPayloadParseError> => {
   const group: GroupDraft = {
     name: undefined,
@@ -689,6 +692,15 @@ const decodeGroup = (
       return;
     }
     if (field === 3 && wire === WireType.LengthDelimited) {
+      if (partitionNameTotal.count >= ANDROID_OTA_MAX_GROUP_PARTITION_NAMES)
+        fail(
+          capacity(
+            "dynamic partition group partition_names total",
+            ANDROID_OTA_MAX_GROUP_PARTITION_NAMES,
+            "name",
+          ),
+        );
+      partitionNameTotal.count += 1;
       group.partitionNames.push(reader.string());
       return;
     }
@@ -747,7 +759,9 @@ const decodeDynamicMetadata = (
         fail(
           capacity("dynamic partition groups", ANDROID_OTA_MAX_GROUPS, "group"),
         );
-      draft.groups.push(unwrap(decodeGroup(reader.bytes())));
+      draft.groups.push(
+        unwrap(decodeGroup(reader.bytes(), draft.groupPartitionNameTotal)),
+      );
       return;
     }
     if (field === 2 && wire === WireType.Varint) {
@@ -805,6 +819,7 @@ const decodeManifest = (
     hasDynamicMetadata: false,
     apex: [],
     operationTotal: 0,
+    groupPartitionNameTotal: { count: 0 },
   };
   const operationTotal = { count: 0 };
   const extentTotal = { count: 0 };
