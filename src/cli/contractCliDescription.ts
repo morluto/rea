@@ -25,6 +25,7 @@ import {
   selectCliAnalysisSelector,
   type CliSelectorKind,
 } from "./analysisSelector.js";
+import { optionFlagName } from "./optionFields.js";
 
 /**
  * Framework-neutral CLI description of a tool contract. This module owns
@@ -784,13 +785,6 @@ const describedThroughWrappers = (value: z.ZodType): string | undefined => {
 };
 
 /**
- * Accept only field forms argv can carry, so a new contract field cannot
- * reach the CLI with an unreviewed spelling.
- */
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
-
-/**
  * JSON text for a structured contract field. Argv carries text; the decoded
  * value is admitted by the contract field itself, so `--schema` advertises
  * the contract's structure.
@@ -1535,7 +1529,7 @@ const describeEvidenceTargets = (
     targets: described,
     options,
     sourceFlags: Object.fromEntries(
-      options.map(({ field, key }) => [field, `--${kebabCase(key)}`]),
+      options.map(({ field, key }) => [field, `--${optionFlagName(key)}`]),
     ),
     admitSource: (operation, values) => {
       let admitted: Result<
@@ -1924,7 +1918,7 @@ export const describeContractCommand = <
         viewDelivery?.viewSelectsSummary === true
           ? analysisEvidenceDeliveryOptions.detail.unwrap().optional()
           : analysisEvidenceDeliveryOptions.detail;
-    else if (jsonText) schema = jsonTextField(declared, kebabCase(key));
+    else if (jsonText) schema = jsonTextField(declared, optionFlagName(key));
     else if (callerPath) {
       const admitted =
         core(declared) instanceof z.ZodArray
@@ -2455,8 +2449,8 @@ export const describeContractCommand = <
             if (positional)
               return selectorOption === undefined
                 ? []
-                : [[field, `--${kebabCase(selectorOption.key)}`] as const];
-            const flag = `--${kebabCase(key)}`;
+                : [[field, `--${optionFlagName(selectorOption.key)}`] as const];
+            const flag = `--${optionFlagName(key)}`;
             // A field group's option supplies each of its contract fields.
             if (group !== undefined)
               return group.map((grouped) => [grouped, flag] as const);

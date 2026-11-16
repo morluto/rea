@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  declaredOptionType,
+  isCountOption,
+  optionFlagName,
+} from "./optionFields.js";
 
 /**
  * REA's argv parser for one command: binds tokens to the command's
@@ -55,21 +60,6 @@ export interface CliParsedArgv {
   readonly options: Record<string, unknown>;
 }
 
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
-
-/** The declared type below optional, default, nullable and similar wrappers. */
-const declaredType = (field: z.ZodType): z.ZodType => {
-  let current = field;
-  for (
-    let inner: unknown = Reflect.get(current.def, "innerType");
-    inner instanceof z.ZodType;
-    inner = Reflect.get(current.def, "innerType")
-  )
-    current = inner;
-  return current;
-};
-
 const fieldOf = (
   schema: z.ZodObject | undefined,
   name: string,
@@ -80,23 +70,27 @@ const fieldOf = (
 
 const isBoolean = (schema: z.ZodObject | undefined, name: string): boolean => {
   const field = fieldOf(schema, name);
-  return field !== undefined && declaredType(field) instanceof z.ZodBoolean;
+  return (
+    field !== undefined && declaredOptionType(field) instanceof z.ZodBoolean
+  );
 };
 
 /** A count option (`.meta({ count: true })`) adds one per occurrence. */
-const isCount = (schema: z.ZodObject | undefined, name: string): boolean =>
-  fieldOf(schema, name)?.meta()?.count === true;
+const isCount = (schema: z.ZodObject | undefined, name: string): boolean => {
+  const field = fieldOf(schema, name);
+  return field !== undefined && isCountOption(field);
+};
 
 const isArray = (schema: z.ZodObject | undefined, name: string): boolean => {
   const field = fieldOf(schema, name);
-  return field !== undefined && declaredType(field) instanceof z.ZodArray;
+  return field !== undefined && declaredOptionType(field) instanceof z.ZodArray;
 };
 
 /** Number and boolean options arrive as text; the schema validates the result. */
 const coerce = (value: unknown, schema: z.ZodObject, name: string): unknown => {
   const field = fieldOf(schema, name);
   if (field === undefined || typeof value !== "string") return value;
-  const type = declaredType(field);
+  const type = declaredOptionType(field);
   if (type instanceof z.ZodNumber) return Number(value);
   if (type instanceof z.ZodBoolean) return value === "true";
   return value;
@@ -151,7 +145,9 @@ export const parseCliArgv = (
   );
   const camelOf = new Map(
     [...known].flatMap((name) =>
-      kebabCase(name) === name ? [] : [[kebabCase(name), name] as const],
+      optionFlagName(name) === name
+        ? []
+        : [[optionFlagName(name), name] as const],
     ),
   );
   const optionName = (raw: string): string | undefined => {

@@ -4,6 +4,12 @@ import {
 } from "./cliBuiltinArguments.js";
 import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
 import { formatCliOutput } from "./cli/cliOutputFormatter.js";
+import {
+  parseOutputFilter,
+  type OutputFilterPath,
+  type UnclosedOutputFilterSlice,
+} from "./cli/outputFilter.js";
+import type { Result } from "./domain/result.js";
 
 import { jsonOutputParts } from "./cli/jsonOutput.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
@@ -94,6 +100,10 @@ export type CliOutputArgumentValidation =
 
 interface CliOutputControls {
   readonly filterOutput: string | undefined;
+  /** `--filter-output` parsed once; a parse failure fails validation. */
+  readonly filterPaths:
+    | Result<readonly OutputFilterPath[], UnclosedOutputFilterSlice>
+    | undefined;
   readonly columns: readonly string[] | undefined;
   readonly format: CliOutputFormat;
   /** Whether `--json` or `--format` selected the format, rather than the default. */
@@ -134,6 +144,10 @@ export const parseCliOutputArguments = (
     const parseError = invalidValue !== undefined;
     const controls: CliOutputControls = {
       filterOutput,
+      filterPaths:
+        filterOutput === undefined
+          ? undefined
+          : parseOutputFilter(filterOutput),
       columns,
       format,
       formatExplicit,
@@ -238,24 +252,6 @@ export const parseCliOutputArguments = (
   return parsed();
 };
 
-/** Reject slices that cannot advance within Incur's comma-delimited paths. */
-const hasUnclosedFilterSlice = (expression: string): boolean => {
-  let depth = 0;
-  let unclosed = false;
-  for (const character of expression) {
-    if (character === "[") {
-      depth += 1;
-      unclosed = true;
-    } else if (character === "]") {
-      depth -= 1;
-      // Incur consumes everything through the next closing bracket, including
-      // nested opening brackets. Do not impose a different filter grammar.
-      unclosed = false;
-    } else if (character === "," && depth === 0 && unclosed) return true;
-  }
-  return unclosed;
-};
-
 /** Name a valued output flag that was given without a value. */
 export const missingCliOutputValueMessage = (flag: string): string =>
   `${flag} requires a value, as in ${flag} <value> or ${flag}=<value>.`;
@@ -264,6 +260,7 @@ export const missingCliOutputValueMessage = (flag: string): string =>
 const validateCliOutputControls = (
   {
     filterOutput,
+    filterPaths,
     columns,
     format,
     missingValue,
@@ -280,7 +277,7 @@ const validateCliOutputControls = (
       code: "INVALID_OUTPUT_VALUE",
       message: invalidValue,
     };
-  if (filterOutput !== undefined && hasUnclosedFilterSlice(filterOutput))
+  if (filterPaths?.ok === false)
     return {
       ok: false,
       format: format === "yaml" || format === "jsonl" ? format : "json",
