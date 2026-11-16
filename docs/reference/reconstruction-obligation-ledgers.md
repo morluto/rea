@@ -15,7 +15,11 @@ verifier whose authority is comparable to the original observation. The
 verifier must enumerate the obligation ID and its result must be present in the
 input Evidence bundle. Contradictions, duplicate definitions or owners,
 residual unknowns, missing dependencies, and unavailable authority keep closure
-open or failed.
+open or failed. A listed residual-unknown ID blocks that obligation even after
+the unknown record is resolved: evaluation records the ID and does not read the
+unknown's status. Remove the ID from the obligation and rebuild the ledger to
+clear it. The schema includes `characterized`; the evaluator does not assign
+that status.
 
 Original process authority requires observed `controlled-replay` Evidence with
 a supported process-capture provider and a valid capture payload. A matching
