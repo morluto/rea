@@ -4,7 +4,7 @@ import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
-} from "./ArtifactReader.js";
+} from "../resources/index.js";
 import {
   PositionalArtifactReader,
   type PositionalArtifactEntries,

@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
-import { streamChunkToBuffer } from "../artifacts/StreamBytes.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  streamChunkToBuffer,
+  ZipArtifactReader,
+} from "../resources/index.js";
 import type {
   AndroidJniLibraryObservation,
   AndroidJniReport,
@@ -12,7 +14,7 @@ import type {
 import { compileAndroidJniLibrarySelection } from "../domain/android/androidJniBindings.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { inspectAndroidJniLibrary } from "../native/android/AndroidJniLibrary.js";
+import { inspectAndroidJniLibrary } from "../domain/android/androidJniLibrary.js";
 import {
   JadxInterruption,
   throwIfJadxInterrupted,
@@ -21,6 +23,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Bounds cover the live library buffer, completed scan work and retained JSON separately. */
 export const ANDROID_JNI_LIBRARY_LIMITS = Object.freeze({
@@ -205,8 +208,11 @@ export const readAndroidJniLibraries = async (input: {
                     cause instanceof ArtifactReaderFailure
                       ? cause.reason
                       : "io",
-                  message:
-                    cause instanceof Error ? cause.message : String(cause),
+                  message: errorMessage(cause),
+                  ...(cause instanceof ArtifactReaderFailure &&
+                  cause.integrityCheck !== undefined
+                    ? { integrity_check: cause.integrityCheck }
+                    : {}),
                 },
               };
             }
@@ -272,10 +278,7 @@ export const readAndroidJniLibraries = async (input: {
           "jadx",
           [owner.resource],
           {
-            reason:
-              released.cause instanceof Error
-                ? released.cause.message
-                : String(released.cause),
+            reason: errorMessage(released.cause),
           },
           { operation, cause: released.cause },
         );

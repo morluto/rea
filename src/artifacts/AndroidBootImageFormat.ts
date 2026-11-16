@@ -11,7 +11,7 @@ import {
   malformedInput,
   ParseFailureError,
 } from "../domain/parseFailure.js";
-import { BinaryReader } from "../native/metadata/BinaryContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 
 export { hasAndroidBootImageMagic };
 

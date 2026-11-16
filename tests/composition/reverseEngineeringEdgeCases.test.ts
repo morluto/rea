@@ -102,7 +102,7 @@ it("records pathless objdump architecture support as provider capability evidenc
       operation: "architectures",
     });
     if (!result.ok) throw result.error;
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(result.value.parameters).not.toHaveProperty("path");
     expect(result.value.parameters).not.toHaveProperty(
       "artifact_sha256_before",
@@ -430,7 +430,7 @@ it("rejects work after reaching the concurrent provider-operation limit", async 
   await withVerifierCleanup(async () => {
     const rejection = service.executeRizinCommand({ path, command: "iI" });
     await awaitAcknowledgement(
-      rejection.then(() => {}),
+      rejection,
       Promise.all(admitted),
       "capacity response",
     );
@@ -831,6 +831,69 @@ it("releases a retained provider owner after cleanup succeeds", async () => {
 
     expect(recovered.ok).toBe(true);
     expect(cleanupOwner.stop).toHaveBeenCalledTimes(1);
+    expect(runOwned).toHaveBeenCalledTimes(2);
+  } finally {
+    await service.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("retains an objdump command's unverified process owner until a later inspection stops it", async () => {
+  const { directory, path } = await createArtifact();
+  let stopped = false;
+  const cleanupOwner = {
+    stop: vi.fn(async () =>
+      stopped
+        ? { status: "verified-cleanup" as const }
+        : { status: "incomplete" as const, reason: "objdump group remains" },
+    ),
+  } as unknown as ProviderProcessSupervisor;
+  const runOwned = vi
+    .fn<typeof runOwnedCommand>()
+    .mockRejectedValueOnce(
+      new OwnedCommandFailure(
+        "process",
+        "objdump cleanup could not be verified",
+        providerSnapshot({ exitCode: null }),
+        "objdump group remains",
+        undefined,
+        ["run-id", "pid:42"],
+        cleanupOwner,
+      ),
+    )
+    .mockResolvedValue(providerSnapshot());
+  const service = new ReverseEngineeringService({ runOwned });
+
+  try {
+    const first = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (first.ok) throw new Error("Expected retained objdump cleanup");
+    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(first.error.cleanup).toMatchObject({
+      reason: "objdump group remains",
+      resources: ["run-id", "pid:42"],
+    });
+
+    const blocked = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    expect(blocked).toMatchObject({
+      ok: false,
+      error: { cleanupIncomplete: true },
+    });
+    expect(runOwned).toHaveBeenCalledOnce();
+
+    stopped = true;
+    const recovered = await service.inspectWithObjdump({
+      path,
+      operation: "symbols",
+    });
+    if (!recovered.ok) throw recovered.error;
+    expect(first.error.cleanupIncomplete).toBe(false);
+    expect(cleanupOwner.stop).toHaveBeenCalledTimes(2);
     expect(runOwned).toHaveBeenCalledTimes(2);
   } finally {
     await service.close().catch(() => undefined);

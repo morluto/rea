@@ -158,7 +158,9 @@ const summarizeDossier = (dossier: FunctionDossier) => {
     },
     value_flow: {
       available: flow !== undefined,
-      truncated: flow?.truncated ?? false,
+      // Unavailable value-flow examined nothing: whether it would be
+      // truncated is unknown, not false.
+      truncated: flow === undefined ? null : flow.truncated,
     },
     facet_availability: dossier.facet_availability ?? null,
     counts: {

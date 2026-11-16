@@ -175,6 +175,7 @@ export const electronActiveWindowSchema = z.strictObject({
 });
 
 const coverageSchema = z.strictObject({
+  // lifecycle-state: how the observation session ended (attach, hook conflict, exit, cleanup).
   status: z.enum([
     "complete",
     "partial_attach",

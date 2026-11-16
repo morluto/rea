@@ -7,13 +7,13 @@ import type { ResolvedElectronFuseFile } from "./ElectronFusePath.js";
 import { createHash } from "node:crypto";
 import { lstat, type FileHandle } from "node:fs/promises";
 
-import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { readMachoImage } from "../domain/apple/machoLoadCommandReader.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   hasMachoMagic,
   readFatHeaderPrefix,
 } from "../domain/apple/machoContainer.js";
-import type { ReadAt } from "../artifacts/apple/MachoLoadCommandReader.js";
+import type { ReadAt } from "../domain/apple/machoLoadCommandReader.js";
 import {
   electronFuseName,
   electronFuseState,
@@ -26,11 +26,11 @@ import {
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 
 /** Admission and search bounds for one Electron executable. */
 export const ELECTRON_FUSE_LIMITS = {

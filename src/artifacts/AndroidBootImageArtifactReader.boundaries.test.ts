@@ -5,7 +5,7 @@ import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
-import { artifactFixedLimitFailure } from "./ArtifactReader.js";
+import { artifactFixedLimitFailure } from "../resources/index.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
   buildBootImage,

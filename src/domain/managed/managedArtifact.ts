@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
@@ -12,8 +14,7 @@ const offsetSchema = z.int().min(0);
  * examined nothing of that kind, unlike `partial`, which records a known gap.
  */
 export const managedInspectionStateSchema = z.enum([
-  "complete",
-  "partial",
+  ...knownCoverageStatusSchema.options,
   "unavailable",
 ]);
 export type ManagedInspectionState = z.infer<
@@ -65,6 +66,16 @@ const moduleIdentitySchema = z.object({
   row_offset: offsetSchema,
 });
 
+/**
+ * What a managed inspection established about the CLI metadata: none present,
+ * read in full or in part, or present but unreadable.
+ */
+export const managedMetadataStatusSchema = z.enum([
+  "absent",
+  ...knownCoverageStatusSchema.options,
+  "malformed",
+]);
+
 const managedArtifactReferenceSchema = z.object({
   path: z.string().min(1),
   sha256: digestSchema,
@@ -73,7 +84,7 @@ const managedArtifactReferenceSchema = z.object({
 });
 
 const managedMetadataSummarySchema = z.object({
-  status: z.enum(["absent", "complete", "partial", "malformed"]),
+  status: managedMetadataStatusSchema,
   version: z.string().nullable(),
   table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
 });
@@ -384,9 +395,8 @@ const managedNativeImplementationSchema = z.object({
 
 const targetRowResolvedSchema = z
   .boolean()
-  .exactOptional()
   .describe(
-    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Omitted by historical observations. Does not establish runtime binding.",
+    "True when the producer resolved the operand to a matching member row with a decoded signature and owner; false means unresolved. Does not establish runtime binding.",
   );
 
 const managedCallEdgeSchema = z.object({
@@ -450,6 +460,8 @@ const managedParseIssueSchema = z.object({
   scope: z.string().min(1),
   offset: offsetSchema.nullable(),
   detail: z.string().min(1),
+  /** The request parameter that bounded a resource-limit issue. */
+  limit: analysisParameterLimitSchema.exactOptional(),
 });
 
 /** Provider-neutral, execution-free PE/CLI triage and identity result. */
@@ -521,7 +533,7 @@ export const managedArtifactInspectionSchema = z.object({
     ),
   }),
   metadata: z.object({
-    status: z.enum(["absent", "complete", "partial", "malformed"]),
+    status: managedMetadataStatusSchema,
     version: z.string().nullable(),
     stream_names: z.array(z.string()),
     table_row_counts: z.record(z.string(), z.int().min(0).max(0xffff_ffff)),
@@ -582,7 +594,7 @@ export const managedMemberInspectionSchema = z
     // coverage. null means they were not examined, not that there were none.
     user_strings: z
       .object({
-        state: z.enum(["complete", "partial"]),
+        state: knownCoverageStatusSchema,
         literals: z.array(managedUserStringSchema),
         issues: z.array(managedParseIssueSchema),
       })

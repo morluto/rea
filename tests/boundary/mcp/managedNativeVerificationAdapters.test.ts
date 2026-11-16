@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -36,7 +37,7 @@ cliTest(
       const source = createEvidence(
         variant === "subject-sha256"
           ? { path: members.artifact.path, format: "pe", sha256: otherDigest }
-          : undefined,
+          : unknownTarget("not-observed"),
         original.provider,
         {
           operation: original.operation,

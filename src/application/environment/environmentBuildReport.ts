@@ -1,3 +1,4 @@
+import { boundedList } from "../../domain/boundedList.js";
 import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { z } from "zod";
 import { basename } from "node:path";
@@ -371,13 +372,14 @@ export const savedCredentialWarnings = (
     unmarked(action.save, "save");
     unmarked(action.save_response?.save, "save_response/save");
   });
+  const reported = boundedList(pointers, REPORTED_POINTERS);
   return pointers.length === 0
     ? []
     : [
         {
           code: "credential-named-saved-values",
           message: `${String(pointers.length)} saved values have credential-like names but are not marked secret, so the capture records them unredacted; mark them \`secret: true\` and record again before sharing.`,
-          pointers: pointers.slice(0, REPORTED_POINTERS),
+          pointers: [...reported.items],
         },
       ];
 };

@@ -1,10 +1,10 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+} from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { RegularFileState } from "../filesystem/RegularFile.js";
 import { createHash } from "node:crypto";
 import {
@@ -59,6 +59,7 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Operation name every export and cache failure reports. */
 export const KUNA_EXPORT_OPERATION = "kuna:decompile-project";
@@ -153,9 +154,6 @@ export interface KunaExportRequest {
   readonly deadline: KunaDeadline;
 }
 
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
@@ -164,7 +162,7 @@ const isMissing = (cause: unknown): boolean =>
 const projectCacheFailure = (cause: unknown) =>
   new ProviderAdapterError(KUNA_PROVIDER_ID, KUNA_EXPORT_OPERATION, {
     cause,
-    userMessage: `Kuna project cache failed: ${message(cause)}`,
+    userMessage: `Kuna project cache failed: ${errorMessage(cause)}`,
   });
 
 /** A project-cache read's own report, apart from its cleanup. */
@@ -212,11 +210,11 @@ export const kunaExportFailureDialect = (
     const { completion } = kunaCopyFailureFacts(read);
     if (completion !== undefined && completion.cancellation === undefined)
       return cleanup;
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       projectCacheReadFailure(read),
       cleanup,
       KUNA_EXPORT_OPERATION,
-    ).bindCleanupDependencies([cleanup]);
+    );
   },
   unclassified: (cause) => {
     if (cause instanceof ArtifactReaderFailure)

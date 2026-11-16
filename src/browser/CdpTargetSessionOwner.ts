@@ -2,7 +2,7 @@ import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
@@ -16,7 +16,8 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { CdpConnection } from "./CdpConnection.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Typed ownership facts shared by transport errors and their adapter projections. */
 class CdpTransportCleanupFailure extends ProviderCleanupError {
@@ -733,9 +734,7 @@ const cleanupError = (
       reason:
         cause instanceof AnalysisError
           ? (cause.userMessage ?? cause.message)
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
+          : errorMessage(cause),
     },
   });
 

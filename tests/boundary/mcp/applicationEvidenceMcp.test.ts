@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { Client } from "@modelcontextprotocol/client";
@@ -35,7 +37,8 @@ async function runUnicodeSourceMapComparison(
 ): Promise<void> {
   const baseApplication = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
   const subject = baseApplication.subject;
-  if (subject === null) throw new Error("Application Evidence has no subject");
+  if (subject.identity.kind !== "file")
+    throw new Error("Application Evidence has no subject");
   const baseResult = javascriptApplicationAnalysisResultSchema.parse(
     baseApplication.normalized_result,
   );
@@ -81,8 +84,8 @@ async function runUnicodeSourceMapComparison(
   const unicodeApplication = createEvidence(
     {
       path: baseResult.input_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     baseApplication.provider,
     {
@@ -309,12 +312,12 @@ async function assertRejectedEvidenceReferences(
   session: BinarySession,
 ): Promise<void> {
   const wrongOperation = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "inventory_artifact", parameters: {}, result: {} },
   );
   const wrongPredicate = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       predicateType: "fixture.application/v1",

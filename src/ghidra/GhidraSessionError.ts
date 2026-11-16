@@ -1,4 +1,4 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
@@ -92,10 +92,7 @@ export class GhidraSessionError extends Error {
     const combined =
       this.cleanupFailure === undefined || this.cleanupFailure === cleanup
         ? cleanup
-        : analysisErrorWithCleanupFailure(
-            this.cleanupFailure,
-            cleanup,
-          ).bindCleanupDependencies([this.cleanupFailure, cleanup]);
+        : analysisErrorWithCleanupDependencies(this.cleanupFailure, cleanup);
     return this.#copy(diagnostics, combined);
   }
 

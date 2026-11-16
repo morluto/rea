@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { z } from "zod";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -39,6 +40,7 @@ const ownedCommand = (
 ) =>
   runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", code],
     redactHttpTransportCredentials: true,
@@ -117,6 +119,7 @@ it("retains safe cleanup observations and retries their original owner", async (
   let retained = false;
   const output = await runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", print],
     redactHttpTransportCredentials: true,
@@ -160,6 +163,7 @@ const nativeOptions = (
   path: string,
 ): Omit<Parameters<typeof runPcapCommand>[0], "limits"> => ({
   operation: "inspect_pcap_capture",
+  platform: HOST_PLATFORM.platform,
   command: "/usr/bin/tshark",
   arguments: [
     "-n",

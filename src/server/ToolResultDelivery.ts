@@ -17,7 +17,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { NoBinaryOpenError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { estimateJsonStorage } from "../application/JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
@@ -31,6 +30,7 @@ import {
 } from "../config/mcpResponseBudget.js";
 import {
   encodeToolResult,
+  errorTextWireBytes,
   measureMcpResultWithinBudget,
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
@@ -440,10 +440,7 @@ export class ToolResultDelivery {
       const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
         .map((candidate) => ({
           candidate,
-          size: estimateJsonStorage(candidate.value, {
-            maximumValueBytes: this.resultBudgetBytes,
-            includeSerialized: false,
-          }).valueBytes,
+          size: errorTextWireBytes(candidate.value, this.resultBudgetBytes),
         }))
         .sort((left, right) => right.size - left.size);
       let next: AnalysisErrorProjection | undefined;

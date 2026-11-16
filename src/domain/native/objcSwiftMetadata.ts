@@ -1,5 +1,6 @@
 import { objcClassSymbol } from "../objcClassSymbol.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   BINARY_ARCHITECTURES,
   type BinaryTarget,
@@ -338,7 +339,11 @@ type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
 /** Per-facet coverage; empty arrays are meaningful only with this record. */
 export const nativeMetadataCoverageSchema = z.strictObject({
   facet: z.string().min(1),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
+  status: z.enum([
+    ...knownCoverageStatusSchema.options,
+    "unsupported",
+    "not_requested",
+  ]),
   reason: z.string().nullable(),
   examined: z.int().nonnegative(),
   decoded: z.int().nonnegative(),

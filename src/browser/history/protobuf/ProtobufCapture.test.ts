@@ -4,7 +4,7 @@ import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDir
 import { protobufCaptureDescriptor } from "../../../../tests/fixtures/protobufCapture.js";
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../resources/ArtifactResourceScope.js";
 import {
   inspectWebNetworkCaptureInputSchema,
   type WebNetworkCapture,

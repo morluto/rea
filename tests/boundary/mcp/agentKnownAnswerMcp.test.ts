@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { appendFile, cp } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -136,8 +137,8 @@ describe("known-answer packaged artifact digest binding", () => {
         arguments: { input_path: targets.javascript },
       });
       const evidence = resultEvidence(result);
-      expect(evidence.subject?.digest.sha256).toEqual(expect.any(String));
-      expect(evidence.subject?.digest.sha256).not.toBe(
+      expect(fileIdentity(evidence.subject).sha256).toEqual(expect.any(String));
+      expect(fileIdentity(evidence.subject).sha256).not.toBe(
         targets.javascriptSha256,
       );
       const manifest = claimManifest(claims, evidence);
@@ -291,8 +292,9 @@ describe("Notes export known-answer evaluation", () => {
           await createPackage(join(root, "notes-electron"), path);
         }
         const workflow = await notesWorkflow(harness, path);
-        const digest = notesEvidence(workflow, "analyze_javascript_application")
-          .subject?.digest.sha256;
+        const digest = fileIdentity(
+          notesEvidence(workflow, "analyze_javascript_application").subject,
+        ).sha256;
         expect(digest === targets.notesElectronSha256).toBe(path === foreign);
         const assessment = grade(
           workflow.events,

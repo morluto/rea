@@ -12,10 +12,9 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import {
@@ -23,6 +22,7 @@ import {
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 

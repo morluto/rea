@@ -5,7 +5,7 @@ import {
   applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
-import { pwntoolsInputBytes } from "../native/pwntools/PwntoolsInputLimit.js";
+import { pwntoolsInputBytes } from "../config/pwntoolsInputLimit.js";
 import { resolveCaptureDecoderHeap } from "../config/captureDecoderHeap.js";
 import { resolveRegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import { resolveRegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";

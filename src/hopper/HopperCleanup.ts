@@ -1,6 +1,6 @@
 import type { Socket } from "node:net";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { HopperError } from "../domain/hopperErrors.js";
 import { HopperProcessError } from "../domain/hopperErrors.js";
@@ -24,6 +24,7 @@ import {
 } from "./HopperDiagnostics.js";
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
 import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface CleanupIssue {
   readonly resource: string;
@@ -141,7 +142,7 @@ export const cleanupHopperSession = async (
       state.resources.add("hopper-lease");
       state.issues.push({
         resource: "hopper-lease",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
   }
