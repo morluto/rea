@@ -469,6 +469,7 @@ const explicitlyTimedSources = (
     specification.events.flatMap((event) =>
       includesCaptureLocalTiming(
         event.exact,
+        // optional-fact-default: a trace specification option, not an observation.
         new Set(event.ignore_fields ?? []),
       )
         ? [event.source]

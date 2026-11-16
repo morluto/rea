@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   mkdir,
   readFile,
@@ -137,8 +138,8 @@ cliTest(
     expect(physicalEvidence.normalized_result).toEqual(
       aliasEvidence.normalized_result,
     );
-    expect(physicalEvidence.subject?.digest.sha256).toBe(
-      aliasEvidence.subject?.digest.sha256,
+    expect(fileIdentity(physicalEvidence.subject).sha256).toBe(
+      fileIdentity(aliasEvidence.subject).sha256,
     );
     expect(physicalEvidence.evidence_id).not.toBe(aliasEvidence.evidence_id);
     const bundlePath = join(root, "retained-evidence.json");

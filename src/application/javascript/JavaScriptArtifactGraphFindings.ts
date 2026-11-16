@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
@@ -38,6 +37,7 @@ import {
   isJsonModuleTarget,
   isNativeAddonModuleTarget,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
 type StaticEndpoint = JavaScriptStaticAnalysis["endpoints"][number];
@@ -666,9 +666,7 @@ const addSourceMapEdge = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticSourceMap>,
 ): void => {
-  const declaredUrlSha256 = createHash("sha256")
-    .update(input.value.declared_url)
-    .digest("hex");
+  const declaredUrlSha256 = sha256Hex(input.value.declared_url);
   const resolution = resolveArtifactPathByContext({
     declaredPath: input.value.declared_url,
     sourcePath: input.file.path,

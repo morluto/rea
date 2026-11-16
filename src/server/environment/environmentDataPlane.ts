@@ -1,7 +1,7 @@
 import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   CANCELLED,
@@ -11,7 +11,7 @@ import {
   type RpcError,
   type StateIntake,
 } from "./stateIntake.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** One data-plane method's outcome; undefined from a method table means the method is not served. */
 export type RpcOutcome =

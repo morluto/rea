@@ -1,4 +1,4 @@
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import type { AnalysisCleanupLease } from "../resources/index.js";
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import type {

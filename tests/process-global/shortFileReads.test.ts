@@ -64,7 +64,7 @@ import {
   CPU,
   fatImage,
 } from "../../src/artifacts/apple/MachoImage.fixture.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { readElectronFuseImage } from "../../src/electron/ElectronFuseReader.js";
 import { ElectronFuseProvider } from "../../src/electron/ElectronFuseProvider.js";
 import { RegularFileChangedError } from "../../src/filesystem/RegularFile.js";

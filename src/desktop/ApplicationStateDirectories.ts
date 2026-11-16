@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import { xdgBase } from "./XdgBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The environment whose XDG folders, and the home whose dot-folders, may hold the application's state. */
 interface StateLocations {
@@ -114,8 +115,7 @@ export const stateDirectories = async (
           : {
               path,
               exists_at_start: null,
-              existence_error:
-                cause instanceof Error ? cause.message : String(cause),
+              existence_error: errorMessage(cause),
             };
       }
     }),

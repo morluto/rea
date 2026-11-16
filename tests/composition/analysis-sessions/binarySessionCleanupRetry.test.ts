@@ -5,13 +5,13 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../../src/artifacts/AnalysisCleanupLease.js";
+} from "../../../src/resources/AnalysisCleanupLease.js";
 import type {
   AnalysisClient,
   AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { HopperStartError } from "../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";

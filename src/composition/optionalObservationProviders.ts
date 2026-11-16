@@ -5,7 +5,7 @@ import type {
   OptionalObservationProviders,
   OptionalProviderLoadFailure,
   OptionalProviderLoadResult,
-} from "../application/OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import {
   CDP_BROWSER_PROVIDER_IDENTITY,
   PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY,
@@ -16,6 +16,7 @@ import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../inspector/providerIdentity.js
 import type { V8InspectorAdmission } from "../inspector/V8InspectorProvider.js";
 import type { WebBundleAnalysisAdmission } from "../browser/IsolatedWebBundleAnalyzer.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Precisely typed startup factories for the five existing observation ports. */
 export type OptionalObservationFactories = {
@@ -80,7 +81,7 @@ const loadPort = async <Port>(
   } catch (cause: unknown) {
     return err({
       providerId,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     });
   }
 };
