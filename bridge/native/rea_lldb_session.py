@@ -13,7 +13,9 @@ import sys
 import os
 import json
 import signal
-import tempfile
+import errno
+import fcntl
+import select
 import threading
 import traceback
 
@@ -34,6 +36,86 @@ try:
 except ImportError:
     # Allow fallback if invoked via python wrapper with PYTHONPATH already set
     pass
+
+
+class _BoundedPipeCapture:
+    """Drain immediate command output in-flight while bounding memory and avoiding disk files."""
+
+    def __init__(self, max_bytes: int):
+        self.max_bytes = max_bytes
+        self.r_fd, self.w_fd = os.pipe()
+        flags = fcntl.fcntl(self.r_fd, fcntl.F_GETFL)
+        fcntl.fcntl(self.r_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        self.captured_bytes = bytearray()
+        self.truncated = False
+        self.stop_reader = threading.Event()
+        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.thread.start()
+
+    def _drain(self, max_pass: int = 65536) -> int:
+        consumed = 0
+        while consumed < max_pass:
+            try:
+                chunk = os.read(self.r_fd, min(65536, max_pass - consumed))
+            except OSError as error:
+                if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    return consumed
+                return consumed
+            if not chunk:
+                return consumed
+            consumed += len(chunk)
+            remaining = max(0, self.max_bytes - len(self.captured_bytes))
+            if remaining:
+                self.captured_bytes.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                self.truncated = True
+        return consumed
+
+    def _reader_loop(self):
+        while not self.stop_reader.is_set():
+            try:
+                readable, _, _ = select.select([self.r_fd], [], [], 0.05)
+                if readable:
+                    self._drain()
+            except Exception:
+                break
+
+    def finish(self, timeout: float = 0.5) -> tuple[str, bool]:
+        self.stop_reader.set()
+        if self.w_fd is not None:
+            try:
+                os.close(self.w_fd)
+            except OSError:
+                pass
+            self.w_fd = None
+        if self.thread is not None:
+            self.thread.join(timeout=timeout)
+        try:
+            self._drain()
+        except Exception:
+            pass
+        if self.r_fd is not None:
+            try:
+                os.close(self.r_fd)
+            except OSError:
+                pass
+            self.r_fd = None
+        return self.captured_bytes.decode("utf-8", errors="replace"), self.truncated
+
+    def close(self):
+        self.stop_reader.set()
+        if self.w_fd is not None:
+            try:
+                os.close(self.w_fd)
+            except OSError:
+                pass
+            self.w_fd = None
+        if self.r_fd is not None:
+            try:
+                os.close(self.r_fd)
+            except OSError:
+                pass
+            self.r_fd = None
 
 
 class ReaLldbSessionDaemon:
@@ -114,22 +196,22 @@ class ReaLldbSessionDaemon:
         res = lldb.SBCommandReturnObject()
         result = {}
 
-        # Set up immediate output streaming to bounded temporary files if supported by LLDB
-        # to avoid accumulating unbounded memory in the daemon before response checks.
-        tmp_out = None
-        tmp_err = None
+        # Set up in-flight bounded streaming via non-blocking pipe to drain output
+        # without writing to disk or accumulating unbounded heap memory.
+        pipe_cap = None
         sbfile_out = None
         sbfile_err = None
-        try:
-            tmp_out = tempfile.NamedTemporaryFile("w+", delete=False)
-            tmp_err = tempfile.NamedTemporaryFile("w+", delete=False)
-            if hasattr(lldb, "SBFile") and hasattr(res, "SetImmediateOutputFile"):
-                sbfile_out = lldb.SBFile(tmp_out.fileno(), "w", False)
-                sbfile_err = lldb.SBFile(tmp_err.fileno(), "w", False)
+        if hasattr(lldb, "SBFile") and hasattr(res, "SetImmediateOutputFile"):
+            try:
+                pipe_cap = _BoundedPipeCapture(self.MAX_OUTPUT_CHARS)
+                sbfile_out = lldb.SBFile(pipe_cap.w_fd, "w", False)
+                sbfile_err = lldb.SBFile(pipe_cap.w_fd, "w", False)
                 res.SetImmediateOutputFile(sbfile_out)
                 res.SetImmediateErrorFile(sbfile_err)
-        except Exception:
-            pass
+            except Exception:
+                if pipe_cap:
+                    pipe_cap.close()
+                    pipe_cap = None
 
         def _run():
             try:
@@ -141,7 +223,6 @@ class ReaLldbSessionDaemon:
 
         def _read_bounded_output():
             out = ""
-            err = ""
             is_truncated = False
 
             out_size = res.GetOutputSize() if hasattr(res, "GetOutputSize") else 0
@@ -149,49 +230,32 @@ class ReaLldbSessionDaemon:
             if out_size > self.MAX_OUTPUT_CHARS or err_size > self.MAX_OUTPUT_CHARS:
                 is_truncated = True
 
-            # If streamed to temporary files, read only up to MAX_OUTPUT_CHARS directly
-            # without materializing massive output strings into the Python heap.
-            used_stream = False
-            if tmp_out and os.path.exists(tmp_out.name):
+            if pipe_cap:
                 try:
-                    with open(tmp_out.name, "r", encoding="utf-8", errors="replace") as f:
-                        out = f.read(self.MAX_OUTPUT_CHARS)
-                        if f.read(1):
-                            is_truncated = True
-                        used_stream = True
+                    pipe_out, pipe_trunc = pipe_cap.finish()
+                    if pipe_trunc:
+                        is_truncated = True
+                    out = pipe_out
                 except Exception:
                     pass
 
-            if tmp_err and os.path.exists(tmp_err.name):
-                try:
-                    with open(tmp_err.name, "r", encoding="utf-8", errors="replace") as f:
-                        err = f.read(self.MAX_OUTPUT_CHARS)
-                        if f.read(1):
-                            is_truncated = True
-                        used_stream = True
-                except Exception:
-                    pass
-
-            if not used_stream or (not out and not err):
+            # Fallback to direct return-object access if streaming pipe was unused or produced no output
+            if not out:
                 raw_out = res.GetOutput() or "" if hasattr(res, "GetOutput") else ""
                 raw_err = res.GetError() or "" if hasattr(res, "GetError") else ""
                 if len(raw_out) > self.MAX_OUTPUT_CHARS:
-                    out = raw_out[:self.MAX_OUTPUT_CHARS]
+                    raw_out = raw_out[:self.MAX_OUTPUT_CHARS]
                     is_truncated = True
-                else:
-                    out = raw_out
                 if len(raw_err) > self.MAX_OUTPUT_CHARS:
-                    err = raw_err[:self.MAX_OUTPUT_CHARS]
+                    raw_err = raw_err[:self.MAX_OUTPUT_CHARS]
                     is_truncated = True
-                else:
-                    err = raw_err
+                out = f"{raw_out}\n{raw_err}".strip() if (raw_err and raw_out) else (raw_out or raw_err).strip()
 
-            combined = f"{out}\n{err}".strip() if (err and out) else (out or err).strip()
-            if len(combined) > self.MAX_OUTPUT_CHARS:
-                combined = combined[:self.MAX_OUTPUT_CHARS]
+            if len(out) > self.MAX_OUTPUT_CHARS:
+                out = out[:self.MAX_OUTPUT_CHARS]
                 is_truncated = True
 
-            return combined, is_truncated
+            return out.strip(), is_truncated
 
         try:
             t = threading.Thread(target=_run, daemon=True)
@@ -240,12 +304,8 @@ class ReaLldbSessionDaemon:
                 "target": live_target,
             }
         finally:
-            for tf in (tmp_out, tmp_err):
-                if tf and os.path.exists(tf.name):
-                    try:
-                        os.unlink(tf.name)
-                    except Exception:
-                        pass
+            if pipe_cap:
+                pipe_cap.close()
 
     def launch(
         self,

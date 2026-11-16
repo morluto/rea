@@ -131,5 +131,22 @@ class ReaLldbSessionDaemonTests(unittest.TestCase):
         self.assertEqual(res["target_state"], "detached")
 
 
+    def test_bounded_pipe_capture_limits_and_truncates(self):
+        capture = session_module._BoundedPipeCapture(16)
+        # Write 64 bytes into the pipe
+        os.write(capture.w_fd, b"0123456789abcdef" * 4)
+        out, truncated = capture.finish()
+        self.assertEqual(out, "0123456789abcdef")
+        self.assertEqual(len(out), 16)
+        self.assertTrue(truncated)
+
+    def test_bounded_pipe_capture_exact_fit(self):
+        capture = session_module._BoundedPipeCapture(16)
+        os.write(capture.w_fd, b"0123456789abcdef")
+        out, truncated = capture.finish()
+        self.assertEqual(out, "0123456789abcdef")
+        self.assertFalse(truncated)
+
+
 if __name__ == "__main__":
     unittest.main()
