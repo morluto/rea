@@ -19,7 +19,20 @@ import {
   withCliEvidencePublication,
 } from "../../../src/cli/cliEvidencePublication.js";
 
-const metadata = { command: "fixture", duration: "1ms", format: "toon" };
+const metadata = { command: "fixture", duration: "1ms" };
+
+/** Fail at the formatter boundary after the command has returned its result. */
+const formattingFailureValue = (
+  cause = new RangeError("Invalid string length"),
+) =>
+  new Proxy(
+    {},
+    {
+      ownKeys: () => {
+        throw cause;
+      },
+    },
+  );
 
 it("keeps receipts isolated across concurrent invocations", async () => {
   const results = await Promise.all(
@@ -38,7 +51,7 @@ it("keeps receipts isolated across concurrent invocations", async () => {
   expect(cliEvidencePublicationReceipt()).toBeUndefined();
 });
 
-it("retains a publication receipt when formatting fails after the invocation context ends", async () => {
+it("retains a publication receipt after formatting recovery leaves the invocation context", async () => {
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
     parseCliOutputArguments([]),
@@ -52,13 +65,14 @@ it("retains a publication receipt when formatting fails after the invocation con
   if (output === undefined) throw new Error("Missing output owner");
   await withCliEvidencePublication(async () => {
     recordCliEvidencePublication({ path: "/tmp/result.json", bytes: 123 });
-    expect(await output.write({ result: "completed" }, metadata)).toBe(false);
+    expect(await output.write(formattingFailureValue(), metadata)).toBe(true);
   });
+  expect(cliEvidencePublicationReceipt()).toBeUndefined();
   expect(
     await output.recoverFormattingFailure(
       new RangeError("Invalid string length"),
     ),
-  ).toBe(true);
+  ).toBe(false);
   expect(output.error).toMatchObject({
     code: "resource_constraint",
     details: {
@@ -138,7 +152,11 @@ describe("CLI formatting stage admission", () => {
   it("declines errors before a result or from a different failure class", async () => {
     const output = createCliResultOutput(
       parseCliOutputArguments([]),
-      new Writable(),
+      new Writable({
+        write(_chunk, _encoding, done) {
+          done();
+        },
+      }),
     );
     expect(output).toBeDefined();
     expect(
@@ -153,7 +171,7 @@ describe("CLI formatting stage admission", () => {
       new Error("operation failed"),
     ])
       expect(await output?.recoverFormattingFailure(cause)).toBe(false);
-    expect(output?.handled).toBe(false);
+    expect(output?.handled).toBe(true);
   });
 
   it("keeps command RangeErrors distinct from post-result formatting capacity failures", async () => {
@@ -225,8 +243,9 @@ describe("CLI formatting recovery outcomes", () => {
         },
       }),
     );
-    await output?.write({ result: "completed" }, metadata);
-    await expect(output?.recoverFormattingFailure(cause)).rejects.toBe(cause);
+    await expect(
+      output?.write(formattingFailureValue(cause), metadata),
+    ).rejects.toBe(cause);
     expect(output?.handled).toBe(true);
     expect(output?.failed).toBe(true);
     expect(await output?.recoverFormattingFailure(cause)).toBe(false);
@@ -271,12 +290,12 @@ describe("CLI formatting recovery outcomes", () => {
         remediation: { action: "Check the selected path." },
         details: { partial_observation: { text: "captured" } },
       }));
-      expect(await output?.write(value, metadata)).toBe(false);
-      expect(
-        await output?.recoverFormattingFailure(
-          new RangeError("Invalid string length"),
-        ),
-      ).toBe(true);
+      Object.defineProperty(value, "details", {
+        get() {
+          throw new RangeError("Invalid string length");
+        },
+      });
+      expect(await output?.write(value, metadata)).toBe(true);
       expect(output?.error).toMatchObject({
         code: "resource_constraint",
         details: {

@@ -527,7 +527,7 @@ describe("full-output token counts", () => {
     );
   });
   it("counts the exact emitted JSON representation and selected document", async () => {
-    const metadata = { command: "fixture", duration: "0ms", format: "json" };
+    const metadata = { command: "fixture", duration: "0ms" };
     for (const terminal of [false, true]) {
       for (const flags of [
         [],
@@ -553,12 +553,24 @@ describe("full-output token counts", () => {
             destination,
           );
           if (output === undefined) throw new Error("Missing output surface");
-          await output.write({ value: ["hello", "雪😀"] }, metadata);
+          await output.write(
+            { rows: ["hello", "雪😀"] },
+            metadata,
+          );
           return Buffer.concat(chunks).toString("utf8");
         };
-        expect(Number((await render(true)).trim())).toBe(
-          estimateTokenCount(await render(false)),
-        );
+        const document = await render(false);
+        // JSONL counts each emitted line independently, including metadata.
+        const expected = flags.includes("jsonl")
+          ? document
+              .split("\n")
+              .filter(Boolean)
+              .reduce(
+                (total, line) => total + estimateTokenCount(`${line}\n`),
+                0,
+              )
+          : estimateTokenCount(document);
+        expect(Number((await render(true)).trim())).toBe(expected);
       }
     }
   });

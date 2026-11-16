@@ -85,10 +85,12 @@ it.each([false, true])(
 );
 
 it("keeps valid supplementary characters and an authored replacement character", async () => {
+  const chunks: Buffer[] = [];
   const output = createCliResultOutput(
     parseCliOutputArguments(["--format", "toon"]),
     new Writable({
-      write(_chunk, _encoding, done) {
+      write(chunk: Buffer, _encoding, done) {
+        chunks.push(chunk);
         done();
       },
     }),
@@ -99,7 +101,11 @@ it("keeps valid supplementary characters and an authored replacement character",
       { value: "😀�" },
       { command: "fixture", duration: "1ms" },
     ),
-  ).toBe(false);
+  ).toBe(true);
+  expect(output.error).toBeUndefined();
+  expect(decode(Buffer.concat(chunks).toString("utf8"))).toEqual({
+    value: "😀�",
+  });
 });
 
 it("only refuses malformed code units in selected TOON output", async () => {

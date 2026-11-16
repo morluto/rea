@@ -64,17 +64,17 @@ cliTest(
     const renderer = await createMarkdownRenderer(process.cwd(), {
       linkify: false,
     });
+    const visibleText = (node: DefaultTreeAdapterTypes.Node): string =>
+      node.nodeName === "#text" && "value" in node
+        ? node.value
+        : "childNodes" in node
+          ? node.childNodes.map(visibleText).join("")
+          : "";
     const renderedCells = (output: string): string[] => {
       const cells: string[] = [];
       const visit = (node: DefaultTreeAdapterTypes.Node): void => {
         if ("tagName" in node && node.tagName === "td") {
-          const text = (child: DefaultTreeAdapterTypes.Node): string =>
-            child.nodeName === "#text" && "value" in child
-              ? child.value
-              : "childNodes" in child
-                ? child.childNodes.map(text).join("")
-                : "";
-          cells.push(text(node));
+          cells.push(visibleText(node));
         } else if ("childNodes" in node) node.childNodes.forEach(visit);
       };
       visit(parseFragment(renderer.render(output)));
@@ -85,7 +85,9 @@ cliTest(
     expect(Number(count.stdout.trim())).toBe(
       estimateTokenCount(markdown.stdout.trimEnd()),
     );
-    expect(window.stdout).toContain("[truncated: showing tokens 0–20 of ");
+    expect(
+      visibleText(parseFragment(renderer.render(window.stdout))),
+    ).toContain("[truncated: showing tokens 0–20 of ");
     expect(window.stdout).toContain("nextOffset");
 
     // A different parser error has a much longer enum. Compare the visible
