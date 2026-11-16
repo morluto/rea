@@ -263,7 +263,7 @@ it("keeps value-flow counts unknown in the default summary when the provider rec
   expect(evidence.normalized_result).toMatchObject({
     kind: "summary",
     summary: {
-      value_flow: { available: false, truncated: false },
+      value_flow: { available: false, truncated: null },
       counts: {
         value_flow_operations: null,
         value_flow_def_use: null,

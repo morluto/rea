@@ -4,7 +4,11 @@ import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
 } from "../resources/index.js";
-import { traverseDirectory } from "./ReferenceSourceReaderEntries.js";
+import {
+  prefetchDirectoryValidations,
+  settleDirectoryAdmissions,
+  traverseDirectory,
+} from "./ReferenceSourceReaderEntries.js";
 import type {
   ReferenceSourceReaderOptions,
   ReferenceSourceRead,
@@ -76,6 +80,8 @@ const readSource = async (
     entries: [],
     exclusions: [],
     pending: [{ path: canonicalRoot }],
+    settling: [],
+    openingLookups: 0,
     bytesRead: 0,
   };
   const traversal = await traverse(state);
@@ -117,12 +123,30 @@ const readSource = async (
 const traverse = async (
   state: TraversalState,
 ): Promise<ReferenceSourceResult<undefined>> => {
-  while (state.pending.length > 0) {
-    if (isAborted(state.signal)) return err(cancelled(state.signal));
-    const current = state.pending.pop();
-    if (current === undefined) break;
-    const result = await traverseDirectory(state, current);
-    if (!result.ok) return result;
+  try {
+    while (state.pending.length > 0) {
+      if (isAborted(state.signal)) {
+        await settleDirectoryAdmissions(state);
+        return err(cancelled(state.signal));
+      }
+      prefetchDirectoryValidations(state);
+      const current = state.pending.pop();
+      if (current === undefined) break;
+      const result = await traverseDirectory(state, current);
+      if (!result.ok) {
+        await settleDirectoryAdmissions(state);
+        return result;
+      }
+    }
+    await settleDirectoryAdmissions(state);
+    return isAborted(state.signal)
+      ? err(cancelled(state.signal))
+      : ok(undefined);
+  } finally {
+    // No observation started ahead of its turn outlives the read.
+    await Promise.allSettled([
+      ...state.settling,
+      ...state.pending.flatMap(({ validation }) => validation ?? []),
+    ]);
   }
-  return ok(undefined);
 };

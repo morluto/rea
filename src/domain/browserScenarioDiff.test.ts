@@ -1026,7 +1026,7 @@ describe("browser scenario comparison validation", () => {
     ).toBe(false);
   });
 
-  it("returns every aligned step beyond the former capture ceiling", () => {
+  it("returns every aligned step of long scenarios", () => {
     const before = multiStepScenarioCapture(130, "before");
     const after = multiStepScenarioCapture(130, "after");
     const result = compareBrowserScenarios(

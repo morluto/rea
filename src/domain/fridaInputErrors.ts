@@ -1,4 +1,4 @@
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 
 /** A session ID that names no open Frida session owned by this process. */
 export const unknownFridaSession = (

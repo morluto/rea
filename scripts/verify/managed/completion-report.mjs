@@ -1,5 +1,33 @@
-import { createEvidence } from "../../../dist/domain/evidence.js";
-import { unknownTarget } from "../../../dist/domain/targetIdentity.js";
+import { createEvidence } from "#dist/domain/evidence.js";
+import { unknownTarget } from "#dist/domain/targetIdentity.js";
+
+/** @typedef {import("#dist/domain/binaryTargetTypes.js").BinaryTarget} BinaryTarget */
+/** @typedef {import("#dist/domain/evidence.js").EvidenceSubjectTarget} EvidenceSubjectTarget */
+/**
+ * A verified file as the manifest verifier and ILSpy oracle report it.
+ * @typedef {{ readonly file_name: string; readonly sha256: string }} ReportedTarget
+ */
+/**
+ * A source-owned fixture the conformance run wrote and resolved.
+ * @typedef {{ readonly target: BinaryTarget }} ResolvedFixture
+ */
+/**
+ * The completed conformance observations the claims are projected from.
+ * @typedef {{
+ *   readonly modern: ResolvedFixture;
+ *   readonly framework: ResolvedFixture;
+ *   readonly nativeFunctionTarget: EvidenceSubjectTarget;
+ *   readonly readyToRun: ResolvedFixture;
+ *   readonly obfuscated: ResolvedFixture;
+ *   readonly left: ResolvedFixture;
+ *   readonly right: ResolvedFixture;
+ *   readonly nativeOnly: ResolvedFixture;
+ *   readonly malformed: ResolvedFixture;
+ *   readonly manifestSelfTest: { readonly target: ReportedTarget };
+ *   readonly operatorManifest: { readonly target: ReportedTarget } | null;
+ *   readonly ilspyOracle: { readonly fixture: ReportedTarget } | null;
+ * }} ManagedCompletionReportInput
+ */
 
 const COMPLETION_PROVIDER = {
   id: "rea-managed-conformance",
@@ -7,6 +35,15 @@ const COMPLETION_PROVIDER = {
   version: "1",
 };
 
+/**
+ * @param {{
+ *   readonly claimId: string;
+ *   readonly scenarioId: string;
+ *   readonly targets?: readonly (BinaryTarget | EvidenceSubjectTarget)[];
+ *   readonly status?: "pass" | "unsupported";
+ *   readonly limitations?: readonly string[];
+ * }} claim
+ */
 const completionClaim = ({
   claimId,
   scenarioId,
@@ -48,11 +85,16 @@ const completionClaim = ({
   };
 };
 
+/**
+ * @param {ReportedTarget | undefined} target
+ * @returns {EvidenceSubjectTarget[]}
+ */
 const optionalTarget = (target) =>
   target === undefined
     ? []
     : [{ path: target.file_name, sha256: target.sha256, format: "pe" }];
 
+/** @param {ManagedCompletionReportInput} input */
 const sourceOwnedClaims = ({
   modern,
   framework,
@@ -128,6 +170,7 @@ const sourceOwnedClaims = ({
   }),
 ];
 
+/** @param {ManagedCompletionReportInput} input */
 const optionalClaims = ({ operatorManifest, ilspyOracle }) => [
   completionClaim({
     claimId: "managed.operator-local-manifest",
@@ -149,7 +192,11 @@ const optionalClaims = ({ operatorManifest, ilspyOracle }) => [
   }),
 ];
 
-/** Project completed managed assertions into the standard verifier report. */
+/**
+ * Project completed managed assertions into the standard verifier report.
+ * @param {ManagedCompletionReportInput} input
+ * @param {unknown} verifierRun The completed run record, reported unchanged.
+ */
 export const createManagedCompletionReport = (input, verifierRun) => ({
   verifier: {
     id: COMPLETION_PROVIDER.id,

@@ -1,4 +1,7 @@
-import { unknownTarget } from "../domain/targetIdentity.js";
+import {
+  unknownTarget,
+  type SessionTargetIdentity,
+} from "../domain/targetIdentity.js";
 import {
   gdbMiConstText,
   gdbMiResultHeader,
@@ -345,6 +348,20 @@ interface GdbSession {
   protocolError: DebuggerSessionStop | undefined;
   recentRecordsTruncated: boolean;
 }
+
+/**
+ * GDB command Evidence names the session REA minted. `start_gdb_session`
+ * launches no program file: programs are loaded or attached by console
+ * commands that REA does not hash, so the session target stays unknown.
+ */
+const gdbSessionSubject = (
+  session: Pick<GdbSession, "id">,
+): SessionTargetIdentity => ({
+  kind: "session",
+  session_kind: "gdb",
+  id: session.id,
+  target: unknownTarget("not-observed"),
+});
 
 const gdbCloseUnavailable = (): AnalysisInputError =>
   unknownDebuggerSessionError(GDB_SESSION_TOOLS, "close_gdb_session");
@@ -841,7 +858,7 @@ export class GdbSessionManager {
       const startupEvidence =
         startupEvidencePayload === undefined
           ? undefined
-          : createEvidence(unknownTarget("not-observed"), session.provider, {
+          : createEvidence(gdbSessionSubject(session), session.provider, {
               predicateType: "rea.debugger.startup-observation",
               operation: "start_gdb_session",
               parameters: {
@@ -1056,7 +1073,7 @@ export class GdbSessionManager {
               accepted.value,
             );
             const evidence = createEvidence(
-              unknownTarget("not-observed"),
+              gdbSessionSubject(session),
               session.provider,
               {
                 predicateType: "rea.debugger.console-observation",
@@ -1130,7 +1147,7 @@ export class GdbSessionManager {
                 command,
               };
               const evidence = createEvidence(
-                unknownTarget("not-observed"),
+                gdbSessionSubject(session),
                 session.provider,
                 {
                   predicateType: "rea.debugger.console-observation",
@@ -1705,7 +1722,7 @@ export class GdbSessionManager {
     const partialObservation =
       partial === undefined
         ? undefined
-        : createEvidence(unknownTarget("not-observed"), session.provider, {
+        : createEvidence(gdbSessionSubject(session), session.provider, {
             predicateType: "rea.debugger.console-observation",
             operation: "gdb_console",
             parameters: {
@@ -1953,7 +1970,7 @@ export class GdbSessionManager {
           },
         );
         const evidence = createEvidence(
-          unknownTarget("not-observed"),
+          gdbSessionSubject(session),
           session.provider,
           {
             predicateType:
@@ -2049,7 +2066,7 @@ export class GdbSessionManager {
           completion_status: "unknown",
         };
         const evidence = createEvidence(
-          unknownTarget("not-observed"),
+          gdbSessionSubject(session),
           session.provider,
           {
             predicateType: "rea.debugger.console-observation",

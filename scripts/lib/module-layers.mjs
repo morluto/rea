@@ -452,6 +452,16 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
       "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
   }),
   Object.freeze({
+    from: "desktop",
+    to: "electron",
+    files: Object.freeze(["ElectronFuseReader.ts"]),
+    // The Linux application inventory marks an executable as Electron when
+    // it carries a fuse sentinel. It locates the sentinel with the electron
+    // provider's fuse reader instead of searching the fuse wire again.
+    reason:
+      "the Linux application inventory detects Electron executables with the electron provider's fuse reader",
+  }),
+  Object.freeze({
     from: "captures",
     to: "pcap",
     files: Object.freeze(["PcapConfiguration.ts"]),

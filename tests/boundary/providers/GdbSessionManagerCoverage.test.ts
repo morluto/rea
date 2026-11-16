@@ -2459,6 +2459,13 @@ it("retains a multi-run console command through its completion query before disp
   expect(result.value.evidence.normalized_result).toMatchObject({
     console: result.value.result.console,
   });
+  // The session launches no file, so its target stays unknown.
+  expect(result.value.evidence.subject.identity).toEqual({
+    kind: "session",
+    session_kind: "gdb",
+    id: started.value.session_id,
+    target: { kind: "unknown", reason: "not-observed" },
+  });
   const next = await follower;
   if (!next.ok) throw next.error;
   expect(next.value.result.console).toBe('~"REA_NEXT_COMMAND\\n"');

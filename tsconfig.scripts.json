@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "paths": {
+      "#dist/*": ["./src/*"]
+    }
+  },
+  "files": [
+    "scripts/lib/mcp-verifier-results.mjs",
+    "scripts/lib/real-ghidra-snapshot-lifecycle.mjs",
+    "scripts/lib/verifier-artifact-scope.mjs",
+    "scripts/verify-package-evidence.mjs",
+    "scripts/verify/javascript/digests.mjs",
+    "scripts/verify/javascript/output.mjs",
+    "scripts/verify/managed/completion-report.mjs",
+    "scripts/verify/managed/manifest-parser.mjs",
+    "scripts/verify/managed/manifest.mjs",
+    "scripts/verify/managed/oracles.mjs"
+  ],
+  "include": []
+}

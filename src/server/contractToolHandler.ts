@@ -181,7 +181,8 @@ export interface ValueToolRequest {
 
 /**
  * Bind a named workflow returning a plain JSON value to shared logging and
- * delivery. It records no Evidence and runs outside analysis admission.
+ * delivery. It records no Evidence; it runs under analysis admission only
+ * when one is supplied.
  */
 export const createValueToolHandler =
   (
@@ -191,18 +192,26 @@ export const createValueToolHandler =
       request: ValueToolRequest,
     ) => Promise<Result<JsonValue, AnalysisError>>,
     logger: Logger,
+    withAdmittedAnalysis?: WithAdmittedAnalysis,
   ) =>
   (contract: ToolContract) =>
   async (input: unknown, context: ServerContext): Promise<CallToolResult> =>
-    server.delivery.toCallToolResult(
-      await logToolExecution(logger, contract.name, () =>
-        operation(input, {
-          signal: context.mcpReq.signal,
-          progress: mcpProgressReporter(context),
-          context,
-        }),
-      ),
-      contract,
+    runAdmittedToolOperation(
+      server,
+      withAdmittedAnalysis,
+      contract.name,
+      context.mcpReq.signal,
+      async () =>
+        server.delivery.toCallToolResult(
+          await logToolExecution(logger, contract.name, () =>
+            operation(input, {
+              signal: context.mcpReq.signal,
+              progress: mcpProgressReporter(context),
+              context,
+            }),
+          ),
+          contract,
+        ),
     );
 
 /** What a derivation may read before it runs. */

@@ -7,10 +7,16 @@ import type {
   ReferenceSourceResult,
   ReferenceSourceRootFailure,
 } from "./ReferenceSourceReaderTypes.js";
+import type { DirectoryValidation } from "./ReferenceSourceReaderValidate.js";
 
 /** Traversal state private to the reader; not part of its contract. */
 export type PendingDirectory = {
   readonly path: string;
+  /**
+   * Identity admission started ahead of this directory's turn. It is an
+   * observation only; traversal consumes it in its original order.
+   */
+  validation?: Promise<DirectoryValidation>;
 };
 
 export type TraversalState = {
@@ -32,6 +38,10 @@ export type TraversalState = {
     readonly kind: ReferenceSourceExclusionKind;
   }>;
   readonly pending: PendingDirectory[];
+  /** Closing admissions of enumerated directories, oldest first. */
+  readonly settling: Promise<void>[];
+  /** Opening admissions started ahead of their turn and still running. */
+  openingLookups: number;
   rootFailure?: ReferenceSourceRootFailure;
   rootFailureCause?: { readonly value: unknown };
   bytesRead: number;

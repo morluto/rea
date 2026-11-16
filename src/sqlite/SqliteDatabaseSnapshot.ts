@@ -268,9 +268,10 @@ const verifyInactiveJournal = async (
           phase === "initial"
             ? `Rollback journal may require recovery: ${path}. Supply a clean offline snapshot; only empty journals or a fully zeroed header are supported.`
             : `Rollback journal became active or malformed during database acquisition: ${path}`,
-          phase === "initial"
-            ? undefined
-            : { integrityCheck: "container-identity" },
+          {
+            integrityCheck:
+              phase === "initial" ? undefined : "container-identity",
+          },
         );
     },
   );

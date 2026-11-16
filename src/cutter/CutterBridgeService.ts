@@ -231,6 +231,9 @@ export class CutterBridgeService {
               resources: [`cutter-session:${input.session_id}`],
             },
             partialObservation: evidence,
+            ...(output.outputLimit === undefined
+              ? {}
+              : { limit: output.outputLimit }),
           },
         );
         const release = new AnalysisCleanupRelease();

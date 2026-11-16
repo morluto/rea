@@ -48,6 +48,20 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
 | `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
 
+`typecheck` also checks the JavaScript verification scripts listed in
+`tsconfig.scripts.json` (`checkJs`, with the main compiler options). Those
+scripts import built modules through the package-private `#dist/*` alias, which
+Node resolves to `./dist/*` at run time and the check resolves to `./src/*`, so a
+domain signature change that breaks a listed script fails `check:fast` without a
+build. To add a script, switch its `../dist/` imports and those of the local
+modules it loads to `#dist/`, add it to the list, and fix what the check
+reports with JSDoc types. Name tool results with the
+`scripts/lib/mcp-verifier-results.mjs` typedefs (`ToolName`,
+`VerifierOperationResult<N>`) so a result reads with its named contract's
+type. `tests/support/analysis-efficiency/android-mapping-retention.mjs` stays
+outside the check: it imports `dist` modules by path from a caller-selected
+checkout at run time, so no import in this tree names their types.
+
 The general source suite above runs on Linux in CI, and Windows CI runs a
 curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).
 A Windows source checkout can fail source tests for reasons unrelated to the

@@ -1102,3 +1102,39 @@ it("keeps a complete UI graph trace untruncated when no bound is reached", async
     ]),
   );
 });
+
+describe("native UI action archive coverage", () => {
+  it("keeps archive coverage unknown when the decoder did not report it", async () => {
+    const trace = async (
+      coverage: z.input<typeof nativeInvestigationGraphSchema>["coverage"],
+    ) => {
+      const result = await new EnhancedTools(
+        testAnalysis({}, { ...graph, coverage }),
+      ).execute("trace_native_ui_action", { action: "missing-selector" });
+      if (!result.ok) throw result.error;
+      return nativeInvestigationTraceSchema
+        .parse(result.value)
+        .coverage.filter(({ facet }) => facet === "interface_builder_archives");
+    };
+    // One document was found but no archive_decode facet was reported.
+    expect(await trace([])).toEqual([
+      {
+        facet: "interface_builder_archives",
+        status: "unknown",
+        reason: "archive_decode_coverage_not_reported",
+        examined: 1,
+        omitted: null,
+      },
+    ]);
+    const reported = {
+      facet: "archive_decode",
+      status: "partial" as const,
+      reason: "archive_decode_failed",
+      examined: 2,
+      omitted: 1,
+    };
+    expect(await trace([reported])).toEqual([
+      { ...reported, facet: "interface_builder_archives" },
+    ]);
+  });
+});
