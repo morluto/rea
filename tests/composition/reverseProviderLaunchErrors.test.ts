@@ -35,7 +35,7 @@ import {
 import { TestReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 
-it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
+it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR", "EIO"] as const)(
   "preserves provider-launch %s and executable recovery independently of target admission",
   async (code) => {
     const { directory, path } = await createArtifact();
@@ -66,6 +66,7 @@ it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
               boundary: "provider-launch",
               command,
               system_code: code,
+              syscall: `spawn ${command}`,
             },
           },
           remediation: {
@@ -73,7 +74,9 @@ it.each(["ENOENT", "EACCES", "EPERM", "ENOTDIR"] as const)(
           },
         });
         expect(projected.message).toContain(command);
-        expect(projected.message).toContain(code);
+        expect(projected.message).toContain(
+          code === "EIO" ? `EIO from spawn ${command}` : code,
+        );
         expect(projected.remediation.action).toContain("execute permission");
         expect(projected.remediation.action).not.toContain("another target");
       }

@@ -40,6 +40,7 @@ import {
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
+  type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -63,7 +64,10 @@ import type {
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
 import { execFileOutputFailure } from "../../process/ExecFileOutput.js";
-import { launcherFailureOf } from "../../process/launchFailure.js";
+import {
+  describeLaunchFailure,
+  launcherFailureOf,
+} from "../../process/launchFailure.js";
 import { classifyLaunchFailure } from "../../process/classifyProviderOutcome.js";
 import {
   OwnedCommandFailure,
@@ -952,22 +956,45 @@ export class ReverseEngineeringService {
           });
         else {
           const { provider, remediationAction } = profile.repair;
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            profile.identity.id,
-            operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
-            {
-              cause,
-              userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
-              remediationAction,
-              diagnostics: {
-                boundary: "provider-launch",
-                command,
-                system_code: code ?? null,
+          // This provider's repair names the configured executable; the
+          // shared launch owner supplies the errno and syscall facts.
+          const unavailable = (
+            description: string,
+            details: AnalysisErrorOptions,
+          ): AnalysisError =>
+            new AnalysisCapabilityUnavailableError(
+              profile.identity.id,
+              operation,
+              `Unable to run configured command (${description})`,
+              {
+                ...details,
+                userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${description}).`,
+                remediationAction,
               },
-              ...ownedCleanupOptions(cause),
-            },
-          );
+            );
+          const details: AnalysisErrorOptions = {
+            cause,
+            ...ownedCleanupOptions(cause),
+          };
+          earlyFailure =
+            launch === undefined
+              ? unavailable(String(code ?? "unknown error"), {
+                  ...details,
+                  diagnostics: {
+                    boundary: "provider-launch",
+                    command,
+                    system_code: code ?? null,
+                  },
+                })
+              : classifyLaunchFailure(launch, {
+                  providerId: profile.identity.id,
+                  operation,
+                  command,
+                  selection: setting,
+                  details,
+                  unavailable: (failure, launchDetails) =>
+                    unavailable(describeLaunchFailure(failure), launchDetails),
+                });
         }
       }
       if (earlyFailure === undefined && capture !== undefined) {
