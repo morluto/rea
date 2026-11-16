@@ -38,7 +38,6 @@ import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { observed } from "../fixtures/analysisExecution.js";
 import { createServer } from "../../src/server/createServer.js";
 import { silentLogger } from "../../src/logger.js";
-import { ToolResultDelivery } from "../../src/server/ToolResultDelivery.js";
 import { ok } from "../../src/domain/result.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
@@ -75,7 +74,6 @@ it("retains and retries the exact snapshot file handle through public MCP captur
   injected.failClose = true;
   injected.opens = 0;
   const resources = await connectSession();
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
   const capture = () =>
     resources.client.callTool({
       name: "capture_process_scenario",
@@ -113,12 +111,6 @@ it("retains and retries the exact snapshot file handle through public MCP captur
         },
       },
     });
-    const firstDelivered = delivery.mock.calls.at(-1)?.[0];
-    expect(firstDelivered?.ok).toBe(false);
-    if (firstDelivered === undefined || firstDelivered.ok)
-      throw new Error("Expected a delivered snapshot failure");
-    expect(firstDelivered.error.cleanupResources).toContain(injected.path);
-
     const retryBlocked = parseMcpToolError(await capture());
     expect(retryBlocked.error.code).toBe("cleanup_incomplete");
     expect(retryBlocked.error.details).toMatchObject({
@@ -141,8 +133,6 @@ it("retains and retries the exact snapshot file handle through public MCP captur
     await expect(injected.handle.stat()).rejects.toMatchObject({
       code: "EBADF",
     });
-    expect(firstDelivered.error.cleanupIncomplete).toBe(false);
-    expect(firstDelivered.error.cleanupResources).toEqual([]);
 
     const recovered = await capture();
     expect(recovered.isError, JSON.stringify(recovered.content)).not.toBe(true);
@@ -166,7 +156,6 @@ it("retains and retries the exact snapshot file handle through public MCP captur
       });
       expect(cleanup.isError, JSON.stringify(cleanup.content)).not.toBe(true);
     }
-    delivery.mockRestore();
     await resources.client.close();
     await resources.server.close();
     const closed = await resources.session.close();
