@@ -88,11 +88,14 @@ const parseUtf8Xml = (
   return ok(root);
 };
 
-const integerAttribute = (element: Element, name: string): number | null => {
+const UINT32_MAX = 0xffff_ffff;
+
+/** Unsigned decimal attribute that fits the report's uint32 field, else unknown. */
+const uint32Attribute = (element: Element, name: string): number | null => {
   const text = attributeOf(element, name);
   if (text === null || !/^[0-9]+$/u.test(text)) return null;
   const value = Number(text);
-  return Number.isSafeInteger(value) ? value : null;
+  return Number.isSafeInteger(value) && value <= UINT32_MAX ? value : null;
 };
 
 const collectChoices = (element: Element, choices: string[]): void => {
@@ -120,7 +123,7 @@ export const parseDistributionXml = (
   const pkgRefs = childElements(installer, "pkg-ref").map((element) => ({
     id: attributeOf(element, "id"),
     version: attributeOf(element, "version"),
-    installKBytes: integerAttribute(element, "installKBytes"),
+    installKBytes: uint32Attribute(element, "installKBytes"),
   }));
   const choices: string[] = [];
   const outline = childElement(installer, "choices-outline");
