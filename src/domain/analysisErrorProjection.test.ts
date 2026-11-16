@@ -875,6 +875,32 @@ describe("analysis error projection: Hopper provider failures", () => {
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
+  it("names the TCC-disclaimed runtime in an Apple Events denial remediation", () => {
+    const projected = projectAnalysisError(
+      new HopperStartError({
+        launchRejection: {
+          boundary: "apple_events_authorization",
+          reason: "not_authorized",
+        },
+        launcherFailure: {
+          exit_code: 2,
+          signal: null,
+          stdout: { text: "", bytes: 0, retained_bytes: 0 },
+          stderr: {
+            text: "Cannot launch Hopper!\nNot authorized to send Apple events to Hopper Disassembler.\n",
+            bytes: 90,
+            retained_bytes: 90,
+          },
+          output_closed: true,
+          diagnostic_truncated: false,
+        },
+      }),
+    );
+    expect(projected.remediation.action).toContain("TCC-disclaiming helper");
+    expect(projected.remediation.action).toContain("Claude Code or Terminal");
+    expect(projected.message).toContain("node/bun");
+  });
+
   it("keeps an ordinary Hopper start failure retryable", () => {
     const projected = projectAnalysisError(
       new HopperStartError({

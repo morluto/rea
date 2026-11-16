@@ -1011,13 +1011,18 @@ stage `connection`.
 If macOS denies Apple Events, REA reports
 `details.launch_rejection.boundary: "apple_events_authorization"` with
 `reason: "not_authorized"`, category `unavailable`, and `retryable: false`.
-Allow the application that starts REA under
-**System Settings → Privacy & Security → Automation** when that client can be
+First identify which process macOS actually holds responsible: a client that
+launches MCP servers through a TCC-disclaiming helper (for example Claude
+Desktop's `disclaimer` helper) hands responsibility to REA's runtime, so the
+client never appears under **System Settings → Privacy & Security →
+Automation** and allowing it cannot help. In that case start REA from a client
+that keeps TCC responsibility, such as Claude Code or Terminal. Otherwise allow
+the application that starts REA under Automation when that client can be
 authorized. A hardened-runtime application requires the
 `com.apple.security.automation.apple-events` entitlement before macOS will
-prompt; without it, ask the client developer to add the entitlement or start
-REA from a client macOS can authorize, such as Terminal. Retrying from the same
-unauthorized client will not succeed until authorization changes. REA releases
+prompt; without it, ask the client developer to add the entitlement. Retrying
+from the same unauthorized launch will not succeed until authorization changes.
+REA releases
 the target reservation when the native helper reports its complete authorization
 rejection after literal argument admission. Before application handoff, REA refuses
 double quotes, backslashes, or line breaks in the final launcher path or arguments,
