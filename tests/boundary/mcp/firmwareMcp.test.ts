@@ -8,6 +8,7 @@ import {
   firmwareFixture,
   assertFirmwareCleanup,
 } from "../../fixtures/firmware/provider.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const it = test.skipIf(process.platform !== "linux");
 
@@ -22,7 +23,10 @@ it("executes named firmware contracts with inline Evidence and no native binary 
       firmwareAnalysis: fixture.provider,
     },
   );
-  const client = new Client({ name: "firmware-regression", version: "1" });
+  const client = new Client(
+    { name: "firmware-regression", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

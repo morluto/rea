@@ -14,7 +14,7 @@ import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
 import { erlangBeamFixture } from "../../../src/erlang/Beam.fixture.js";
 import { DevicetreeService } from "../../../src/application/binaryDiagnostics/DevicetreeService.js";
 import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeProvider.js";
-import { devicetreeFixture } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+import { devicetreeFixture } from "../../../src/domain/firmware/devicetree.fixture.js";
 
 const injected = vi.hoisted(() => ({
   opened: undefined as

@@ -5,7 +5,7 @@ import { executeComposedWorkflow } from "../WorkflowEvidence.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
@@ -29,6 +29,12 @@ import {
   valueTraceProvider as provider,
   valueTraceSubject as subject,
 } from "./NativeValueTrace.fixture.js";
+
+const valueFlowLimits = {
+  max_operations: 3_000,
+  max_inputs_per_operation: 64,
+  max_edges: 12_000,
+};
 
 const traceNativeValues: typeof traceNativeValuesCore = async (
   source,
@@ -95,6 +101,8 @@ const analysis: AnalysisOperationPort = {
           native_value_flow: {
             available: true,
             provenance: "ghidra-high-pcode",
+            limits: valueFlowLimits,
+            limits_reached: [],
             operations: callee
               ? [node("return", "0x2000", "RETURN")]
               : [node("call", "0x1000", "CALL")],
@@ -243,6 +251,8 @@ describe("native value parameter-use node membership", () => {
     const largeFlow = {
       available: true as const,
       provenance: "ghidra-high-pcode" as const,
+      limits: valueFlowLimits,
+      limits_reached: [],
       operations: Array.from({ length: operationCount }, (_, index) => ({
         ...node(`operation-${String(index)}`, procedureAddress, "MULTIEQUAL"),
         inputs: [scalar, scalar, scalar, scalar],
@@ -261,10 +271,7 @@ describe("native value parameter-use node membership", () => {
       known_omitted_edges: 0,
       limitations: [],
     };
-    const largeDossier = {
-      ...base,
-      native_value_flow: largeFlow,
-    };
+    const largeDossier = { ...base, native_value_flow: largeFlow };
     const largeAnalysis: AnalysisOperationPort = {
       execute: async () =>
         ok(createAnalysisExecution(largeDossier, provider, { subject })),
@@ -332,6 +339,8 @@ describe("native value parameter-use node membership", () => {
           native_value_flow: {
             available: true,
             provenance: "ghidra-high-pcode",
+            limits: valueFlowLimits,
+            limits_reached: [],
             operations: [
               node("parameter:0", address, "COPY"),
               node("parameter:0#1", address, "COPY"),

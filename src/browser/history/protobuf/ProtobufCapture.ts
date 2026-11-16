@@ -6,14 +6,15 @@ import {
   CaptureRedaction,
   isCaptureCredentialHeaderBytes,
 } from "../CaptureRedaction.js";
-import { createHash } from "node:crypto";
-import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
+import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactResourceScope,
+} from "../../../resources/index.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
 } from "../CaptureFailures.js";
-import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
@@ -38,6 +39,7 @@ import {
   type PreparedProtobufBody,
 } from "./ProtobufFraming.js";
 import type { ProtobufDecoding } from "../../../domain/protobufWire.js";
+import { sha256Hex } from "../../../kernel/sha256Hex.js";
 
 const object = (
   value: JsonValue | undefined,
@@ -421,14 +423,11 @@ export const prepareCaptureProtobuf = async (
           Math.ceil(captureBudgets().inputBytes / 3) * 4
       )
         throw new CaptureFormatError(
-          "limit",
+          { name: "protobuf-body", maximum: captureBudgets().inputBytes },
           `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
         );
       const body = Buffer.from(field.content_base64, "base64");
-      if (
-        body.length !== field.bytes ||
-        createHash("sha256").update(body).digest("hex") !== field.sha256
-      )
+      if (body.length !== field.bytes || sha256Hex(body) !== field.sha256)
         throw new AnalysisInputError("inspect_web_network_capture", undefined, [
           {
             path: ["capture_path"],

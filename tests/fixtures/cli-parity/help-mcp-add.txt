@@ -1,0 +1,27 @@
+$ rea mcp add --help
+exit: 0
+--- stdout
+rea mcp add — Register exact stdio launcher arguments in selected client settings, with backups and verified publication.
+
+Usage: rea mcp add [options]
+
+Options:
+  --agent <array>         Select client IDs or documented aliases; repeat --agent to select more than one.
+  --command, -c <string>  Stdio launcher text: space-separated words, single/double quote fragments, literal backslashes. Empty quoted arguments are preserved; NUL is rejected. HTTP(S) URL sources are unsupported; configure remote transports in client settings.
+  --no-global             Write only project-scoped client settings; reject selections requiring global writes.
+
+No package acquisition or server execution. --no-global never writes global settings.
+
+Global Options:
+  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl>  Output format
+  --full-output                       Show full output envelope
+  --help                              Show help
+  --llms, --llms-full                 Print LLM-readable manifest
+  --schema                            Show JSON Schema for command
+  --token-count                       Print token count of output (instead of output)
+  --token-limit <n>                   Limit output to n tokens
+  --token-offset <n>                  Skip first n tokens of output
+<end>
+--- stderr
+<end>

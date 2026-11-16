@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { decodeNibArchive } from "./NibArchive.js";
 import { encodeNibArchiveFixture as encodeArchive } from "./NibArchive.fixture.js";
-import { InterfaceBuilderDecodeBudgetExceeded } from "./InterfaceBuilderDecodeBudget.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const archiveWithOverlappingObjectRanges = (objectCount: number): Buffer => {
   const objectRecords = Buffer.alloc(objectCount * 3);
@@ -177,10 +177,15 @@ describe("NIBArchive decoder", () => {
     } catch (cause: unknown) {
       thrown = cause;
     }
-    expect(thrown).toBeInstanceOf(InterfaceBuilderDecodeBudgetExceeded);
+    expect(thrown).toBeInstanceOf(ParseFailureError);
     expect(thrown).toHaveProperty(
-      "message",
-      expect.stringMatching(/projected field ranges/u),
+      "failure",
+      expect.objectContaining({
+        kind: "limit",
+        format: "nib-archive",
+        detail: expect.stringMatching(/projected field ranges/u),
+        limit: { name: "aggregate-decode-bytes", maximum: expect.any(Number) },
+      }),
     );
   });
 });
@@ -206,4 +211,35 @@ it("retains repeated serialized collection fields in source order", () => {
   expect(decoded.objects[0]?.repeated_values).toEqual({
     UINibEncoderEmptyKey: [{ $nib_object_ref: 2 }, { $nib_object_ref: 1 }],
   });
+});
+
+it("classifies NIBArchive input faults through ParseFailure", () => {
+  const valid = encodeArchive({
+    classes: ["NSObject"],
+    objects: [{ classIndex: 0, values: { child: { ref: 4 } } }],
+  });
+  const failureOf = (bytes: Buffer): unknown => {
+    try {
+      decodeNibArchive(bytes);
+    } catch (cause: unknown) {
+      return cause;
+    }
+    throw new Error("Expected the NIBArchive to be refused");
+  };
+  const newerVersion = Buffer.from(valid);
+  newerVersion.writeUInt32LE(2, 10);
+  expect(failureOf(newerVersion)).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      format: "nib-archive",
+      undecodedContent: true,
+    },
+  });
+  expect(failureOf(valid)).toBeInstanceOf(ParseFailureError);
+  expect(failureOf(valid)).toMatchObject({ kind: "malformed" });
+  expect(failureOf(valid.subarray(0, valid.length - 1))).toMatchObject({
+    kind: "truncated",
+  });
+  // Intact magic with a header cut short is missing bytes, not bad bytes.
+  expect(failureOf(valid.subarray(0, 20))).toMatchObject({ kind: "truncated" });
 });

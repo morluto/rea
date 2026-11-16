@@ -25,7 +25,10 @@ import {
   observeJavaScriptRuntimeInputSchema,
 } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
@@ -88,16 +91,20 @@ test("reports browser origin scope mismatch at the caller parameter path", async
       { source: jsonValueSchema.parse(observed.value), facts: observed.value },
       provider.identity(),
     );
-    const invalidEvidence = createEvidence(undefined, evidence.provider, {
-      predicateType: evidence.predicate_type,
-      operation: evidence.operation,
-      parameters: { ...evidence.parameters, allowed_origins: [] },
-      result: evidence.normalized_result,
-      confidence: evidence.confidence,
-      authority: evidence.authority,
-      environment: evidence.environment,
-      limitations: evidence.limitations,
-    });
+    const invalidEvidence = createEvidence(
+      evidenceSubjectInput(evidence.subject),
+      evidence.provider,
+      {
+        predicateType: evidence.predicate_type,
+        operation: evidence.operation,
+        parameters: { ...evidence.parameters, allowed_origins: [] },
+        result: evidence.normalized_result,
+        confidence: evidence.confidence,
+        authority: evidence.authority,
+        environment: evidence.environment,
+        limitations: evidence.limitations,
+      },
+    );
     const result = reconcileJavaScriptRuntimeEvidence({
       static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
       runtime_observations: [invalidEvidence],
@@ -569,7 +576,7 @@ describe("undeclared V8 runtime role", () => {
 });
 
 describe("V8 Inspector script retention", () => {
-  test("retains authorized script locations longer than the former byte ceiling", async () => {
+  test("retains an authorized script location of more than 20,000 characters", async () => {
     const longUrl = `https://example.test/${"a".repeat(20_000)}`;
     const fake = await startFakeV8Inspector({
       targetUrl: longUrl,
@@ -592,7 +599,7 @@ describe("V8 Inspector script retention", () => {
     }
   });
 
-  test("returns every authorized script beyond the former collection ceiling", async () => {
+  test("returns every authorized script of a target with 2,005 scripts", async () => {
     const fixture = await runtimeFixture();
     const scriptUrls = [
       pathToFileURL(fixture.entry).href,
@@ -920,16 +927,17 @@ test("keeps Inspector parse failures separate and preserves file URL script iden
       parsedCapture.inspection.completeness.unavailable_sections,
     ).not.toContain("scripts");
 
-    const legacySnapshot = {
+    const withoutCount = {
       ...observed.value,
       scripts: {
         ...observed.value.scripts,
       },
     };
-    delete legacySnapshot.scripts.parse_failed_total;
-    const parsedLegacySnapshot =
-      javascriptRuntimeObservationSchema.parse(legacySnapshot);
-    expect("parse_failed_total" in parsedLegacySnapshot.scripts).toBe(false);
+    delete (withoutCount.scripts as { parse_failed_total?: number })
+      .parse_failed_total;
+    expect(
+      javascriptRuntimeObservationSchema.safeParse(withoutCount).error?.issues,
+    ).toMatchObject([{ path: ["scripts", "parse_failed_total"] }]);
   } finally {
     await fake.close();
   }
@@ -1025,6 +1033,7 @@ const runtimeObservation = (
       },
     ],
     observed_total: 1,
+    parse_failed_total: 0,
     excluded: {
       unsupported_location: 0,
       invalid_protocol_value: 0,

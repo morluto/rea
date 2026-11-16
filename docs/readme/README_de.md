@@ -82,11 +82,11 @@ Wähle deine Agenten aus, prüfe die geplanten Änderungen und bestätige sie. D
 
 Die Einrichtung unterstützt Claude Code, Codex, Cursor, Gemini CLI, Grok Build und [weitere Agenten](../getting-started/installation.md#supported-agents). Informationen zur Provider-Konfiguration und manuellen MCP-Registrierung findest du unter [Installation und Einrichtung](../getting-started/installation.md).
 
-MCP verwendet standardmäßig kompakte Eingabeschemas. Für vollständige Feldhinweise und Details zur verschachtelten Validierung setze `REA_MCP_INPUT_SCHEMA_PROFILE=full` in der MCP-Registrierung. Beide Profile behalten alle Tools und dieselbe kanonische Servervalidierung; siehe MCP-Vertragsleitfaden.
+MCP verwendet standardmäßig kompakte Eingabeschemas. Hinweise, die ein kompaktes Schema auslässt, folgen der Tool-Beschreibung. Alle Tools und die kanonische Servervalidierung bleiben unverändert; siehe MCP-Vertragsleitfaden.
 
 Die Einrichtung registriert die gewählte Laufzeit und das REA-Einstiegsskript direkt. Bewahre bei einem Paket-Runner dessen Cache-Eintrag und die Laufzeit auf; lade das Paket aus einem vertrauenswürdigen Verzeichnis außerhalb des Zielprojekts. Siehe die Installationsanleitung.
 
-Vollständige Ausgabeschemas werden standardmäßig angekündigt. Begrenzt dein Client `tools/list`, setze in der MCP-Registrierung `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` oder `off`. Servervalidierung und strukturierte Ergebnisse bleiben vollständig. Siehe „Output schemas“ im MCP-Vertragsleitfaden.
+Ausgabeschemas werden standardmäßig nicht in `tools/list` angekündigt: Keine Modell-API liest sie, und REA validiert jedes Ergebnis selbst. Setze in der MCP-Registrierung `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`, um jedes Ausgabeschema innerhalb von 4096 Byte anzukündigen. Servervalidierung und strukturierte Ergebnisse bleiben in jeder Einstellung vollständig. Siehe „Output schemas“ im MCP-Vertragsleitfaden.
 
 ### Deinen Agenten fragen
 

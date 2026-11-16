@@ -12,11 +12,12 @@ import {
   processTest,
   type TestProcesses,
 } from "../../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const openHttp = async (
   processes: TestProcesses,
   maximum: string | undefined,
-  outputProfile: "full" | "off" = "full",
+  outputProfile: "compact" | "off" = "off",
 ) => {
   const root = await createTestTempDirectory("rea-input-capacity-http-");
   const { url, stderr, child } = await startListeningProcess(
@@ -33,7 +34,10 @@ const openHttp = async (
       ...(maximum === undefined ? {} : { REA_MCP_MAX_INPUT_ELEMENTS: maximum }),
     },
   );
-  const client = new Client({ name: "input-capacity-http", version: "1" });
+  const client = new Client(
+    { name: "input-capacity-http", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const transport = new StreamableHTTPClientTransport(url, {
     // SDK output-schema compilation can outlive an idle pooled socket on two
     // CPUs. Keep this admission test independent of that client-side race.

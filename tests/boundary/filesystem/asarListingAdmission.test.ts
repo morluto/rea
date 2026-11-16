@@ -6,16 +6,19 @@ import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { readAsarListing } from "../../../src/artifacts/AsarListing.js";
-import { resolveAsarHeaderAdmission } from "../../../src/artifacts/AsarHeader.js";
+import {
+  BLOCK_INTEGRITY_LIMITATION,
+  readAsarListing,
+} from "../../../src/artifacts/AsarListing.js";
 import {
   asarHeaderBytes,
   nestedAsarHeader,
 } from "../../fixtures/asarHeader.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { resolveAsarHeaderAdmission } from "../../../src/resources/index.js";
 
 const archiveWith = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-asar-listing-");
@@ -178,7 +181,7 @@ it("bounds the quoted unsafe ASAR path component", async () => {
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
     message: inArchive(
-      `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}... (302 UTF-16 code units)`,
+      `ASAR header has an unsafe path component under the archive root: ${JSON.stringify("a".repeat(256))}… (302 UTF-16 code units)`,
       path,
     ),
   });
@@ -193,7 +196,7 @@ it("bounds the quoted parent of an unsafe ASAR path component", async () => {
   await expect(inventoryArtifact(path)).rejects.toMatchObject({
     reason: "path",
     message: inArchive(
-      `ASAR header has an unsafe path component under ${JSON.stringify("d".repeat(256))}... (300 UTF-16 code units): ".."`,
+      `ASAR header has an unsafe path component under ${JSON.stringify("d".repeat(256))}… (300 UTF-16 code units): ".."`,
       path,
     ),
   });
@@ -311,7 +314,7 @@ it.each([
   [
     JSON.stringify("9".repeat(300)),
     invalidSize(
-      `size ${JSON.stringify("9".repeat(256))}... (300 UTF-16 code units)`,
+      `size ${JSON.stringify("9".repeat(256))}… (300 UTF-16 code units)`,
     ),
   ],
   ["9007199254740992", unretainedSize],
@@ -545,14 +548,7 @@ it("retains uninterpreted integrity declarations through packed and unpacked inv
     const row = occurrence(name);
     expect(row.declared_integrity).toEqual({ algorithm: "sha256", digest });
     expect(row.hash_status).toBe("verified");
-    expect(row.limitations).toEqual([
-      expect.stringContaining(
-        "block integrity declarations were not validated",
-      ),
-    ]);
-    expect(row.limitations[0]).toContain(
-      "does not establish block integrity or Electron runtime acceptance",
-    );
+    expect(row.limitations).toEqual([BLOCK_INTEGRITY_LIMITATION]);
   }
   for (const [name, declaration, reason] of [
     ["unsupported", unsupported, "unsupported algorithm"],
@@ -624,11 +620,7 @@ it.each([
       algorithm: "sha256",
       digest: "a".repeat(64),
     });
-    expect(entries[0]?.limitations).toEqual([
-      expect.stringContaining(
-        "block integrity declarations were not validated",
-      ),
-    ]);
+    expect(entries[0]?.limitations).toEqual([BLOCK_INTEGRITY_LIMITATION]);
   },
 );
 

@@ -187,15 +187,14 @@ address tokens, typed references and flow destinations. Mid-instruction, data,
 outside-memory and unlisted addresses have separate outcomes. For Ghidra,
 `not-in-listing` means the address is in memory without a listed instruction or
 defined data. REA does not attempt a decode there: the memory may be uninitialized
-or contain valid instructions. Older Evidence may report `undecodable` for this
-same ambiguous case; it does not establish that a decode failed. Effective
+or contain valid instructions. Effective
 memory base/index/displacement roles remain unavailable. Ghidra reports its program
 language variant in `mode`; other providers retain their own mode label. Ghidra
 MIPS results additionally expose `decoder_context`
 with the observed `ISA_MODE` register at the queried address and its provider
 source. A null value is unavailable, not mode zero; an empty array reports no
-available context register, and omission preserves older captures or providers
-that do not expose this facet. The context is an analysis observation, not proof
+available context register, and omission means the provider does not expose
+this facet for the program's architecture. The context is an analysis observation, not proof
 of a runtime processor state.
 
 `inspect_native_instruction` also returns `incoming_references` to the exact
@@ -229,8 +228,8 @@ profile produce a profile mismatch rather than replaying the former generic
 terminal result. The old snapshot's `evidence_bundle` remains valid retained
 Evidence: copy that object to a separate JSON file and use `rea evidence-import`
 to validate it. Run analysis without the old snapshot and save a fresh one
-under the current profile. Other providers and older captures may omit the
-classification evidence field.
+under the current profile. Other providers may omit the classification
+evidence field.
 
 Call resolution reports direct, resolved indirect, ambiguous, unresolved and
 non-call outcomes from static call references. It does not establish runtime
@@ -358,6 +357,21 @@ complete. These fields describe omissions from the response, independently of
 whether Ghidra recovered the original source layout.
 
 ### Hopper analysis behavior
+
+Hopper Evidence commits `analysis_profile.parameters.producer` as
+`{ rea_version, sources_sha256 }`. It replaces the former
+`function_dossier_coverage` marker. The source digest covers the packaged
+`bridge/hopper_bridge.py` that REA launches; changing that script or the REA
+release changes the profile digest and Evidence identity. A snapshot with the
+earlier profile is refused with `evidence_integrity_mismatch` before starting
+Hopper. Open the target without the old snapshot and save a fresh one; REA does
+not rewrite the old file. A matching profile does not enable Hopper snapshot
+replay: document observations remain live because Hopper has no revision token.
+
+Producer identity is computed once per REA process, so restart REA after editing
+packaged bridge files. Between releases, TypeScript-only edits within the same
+REA version do not change this identity. Regenerate observations after such
+development changes; the bridge digest does not fingerprint REA's TypeScript.
 
 Cursor navigation returns the observed object start when Hopper snaps an interior
 address; adjacent-object navigation rejects unmapped inputs and document ends.
@@ -1291,7 +1305,13 @@ cancellation Evidence, even if the target has already exited.
 - `selected_file_sha256` and LLDB module identity observations. These checks do
   not pin the executable against concurrent mutation; `loaded_image_sha256`
   remains unknown;
-- signal or exception stops;
+- signal or exception stops. LLDB can report a requested breakpoint's own trap
+  as an `EXC_BREAKPOINT` exception without running its callback; a trap at a
+  requested location is recorded as that breakpoint's event. Any other
+  breakpoint trap, and any signal or exception stop on a requested location,
+  stays in `other_stops`, is counted in
+  `coverage.unattributed_breakpoint_stops`, and makes coverage partial, because
+  it may be a hit REA could not record;
 - every breakpoint's resolved locations; a breakpoint that matched no loaded
   code makes coverage partial;
 - limitations.
@@ -1574,6 +1594,18 @@ because a JSON number cannot carry the sign of zero. `inspect_plist` and
 `inspect_keyed_archive` count these values in a limitation, and Interface
 Builder node attributes use the same value. Positive zero and integer zero,
 including an `<integer>-0</integer>` literal, remain the number `0`.
+
+A dictionary that declares a key more than once keeps one value in the JSON
+result, the last one. When `inspect_plist` decodes binary, XML or OpenStep
+source directly, it reads each dictionary's keys before they collapse and adds
+a limitation with the count of affected dictionaries and replaced values and the
+first repeated key names. `inspect_keyed_archive`, Interface Builder analysis
+(per archive path) and the `codesign` entitlements in `inspect_signature` add the
+same limitation. Other plist readers may keep a different value. Opening an
+app bundle refuses an `Info.plist` that may declare `CFBundleExecutable` more
+than once, because which declaration names the program is ambiguous. JSON
+sources and plists decoded through a `plutil` conversion are not checked:
+those parsers keep one value per key before REA sees the result.
 
 Known non-finite reals are reported as
 `{ "$plist_type": "real", "value": "nan" | "+infinity" | "-infinity" }`.

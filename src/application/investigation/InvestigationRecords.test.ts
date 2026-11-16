@@ -1,3 +1,5 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -24,7 +26,7 @@ const unknownInput = (question: string) =>
     recommended_probes: [],
     relationships: [],
   });
-const evidence = createEvidence(undefined, provider, {
+const evidence = createEvidence(unknownTarget("not-observed"), provider, {
   operation: "inspect-fixture",
   parameters: {},
   result: true,
@@ -85,7 +87,7 @@ describe("investigation record ownership", () => {
       unknownMutationEvidence(undefined, { operation: "record_unknown", input })
         .evidence_id,
     );
-    expect(mutation?.subject).toBeNull();
+    expect(mutation?.subject.identity.kind).toBe("unknown");
     expect(mutation?.parameters).toEqual(input);
     expect(records.listUnknowns()).toHaveLength(2);
   });
@@ -131,8 +133,10 @@ describe("investigation record ownership", () => {
     });
     const bundle = records.exportEvidenceBundle();
     expect(
-      bundle.records.find(({ operation }) => operation === "update_unknown")
-        ?.subject?.digest.sha256,
+      fileIdentity(
+        bundle.records.find(({ operation }) => operation === "update_unknown")
+          ?.subject,
+      ).sha256,
     ).toBe(target.sha256);
     expect(
       bundle.records.find(({ operation }) => operation === "update_unknown")
@@ -250,7 +254,7 @@ it("rejects changed creation intent after the original unknown was updated", () 
   });
   if (!updated.ok) throw updated.error;
   const retained = records.exportEvidenceBundle();
-  const addition = createEvidence(undefined, provider, {
+  const addition = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "another-derived-result",
     parameters: {},
     result: true,

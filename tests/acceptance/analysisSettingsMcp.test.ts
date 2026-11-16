@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { analysisSettingsResultSchema } from "../../src/contracts/analysisSettingsContracts.js";
 import { expect, it } from "vitest";
 import type { AnySchema } from "ajv";
@@ -111,7 +112,9 @@ it("advertises exact contracts and recovers a full large-index archive over one 
       const tool = catalog.tools.find((tool) => tool.name === name)!;
       expect(tool).toBeDefined();
       expect(ajv.validateSchema(tool.inputSchema as AnySchema)).toBe(true);
-      expect(ajv.validateSchema(tool.outputSchema as AnySchema)).toBe(true);
+      expect(
+        ajv.validateSchema(canonicalOutputSchema(tool.name) as AnySchema),
+      ).toBe(true);
     }
     const initial = await invoke("inspect_analysis_settings", {
       settings: ["asar.max_header_bytes"],
@@ -232,9 +235,11 @@ it.each(["0", "2147483648"])(
       const tool = (await client.listTools()).tools.find(
         (entry) => entry.name === "inspect_analysis_settings",
       );
-      expect(tool?.outputSchema).toBeDefined();
+      expect(tool).toBeDefined();
       const ajv = new Ajv2020({ strict: false });
-      const validate = ajv.compile(tool!.outputSchema as AnySchema);
+      const validate = ajv.compile(
+        canonicalOutputSchema(tool!.name) as AnySchema,
+      );
       expect(
         validate(response.structuredContent),
         JSON.stringify(validate.errors),

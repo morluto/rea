@@ -1,4 +1,5 @@
 /** Public SDK/stdio JNI investigation, checked against independent NDK/DEX facts. */
+import { selectedOutputContracts } from "./selected-output-contracts.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -596,7 +597,7 @@ async function qualifyRetainedRemoval(invoke) {
       detail: "complete",
     });
     assert.equal(parent.operation, "inspect_android_jni_bindings");
-    assert.equal(parent.subject.digest.sha256, targetSha);
+    assert.equal(parent.subject.identity.sha256, targetSha);
     assert.equal(parent.normalized_result.apk.path, ownedCopy);
     const report = parent.normalized_result;
     (values.variant === "conscrypt" ? checkConscrypt : checkFixture)(
@@ -721,6 +722,8 @@ const { StdioClientTransport } = await import(
 const { Ajv2020 } = await import(
   pathToFileURL(require.resolve("ajv/dist/2020.js"))
 );
+const outputContracts = await selectedOutputContracts(repo);
+const { withCanonicalOutputSchema } = outputContracts;
 const environment = {
   PATH: process.env.PATH,
   JAVA_HOME: resolve(values["java-home"]),
@@ -737,6 +740,8 @@ const environment = {
         ? "android,session"
         : "android",
   REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+  // The run validates each result against the selected revision's output contract.
+  ...outputContracts.environment,
 };
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -807,11 +812,11 @@ try {
   ]) {
     const selected = catalog.tools.filter((tool) => tool.name === name);
     assert.equal(selected.length, 1);
-    assert.ok(selected[0].outputSchema);
+    const definition = withCanonicalOutputSchema(selected[0]);
     contracts.set(name, {
-      definition: selected[0],
-      input: ajv.compile(selected[0].inputSchema),
-      output: ajv.compile(selected[0].outputSchema),
+      definition,
+      input: ajv.compile(definition.inputSchema),
+      output: ajv.compile(definition.outputSchema),
     });
   }
   validateJniOutput = contracts.get("inspect_android_jni_bindings").output;
@@ -878,7 +883,7 @@ try {
           ? "inspect_analysis_view"
           : "inspect_android_jni_bindings",
       );
-      assert.equal(evidence.subject.digest.sha256, targetSha);
+      assert.equal(evidence.subject.identity.sha256, targetSha);
       const parent = {
         id:
           values.detail === "summary"
@@ -922,7 +927,7 @@ try {
         );
         assert.ok(parent, "Complete source Evidence must remain exportable");
         assert.equal(parent.operation, "inspect_android_jni_bindings");
-        assert.equal(parent.subject.digest.sha256, targetSha);
+        assert.equal(parent.subject.identity.sha256, targetSha);
         if (report !== undefined)
           assert.deepEqual(parent.normalized_result, report);
         report = parent.normalized_result;

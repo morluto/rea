@@ -1,4 +1,18 @@
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
+import {
+  completedStableArtifactObservation,
+  type StableArtifactSnapshot,
+  projectOwnedArtifactIdentityFailure,
+  projectSelectedArtifactFileFailure,
+  projectStableArtifactFailure,
+  stableArtifactInputFailure,
+  projectArtifactCloseFailure,
+  ArtifactReaderFailure,
+  readStableArtifact,
+  artifactFilePrimaryFacts,
+  type ArtifactFilePrimaryFacts,
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { FieldReader } from "./AppleIpsFieldReader.js";
 import {
   type AppleIps,
@@ -12,41 +26,23 @@ import {
   MAX_INSPECT_APPLE_IPS_THREADS,
   type InspectAppleIpsInput,
 } from "../../domain/native/appleIps.js";
-import type { StableArtifactSnapshot } from "../../artifacts/readStableArtifact.js";
-import {
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
-  projectStableArtifactFailure,
-  stableArtifactInputFailure,
-  projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
-  artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  assertArtifactReadActive,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { AppleIpsPort } from "../../application/binaryDiagnostics/AppleIpsPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  AppleIpsFormatFailure,
   AppleIpsResourceFailure,
+  type AppleIpsFixedBoundary,
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 import { resolveAppleIpsJoin } from "./AppleIpsMachOJoin.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -247,9 +243,17 @@ const resourceRecovery = (
         remediationAction: budgetRemediation(input, boundary),
       }
     : fixedAllowanceOptions(
-        `The IPS ${boundary.replaceAll("_", " ")} allowance of ${String(cause.maximum)}`,
+        `The IPS ${boundary.replaceAll("_", " ")} allowance`,
         "parser",
+        { limit: cause.maximum, unit: FIXED_BOUNDARY_UNITS[boundary] },
       );
+};
+
+/** The unit each fixed IPS format ceiling counts. */
+const FIXED_BOUNDARY_UNITS: Readonly<Record<AppleIpsFixedBoundary, string>> = {
+  termination_reasons: "termination reasons",
+  unlisted_keys: "keys",
+  nesting: "levels",
 };
 
 const appleIpsFailurePrimary = (
@@ -274,21 +278,13 @@ const appleIpsFailurePrimary = (
       { boundary: cause.boundary, maximum: cause.maximum },
       { cause, ...resourceRecovery(input, cause) },
     );
-  if (cause instanceof AppleIpsFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: [field],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(
+    OPERATION,
+    input.path,
+    cause,
+    field,
+  );
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -324,7 +320,7 @@ const appleIpsFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

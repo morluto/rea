@@ -34,55 +34,64 @@ describe("childCandidates", () => {
 });
 
 describe("childConditions", () => {
-  /**
-   * Count the code units every `for...of` over a string consumes while `read`
-   * runs, which is the read `shortText` performs. Adjusting
-   * `String.prototype[Symbol.iterator]` is only observable by that loop; `trim`,
-   * `includes` and the timestamp probes read their own primitives.
-   */
-  const countingStringReads = <Result>(read: () => Result) => {
-    const original = String.prototype[Symbol.iterator];
-    let codeUnitsRead = 0;
-    String.prototype[Symbol.iterator] = function* (
-      this: string,
-    ): Generator<string, undefined, undefined> {
-      for (let index = 0; index < this.length; index += 1) {
-        codeUnitsRead += 1;
-        yield this[index] as string;
-      }
-      return undefined;
-    };
-    try {
-      return { result: read(), codeUnitsRead: () => codeUnitsRead };
-    } finally {
-      String.prototype[Symbol.iterator] = original;
-    }
-  };
-
-  /** An element whose only string the loop reads is its `body` child's text. */
-  const record = (text: string) => ({
-    name: "record",
-    attributes: {},
-    children: [{ name: "body", attributes: {}, children: [text] }],
-  });
-
   it("stops reading a child's text once it is past what a selector names a member by, however long the text", () => {
-    const huge = countingStringReads(() =>
-      childConditions(record(`a b ${"x".repeat(4 * 1024 * 1024)}`)),
-    );
+    const element = (text: string) => ({
+      name: "record",
+      attributes: {},
+      children: [
+        { name: "title", attributes: {}, children: ["Budget"] },
+        { name: "body", attributes: {}, children: [text] },
+      ],
+    });
+    const length = 4 * 1024 * 1024;
+    const huge = element(`a b ${"x".repeat(length)}`);
 
-    expect(huge.result).toEqual([]);
-    // Reading stops at the 65th code unit, the first past the 64 a selector
-    // names a member by, so the remaining 4 MiB costs nothing.
-    expect(huge.codeUnitsRead()).toBe(65);
-  });
+    // A selector names a member by at most 64 characters. Count the characters
+    // read one at a time, and refuse any whole-string rewrite of the long
+    // text, as collapsing all of it before measuring would do.
+    const allowed = 1024;
+    let read = 0;
+    const string = String.prototype;
+    const { [Symbol.iterator]: iterate } = string;
+    const rewrites = ["replace", "replaceAll", "split"] as const;
+    const originals = rewrites.map((name) => [name, string[name]] as const);
+    Object.defineProperty(string, Symbol.iterator, {
+      configurable: true,
+      writable: true,
+      *value(this: string) {
+        for (const character of iterate.call(this)) {
+          if (++read > allowed) throw new Error("read the whole child text");
+          yield character;
+        }
+      },
+    });
+    for (const [name, original] of originals)
+      Object.defineProperty(string, name, {
+        configurable: true,
+        writable: true,
+        value(this: string, ...args: never[]) {
+          if (this.length >= length)
+            throw new Error(`${name} on the long text`);
+          return (original as (...values: never[]) => unknown).apply(
+            this,
+            args,
+          );
+        },
+      });
+    let conditions: string[];
+    try {
+      conditions = childConditions(huge);
+    } finally {
+      string[Symbol.iterator] = iterate;
+      for (const [name, original] of originals)
+        Object.defineProperty(string, name, {
+          configurable: true,
+          writable: true,
+          value: original,
+        });
+    }
 
-  it("reads a child's text to its end when it stays within what a selector names a member by", () => {
-    const short = countingStringReads(() =>
-      childConditions(record("a b Budget")),
-    );
-
-    expect(short.result).toEqual(["[>body=a b Budget]"]);
-    expect(short.codeUnitsRead()).toBe(10);
+    expect(conditions).toEqual(["[>title=Budget]"]);
+    expect(read).toBeLessThanOrEqual(allowed);
   });
 });

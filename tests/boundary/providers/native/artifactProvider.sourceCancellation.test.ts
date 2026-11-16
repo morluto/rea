@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { expect, it, vi } from "vitest";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
-import { SafeOutputTree } from "../../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../../src/resources/SafeOutputTree.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 it.each(["cancel", "denied-rollback", "control"] as const)(
