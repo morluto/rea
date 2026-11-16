@@ -27,3 +27,19 @@ it("reports installKBytes past uint32 as unknown", () => {
   expect(installKBytesOf("9007199254740993")).toBeNull();
   expect(installKBytesOf("-1")).toBeNull();
 });
+
+it("counts check script length in UTF-8 bytes", () => {
+  const parsed = parseDistributionXml(
+    Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8"?>
+<installer-gui-script minSpecVersion="2">
+  <installation-check script="check()"><script>"é✓"</script></installation-check>
+  <volume-check>"日本"</volume-check>
+</installer-gui-script>`,
+      "utf8",
+    ),
+  );
+  if (!parsed.ok) throw new Error("Distribution fixture did not parse");
+  expect(parsed.value.installationCheckScriptBytes).toBe(7);
+  expect(parsed.value.volumeCheckScriptBytes).toBe(8);
+});

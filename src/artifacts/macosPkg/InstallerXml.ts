@@ -108,8 +108,8 @@ const collectChoices = (element: Element, choices: string[]): void => {
 const scriptLength = (parent: Element | undefined): number | null => {
   if (parent === undefined) return null;
   const script = childElement(parent, "script");
-  if (script === undefined) return (parent.textContent ?? "").length;
-  return (script.textContent ?? "").length;
+  const text = (script ?? parent).textContent ?? "";
+  return Buffer.byteLength(text, "utf8");
 };
 
 /** Parse a product-archive `Distribution` document. JavaScript is length-only. */
