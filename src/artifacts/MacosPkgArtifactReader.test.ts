@@ -555,7 +555,16 @@ it("names skipped component archives when the expansion budget is exhausted", as
     );
     expect(paths).not.toContain("A.pkg/Payload/usr/local/rea/hello.txt");
     expect(paths).not.toContain("B.pkg/Payload/usr/local/rea/hello.txt");
-    expect(reader.formatMetadata()?.scripts.present).toBe(false);
+    expect(reader.formatMetadata()?.scripts).toMatchObject({
+      present: true,
+      compression: "unread",
+      members: [],
+    });
+    expect(reader.formatMetadata()?.payload).toMatchObject({
+      present: true,
+      compression: "unread",
+      members: [],
+    });
   } finally {
     await reader.close();
   }

@@ -795,6 +795,18 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         used += Math.max(declared, charged);
       }
     };
+    // Presence comes from the TOC. An archive that is listed but not read
+    // (budget skip or read refusal) stays present with "unread" contents.
+    if (scripts.length > 0)
+      metadata.scripts = {
+        present: true,
+        compression: "unread",
+        preinstall: false,
+        postinstall: false,
+        members: [],
+      };
+    if (payloads.length > 0)
+      metadata.payload = { present: true, compression: "unread", members: [] };
     await expandListed(scripts, "scripts");
     await expandListed(payloads, "payload");
     if (skipped.length === 0) return [];
