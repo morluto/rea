@@ -452,6 +452,7 @@
 * **cli:** read global arguments once with one REA owner ([#11687](https://github.com/morluto/rea/issues/11687)) ([5257a3d](https://github.com/morluto/rea/commit/5257a3d91278387d832aed41c96b8896c2313a46))
 * **cli:** register every command in an REA-owned command table ([#11680](https://github.com/morluto/rea/issues/11680)) ([f14e9a1](https://github.com/morluto/rea/commit/f14e9a1d282a7155c32f260730f5881d2c3e6c83))
 * **cli:** render command help with REA's own help owner ([#11683](https://github.com/morluto/rea/issues/11683)) ([ec1cf3a](https://github.com/morluto/rea/commit/ec1cf3a9bd193371a599ae69b1bc6325b4624b14))
+* **cli:** report unknown commands and the update notice from REA ([#11692](https://github.com/morluto/rea/issues/11692)) ([a10037e](https://github.com/morluto/rea/commit/a10037ef10516cf92653596512932b15f190a5c0))
 * **cli:** run one-shot commands through one shared owner ([#10405](https://github.com/morluto/rea/issues/10405)) ([bddbd80](https://github.com/morluto/rea/commit/bddbd80afb8e5e2c5b5d7a0f3906497b5be7e9b5))
 * **compression:** move the raw LZ4 block decoder into src/compression ([#11492](https://github.com/morluto/rea/issues/11492)) ([79abe4e](https://github.com/morluto/rea/commit/79abe4e5fa1b7bf39390411ed0940872675d9f9c))
 * **config:** move the MCP startup policy beside its startup budgets in src/config ([#11429](https://github.com/morluto/rea/issues/11429)) ([47c252f](https://github.com/morluto/rea/commit/47c252f5274607a02d750f817caaac7366a33ccb))
