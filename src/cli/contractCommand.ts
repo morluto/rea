@@ -66,6 +66,7 @@ import {
 } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { optionFlagName } from "./optionFields.js";
 
 /**
  * Incur adapter for contract commands. The command itself is described in
@@ -985,7 +986,7 @@ export const registerRoutedCommand = (
                   refused.map((key) => ({
                     path: [key],
                     reason: "invalid_value" as const,
-                    message: `--${kebabCase(key)} requires ${owners.get(key)!.requirement}; the given input selects ${route.requirement}, which does not take it.`,
+                    message: `--${optionFlagName(key)} requires ${owners.get(key)!.requirement}; the given input selects ${route.requirement}, which does not take it.`,
                   })),
                 ),
               );
@@ -1062,9 +1063,6 @@ const withCliOnlyDefaults = (
     ),
   ),
 });
-
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 /** What a JSON-document command's handler receives besides the document. */
 export interface ContractDocumentContext<

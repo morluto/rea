@@ -7,19 +7,9 @@ import { splitIncurBuiltinArguments } from "../cliBuiltinArguments.js";
 import { parseCliArgv } from "./argvParser.js";
 import type { CliInstance } from "./types.js";
 import { visitRegisteredCommands } from "./visitRegisteredCommands.js";
+import { declaredOptionType, isCountOption } from "./optionFields.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
-
-/** Match the wrapper types the argv parser unwraps for token binding. */
-const tokenType = (field: z.ZodType): z.ZodType => {
-  let inner = field;
-  while ("innerType" in inner.def) {
-    const candidate = inner.def.innerType;
-    if (!(candidate instanceof z.ZodType)) break;
-    inner = candidate;
-  }
-  return inner;
-};
 
 /** Preserve flag consumption without evaluating command defaults or transforms. */
 const optionTokenShape = (
@@ -29,7 +19,7 @@ const optionTokenShape = (
   z.object(
     Object.fromEntries(
       Object.entries(schema.shape).map(([name, field]) => {
-        const inner = tokenType(field);
+        const inner = declaredOptionType(field);
         const token =
           inner instanceof z.ZodBoolean && !(strictDryRun && name === "dryRun")
             ? z.boolean().optional()
@@ -38,7 +28,7 @@ const optionTokenShape = (
               : z.unknown().optional();
         return [
           name,
-          field.meta()?.count === true ? token.meta({ count: true }) : token,
+          isCountOption(field) ? token.meta({ count: true }) : token,
         ];
       }),
     ),
@@ -67,10 +57,10 @@ export const validateCliArguments = (
     const dryRunField = optionsSchema?.shape["dryRun"];
     const strictDryRun =
       dryRunField !== undefined &&
-      tokenType(dryRunField) instanceof z.ZodBoolean;
+      declaredOptionType(dryRunField) instanceof z.ZodBoolean;
     const final = entries.at(-1)?.[1];
     const variadic =
-      final !== undefined && tokenType(final) instanceof z.ZodArray;
+      final !== undefined && declaredOptionType(final) instanceof z.ZodArray;
     // A final array consumes the tail, but must still admit dry-run literals.
     if (variadic && !strictDryRun) return;
     let tail = "__rea_unbound_positionals";
@@ -86,7 +76,7 @@ export const validateCliArguments = (
             ...Object.fromEntries(
               entries.map(([name, field]) => [
                 name,
-                tokenType(field) instanceof z.ZodArray
+                declaredOptionType(field) instanceof z.ZodArray
                   ? z.array(z.unknown()).optional()
                   : z.unknown().optional(),
               ]),
