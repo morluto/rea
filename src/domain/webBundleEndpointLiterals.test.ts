@@ -609,3 +609,27 @@ it("reserves checked route facts before optional literal candidates", () => {
     limited.inferences.filter(isLiteralEndpointCandidate).length,
   ).toBeLessThan(literals.length);
 });
+
+it("retains uppercase request-method wrapper arguments via the call fallback", () => {
+  // `client.GET` / `client.POST` are not among the known lowercase method names
+  // (get/post/...), so `endpointArgument` does not recognise them; the call
+  // fallback must still retain the literal-shaped first argument.
+  const result = analyze(`const client = {
+  GET: (u) => fetch(u),
+  POST: (u) => fetch(u),
+};
+client.GET(\`/api/uppercase-get\`);
+client.POST(\`/api/uppercase-post\`);`);
+  const candidates = result.inferences.filter(
+    ({ kind }) => kind === "endpoint_candidate",
+  );
+  expect(candidates.map(({ value }) => value)).toEqual([
+    "/api/uppercase-get",
+    "/api/uppercase-post",
+  ]);
+  expect(
+    candidates.every(({ basis }) =>
+      basis.some((item) => item.detector === "literal:path-shaped"),
+    ),
+  ).toBe(true);
+});
