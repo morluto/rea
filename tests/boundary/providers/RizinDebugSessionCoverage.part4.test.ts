@@ -272,6 +272,10 @@ it.skipIf(process.platform === "win32")(
     if (!result.ok) {
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toEqual([sessionId]);
+      // The retained failure names why the session stopped.
+      expect(result.error.diagnostics).toMatchObject({
+        session_stop: "command-deadline",
+      });
       const evidence = evidenceSchema.parse(result.error.partialObservation);
       expect(evidence.normalized_result).toMatchObject({
         completion_status: "unknown",

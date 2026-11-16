@@ -7,19 +7,19 @@ import {
 } from "../domain/artifactReaderLimits.js";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
 import {
+  ArtifactResourceScope,
   ArtifactReaderFailure,
+  assertProducedEntry,
   copyArtifactEntry,
-  sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+  readArtifactFileChunks,
+  abortIfNeeded,
+  ArtifactFileSource,
+} from "../resources/index.js";
+import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import {
   findDotnetBundleHeader,
   readDotnetBundle,
@@ -146,11 +146,11 @@ export class DotnetBundleArtifactReader implements ArtifactReader {
       const source = await this.#source.readSelectedPath(signal);
       this.#assertOpen(signal);
       const selected = this.#entries.get(entry.adapterKey);
-      if (selected === undefined || !sameArtifactEntry(entry, selected.entry))
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Selected .NET bundle entry differs from its observed manifest",
-        );
+      assertProducedEntry(
+        entry,
+        selected?.entry,
+        "Selected .NET bundle entry differs from its observed manifest",
+      );
       const stream = Readable.from(
         this.#readMember(source, selected.file, signal),
         { objectMode: false },

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -38,7 +39,7 @@ cliTest(
       matched_count: 1,
       entries: [{ name: "CONFIG_SECURITY_SELINUX", kind: "y", value: "y" }],
     });
-    expect(evidence.subject?.format).toBe("elf");
+    expect(fileIdentity(evidence.subject).format).toBe("elf");
   },
 );
 

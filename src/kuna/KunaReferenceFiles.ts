@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -8,6 +6,8 @@ import { compareKunaAddresses } from "./KunaAddress.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { parseKunaJson } from "./KunaJson.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** The raw xref budget also bounds its materialized rows. */
 export const KUNA_XREF_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -375,7 +375,7 @@ export const parseKunaIncomingReferences = (
             pointer,
         ) ?? null,
       bytes: Buffer.byteLength(text),
-      sha256: createHash("sha256").update(text).digest("hex"),
+      sha256: sha256Hex(text),
     });
   } catch (cause: unknown) {
     if (cause instanceof KunaDocumentError) {
@@ -387,7 +387,7 @@ export const parseKunaIncomingReferences = (
       );
     }
     return err({
-      code: cause instanceof Error ? cause.message : String(cause),
+      code: errorMessage(cause),
     });
   }
 };

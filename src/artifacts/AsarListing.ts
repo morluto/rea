@@ -2,10 +2,14 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
 
-import { asarDeclaredSizeSchema, asarNodeSchema } from "./AsarNode.js";
-import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
+import { asarDeclaredSizeSchema, asarNodeSchema } from "../domain/asarNode.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+} from "../resources/index.js";
 import { assertAsarReadActive } from "./AsarFailure.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { quotedExcerpt } from "../domain/excerpt.js";
 import {
   DEFAULT_ASAR_LISTING_ADMISSION,
   type AsarListingAdmission,
@@ -16,9 +20,7 @@ export const BLOCK_INTEGRITY_LIMITATION =
 /** Source text quoted in listing diagnostics; longer values keep their length. */
 const MAX_QUOTED_SOURCE_UNITS = 256;
 const quoteSource = (value: string): string =>
-  value.length <= MAX_QUOTED_SOURCE_UNITS
-    ? JSON.stringify(value)
-    : `${JSON.stringify(value.slice(0, MAX_QUOTED_SOURCE_UNITS))}... (${String(value.length)} UTF-16 code units)`;
+  quotedExcerpt(value, MAX_QUOTED_SOURCE_UNITS);
 // Listing keeps a member whose size cannot bound its content, as it keeps an
 // unreadable offset; only reading that member fails.
 const asarListingNodeSchema = asarNodeSchema.extend({

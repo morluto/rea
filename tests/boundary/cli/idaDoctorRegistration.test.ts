@@ -127,7 +127,7 @@ cliTest.for([
     name: `valid timeout ${String(timeoutMs)}`,
     registration: {
       command: "provider-must-not-launch",
-      protocol: "legacy",
+      protocol: "native",
       timeoutMs,
     },
     constraint: undefined,
@@ -137,7 +137,7 @@ cliTest.for([
     registration: {
       command: "provider-must-not-launch",
       args: [],
-      protocol: "legacy",
+      protocol: "native",
     },
     constraint: undefined,
   },

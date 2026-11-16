@@ -79,7 +79,7 @@ it("records the selected artifact and the dependency section range", async () =>
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
     locations: [
       { kind: "artifact-path", path: report.artifact.path },

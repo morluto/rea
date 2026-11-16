@@ -2,13 +2,14 @@ import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
 import {
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import {
+  ArtifactResourceScope,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  ZipArtifactReader,
+} from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
@@ -23,11 +24,13 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   MAX_FLUTTER_LIBRARY_PATH_BYTES,
+  dartPoolBudgetLimit,
   dartPoolPolicy,
+  type DartPoolBudget,
   type DartPoolPolicy,
   type FlutterRequest,
 } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -42,19 +45,15 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { isAbortWithReason } from "../process/SignalAbort.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { fixedAllowanceOptions as flutterBudget } from "../domain/fixedAllowanceRemediation.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-} from "../artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   NonRegularFileReadError,
@@ -75,6 +74,7 @@ import {
 } from "./DartElf.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const APK_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 const LIBRARY_MAX_BYTES = 256 * 1024 * 1024;
@@ -89,6 +89,45 @@ const MAX_FLUTTER_ABIS = 32;
 /** A complete AOT image carries exactly one VM and one isolate section. */
 const SYMBOL_PAIR_COUNT = 2;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+
+/** Each release-fixed Flutter ceiling with the value that refused the input. */
+const FLUTTER_ALLOWANCES = {
+  apkMetadataRead: fixedAllowanceOptions(
+    "The Flutter APK metadata read allowance",
+    "parser",
+    { limit: APK_METADATA_READ_MAX_BYTES, unit: "bytes" },
+  ),
+  abiInventory: fixedAllowanceOptions(
+    "The Flutter ABI inventory allowance",
+    "parser",
+    { limit: MAX_FLUTTER_ABIS, unit: "ABIs" },
+  ),
+  libraryPath: fixedAllowanceOptions(
+    "The Flutter library path allowance",
+    "parser",
+    { limit: MAX_FLUTTER_LIBRARY_PATH_BYTES, unit: "bytes" },
+  ),
+  apkSnapshot: fixedAllowanceOptions(
+    "the Flutter APK snapshot allowance",
+    "input",
+    { limit: APK_MAX_BYTES, unit: "bytes" },
+  ),
+  libraryRead: fixedAllowanceOptions(
+    "the Flutter library read allowance",
+    "input",
+    { limit: LIBRARY_MAX_BYTES, unit: "bytes" },
+  ),
+  cumulativeExtraction: fixedAllowanceOptions(
+    "the Flutter cumulative extraction allowance",
+    "input",
+    { limit: TOTAL_EXTRACTION_MAX_BYTES, unit: "bytes" },
+  ),
+  snapshotHashCandidates: fixedAllowanceOptions(
+    "The Flutter snapshot-hash candidate allowance",
+    "parser",
+    { limit: MAX_SNAPSHOT_HASH_CANDIDATES, unit: "candidates" },
+  ),
+} as const;
 
 /**
  * Stream a local file digest without retaining large files in memory.
@@ -113,11 +152,7 @@ const sha256File = async (
     }
     return hash.digest("hex");
   } catch (cause) {
-    if (
-      cause instanceof Error &&
-      cause.name === "AbortError" &&
-      cause.cause === marker
-    )
+    if (isAbortWithReason(cause, marker))
       throw cancelledBy(operation, carriedReason(signal?.reason));
     throw cause;
   } finally {
@@ -208,16 +243,7 @@ const mapInputFailure = (
       cause,
     });
   if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      cause.message,
-      { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
-      {
-        cause,
-        ...flutterBudget("The Flutter APK metadata read allowance", "parser"),
-      },
-    );
+    return readerLimitFailure(operation, cause);
   return new AnalysisInputError(operation, { cause }, [
     {
       path: ["path"],
@@ -225,6 +251,52 @@ const mapInputFailure = (
       message: inputFailureMessage(path, cause),
     },
   ]);
+};
+
+/**
+ * Report the ZIP reader ceiling that refused the APK. A ceiling the reader
+ * names (the Zstandard decoder window) keeps its name. The archive expansion
+ * budget is derived from the APK's size, and Flutter offers no control that
+ * raises it, so it is fixed for this request. The ZIP reader's remaining limit
+ * is the metadata read budget this provider selects.
+ */
+const readerLimitFailure = (
+  operation: string,
+  cause: ArtifactReaderFailure,
+): AnalysisError => {
+  if (cause.fixedAllowance !== undefined)
+    return new AnalysisResourceConstraintError(
+      operation,
+      cause.boundary === "file-size" ? "file-size" : "memory",
+      cause.message,
+      null,
+      { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
+    );
+  if (cause.readerLimit !== undefined) {
+    const { effective_value: limit, required_value: required } =
+      cause.readerLimit;
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      `The APK's declared member sizes${required === undefined ? "" : ` (${String(required)} bytes)`} exceed its ${String(limit)}-byte expansion allowance.`,
+      { max_expanded_bytes: limit },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          "The Flutter APK expansion allowance (derived from the APK size)",
+          "parser",
+          { limit, unit: cause.readerLimit.unit },
+        ),
+      },
+    );
+  }
+  return new AnalysisResourceConstraintError(
+    operation,
+    "memory",
+    cause.message,
+    { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
+    { cause, ...FLUTTER_ALLOWANCES.apkMetadataRead },
+  );
 };
 
 /** Name a missing or non-file selection instead of blaming package bytes. */
@@ -237,7 +309,7 @@ const inputFailureMessage = (path: string, cause: unknown): string => {
     return `Selected APK does not exist: ${path}`;
   if (cause instanceof NonRegularFileReadError)
     return `Selected APK is not a regular file: ${path}`;
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return `The APK could not be read as a package: ${path}: ${message}`;
 };
 
@@ -326,7 +398,9 @@ const collectFlutterLibraries = async (
             max_flutter_abis: MAX_FLUTTER_ABIS,
             max_library_path_bytes: MAX_FLUTTER_LIBRARY_PATH_BYTES,
           },
-          flutterBudget("The Flutter ABI inventory allowance", "parser"),
+          abis.size > MAX_FLUTTER_ABIS
+            ? FLUTTER_ALLOWANCES.abiInventory
+            : FLUTTER_ALLOWANCES.libraryPath,
         );
       libraries.push({
         entry,
@@ -362,7 +436,7 @@ const checkApkSize = (operation: string, bytes: number): void => {
       "file-size",
       `The selected APK exceeds the ${String(APK_MAX_BYTES)}-byte snapshot budget`,
       { max_apk_bytes: APK_MAX_BYTES, observed_bytes: bytes },
-      flutterBudget("the Flutter APK snapshot allowance", "input"),
+      FLUTTER_ALLOWANCES.apkSnapshot,
     );
 };
 
@@ -596,17 +670,13 @@ export class FlutterBuildProvider {
       FLUTTER_PROVIDER_IDENTITY.id,
       [root],
       {
-        reason: causes
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: causes.map((cause) => errorMessage(cause)).join("; "),
         retained_roots: [
           {
             path: root,
             failures: causes.map((cause) => ({
               name: cause instanceof Error ? cause.name : "UnknownError",
-              message: cause instanceof Error ? cause.message : String(cause),
+              message: errorMessage(cause),
               ...(cause instanceof Error &&
               "code" in cause &&
               typeof cause.code === "string"
@@ -632,11 +702,7 @@ export class FlutterBuildProvider {
     cleanup: AnalysisError,
     operation: string,
   ): AnalysisError {
-    return analysisErrorWithCleanupFailure(
-      primary,
-      cleanup,
-      operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
   }
 
   /** Stop admission and drain active snapshots before attempting retained cleanup. */
@@ -819,7 +885,7 @@ export class FlutterBuildProvider {
             "file-size",
             `${entry.path} exceeds the library read budget`,
             { max_library_bytes: LIBRARY_MAX_BYTES, entry_path: entry.path },
-            flutterBudget("the Flutter library read allowance", "input"),
+            FLUTTER_ALLOWANCES.libraryRead,
           ),
         );
     }
@@ -840,7 +906,7 @@ export class FlutterBuildProvider {
             max_total_bytes: TOTAL_EXTRACTION_MAX_BYTES,
             declared_total: declaredTotal,
           },
-          flutterBudget("the Flutter cumulative extraction allowance", "input"),
+          FLUTTER_ALLOWANCES.cumulativeExtraction,
         ),
       );
 
@@ -888,7 +954,7 @@ export class FlutterBuildProvider {
                 max_library_bytes: LIBRARY_MAX_BYTES,
                 entry_path: entry.path,
               },
-              flutterBudget("the Flutter library read allowance", "input"),
+              FLUTTER_ALLOWANCES.libraryRead,
             ),
           );
         hash.update(view);
@@ -906,10 +972,7 @@ export class FlutterBuildProvider {
               "file-size",
               `cumulative library extraction across ${String(flutterEntries.length)} entries exceeds the ${String(TOTAL_EXTRACTION_MAX_BYTES)}-byte budget`,
               { max_total_bytes: TOTAL_EXTRACTION_MAX_BYTES },
-              flutterBudget(
-                "the Flutter cumulative extraction allowance",
-                "input",
-              ),
+              FLUTTER_ALLOWANCES.cumulativeExtraction,
             ),
           );
       }
@@ -928,10 +991,7 @@ export class FlutterBuildProvider {
                 max_snapshot_hash_candidates: MAX_SNAPSHOT_HASH_CANDIDATES,
                 entry_path: entry.path,
               },
-              flutterBudget(
-                "The Flutter snapshot-hash candidate allowance",
-                "parser",
-              ),
+              FLUTTER_ALLOWANCES.snapshotHashCandidates,
             ),
           );
         facts.set(abi, {
@@ -1133,7 +1193,7 @@ export class FlutterBuildProvider {
           "file-size",
           `lib/${selected.abi}/libapp.so declares ${String(declared)} bytes, exceeding the ${String(LIBRARY_MAX_BYTES)}-byte read budget`,
           { max_library_bytes: LIBRARY_MAX_BYTES },
-          flutterBudget("the Flutter library read allowance", "input"),
+          FLUTTER_ALLOWANCES.libraryRead,
         ),
       );
     const imagePath = join(snapshot.root, "libapp.so");
@@ -1163,7 +1223,7 @@ export class FlutterBuildProvider {
               "file-size",
               `lib/${selected.abi}/libapp.so exceeds the ${String(LIBRARY_MAX_BYTES)}-byte read budget while streaming`,
               { max_library_bytes: LIBRARY_MAX_BYTES },
-              flutterBudget("the Flutter library read allowance", "input"),
+              FLUTTER_ALLOWANCES.libraryRead,
             ),
           );
         imageHash.update(view);
@@ -1316,6 +1376,14 @@ export class FlutterBuildProvider {
       dataHeaders.some((section) => !section.header.complete) ||
       hashScan.candidates.length !== 1 ||
       hashScan.sources !== SYMBOL_PAIR_COUNT;
+    const poolBudgetsReached = new Set<DartPoolBudget>(pool.limitsReached);
+    if (
+      pool.packageUriCount > poolPolicy.uri_limit ||
+      pool.dartUriCount > poolPolicy.uri_limit
+    )
+      poolBudgetsReached.add("uri_limit");
+    if (pool.classLikeTokenCount > poolPolicy.token_limit)
+      poolBudgetsReached.add("token_limit");
     const poolPartial =
       isolateData === null ||
       pool.collectionCapped ||
@@ -1350,6 +1418,13 @@ export class FlutterBuildProvider {
             ),
             class_like_token_count_at_least: pool.classLikeTokenCount,
             printable_run_count: pool.printableRunCount,
+            ...(poolBudgetsReached.size === 0
+              ? {}
+              : {
+                  limits: [...poolBudgetsReached].map((budget) =>
+                    dartPoolBudgetLimit(budget, poolPolicy),
+                  ),
+                }),
           },
           coverage: snapshotPartial || poolPartial ? "partial" : "complete",
         },
@@ -1388,21 +1463,21 @@ export class FlutterBuildProvider {
               ),
             ...pool.limitsReached.map(
               (limit) =>
-                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit} (CLI --pool-policy JSON); no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
+                `String-pool admission reached pool_policy.${limit}=${String(poolPolicy[limit])}. Retry with a narrower pool_policy.contains or increase ${limit}; string_pool.limits records the control and no REA restart is required. Counts remain lower bounds and overflowed runs are omitted. APK, library and response limits are unchanged`,
             ),
             ...(pool.dartUriCount > poolPolicy.uri_limit
               ? [
-                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `dart_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.dartUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
             ...(pool.packageUriCount > poolPolicy.uri_limit
               ? [
-                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `package_uris reports ${String(poolPolicy.uri_limit)} of at least ${String(pool.packageUriCount)} distinct URIs; narrow pool_policy.contains or raise pool_policy.uri_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
             ...(pool.classLikeTokenCount > poolPolicy.token_limit
               ? [
-                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (CLI --pool-policy JSON) on a new call, no restart required`,
+                  `class_like_tokens reports ${String(poolPolicy.token_limit)} of at least ${String(pool.classLikeTokenCount)} distinct tokens; narrow pool_policy.contains or raise pool_policy.token_limit (recorded in string_pool.limits) on a new call, no restart required`,
                 ]
               : []),
           ],
@@ -1432,13 +1507,13 @@ const projectStringPool = async (
   classLikeTokenCount: number;
   printableRunCount: number;
   collectionCapped: boolean;
-  limitsReached: readonly Exclude<keyof DartPoolPolicy, "contains">[];
+  limitsReached: readonly DartPoolBudget[];
 }> => {
   const packages = new Set<string>();
   const darts = new Set<string>();
   const tokens = new Set<string>();
   let runCount = 0;
-  const limitsReached = new Set<Exclude<keyof DartPoolPolicy, "contains">>();
+  const limitsReached = new Set<DartPoolBudget>();
   const COLLECTION_SLACK = 2;
   // Input bytes bound useful capacity before slack multiplication; large safe
   // integer requests never overflow the collection-budget arithmetic.
