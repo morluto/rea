@@ -31,6 +31,7 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   type AnalysisWorkflow,
+  type AnalysisWorkflowOutcome,
   type ApplicationWorkflowRequest,
   createAnalysisToolHandler,
   createApplicationToolHandler,
@@ -272,7 +273,7 @@ type AnalysisOperation<Input> = (
   input: Input,
   analysis: AnalysisOperationPort,
   request: ApplicationWorkflowRequest,
-) => Promise<Result<Evidence, AnalysisError>>;
+) => Promise<Result<AnalysisWorkflowOutcome, AnalysisError>>;
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
 export type ContractToolBinding<Name extends CatalogToolName> =

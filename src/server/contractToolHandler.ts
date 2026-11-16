@@ -448,12 +448,22 @@ export const runEvidenceToolOperation = async <Input>(
   );
 };
 
+/**
+ * A provider-backed workflow's Evidence and, when the workflow already
+ * recorded it in the session, that record's result: delivery reuses it
+ * rather than recording (and re-validating) the Evidence again.
+ */
+export interface AnalysisWorkflowOutcome {
+  readonly evidence: Evidence;
+  readonly recorded?: Result<unknown, AnalysisError>;
+}
+
 /** A provider-backed workflow run on the analysis its admission grants. */
 export type AnalysisWorkflow = (
   input: unknown,
   analysis: AnalysisOperationPort,
   request: ApplicationWorkflowRequest,
-) => Promise<Result<Evidence, AnalysisError>>;
+) => Promise<Result<AnalysisWorkflowOutcome, AnalysisError>>;
 
 /**
  * Run a provider-backed workflow on the analysis that admission grants for
@@ -494,16 +504,31 @@ export const createAnalysisToolHandler =
         const analyzed = await logToolExecution(logger, contract.name, () =>
           analyze(input, analysis, { signal, progress }),
         );
-        const delivered =
-          detail === "summary" && analyzed.ok
-            ? summarizeRetainedAnalysis(analyzed.value, retention)
-            : analyzed;
-        const response = deliverEvidenceResult(
-          server,
-          delivered,
-          contract,
-          retention.recordEvidence,
-        );
+        const response =
+          !analyzed.ok || detail === "summary"
+            ? deliverEvidenceResult(
+                server,
+                analyzed.ok
+                  ? summarizeRetainedAnalysis(
+                      analyzed.value.evidence,
+                      retention,
+                    )
+                  : analyzed,
+                contract,
+                retention.recordEvidence,
+              )
+            : analyzed.value.recorded === undefined
+              ? deliverEvidenceResult(
+                  server,
+                  ok(analyzed.value.evidence),
+                  contract,
+                  retention.recordEvidence,
+                )
+              : server.delivery.toEvidenceToolResult(
+                  analyzed.value.evidence,
+                  contract,
+                  analyzed.value.recorded,
+                );
         await reportOperationEnd(
           progress,
           contract.name,
