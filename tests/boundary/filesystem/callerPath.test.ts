@@ -71,3 +71,31 @@ it("normalizes separator spellings of absolute Windows paths (#4707)", () => {
   ])
     expect(absoluteCallerPath(spelling, win32)).toBe("C:\\Users\\u\\h.exe");
 });
+
+it("keeps unselected Windows share paths lexical", () => {
+  expect(
+    absoluteCallerPath("\\\\unselected-server\\share\\Source.JS", {
+      platform: "win32",
+    }),
+  ).toBe("\\\\unselected-server\\share\\Source.JS");
+  expect(
+    absoluteCallerPath("C:\\CaseSensitive\\Different.js", {
+      platform: "win32",
+    }),
+  ).toBe("C:\\CaseSensitive\\Different.js");
+});
+
+it("refuses POSIX resolution from a Windows working directory instead of recursing", () => {
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue("C:\\work");
+  try {
+    // A POSIX PATH search on a Windows host reached this with a relative entry.
+    expect(() => absoluteCallerPath("bin/uv", { platform: "linux" })).toThrow(
+      TypeError,
+    );
+    expect(() =>
+      absoluteCallerPath("bin/uv", { cwd: "relative", platform: "linux" }),
+    ).toThrow(TypeError);
+  } finally {
+    cwd.mockRestore();
+  }
+});

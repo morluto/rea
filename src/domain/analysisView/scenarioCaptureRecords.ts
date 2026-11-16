@@ -20,6 +20,7 @@ import { analysisViewResultInputError } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 type RequestEvent = Extract<BrowserScenarioEvent, { kind: "request" }>;
 type ContentEvent = Extract<BrowserScenarioEvent, { kind: "network-content" }>;
@@ -79,7 +80,7 @@ const retainedBody = (
 /** Strictly decoded text, keeping a byte-order mark; undefined for bytes that are not UTF-8. */
 const utf8Text = (body: CapturedBody): string | undefined => {
   try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    return strictUtf8Decoder("preserve").decode(
       Buffer.from(body.content, "base64"),
     );
   } catch {

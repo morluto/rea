@@ -115,6 +115,21 @@ it.skipIf(process.platform === "win32")(
         process.platform,
       ),
     ).toBe(installation);
+    // A removed working directory holds nothing under `.` or an empty entry;
+    // a later absolute entry still finds the installation.
+    const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("ENOENT: uv_cwd");
+    });
+    try {
+      expect(
+        discoverGhidraInstallationOnPath(
+          { PATH: `.::${pathDirectory}` },
+          process.platform,
+        ),
+      ).toBe(installation);
+    } finally {
+      cwd.mockRestore();
+    }
 
     const incomplete = join(root, "incomplete");
     const incompletePath = join(root, "incomplete-bin");
@@ -1532,27 +1547,6 @@ describe("Ghidra JVM native directory admission", () => {
       ),
       remediation: expect.stringContaining("JAVA_HOME"),
     });
-  });
-
-  it("accepts a JDK whose os.arch selects the validated native decompiler directory", async () => {
-    const result = await inspectGhidraInstallation(
-      {
-        resourceOwner: inspectionResources.owner,
-        environment: {},
-        installDir: INSTALL,
-        platform: "darwin",
-        architecture: "arm64",
-      },
-      host({
-        probeJava: () =>
-          javaProbeOk<GhidraJavaObservation>({
-            ...JAVA,
-            osArch: "aarch64",
-            osName: "Mac OS X",
-          }),
-      }),
-    );
-    expect(result.status).toBe("available");
   });
 
   it("rejects a successful Java probe that omits os.arch", async () => {

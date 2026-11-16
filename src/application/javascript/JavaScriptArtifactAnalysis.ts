@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { boundedList } from "../../domain/boundedList.js";
 import { posix } from "node:path";
 
 import { setImmediate } from "node:timers/promises";
@@ -45,14 +45,18 @@ import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactRefe
 import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
+import {
+  ArtifactReaderFailure,
+  translateArtifactFailure,
+} from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 interface MutableArtifactAnalysis {
   readonly jsonDocuments: JavaScriptJsonDocuments;
@@ -97,24 +101,21 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
   let selectedFileIndex = 0;
-  for (const file of fileSet.files) {
+  for (const file of fileSet.source_selection === undefined
+    ? javaScriptAnalysisOrder(fileSet.files)
+    : fileSet.files) {
     let analysisStarted = false;
     try {
       await setImmediate();
       if (classifyUnavailableSource(file, state, projection)) {
         if (signal?.aborted === true) {
-          interruption = new AnalysisCancelledError(
-            "analyze_javascript_application",
-            { cause: signal.reason },
-          );
+          interruption = cancelledBy("analyze_javascript_application", signal);
           break;
         }
         continue;
       }
       if (signal?.aborted === true)
-        throw new AnalysisCancelledError("analyze_javascript_application", {
-          cause: signal.reason,
-        });
+        throw cancelledBy("analyze_javascript_application", signal);
       await beforeFile(file, selectedFileIndex++, selectedFileCount);
       analysisStarted = true;
       if (file.kind !== "javascript" || !file.text.included) {
@@ -129,7 +130,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         signal,
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
         preloadPaths.has(`${file.container_sha256}:${file.path}`) &&
-          /\.js$/iu.test(file.path)
+          posix.extname(file.path) === ".js"
           ? "commonjs"
           : packageTypeFor(file),
       );
@@ -233,9 +234,9 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
           cause,
         );
       else if (signal?.aborted === true && cause === signal.reason)
-        interruption = new AnalysisCancelledError(
+        interruption = cancelledBy(
           "analyze_javascript_application",
-          { cause },
+          carriedReason(cause),
         );
       else throw cause;
       const scope = javascriptArtifactAnalysisScopes[file.kind];
@@ -308,10 +309,47 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
       );
     }
   }
+  restoreInventoryOrder(fileSet.files, state.files);
   return {
     analysis: finalizeArtifactAnalysis(state, preloadLimitations),
     interruption,
   };
+};
+
+/** A source inside an installed dependency package, not the application. */
+const dependencySourcePath = (path: string): boolean =>
+  path.split("/").slice(0, -1).includes("node_modules");
+
+/**
+ * Every source in one analysis charges the same parent result budget, so the
+ * order sources are offered decides which ones keep semantic and application
+ * facts when that budget runs out. Inventory order is lexical, which lets a
+ * large `node_modules` tree spend the budget before first-party entrypoints,
+ * preloads, and Electron windows are examined. Offer application JavaScript
+ * first and dependency JavaScript last; metadata files keep their position.
+ */
+const javaScriptAnalysisOrder = (
+  files: readonly JavaScriptArtifactFile[],
+): JavaScriptArtifactFile[] => {
+  const application: JavaScriptArtifactFile[] = [];
+  const dependencies: JavaScriptArtifactFile[] = [];
+  for (const file of files) {
+    if (file.kind === "javascript" && dependencySourcePath(file.path))
+      dependencies.push(file);
+    else application.push(file);
+  }
+  return [...application, ...dependencies];
+};
+
+/** Analysis order is an admission policy; reported files keep inventory order. */
+const restoreInventoryOrder = (
+  inventory: readonly JavaScriptArtifactFile[],
+  analyzed: AnalyzedJavaScriptArtifactFile[],
+): void => {
+  const positions = new Map(inventory.map((file, index) => [file, index]));
+  const position = ({ file }: AnalyzedJavaScriptArtifactFile): number =>
+    positions.get(file) ?? inventory.length;
+  analyzed.sort((left, right) => position(left) - position(right));
 };
 
 const finalizeArtifactAnalysis = (
@@ -447,6 +485,10 @@ export const createJavaScriptPackageTypeLookup = (
         const type = document.packageFields.type;
         return type === "module" || type === "commonjs" ? type : "unspecified";
       }
+      // An unvisited nearer manifest may override an observed ancestor's type.
+      const coverage = fileSet.unanalyzed_files?.coverage;
+      if (coverage !== undefined && coverage.status !== "complete")
+        return "unknown";
       if (directory === "." || directory === "" || directory === "/") break;
     }
     return "unknown";
@@ -658,7 +700,7 @@ const collectSourceMapOriginals = (
         declaration_index: declarationIndex++,
         reference,
         content,
-        content_sha256: content === null ? null : sha256(content),
+        content_sha256: content === null ? null : sha256Hex(content),
         section_path,
       });
     }
@@ -686,10 +728,13 @@ export const htmlInlineScriptLimitation = ({
   script_count: count,
   scripts,
 }: JavaScriptHtmlInlineScriptsObservation): string => {
-  const lines = scripts
-    .slice(0, HTML_INLINE_SCRIPT_LIMITATION_LINES)
-    .map(({ location }) => String(location.start.line));
-  const unnamed = count - lines.length;
+  const listed = boundedList(
+    scripts.map(({ location }) => String(location.start.line)),
+    HTML_INLINE_SCRIPT_LIMITATION_LINES,
+    count - scripts.length,
+  );
+  const lines = listed.items;
+  const unnamed = listed.omitted;
   const one = count === 1;
   return `${path} has ${String(count)} inline JavaScript ${one ? "body" : "bodies"} starting at line${one ? "" : "s"} ${lines.join(", ")}${unnamed > 0 ? ` and ${String(unnamed)} more` : ""} that ${one ? "was" : "were"} not analyzed; endpoints, storage, imports and other facts in ${one ? "it" : "them"} are absent from the evidence.`;
 };
@@ -736,10 +781,8 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.electron.sender_validations.length +
   analysis.electron.utility_processes.length +
   analysis.electron.native_addon_bindings.length +
-  analysis.electron.protocols.length;
+  analysis.electron.protocols.length +
+  (analysis.electron.dynamic_code ?? []).length;
 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;
-
-const sha256 = (value: string): string =>
-  createHash("sha256").update(value).digest("hex");

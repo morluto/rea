@@ -19,7 +19,7 @@ import { processCaptureCancelled } from "./ProcessCaptureError.js";
 export const resolveProcessScenarioRuntimePaths = async (
   scenario: ProcessScenario,
   environment: Readonly<Record<string, string | undefined>> = process.env,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): Promise<ProcessScenario> => {
   const selectedWorkingDirectory = absoluteCallerPath(
     scenario.working_directory,
@@ -78,7 +78,7 @@ export const resolveProcessScenarioRuntimePaths = async (
  * continues past denied directories, and an existing file without execute
  * permission remains an invalid selection.
  */
-export const resolveExecutable = async (
+const resolveExecutable = async (
   command: string,
   workingDirectory: string,
   searchPath: string | undefined,

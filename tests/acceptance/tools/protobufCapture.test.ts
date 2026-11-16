@@ -9,7 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   protobufCaptureDescriptor,
@@ -17,13 +17,14 @@ import {
   protobufFrame,
   protobufCaptureBody,
 } from "../../fixtures/protobufCapture.js";
+import { expectCliMcpEvidenceParity } from "../../fixtures/cliMcpEvidenceParity.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   webNetworkCaptureSchema,
   inspectWebNetworkCaptureInputSchema,
 } from "../../../src/domain/webNetworkCapture.js";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
@@ -648,9 +649,10 @@ captureTest.for(
         "--json",
       ],
     };
-    const response = await (name === "valid"
-      ? cli.run(options)
-      : runFileCli(cli, options));
+    const response = await cli.run({
+      ...options,
+      freshProcess: name === "valid",
+    });
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     const report = webNetworkCaptureSchema.parse(evidence.normalized_result);
@@ -678,7 +680,7 @@ captureTest.for(
       protobuf: { framing: "auto" },
     });
     expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-    expect(reply.structuredContent).toEqual(response.json);
+    expectCliMcpEvidenceParity(response.json, reply.structuredContent, path);
     expect(await readFile(path, "utf8")).toBe(original);
   },
 );

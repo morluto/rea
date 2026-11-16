@@ -1,4 +1,3 @@
-import type { IPty } from "@lydell/node-pty";
 import { expect, it } from "vitest";
 import type { TerminalFrame } from "../../domain/process/processCapture.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
@@ -56,7 +55,7 @@ const fixture = (
         },
       };
     },
-  } as unknown as IPty;
+  };
   const retention = captureTerminalFrames({
     terminal,
     scenario,

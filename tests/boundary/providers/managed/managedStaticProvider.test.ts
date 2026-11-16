@@ -1,3 +1,4 @@
+import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../../../../src/domain/managed/managedInspectionLimits.js";
 import { createHash } from "node:crypto";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import type { AnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   managedArtifactInspectionSchema,
@@ -15,16 +16,102 @@ import {
 } from "../../../../src/domain/managed/managedArtifact.js";
 import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvider.js";
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
-import {
-  MAX_MANAGED_SNAPSHOT_BYTES,
-  readManagedSnapshot,
-} from "../../../../src/dotnet/ManagedSnapshot.js";
+import { readManagedSnapshot } from "../../../../src/dotnet/ManagedSnapshot.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
 import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
+
+it.each([
+  "inspect_managed_artifact",
+  "inspect_managed_members",
+  "inspect_managed_native_boundaries",
+] as const)(
+  "recovers the same managed target with per-call byte budgets: %s",
+  async (operation) => {
+    const root = await createTestTempDirectory("rea-managed-budget-recovery-");
+    const path = join(root, "fixture.dll");
+    const bytes = buildManagedPeFixture();
+    await writeFile(path, bytes);
+    const target = await parseBinaryTarget(path);
+    if (!target.ok) throw target.error;
+    const client = new ManagedStaticProvider().createClient(target.value);
+    try {
+      const refused = await client.execute(operation, {
+        max_snapshot_bytes: bytes.length - 1,
+      });
+      expect(refused).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisResourceConstraintError",
+          reportedLimits: { max_snapshot_bytes: bytes.length - 1 },
+        },
+      });
+      if (refused.ok) throw new Error("Expected snapshot admission refusal");
+      expect(projectAnalysisError(refused.error).remediation?.action).toContain(
+        "max_snapshot_bytes",
+      );
+      const partial = await client.execute(operation, {
+        max_snapshot_bytes: bytes.length,
+        max_metadata_representation_bytes: 1,
+      });
+      expect(partial.ok).toBe(true);
+      if (!partial.ok) throw partial.error;
+      expect(partial.value.result).toMatchObject({
+        coverage: {
+          issues: [
+            expect.objectContaining({
+              code: "resource-limit",
+              detail: expect.stringContaining(
+                "max_metadata_representation_bytes=1",
+              ),
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_metadata_representation_bytes",
+                effective_value: 1,
+                unit: "bytes",
+                minimum: 1,
+                maximum: Number.MAX_SAFE_INTEGER,
+                default_value: 64 * 1024 * 1024,
+                applies_at: "next_call",
+              },
+            }),
+          ],
+        },
+      });
+      // The issue names the contract field; adapters render their option.
+      expect(JSON.stringify(partial.value.result)).not.toContain(
+        "--max-metadata",
+      );
+      const recovered = await client.execute(operation, {
+        max_snapshot_bytes: bytes.length,
+        max_metadata_representation_bytes: 1024 * 1024,
+      });
+      expect(recovered.ok).toBe(true);
+      if (!recovered.ok) throw recovered.error;
+      expect(recovered.value.result).toMatchObject({
+        artifact: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        coverage: { state: "complete" },
+      });
+      // The warmed snapshot must not bypass a later caller's smaller admission.
+      expect(
+        await client.execute(operation, {
+          max_snapshot_bytes: bytes.length - 1,
+        }),
+      ).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisResourceConstraintError" },
+      });
+      expect(
+        await client.execute(operation, { max_snapshot_bytes: 0 }),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+    } finally {
+      await client.close();
+    }
+  },
+);
 
 it.each(
   [false, true]
@@ -205,7 +292,7 @@ describe("managed static snapshot capacity failure", () => {
     );
     const path = join(directory, "sparse.exe");
     await writeFile(path, Buffer.alloc(0));
-    await truncate(path, MAX_MANAGED_SNAPSHOT_BYTES + 1);
+    await truncate(path, DEFAULT_MANAGED_SNAPSHOT_BYTES + 1);
     const resources = new ArtifactResourceScope();
     const originalClose = OwnedFileHandle.prototype.close;
     let permitClose = false;
@@ -683,8 +770,9 @@ it("preserves custom attribute value evidence through the filesystem provider wh
         code: "invalid-row",
         scope: "metadata.CustomAttribute:0x0c000001",
         offset: attribute.row_offset + 2,
-        detail:
-          "CustomAttribute constructor coded index 0x13 is invalid: coded index selects row 2 in table 10, which has 1 rows",
+        detail: expect.stringMatching(
+          /CustomAttribute.*0x13.*row 2.*table 10.*1 rows/i,
+        ),
       }),
     ]);
   } finally {

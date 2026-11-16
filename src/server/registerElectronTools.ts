@@ -5,17 +5,18 @@ import {
 } from "../application/analysisView/AnalysisViewService.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { OptionalProviderLoadFailure } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
 import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
 import {
   inspectElectronPage,
   listElectronTargets,
 } from "../application/javascript/ElectronObservationService.js";
 import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
 import { recordEvidenceSources } from "../application/investigation/recordEvidenceSources.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
@@ -112,6 +113,7 @@ export const registerElectronTools = (
             request,
             options.artifactResources,
             {
+              sourceAnalysis: javascriptSourceAnalysis,
               signal,
               progress,
               environment: options.environment,
@@ -149,6 +151,7 @@ export const registerElectronTools = (
           const recorded = recordEvidenceSources(
             options.recordEvidence,
             result.value.sources,
+            { evidence: result.value.evidence },
           );
           return recorded.ok
             ? { ok: true, value: result.value.evidence }

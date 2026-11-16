@@ -1,3 +1,5 @@
+import { ellipsisExcerpt } from "../../domain/excerpt.js";
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { matchesClockFormat } from "../../domain/analysisView/environmentStateWriteClockFormats.js";
@@ -22,6 +24,7 @@ import {
   translateValue,
   type IdMap,
 } from "./environmentCompareIds.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 export const DIFFERENCE_CATEGORIES = [
   "status",
@@ -66,16 +69,10 @@ const TIME_FIELD_CAMEL =
   /(?:At|Time|Date|Timestamp|Created|Updated|Modified)$/u;
 const ID_LIST_FIELD = /^(ids|uuids|guids)$/u;
 
-const isObject = (value: JsonValue | undefined): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const shown = (value: JsonValue | undefined): string => {
   const text = value === undefined ? "<absent>" : JSON.stringify(value);
-  return text.length > VALUE_CHARS ? `${text.slice(0, VALUE_CHARS)}…` : text;
+  return ellipsisExcerpt(text, VALUE_CHARS);
 };
-
-const escapePointer = (key: string): string =>
-  key.replaceAll("~", "~0").replaceAll("/", "~1");
 
 const formatKey = (format: ClockFormat): string =>
   format.kind === "epoch"
@@ -427,9 +424,11 @@ class Differ {
         ? { agreed: new Set<string>(), fields: new Map<string, string>() }
         : undefined;
     for (const [key, value] of Object.entries(live)) {
-      const child = `${pointer}/${escapePointer(key)}`;
+      const child = `${pointer}/${escapeJsonPointerToken(key)}`;
       const other = envKey(key);
-      if (!Object.hasOwn(env, other))
+      // A translated key and a verbatim key may name the same entry; an
+      // environment member can account for only one live member.
+      if (!Object.hasOwn(env, other) || matched.has(other))
         this.add({
           category: "missing-field",
           pointer: child,
@@ -458,7 +457,7 @@ class Differ {
               ? undefined
               : {
                   ...generation,
-                  pointer: `${generation.pointer}/${escapePointer(key)}`,
+                  pointer: `${generation.pointer}/${escapeJsonPointerToken(key)}`,
                 },
         );
         if (this.differences.length === before) composed?.agreed.add(key);
@@ -487,7 +486,7 @@ class Differ {
         } else
           this.add({
             category: "value",
-            pointer: `${pointer}/${escapePointer(rule.field)}`,
+            pointer: `${pointer}/${escapeJsonPointerToken(rule.field)}`,
             live: shown(live[rule.field]),
             env: shown(env[other]),
           });
@@ -497,7 +496,7 @@ class Differ {
       if (!matched.has(key))
         this.add({
           category: "extra-field",
-          pointer: `${pointer}/${escapePointer(key)}`,
+          pointer: `${pointer}/${escapeJsonPointerToken(key)}`,
           env: shown(value),
         });
   }
@@ -517,7 +516,7 @@ class Differ {
   ): void {
     if (Array.isArray(live) && Array.isArray(env))
       this.array(live, env, pointer, at.clockKey ?? at.key, generation);
-    else if (isObject(live) && isObject(env))
+    else if (isRecord(live) && isRecord(env))
       this.object(
         live,
         env,
@@ -528,8 +527,8 @@ class Differ {
     else if (
       Array.isArray(live) ||
       Array.isArray(env) ||
-      isObject(live) ||
-      isObject(env)
+      isRecord(live) ||
+      isRecord(env)
     )
       this.add({
         category: "value",
@@ -565,6 +564,7 @@ export const compareAnswers = (
     scope: entity.scope,
     at: entity.at ?? "",
     identity: entity.identity === true,
+    // optional-fact-default: a caller-selected comparison option, not an observation.
     rules: entity.rules ?? [],
   });
   if (live.status !== env.status)

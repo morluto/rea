@@ -167,6 +167,16 @@ This operation actively launches and interacts with the selected target. It is
 not a passive CDP observation. The owned process keeps normal host filesystem
 and network privileges, so lifecycle ownership does not make it a sandbox.
 
+The app runs with the operator's real profile. If the app is already running,
+or another capture of the same app is in progress, the launched instance can
+fail to obtain the app's single-instance lock. Electron then hands the launch,
+including its arguments, to the running instance. The active hook stops the
+launched app at that call, and the capture fails with
+`application_already_running` without observing or driving the running
+instance. If the app requests the lock while actions run, the pending actions
+stop and the capture fails the same way, keeping its final snapshot. Close the
+running app, or wait for the other capture, and retry.
+
 The CLI and MCP surfaces accept the same schema. For a JSON request file:
 
 ```bash
@@ -265,6 +275,9 @@ retained arrays and counters without invoking application iterators or Array
 species.
 
 Listener-chain recognition distinguishes owned, unowned and unknown metadata.
+Only a directly owned wrapper establishes hook dispatch. An application's data
+link to an owned wrapper remains unknown: `.listener` can name that wrapper
+without invoking it.
 Data links may be inherited; absence is established only after completing the
 bounded prototype lookup. Exhausting either walk, encountering a getter or seeing a Proxy leaves
 ownership unknown. The hook preserves native registration without adding another

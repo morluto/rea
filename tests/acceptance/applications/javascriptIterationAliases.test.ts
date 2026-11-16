@@ -72,5 +72,4 @@ const assertReturns = (fields: JavaScriptReturnFields): void => {
 cliTest(
   "preserves yielded-object mutation uncertainty through CLI and stdio MCP",
   ({ cli }) => verifyJavaScriptReturnShapes(cli, source, assertReturns),
-  120_000,
 );

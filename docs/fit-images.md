@@ -22,9 +22,10 @@ use the current projection identity; there is no pre-coverage FIT summary varian
 A FIT is a flattened devicetree (FDT v16 or v17) with a top-level `/images`
 node. Recognition walks the structure block within the first 4 KiB of the file
 only; the file name does not matter. A devicetree whose `/images` node begins
-after 4 KiB, a devicetree without `/images`, and any other FDT version stay on
-the plain devicetree route: `open_binary` refuses them and
-[`inspect_devicetree`](devicetree.md) still parses them. A U-Boot control DTB
+after 4 KiB or a devicetree without `/images` stays on the plain devicetree
+route: `open_binary` refuses it and [`inspect_devicetree`](devicetree.md)
+can parse it when its FDT version is 16 or 17. Other FDT versions are not
+recognized as FIT and are also unsupported by `inspect_devicetree`. A U-Boot control DTB
 that contains `/images` is treated as a FIT. The container format is `fit`.
 
 Recognition is a probe. The complete devicetree parse decides, so a file whose
@@ -124,8 +125,9 @@ Failures apply to the whole file and return no partial inventory.
 
 The devicetree, including any embedded image data, must be at most 16 MiB; a
 larger `totalsize` fails as a memory limit. Store large images externally
-(`mkimage -E`): external data of any size is streamed from the file and never
-loaded into memory. A FIT may declare at most 1,024 images and 1,024
+(`mkimage -E`): external image bytes are streamed from the file within their declared
+32-bit sizes and the resource bounds below, without loading the whole image
+into memory. A FIT may declare at most 1,024 images and 1,024
 configurations, and an image at most 8 hash nodes; the devicetree parser's
 node, property and depth bounds also apply. The sum of declared image sizes
 is bounded by the shared archive expansion budget. These are fixed resource

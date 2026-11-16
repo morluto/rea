@@ -1,6 +1,6 @@
 import pino from "pino";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerErlangTools } from "../../../src/server/registerErlangTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { BeamService } from "../../../src/application/erlang/BeamService.js";
 import { BeamProvider } from "../../../src/erlang/BeamProvider.js";
@@ -17,6 +17,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   erlangBeamDeclaredRowsFixture,
+  erlangBeamRowsFixture,
   erlangBeamFixture,
 } from "../../../src/erlang/Beam.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -106,7 +107,7 @@ mcpTest(
         ],
         [
           "rows",
-          erlangBeamDeclaredRowsFixture([
+          erlangBeamRowsFixture([
             ["ExpT", MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
           ]),
           {},
@@ -144,7 +145,11 @@ mcpTest(
       undefined,
       createToolResultDelivery(2 * 1024 * 1024),
     );
-    registerErlangTools(server, service, pino({ enabled: false }));
+    registerServiceTools(
+      server,
+      { erlangBeam: service },
+      { logger: pino({ enabled: false }) },
+    );
     const client = await mcp.connect(server);
     try {
       for (const delivery of [
@@ -174,6 +179,35 @@ mcpTest(
       ).toBe("without_retention");
     } finally {
       await service.close();
+    }
+  },
+);
+
+mcpTest(
+  "reports impossible BEAM table counts as malformed input",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    const root = await createTestTempDirectory("rea-beam-malformed-rows-");
+    try {
+      for (const chunk of ["ExpT", "ImpT", "FunT"]) {
+        const path = join(root, `${chunk}.beam`);
+        await writeFile(
+          path,
+          erlangBeamDeclaredRowsFixture([
+            [chunk, MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS + 1],
+          ]),
+        );
+        const response = await client.callTool({
+          name: "inspect_erlang_beam",
+          arguments: { path },
+        });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code: "invalid_request",
+        });
+      }
+    } finally {
+      await session.close();
     }
   },
 );

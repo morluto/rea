@@ -19,9 +19,11 @@ it.skipIf(process.platform === "win32")(
       'exec 0<&-; printf "\\000"; while :; do :; done',
       "#!/bin/sh",
     );
-    const { manager, sessionId } = await start(provider, {
-      frameTimeoutMs: 500,
-    });
+    const { manager, sessionId } = await start(
+      provider,
+      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "500" },
+    );
     const result = await manager.execute(sessionId, "dr");
     expect(result.ok).toBe(false);
     expect(manager.status(sessionId)?.state).toBe("closed");

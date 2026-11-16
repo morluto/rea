@@ -4,6 +4,13 @@ Pushes to main automatically open or refresh a Release Please PR with the next
 version and changelog. Review its migration notes and wait for its current CI
 checks to pass. Merging that PR into main starts publication automatically.
 
+The push caused by merging a same-repository Release Please PR skips proposal
+generation: the separate merged-release workflow owns tag creation and
+publication. This avoids looking for the new version's tag before that workflow
+has created it. The next ordinary main push resumes proposals. API lookup
+failures and missing release boundaries on ordinary pushes or manual preparation
+still fail closed.
+
 The Release workflow validates the merged release metadata and ancestry before
 creating a tag. npm and MCP Registry publication use the exact reviewed merge
 SHA returned by Release Please. Before either registry is published, the release
@@ -54,6 +61,50 @@ Ordinary main pushes and closed, unmerged PRs cannot publish packages. Check
 both publication jobs and the published-package canary; a merged PR or GitHub
 tag alone does not establish that publication finished. Retry failed jobs in
 the original run after a partial publication.
+
+## Check the packed catalog with client engines
+
+rea-agents 6.9.0 advertised a pattern that RE2 and Rust's `regex` cannot
+compile, so clients rejected the whole tools list
+([#10830](https://github.com/morluto/rea/issues/10830)). Release qualification
+runs `ci.yml` on the release revision, and its build job checks the advertised
+catalog with every client engine and, in full qualification, Python
+`jsonschema`; a refusal fails qualification, so publication does not start.
+
+To check the archive itself, for example when auditing a release or
+investigating a client report, install the exact qualified archive: the
+`package.tgz` in the release run's `verified-release-package` artifact, which
+the publish job uploads unchanged. A root `npm pack` is not that archive; it
+lacks the release manifest, `npm-shrinkwrap.json` and bundled dependencies. The
+check needs Go and Python 3.10 or later on the host. It runs in a subshell, so
+its cleanup trap removes the archive, installed package and Python engines on
+success or failure without replacing your shell's own trap.
+
+```bash
+(
+  set -eu
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  gh run download "$RELEASE_RUN_ID" --repo morluto/rea \
+    --name verified-release-package --dir "$work/verified"
+  npm install --ignore-scripts --no-save --no-package-lock --no-audit --no-fund \
+    --prefix "$work/prefix" "$work/verified/package.tgz"
+  python3 -m venv "$work/engines"
+  "$work/engines/bin/pip" install --require-hashes \
+    -r scripts/verify/advertised-schemas/requirements.txt
+  REA_REQUIRE_SCHEMA_ENGINES=1 REA_SCHEMA_ENGINES_PYTHON="$work/engines/bin/python" \
+    node scripts/verify-advertised-schemas.mjs --complete \
+    --package-root="$work/prefix/node_modules/rea-agents"
+)
+```
+
+Set `RELEASE_RUN_ID` to the release workflow run that qualified the version.
+Run it from a checkout of the release commit after `npm run build:cached`; the
+checkout supplies the checker and the profile list, and the installed package
+supplies every listing. The run must report each engine with its version,
+including `go regexp (RE2)`, `re2 (C++)`, `rust regex`, `rust fancy-regex`,
+`rust jsonschema` and `python jsonschema`; a missing engine fails instead of
+passing. Report any refusal as a release defect.
 
 ## Recover an already published npm release
 
@@ -156,7 +207,13 @@ resume bot regeneration. The label does not freeze the base branch: new base
 commits require re-inventorying and re-reviewing the notes.
 
 Update both the release branch's `CHANGELOG.md` and the PR body, preserving
-Release Please's surrounding metadata. Before creating a release, the workflow
+Release Please's surrounding metadata. Keep Author readiness declarations and
+other PR metadata outside the first and last standalone `---` notes delimiters.
+The version heading must start the notes within those delimiters (or use Release
+Please's generated component wrapper). The checker uses Release Please's parser
+to verify that publication will extract the reviewed notes.
+
+Before creating a release, the workflow
 checks an inventory when present, requires its target to equal the reviewed
 merge's first parent, and compares the freshly fetched PR body to the changelog.
 It rejects changes outside the release metadata paths and stale credit records
@@ -181,7 +238,8 @@ When choosing the manual path, leave the automatic main release PR unmerged.
 Select the application commit from main, create the frozen branch, and prepare
 its own release PR using the steps below. Merging the main release PR starts
 automatic publication instead. Close the superseded main PR after the manual
-release has published and its metadata has been synchronized back to main.
+release has published, before merging the metadata synchronization PR back
+to main.
 
 `release/VERSION` also sets the expected version for the workflow. Use an exact
 SemVer such as `release/6.1.0` or `release/6.1.0-rc.1`, without build metadata.
@@ -349,8 +407,10 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 The synchronization must include `.release-please-manifest.json`,
 `package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
-`server.json`, both plugin manifests (`.claude-plugin/plugin.json` and
-`.codex-plugin/plugin.json`), the Codex server declaration (`.codex-plugin/mcp.json`), both
+`server.json`, the Claude Code and Codex plugin manifests
+(`.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`), the Codex
+server declaration (`.codex-plugin/mcp.json`), the Cursor Marketplace manifest
+(`.cursor-plugin/plugin.json`) and server pin (`mcp.json`), both
 marketplaces (`.claude-plugin/marketplace.json` and
 `.agents/plugins/marketplace.json`), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration

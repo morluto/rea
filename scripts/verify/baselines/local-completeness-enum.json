@@ -1,0 +1,10 @@
+{
+  "src/domain/analysisView/browserScenarioViewSchemas.ts": 1,
+  "src/domain/analysisView/goBinaryView.ts": 1,
+  "src/domain/artifactFormatMetadata.ts": 2,
+  "src/domain/evidenceRecordSummary.ts": 1,
+  "src/domain/javascript/javascriptExportShapeComparisonSchemas.ts": 1,
+  "src/domain/javascript/javascriptRouteInventory.ts": 1,
+  "src/domain/javascript/javascriptStaticCoverage.ts": 1,
+  "src/domain/windows/ntfsMftAttributes.ts": 1
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createIdaMcpConnection } from "../../src/ida/IdaMcpConnection.js";
+import { idaConnectionDependencies } from "../support/idaConnectionDependencies.js";
 
 const launcherEnvironment = (): Readonly<Record<string, string>> => {
   if (process.platform !== "win32") return {};
@@ -20,9 +21,11 @@ describe("IDA startup diagnostics", () => {
         ],
         env: launcherEnvironment(),
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
       },
       {},
+      idaConnectionDependencies(),
     );
     try {
       await expect(connection.connect()).rejects.toMatchObject({
@@ -47,9 +50,11 @@ describe("IDA startup diagnostics", () => {
         ],
         env: launcherEnvironment(),
         mode: "headless",
+        protocol: "modern",
         timeoutMs: 1000,
       },
       {},
+      idaConnectionDependencies(),
     );
     try {
       await expect(connection.connect()).rejects.toMatchObject({
@@ -76,9 +81,11 @@ it("drops a leading partial UTF-8 character from the bounded stderr tail", async
       ],
       env: launcherEnvironment(),
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
     },
     {},
+    idaConnectionDependencies(),
   );
   try {
     await expect(connection.connect()).rejects.toMatchObject({
@@ -103,9 +110,11 @@ it("retains an in-budget undecodable leading byte without claiming tail truncati
       ],
       env: launcherEnvironment(),
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
     },
     {},
+    idaConnectionDependencies(),
   );
   try {
     const failure = await connection.connect().catch((cause: unknown) => cause);

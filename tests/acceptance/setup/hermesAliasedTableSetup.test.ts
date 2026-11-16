@@ -50,7 +50,6 @@ for (const version of ["1.1", "1.2"] as const) {
           HERMES_HOME: profile,
           HOPPER_LAUNCHER_PATH: process.execPath,
         },
-        timeoutMs: 20_000,
       });
       expect(removed.exitCode).toBe(0);
       expect(await readFile(config, "utf8")).toBe(original);
@@ -84,7 +83,6 @@ for (const version of ["1.1", "1.2"] as const) {
               GHIDRA_INSTALL_DIR: ghidra,
               JAVA_HOME: java,
             },
-            timeoutMs: 20_000,
           });
         const setup = [
           "setup",
@@ -166,7 +164,6 @@ cliTest("Hermes still registers into an explicit table", async ({ cli }) => {
       HERMES_HOME: profile,
       HOPPER_LAUNCHER_PATH: process.execPath,
     },
-    timeoutMs: 20_000,
   });
   expect(applied.exitCode).toBe(0);
   expect(applied.json).toMatchObject({ status: "ready" });
@@ -209,7 +206,6 @@ for (const version of ["1.1", "1.2"] as const) {
           HERMES_HOME: profile,
           HOPPER_LAUNCHER_PATH: process.execPath,
         },
-        timeoutMs: 20_000,
       });
       expect(applied.exitCode).toBe(0);
       const configured = parse(await readFile(config, "utf8"), { version });
@@ -237,7 +233,6 @@ cliTest(
           HERMES_HOME: profile,
           HOPPER_LAUNCHER_PATH: process.execPath,
         },
-        timeoutMs: 20_000,
       });
     const [command, ...args] = currentClientRegistrationCommand({
       entrypointPath: resolve("scripts/rea.mjs"),
@@ -316,7 +311,6 @@ for (const original of [
           HERMES_HOME: profile,
           HOPPER_LAUNCHER_PATH: process.execPath,
         },
-        timeoutMs: 20_000,
       });
       expect(rejected.exitCode).not.toBe(0);
       expect(rejected.json).toMatchObject({

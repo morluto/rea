@@ -1,15 +1,17 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
-import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
+import { hopperLauncherDiscovery } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
+import { isDesktopBuildCheck } from "../domain/doctorProviderIds.js";
+import type { DoctorHost } from "./Doctor.js";
 import type {
   DoctorCheck,
-  DoctorHost,
   DoctorProviderInspection,
-} from "./Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 
 /** Ordered environment diagnostics consumed by the Doctor report assembler. */
 export interface DoctorDiagnostics {
@@ -22,6 +24,7 @@ export interface DoctorDiagnostics {
 export const collectDoctorDiagnostics = async (
   target: string | undefined,
   host: DoctorHost,
+  clients: readonly string[] = [],
 ): Promise<DoctorDiagnostics> => {
   const checks: DoctorCheck[] = [nodeCheck(host)];
   checks.push(await hostCheck(host));
@@ -34,7 +37,7 @@ export const collectDoctorDiagnostics = async (
   const hopperVersionCheck = await optionalHopperVersionCheck(host, hopperPath);
   if (hopperVersionCheck !== undefined) checks.push(hopperVersionCheck);
 
-  const providerInspections = await host.providerInspections?.();
+  const providerInspections = await host.providerInspections?.(clients ?? []);
   if (providerInspections !== undefined)
     checks.push(...providerInspections.flatMap(providerDoctorChecks));
 
@@ -63,16 +66,17 @@ export const doctorHealthy = (
       | undefined;
   },
 ): boolean => {
+  const audited = checks.filter(({ name }) => !isDesktopBuildCheck(name));
   if (providers.providerInspections === undefined)
-    return checks.every(({ ok }) => ok);
-  const providerChecks = checks.filter(
+    return audited.every(({ ok }) => ok);
+  const providerChecks = audited.filter(
     ({ name }) =>
       name.startsWith("hopper") ||
       providers.providerInspections?.some((inspection) =>
         providerCheckName(inspection.id, name),
       ) === true,
   );
-  const coreHealthy = checks
+  const coreHealthy = audited
     .filter((candidate) => !providerChecks.includes(candidate))
     .every(({ ok }) => ok);
   const configuredProvidersHealthy = providerChecks
@@ -95,7 +99,9 @@ export const doctorHealthy = (
 };
 
 /** Runtime support follows the shared rule, which judges Bun by its Node.js compatibility. */
-const nodeCheck = ({ runtime }: DoctorHost): DoctorCheck => {
+export const nodeCheck = ({
+  runtime,
+}: Pick<DoctorHost, "runtime">): DoctorCheck => {
   const failure = {
     remediation: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
     classification: "missing_dependency",
@@ -217,8 +223,7 @@ const optionalHopperStartupTimeoutCheck = (
       : `REA_HOPPER_STARTUP_TIMEOUT_MS: ${parsed.error.settings.map(({ constraint }) => constraint).join("; ")}`,
     {
       classification: "config_drift",
-      remediation:
-        "Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to 2147483647 milliseconds.",
+      remediation: `Unset REA_HOPPER_STARTUP_TIMEOUT_MS to use the default, or set it to a positive decimal integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} milliseconds.`,
     },
   );
 };
