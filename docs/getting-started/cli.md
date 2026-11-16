@@ -685,7 +685,13 @@ For one-shot commands, `details.limit` reports `scope: "rea-invocation"` and
 deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
 
 `rea debug-with-gdb` and `rea debug-with-rizin` hold their debugger only for the
-command's own process. If cleanup cannot confirm the debugger stopped, they print
+command's own process. GDB's optional `--executable ./program` hashes and loads
+that initial file before running the caller's console command, without starting
+the inferior automatically. The Evidence target retains this initial file
+selection; later console loads do not rebind it. Without the option, the session
+target remains unknown. `--inferior-tty` still selects the durable output terminal.
+
+If cleanup cannot confirm the debugger stopped, they print
 `cleanup_incomplete` and exit nonzero without stopping it. `remediation.action`
 names the process, as does `retained_debugger_pids` in `details.diagnostics`, or
 in `details.diagnostics.cleanup_error.details.diagnostics` when the command also
