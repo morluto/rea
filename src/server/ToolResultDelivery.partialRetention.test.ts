@@ -49,7 +49,7 @@ it.each([
   [
     "silent about retention",
     undefined,
-    { kind: "inline-evidence", retention: "unknown", evidence },
+    { kind: "unretained-evidence", evidence },
   ],
 ] as const)(
   "keeps the ledger's refusal with a completed partial observation (%s)",
@@ -72,7 +72,7 @@ it("does not reference a retained record the ledger did not name", () => {
     refusal({ kind: "retained-evidence", evidence_id: "ev_other" }),
   );
   expect(details.partial_observation).toMatchObject({
-    kind: "inline-evidence",
-    retention: "unknown",
+    kind: "unretained-evidence",
+    evidence,
   });
 });
