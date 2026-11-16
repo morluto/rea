@@ -516,17 +516,22 @@ itWithCaptureCapability(
       expect(update.message ?? "").not.toContain("TOKEN_CHILD_DONE");
     }
     const messages = progress.map(({ message }) => message ?? "");
-    expect(messages.some((message) => message.startsWith("running:"))).toBe(
-      true,
-    );
-    expect(messages.at(-1)).toContain("cleanup:");
-    expect(messages.at(-1)).toContain("owned_process_group=cleaned");
-    expect(messages.at(-1)).toContain("disposition=exited");
-    const nonTerminal = progress.slice(0, -1);
+    expect(messages[0]).toBe("capture_process_scenario: started");
+    expect(messages.at(-1)).toBe("capture_process_scenario: completed");
+    // The shared handler encloses the provider's own progress lifecycle.
+    const captureMessages = messages.slice(1, -1);
+    expect(
+      captureMessages.some((message) => message.startsWith("running:")),
+    ).toBe(true);
+    expect(captureMessages.at(-1)).toContain("cleanup:");
+    expect(captureMessages.at(-1)).toContain("owned_process_group=cleaned");
+    expect(captureMessages.at(-1)).toContain("disposition=exited");
+    const nonTerminal = captureMessages.slice(0, -1);
     assertRateBound(
       nonTerminal.length,
-      parseProgressMessage((messages.at(-1) ?? "").slice("cleanup: ".length))
-        .elapsed_ms,
+      parseProgressMessage(
+        (captureMessages.at(-1) ?? "").slice("cleanup: ".length),
+      ).elapsed_ms,
     );
     const tokenEvidence = toolContract(
       "capture_process_scenario",
@@ -578,8 +583,18 @@ itWithCaptureCapability(
     expect(timeoutProgress.every(({ total }) => total === undefined)).toBe(
       true,
     );
-    expect(timeoutProgress.at(-1)?.message).toContain("disposition=timeout");
-    expect(timeoutProgress.at(-1)?.message).toContain(
+    expect(timeoutProgress[0]?.message).toBe(
+      "capture_process_scenario: started",
+    );
+    expect(timeoutProgress.at(-1)?.message).toBe(
+      "capture_process_scenario: completed",
+    );
+    const timeoutCaptureProgress = timeoutProgress.slice(1, -1);
+    expect(timeoutCaptureProgress.at(-1)?.message).toContain("cleanup:");
+    expect(timeoutCaptureProgress.at(-1)?.message).toContain(
+      "disposition=timeout",
+    );
+    expect(timeoutCaptureProgress.at(-1)?.message).toContain(
       "owned_process_group=cleaned",
     );
 
