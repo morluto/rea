@@ -228,6 +228,32 @@ export const inspectSignatureSchema = z.object({
   entitlements: jsonValueSchema.nullable(),
   timestamp: z.string().nullable(),
   hardened_runtime: z.boolean().nullable(),
+  /** Which slice the facts above describe, and what is known of the others. */
+  slices: z.strictObject({
+    described: z
+      .string()
+      .describe(
+        "codesign architecture of the slice the identity, hashes, designated requirement, entitlements and runtime state describe.",
+      ),
+    architectures: z
+      .array(z.string())
+      .describe(
+        "Known codesign architectures of every slice; empty when codesign reports a thin file. More than one means the facts above cover only the described slice.",
+      ),
+    unmapped: z
+      .boolean()
+      .describe(
+        "Some slices have no known codesign architecture; their signing states are unknown.",
+      ),
+    checked: z
+      .array(z.string())
+      .describe(
+        "Architectures whose own signing state codesign was asked for, one call per slice when there is more than one; a known slice missing here has an unknown state.",
+      ),
+    unsigned: z
+      .array(z.string())
+      .describe("The checked architectures codesign reported unsigned."),
+  }),
   provenance: z.array(nativeCommandInvocationSchema),
   limitations: z.array(z.string()),
 });
