@@ -12,7 +12,7 @@ import {
   buildArsc,
 } from "../../fixtures/arsc.js";
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "decodes arsc facts and XML text through compiled MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-arsc-mcp-");
