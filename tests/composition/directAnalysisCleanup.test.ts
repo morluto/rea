@@ -1,3 +1,4 @@
+import { publishCliAnalysisEvidence } from "../../src/cli/analysisEvidenceDelivery.js";
 import { projectCliAnalysisResult } from "../../src/cli/projectCliAnalysisResult.js";
 import {
   mkdir,
@@ -56,7 +57,7 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { BinarySession } from "../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../src/application/investigation/InvestigationRecords.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
 
 const cleanupError = new ProviderCleanupError(
   "fixture",
@@ -773,28 +774,24 @@ it.each(["complete", "summary"] as const)(
     const { dependencies, session } = factories({
       onClose: () => controller.abort(reason),
     });
+    const analysis = await runProviderAnalysis(
+      dependencies,
+      path,
+      "inspect_managed_members",
+      {},
+      undefined,
+      controller.signal,
+    );
+    // The CLI delivery receives the cancelled run and publishes nothing.
     const result =
       detail === "summary"
-        ? await runProviderAnalysis(
-            dependencies,
-            path,
-            "inspect_managed_members",
-            {},
-            undefined,
-            controller.signal,
-            {
-              detail,
-              evidenceBundlePath: join(dirname(path), "bundle.json"),
-            },
-          ).then(projectCliAnalysisResult)
-        : await runProviderAnalysis(
-            dependencies,
-            path,
-            "inspect_managed_members",
-            {},
-            undefined,
-            controller.signal,
-          ).then(projectCliAnalysisResult);
+        ? await publishCliAnalysisEvidence(analysis, {
+            operation: "inspect_managed_members",
+            signal: controller.signal,
+            detail,
+            evidenceOutput: join(dirname(path), "bundle.json"),
+          })
+        : projectCliAnalysisResult(analysis);
     expect(result).toEqual({
       error: "Analysis failed",
       ...projectAnalysisError(

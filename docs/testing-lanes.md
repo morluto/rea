@@ -386,7 +386,7 @@ or upgrade Java, Ghidra, .NET or native toolchains. See
 `npm run verify:ida -- --target /absolute/path/to/program --procedure main`
 uses the existing `REA_IDA_MCP_CONFIG` registration. It installs no engine,
 Python package, or compiler. The target must already be open in the GUI for
-the legacy or native attached profile; the database-supervisor headless profile opens
+the native attached profile; the database-supervisor headless profile opens
 a digest-verified private copy. A caller-supplied fixture keeps prerequisites
 limited to the selected engine and host. `tests/conformance/ida/inventory.c`
 provides an optional small native fixture source with exported
@@ -410,7 +410,7 @@ Adapter and composition tests cover producer parsing, pagination, canonical
 entries, external callees, target switches, cancellation draining, snapshot
 replay exclusion, ownership failures, and incomplete cleanup. They do not
 establish real IDA operation. The initial real workflows cover legacy upstream
-1.4.0 on a Windows GUI and the modern supervisor at upstream commit
+1.4.0 on a Windows GUI (a profile REA has since removed) and the modern supervisor at upstream commit
 `c133c3853faa111a9b00ee615c013b720d0c4acd` with Windows x64 IDA 9.3, and the
 headless profile on macOS arm64 with IDA Professional 9.1 (build 9.1.250226)
 at the same upstream commit, using `tests/conformance/ida/inventory.c` built
@@ -423,7 +423,7 @@ other engine versions and architectures remain unverified; see the
 
 Native IDA MCP verification uses `"protocol": "native"` with an already-running native plugin and requires `--second-procedure other_function --second-marker unique_second_body_text` to exercise GUI function switching and a return to the first function. These options remain optional for other profiles. The literal marker must appear in the second function's pseudocode and be absent from the first. Native cloud/widget failures are reported without hidden retries.
 
-The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](providers/ida-provider.md#optional-native-ida-mcp-bridge).
+The initial Linux x64 IDA Free 9.4 run used native MCP 1.1.2 with a local navigation correction. Windows x64 verification uses **IDA Pro 9.3**, the two-function public fixture, and the shipped Windows `whoami.exe` application. The native plugin was built from upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c`, including the merged navigation fix, with a local loopback-listener change. Production CLI/MCP parity, switching, identity and cleanup passed. Correctness and performance measurements are recorded in the [Windows native verification notes](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). Stock 1.1.2 switching, native macOS, and Windows IDA Free remain unverified. See the [native bridge prerequisites](providers/ida-provider.md#native-ida-mcp-bridge).
 
 ## Kuna lane
 
@@ -631,30 +631,13 @@ generated-document validation, including the small onboarding example consistenc
 suite, without the source-test shards or native package
 lanes. Classification compares the PR head with its merge base, so later
 base-branch changes do not expand that scope. Static and portable-test aggregate jobs
-remain present and fail if classification fails. Every code change retains the
-complete portable Linux suite; individual test files are not selected by
-imports or filenames.
+remain present and fail if classification fails.
 
-Ordinary PRs also produce an **observational** test-selection plan. The candidate
-leaf-adapter ownership table lives in `scripts/ci/test-selection.mjs`, separately
-from provider-job scopes. It proposes keeping affected owners plus every unowned
-test, including all CLI/MCP, acceptance, composition, conformance, and process
-tests. Shared inputs, unknown paths, missing owner tests, and removed tests fall
-back to the complete inventory. Renames account for both paths. Main, scheduled,
-manual, and `ci:full` runs always propose the full suite.
-
-The source group and every built shard together still execute the complete suite. The existing report merge
-compares the proposal with actual module outcomes and retains
-`.cache/ci-test-selection/report.json` in `test-results`, including selected and
-omitted paths, changed input paths, missed failures, unobserved files, scheduling weights, PR head and
-executed merge SHA. This adds no test reruns or runner jobs. Missing, duplicate,
-skipped, interrupted, or unhandled results cannot establish a complete comparison;
-even a complete passing comparison is not proof of ownership completeness.
-Before enabling omissions, review representative full-run comparisons and
-cross-owner consumers, including failures, and measure completed CI feedback and
-runner demand. There is no automatic promotion or switch to skip tests. The
-initial proposal measures only leaf producer-test omissions; it does not promise
-the savings of a broader affected-test planner.
+Pull requests with code changes run only the portable tests the change
+affects; main pushes, scheduled and manual runs, release qualification and
+`ci:full` run the complete suite. See
+[pull-request test selection](development/testing.md#pull-request-test-selection)
+for the selection rules, fallbacks and gate.
 
 `scripts/ci/plan.mjs` selects lanes using the ownership table in
 `scripts/ci/scopes.mjs`. Each lane record owns its path and test selection
@@ -739,13 +722,14 @@ push: changes from failed or cancelled intermediate runs remain in scope.
 Missing, untrusted, or non-ancestor history selects the fast Linux x64
 baseline: portable checks and the Linux runtime lane. The lookup is
 bounded to the last 100 successful push runs; lookup failures broaden selection.
-Every code change still selects the source group and every fast built shard, without coverage
+Pull requests run their selected tests, or the complete suite when selection
+falls back; main pushes run the source group and every fast built shard, without coverage
 instrumentation in this fast tier. Ordinary PR matrices cancel remaining
-shards after the first failure; passing PRs execute the complete suite. Main,
+shards after the first failure. Main,
 `ci:full`, scheduled, manual, and release qualification retain every shard's
 results after a failure. Available failed-shard reports remain diagnostic only:
 failed, cancelled, skipped, or missing selected shards cannot pass the gate or
-publish successful timing history. This deliberately avoids relying on an
+publish successful timing history. Complete-suite runs do not rely on an
 import graph for generated files, filesystem inputs, subprocesses, or bridges.
 The portable report rejects an entirely skipped module inventory and lists
 fully skipped modules in its summary. A mixed passed/skipped inventory is
@@ -929,10 +913,6 @@ prefix still has a seed.
 Main warms the new cache namespace after merge; a cold cache falls back to the
 normal install. This prevents each PR from saving another branch-scoped copy of
 the same download cache. It does not remove runner assignment waits.
-
-Portable owner-based test selection remains observational. Its reports compare
-proposed omissions with the full run; incomplete or skipped observations do not
-establish that fewer tests would preserve regression detection.
 
 The automatic browser, binary-layout, EVM, JavaScript-recovery, packet-capture,
 signal-recording, recorded-crash, web and environment-bundle provider lanes download

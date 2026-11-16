@@ -35,18 +35,16 @@ import {
   type ComputerStartTiming,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
-import {
-  AGENTENV_PROVIDER,
-  ComputerHelper,
-  type ComputerRelease,
-} from "../../desktop/AgentEnvComputerHelper.js";
+import { ComputerHelper } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../../domain/desktop/computerRelease.js";
 import {
   resolveBuildComputerEnvironment,
   type BuildComputerDefaults,
 } from "../../desktop/BuildComputerEnvironment.js";
 import { buildSecretsDirectory } from "../../desktop/BuildSecretFiles.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   BuildComputerActionLog,
   type ReadonlyActionLog,
@@ -68,6 +66,7 @@ import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
 import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
@@ -149,7 +148,7 @@ const failure = (
   if (cause instanceof AnalysisError) return cause;
   if (signal.aborted) return cancelledBy(operation, signal);
   return new ProviderAdapterError(AGENTENV_PROVIDER, operation, {
-    userMessage: cause instanceof Error ? cause.message : String(cause),
+    userMessage: errorMessage(cause),
     cause,
   });
 };
@@ -199,7 +198,7 @@ const reset = async (
       .callTool("computer_screenshot", {}, signal)
       .catch((cause: unknown) => {
         if (signal.aborted) throw cause;
-        return cause instanceof Error ? cause.message : String(cause);
+        return errorMessage(cause);
       });
     if (typeof shot === "string" || shot.isError)
       return {
@@ -271,7 +270,7 @@ const liveComputer = (
     } catch (cause: unknown) {
       return {
         verified: false,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         resources: [],
       };
     }
@@ -397,7 +396,7 @@ const startFailure = (
     kept.release.verified
       ? { remediationAction: cause.remediation }
       : {}),
-    userMessage: cause instanceof Error ? cause.message : String(cause),
+    userMessage: errorMessage(cause),
     ...options,
     cause,
   });
@@ -422,7 +421,9 @@ export class DesktopBuildComputers {
     private readonly defaults: BuildComputerDefaults = {},
     private readonly startTiming: ComputerStartTiming = COMPUTER_START_TIMING,
   ) {
-    this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
+    this.#secrets = new DesktopBuildSecrets(
+      buildSecretsDirectory(environment, HOST_PLATFORM.platform),
+    );
     this.#shared = { settle, secrets: this.#secrets };
   }
 
@@ -757,7 +758,7 @@ export class DesktopBuildComputers {
     } catch (cause: unknown) {
       return {
         verified: false,
-        reason: `the build bundle folder could not be removed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `the build bundle folder could not be removed: ${errorMessage(cause)}`,
         resources: [held.workspace?.path ?? id],
       };
     }

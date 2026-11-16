@@ -5,19 +5,15 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { ElfNotesPort } from "../../application/binaryDiagnostics/ElfNotesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
@@ -78,9 +74,6 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 }
 
-const NOTE_TEXT_BUDGET =
-  "The ELF note text, hash, and scan budget fixed by the admitted image length plus decoded section names";
-
 const inputBudgetRemediation = (
   boundary: "file-size" | "capacity",
   input: InspectElfNotesInput,
@@ -134,9 +127,8 @@ const elfNotesFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
-      // Caller-selected read and entry budgets name the bound to raise.
-      // The note text, hash, and scan ceiling equals the admitted image
-      // length plus decoded section names, so host memory cannot raise it.
+      // Caller-selected read and entry budgets name the bound to raise; a
+      // memory limit keeps the ceiling its parser named (note text).
       const noteTextBudget = cause.boundary === "memory";
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -151,7 +143,12 @@ const elfNotesFailurePrimary = (
           ...(cause.boundary === undefined
             ? {}
             : noteTextBudget
-              ? fixedAllowanceOptions(NOTE_TEXT_BUDGET, "parser")
+              ? cause.fixedAllowance === undefined
+                ? {}
+                : {
+                    retryable: false as const,
+                    fixedAllowance: cause.fixedAllowance,
+                  }
               : {
                   retryable: false as const,
                   remediationAction: inputBudgetRemediation(

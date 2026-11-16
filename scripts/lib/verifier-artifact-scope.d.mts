@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 
 export class VerifierArtifactCleanupFailure extends AggregateError {
   readonly _tag: "VerifierArtifactCleanupFailure";

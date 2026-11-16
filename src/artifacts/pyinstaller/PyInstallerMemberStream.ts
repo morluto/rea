@@ -1,8 +1,7 @@
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createInflate } from "node:zlib";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../../resources/index.js";
 
 interface MemberStreamOptions {
   readonly sourceBytes: number;

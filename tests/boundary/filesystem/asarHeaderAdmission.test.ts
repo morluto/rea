@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { createPackage } from "@electron/asar";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { translateArtifactFailure } from "../../../src/artifacts/ArtifactOperationFailure.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import {
+  translateArtifactFailure,
   admitAsarHeader,
   asarHeaderAdmissionRecovery,
-} from "../../../src/artifacts/AsarHeader.js";
+} from "../../../src/resources/index.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { parseEnvironment } from "../../../src/config/environment.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import {

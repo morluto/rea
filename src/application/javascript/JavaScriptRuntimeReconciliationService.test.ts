@@ -1,8 +1,11 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
   parseEvidence,
   type Evidence,
+  evidenceSubjectInput,
 } from "../../domain/evidence.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../domain/javascript/javascriptRuntimeReconciliationSchemas.js";
@@ -29,16 +32,58 @@ const reconcile = (observations: readonly Evidence[]) => {
   };
 };
 
+it("stops resolving retained reconciliation sources when the caller cancels mid-request", () => {
+  const sources = [
+    JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers[0]!.analysis,
+    electronRuntimeEvidence("/synthetic", SOURCE),
+  ];
+  const controller = new AbortController();
+  const reason = { request: "cancel runtime reconciliation" };
+  const looked: string[] = [];
+  const result = reconcileJavaScriptRuntimeEvidence(
+    {
+      static_layers: [
+        {
+          analysis: {
+            kind: "retained-evidence",
+            evidence_id: sources[0]!.evidence_id,
+          },
+        },
+      ],
+      runtime_observations: [
+        { kind: "retained-evidence", evidence_id: sources[1]!.evidence_id },
+      ],
+    },
+    (id) => {
+      looked.push(id);
+      controller.abort(reason);
+      return sources.find(({ evidence_id }) => evidence_id === id);
+    },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(looked).toHaveLength(1);
+});
+
 it("keeps equal runtime payloads at distinct selected endpoints separate through service graph Evidence", () => {
   const first = electronRuntimeEvidence("/synthetic", SOURCE);
-  const second = createEvidence(undefined, first.provider, {
-    predicateType: first.predicate_type,
-    operation: first.operation,
-    parameters: { ...first.parameters, cdp_endpoint: "http://127.0.0.1:9444" },
-    confidence: first.confidence,
-    authority: first.authority,
-    result: first.normalized_result,
-  });
+  const second = createEvidence(
+    evidenceSubjectInput(first.subject),
+    first.provider,
+    {
+      predicateType: first.predicate_type,
+      operation: first.operation,
+      parameters: {
+        ...first.parameters,
+        cdp_endpoint: "http://127.0.0.1:9444",
+      },
+      confidence: first.confidence,
+      authority: first.authority,
+      result: first.normalized_result,
+    },
+  );
   const observed = reconcile([first, second]);
   expect(observed.result.graph.coverage).toMatchObject({
     status: "complete",
@@ -81,22 +126,26 @@ it("preserves attach-limited frame and worker coverage through service graph Evi
   const inspection = electronPageInspectionSchema.parse(
     first.normalized_result,
   );
-  const capture = createEvidence(undefined, first.provider, {
-    predicateType: first.predicate_type,
-    operation: first.operation,
-    parameters: first.parameters,
-    confidence: first.confidence,
-    authority: first.authority,
-    result: {
-      ...inspection,
-      completeness: {
-        ...inspection.completeness,
-        status: "attach_limited",
-        conditions: ["attach_limited"],
-        attach_limited_sections: ["frames", "workers"],
+  const capture = createEvidence(
+    evidenceSubjectInput(first.subject),
+    first.provider,
+    {
+      predicateType: first.predicate_type,
+      operation: first.operation,
+      parameters: first.parameters,
+      confidence: first.confidence,
+      authority: first.authority,
+      result: {
+        ...inspection,
+        completeness: {
+          ...inspection.completeness,
+          status: "attach_limited",
+          conditions: ["attach_limited"],
+          attach_limited_sections: ["frames", "workers"],
+        },
       },
     },
-  });
+  );
   const { result } = reconcile([capture]);
   const runtime = result.graph.nodes.filter(
     ({ identity }) => identity.strategy === "runtime-instance",
@@ -129,7 +178,7 @@ it("preserves attach-limited frame and worker coverage through service graph Evi
 
 it("preserves unresolved Inspector target location reason through service Evidence", () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "rea-v8-inspector",
       name: "REA passive Node/Electron V8 Inspector provider",

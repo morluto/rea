@@ -13,16 +13,16 @@ import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "../ArtifactHash.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
-import * as artifactPaths from "../ArtifactPaths.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import { pyInstallerMemberStream } from "./PyInstallerMemberStream.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import {
   cArchiveExecutable,
   pyzArchive,

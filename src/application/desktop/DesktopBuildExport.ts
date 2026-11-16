@@ -29,16 +29,15 @@ import {
 } from "../../domain/desktop/buildSecrets.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   BUILD_REA_TIMEOUT_S,
   fetchHomeFolder,
-  type ControlledComputer,
 } from "../../desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 import {
   adapterError,
   ENDS,
-  errorText,
   readOutput,
   refused,
   reportedFailure,
@@ -51,6 +50,7 @@ import {
   desktopOutputFailure,
   type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const EXPORT = "export_build_environment";
 const exportResultSchema = z.looseObject({
@@ -485,7 +485,7 @@ export const exportBuild = async (
           ? cancelledBy(EXPORT, carriedReason(cause))
           : adapterError(
               EXPORT,
-              redactSecrets(errorText(cause), capture.secrets),
+              redactSecrets(errorMessage(cause), capture.secrets),
               cause,
             );
     if (published !== undefined)

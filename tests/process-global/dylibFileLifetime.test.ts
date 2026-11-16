@@ -55,10 +55,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { traceDylibResolution } from "../../src/artifacts/apple/DylibResolutionReader.js";
 import { machoImage } from "../../src/artifacts/apple/MachoImage.fixture.js";
-import { ArtifactFileCleanupFailure } from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
+import { ArtifactFileCleanupFailure } from "../../src/resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { ArtifactProvider } from "../../src/artifacts/ArtifactProvider.js";
-import type { AnalysisClient } from "../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 

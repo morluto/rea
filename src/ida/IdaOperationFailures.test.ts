@@ -13,7 +13,7 @@ import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import { decodeIdaToolResult } from "./IdaMcpConnection.js";
 import { IDA_PROVIDER_IDENTITY } from "./IdaProviderMetadata.js";
-import type { AnalysisOperation } from "../application/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
 const roots: string[] = [];
@@ -698,83 +698,4 @@ describe("provider-derived procedure selectors", () => {
       }
     },
   );
-});
-
-describe("attached IDA procedure lookup failures", () => {
-  it("leaves a failed legacy lookup as unreadable output", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const producer = new RecordingIdaMcp(target, "attached");
-    producer.overrideCall = (name) =>
-      name === "get_function_by_name" ? null : undefined;
-    const client = new IdaSessionClient(
-      {
-        command: "fixture",
-        args: [],
-        env: {},
-        mode: "attached",
-        protocol: "legacy",
-        timeoutMs: 1000,
-        workspaceRoot: root,
-      },
-      target,
-      producer,
-    );
-    try {
-      const result = await client.execute("procedure_pseudo_code", {
-        procedure: "main",
-      });
-
-      if (result.ok) throw new Error("expected unreadable output");
-      expect(
-        projectAnalysisError(result.error).code,
-        "the legacy profile keeps its pre-existing classification",
-      ).toBe("unreadable_output");
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
-
-  it("leaves an MCP error reply for an unknown legacy name as unreadable output", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const producer = new RecordingIdaMcp(target, "attached");
-    producer.beforeCall = async (name) => {
-      if (name === "get_function_by_name")
-        decodeIdaToolResult({
-          content: [{ type: "text", text: "Function not found: main" }],
-          isError: true,
-        });
-    };
-    const client = new IdaSessionClient(
-      {
-        command: "fixture",
-        args: [],
-        env: {},
-        mode: "attached",
-        protocol: "legacy",
-        timeoutMs: 1000,
-        workspaceRoot: root,
-      },
-      target,
-      producer,
-    );
-    try {
-      const result = await client.execute("procedure_pseudo_code", {
-        procedure: "main",
-      });
-
-      if (result.ok) throw new Error("expected unreadable output");
-      expect(
-        result.error._tag,
-        "a producer error reply, not caller input",
-      ).toBe("AnalysisProtocolError");
-      expect(
-        projectAnalysisError(result.error).code,
-        "the legacy profile keeps its existing classification",
-      ).toBe("unreadable_output");
-    } finally {
-      expect((await client.close()).ok).toBe(true);
-    }
-  });
 });

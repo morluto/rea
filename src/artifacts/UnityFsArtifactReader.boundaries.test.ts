@@ -1,5 +1,4 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer, text } from "node:stream/consumers";
@@ -12,6 +11,7 @@ import { buildUnityFs } from "../../tests/fixtures/unityfs.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const fixture = async (bytes: Buffer): Promise<string> => {
   const path = join(

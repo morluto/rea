@@ -1,6 +1,6 @@
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   openImageSteps,
   readUInt32,
