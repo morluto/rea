@@ -342,6 +342,7 @@ export const ENTRY_FILES = Object.freeze(
         "NativeMacOSProviderMetadata.ts",
         "NativeMacosProviderIdentity.ts",
         "apple/AppleIpsProvider.ts",
+        "dwarf/DwarfUnitsProvider.ts",
         "elf/ElfNotesProvider.ts",
         "elf/ElfUnwindRangesProvider.ts",
         "elf/KernelBuildConfigProvider.ts",
