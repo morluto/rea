@@ -38,7 +38,10 @@ import {
   projectAppleAssetCatalogPage,
   type AppleAssetAnalysisCoverage,
 } from "../../domain/apple/appleAssetCatalog.js";
-import { runOwnedCommand } from "../../process/OwnedCommand.js";
+import {
+  prepareOwnedCommand,
+  runOwnedCommand,
+} from "../../process/OwnedCommand.js";
 import type {
   OwnedProviderProcessSpawnOptions,
   SpawnedOwnedProviderProcess,
@@ -453,28 +456,37 @@ export const collectInterfaceBuilderResourceKeys = (
     ]);
   });
 
-/** Run assetutil under owned supervision and return its complete output. */
+/**
+ * Run assetutil under owned supervision and return its complete output. The
+ * macOS ownership helper is prepared first, under its own compile allowance,
+ * so a cold helper build does not spend assetutil's deadline. Each stream
+ * keeps its own 64 MiB allowance.
+ */
 const runAssetUtil = async (
   path: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
   launcher?: AssetUtilLauncher,
-): Promise<string> =>
-  (
-    await runOwnedCommand(
-      {
-        command: ASSETUTIL,
-        arguments: ["--info", path],
-        runId: `rea-assetutil-${randomUUID()}`,
-        hostEnvironment: { ...environment },
-      },
-      { timeoutMs: ASSETUTIL_TIMEOUT_MS, diagnosticBytes: MAX_CATALOG_BYTES },
-      {
-        ...(signal === undefined ? {} : { signal }),
-        ...(launcher === undefined ? {} : { launcher }),
-      },
-    )
-  ).stdout.text;
+): Promise<string> => {
+  await prepareOwnedCommand(signal);
+  const snapshot = await runOwnedCommand(
+    {
+      command: ASSETUTIL,
+      arguments: ["--info", path],
+      runId: `rea-assetutil-${randomUUID()}`,
+      hostEnvironment: { ...environment },
+    },
+    {
+      timeoutMs: ASSETUTIL_TIMEOUT_MS,
+      diagnosticBytes: { stdout: MAX_CATALOG_BYTES, stderr: MAX_CATALOG_BYTES },
+    },
+    {
+      ...(signal === undefined ? {} : { signal }),
+      ...(launcher === undefined ? {} : { launcher }),
+    },
+  );
+  return snapshot.stdout.text;
+};
 
 /**
  * Classify one assetutil run through the shared command outcome owner, and

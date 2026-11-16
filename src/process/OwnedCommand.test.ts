@@ -529,9 +529,9 @@ it.each(["cancelled", "timeout"] as const)(
       await releaseCleanup.promise;
       return { cleaned: false, reason: "process group still present" };
     });
-    let failure: OwnedCommandFailure | undefined;
+    let pending: Promise<unknown> | undefined;
     try {
-      const pending = runOwnedCommand(
+      pending = runOwnedCommand(
         spawn,
         { timeoutMs: 1_000, diagnosticBytes: 1024 },
         {
@@ -556,9 +556,8 @@ it.each(["cancelled", "timeout"] as const)(
       if (interruption === "cancelled") controller.abort(reason);
       else await vi.advanceTimersByTimeAsync(1_000);
       releaseCleanup.resolve();
-      const cause = await pending;
-      if (!(cause instanceof OwnedCommandFailure)) throw cause;
-      failure = cause;
+      const failure = await pending;
+      if (!(failure instanceof OwnedCommandFailure)) throw failure;
       expect(failure).toMatchObject({
         reason: interruption,
         cleanupFailure: "process group still present",
@@ -576,7 +575,19 @@ it.each(["cancelled", "timeout"] as const)(
     } finally {
       denied = false;
       releaseCleanup.resolve();
-      await failure?.cleanupOwner?.stop();
+      // Join the command even when an assertion failed before it settled;
+      // its deadline bounds the fake time this can take.
+      if (pending !== undefined) {
+        let settled = false;
+        const joined = pending.finally(() => {
+          settled = true;
+        });
+        for (let step = 0; !settled && step < 200; step += 1)
+          await vi.advanceTimersByTimeAsync(10);
+        const outcome = await joined;
+        if (outcome instanceof OwnedCommandFailure)
+          await outcome.cleanupOwner?.stop();
+      }
       vi.useRealTimers();
     }
   },

@@ -219,3 +219,63 @@ it.each(["decode_interface_builder", "inspect_keyed_archive"] as const)(
     }
   },
 );
+
+it.skipIf(process.platform !== "darwin")(
+  "prepares process ownership before the assetutil deadline and bounds each stream separately",
+  async () => {
+    const bundle = await createTestTempDirectory("rea-asset-limits-");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(join(resources, "Assets.car"), "inert catalog bytes");
+    const stages: string[] = [];
+    const prepare = vi
+      .spyOn(ownedCommand, "prepareOwnedCommand")
+      .mockImplementationOnce(async () => {
+        stages.push("prepare");
+      });
+    const run = vi
+      .spyOn(ownedCommand, "runOwnedCommand")
+      .mockImplementationOnce(async (_spawn, limits) => {
+        stages.push("run");
+        // A cold helper build must not spend the command deadline, and
+        // stderr diagnostics must not shrink the stdout allowance.
+        expect(limits).toMatchObject({
+          timeoutMs: 60_000,
+          diagnosticBytes: {
+            stdout: 64 * 1024 * 1024,
+            stderr: 64 * 1024 * 1024,
+          },
+        });
+        const stream = (text: string) => ({
+          text,
+          bytes: text.length,
+          observedBytes: text.length,
+        });
+        return {
+          stdout: stream("[]"),
+          stderr: stream(""),
+          exitCode: 0,
+          signal: null,
+        };
+      });
+    const client = new ArtifactProvider(
+      {},
+      "darwin",
+    ).createBundleResourceClient({
+      callerPath: bundle,
+      canonicalPath: bundle,
+      infoPlistPath: join(bundle, "Contents", "Info.plist"),
+      layout: "contents",
+      executableSha256: null,
+    });
+    try {
+      const result = await client.execute("inspect_asset_catalog", {});
+      if (!result.ok) throw result.error;
+      expect(stages).toEqual(["prepare", "run"]);
+    } finally {
+      await client.close();
+      run.mockRestore();
+      prepare.mockRestore();
+    }
+  },
+);
