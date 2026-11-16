@@ -9,6 +9,5 @@
   "src/server/registerJavaScriptRuntimeObservationTools.ts": 2,
   "src/server/registerNativeFunctionMatchingTool.ts": 1,
   "src/server/registerResetInvestigationTool.ts": 1,
-  "src/server/registerReverseEngineeringTools.ts": 2,
-  "src/server/registerSessionTools.ts": 5
+  "src/server/registerReverseEngineeringTools.ts": 2
 }

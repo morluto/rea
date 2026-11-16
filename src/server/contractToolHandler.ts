@@ -30,6 +30,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import type { ToolResultEncoding } from "./toolResultEncoding.js";
 import { logToolExecution } from "./toolLogging.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
@@ -199,19 +200,55 @@ export class CommittedValue {
 }
 
 /**
+ * Smaller forms of a value, offered in order when the complete value does not
+ * fit the response budget. Each keeps the contract's result shape.
+ */
+export type ValueAlternatives = (
+  failure: Extract<ToolResultEncoding, { readonly ok: false }>,
+  budgetBytes: number,
+) => Iterable<JsonValue>;
+
+/** A value delivered complete when it fits, or as its first fitting alternative. */
+export class ReducibleValue {
+  constructor(
+    readonly value: JsonValue,
+    readonly alternatives: ValueAlternatives,
+  ) {}
+}
+
+/**
+ * A failure delivered with facts its operation observed alongside the error
+ * (an open's selection at failure, say), added to the error's details.
+ */
+export class DetailedFailure {
+  constructor(
+    readonly error: AnalysisError,
+    readonly details: Readonly<Record<string, JsonValue>>,
+  ) {}
+}
+
+/** What a value workflow returns. */
+export type ValueOutcome = Result<
+  JsonValue | CommittedValue | ReducibleValue,
+  AnalysisError | DetailedFailure
+>;
+
+/**
  * Bind a named workflow returning a plain JSON value to shared logging and
  * delivery. A success records no Evidence; a failure's partial Evidence (a
  * cancelled session's cleanup record, say) is delivered through the session
  * writer like any other. It runs under analysis admission only when one is
- * supplied.
+ * supplied, and then receives the analysis that admission grants.
  */
 export const createValueToolHandler =
   (
     server: EvidenceMcpServer,
     operation: (
       input: unknown,
-      request: ValueToolRequest,
-    ) => Promise<Result<JsonValue | CommittedValue, AnalysisError>>,
+      request: ValueToolRequest & {
+        readonly analysis?: AnalysisOperationPort;
+      },
+    ) => Promise<ValueOutcome>,
     logger: Logger,
     withAdmittedAnalysis?: WithAdmittedAnalysis,
     recordEvidence?: EvidenceWriter["recordEvidence"],
@@ -223,20 +260,27 @@ export const createValueToolHandler =
       withAdmittedAnalysis,
       contract.name,
       context.mcpReq.signal,
-      async () => {
+      async (analysis) => {
         const result = await logToolExecution(logger, contract.name, () =>
           operation(input, {
             signal: context.mcpReq.signal,
             progress: mcpProgressReporter(context),
             context,
+            ...(analysis === undefined ? {} : { analysis }),
           }),
         );
         if (!result.ok)
-          return server.delivery.toPartialErrorToolResult(
-            result.error,
-            contract.returnsTargetContent,
-            recordEvidence,
-          );
+          return result.error instanceof DetailedFailure
+            ? server.delivery.toDetailedErrorToolResult(
+                result.error.error,
+                result.error.details,
+                contract.returnsTargetContent,
+              )
+            : server.delivery.toPartialErrorToolResult(
+                result.error,
+                contract.returnsTargetContent,
+                recordEvidence,
+              );
         const { value } = result;
         return value instanceof CommittedValue
           ? server.delivery.toCallToolResult(
@@ -244,7 +288,14 @@ export const createValueToolHandler =
               contract,
               value.receipt,
             )
-          : server.delivery.toCallToolResult(ok(value), contract);
+          : value instanceof ReducibleValue
+            ? server.delivery.toCallToolResult(
+                ok(value.value),
+                contract,
+                {},
+                value.alternatives,
+              )
+            : server.delivery.toCallToolResult(ok(value), contract);
       },
     );
 

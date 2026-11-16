@@ -150,7 +150,22 @@ import {
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
-import { CommittedValue } from "./contractToolHandler.js";
+import {
+  CommittedValue,
+  DetailedFailure,
+  ReducibleValue,
+} from "./contractToolHandler.js";
+import {
+  getNavigationContext,
+  inspectAddressContext,
+  omitContextEvidenceForDelivery,
+} from "../application/AnalysisContextQueries.js";
+import { binaryTargetSummary } from "../application/binary/BinaryTargetSummary.js";
+import {
+  captureSessionProcessScenario,
+  type ProcessSessionCaptureOptions,
+} from "../application/process/ProcessSessionCapture.js";
+import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
 import type { ResidualUnknown } from "../domain/residualUnknown.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
@@ -1474,6 +1489,88 @@ const SERVICE_TOOL_BINDINGS = {
       },
     },
   })) satisfies Bind<FridaInstrumentationService>,
+  // Opening a target orders itself in the session, so it runs outside
+  // analysis admission; a failed open reports the selection at failure.
+  binaryTarget: ((session) => ({
+    open_binary: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const snapshotPath = input.snapshot_path;
+        const opened = await session.open(input.path, {
+          signal,
+          ...openBinaryTargetSelection(input),
+          ...(input.provider_id === undefined
+            ? {}
+            : { providerId: input.provider_id }),
+          ...(snapshotPath === undefined
+            ? {}
+            : {
+                // Read inside the open's turn: calls issued after it must not
+                // overtake a file read that precedes its place in the order.
+                loadSnapshot: () =>
+                  session.readAnalysisSnapshot(snapshotPath, signal),
+              }),
+        });
+        return opened.ok
+          ? ok(binaryTargetSummary(opened.value))
+          : err(
+              new DetailedFailure(opened.error, {
+                selection_at_failure: opened.selection,
+                target_at_open_completion: opened.targetAtCompletion,
+                provider_id_at_open_completion: opened.providerIdAtCompletion,
+              }),
+            );
+      },
+    },
+    open_bundle_resources: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const opened = await session.openBundleResources(input.path, {
+          signal,
+        });
+        return opened.ok
+          ? ok({
+              caller_path: opened.value.callerPath,
+              canonical_path: opened.value.canonicalPath,
+              info_plist_path: opened.value.infoPlistPath,
+              layout: opened.value.layout,
+              executable_sha256: opened.value.executableSha256,
+            })
+          : opened;
+      },
+    },
+  })) satisfies Bind<BinarySessionPort>,
+  // Context reads query the analysis admission grants for the call.
+  analysisContext: ((_options: Readonly<Record<string, never>>) => ({
+    get_navigation_context: {
+      admission: "sdk",
+      query: (input, analysis, { signal }) =>
+        getNavigationContext(analysis, input, signal),
+    },
+    inspect_address_context: {
+      admission: "sdk",
+      query: async (input, analysis, { signal }) => {
+        const inspected = await inspectAddressContext(analysis, input, signal);
+        if (!inspected.ok) return inspected;
+        const context = inspected.value;
+        // An oversized context drops its largest Evidence facets first.
+        return ok(
+          new ReducibleValue(context, (failure, budgetBytes) =>
+            omitContextEvidenceForDelivery(context, failure, budgetBytes),
+          ),
+        );
+      },
+    },
+  })) satisfies Bind<Readonly<Record<string, never>>>,
+  // Process capture runs under session admission and records its Evidence
+  // and residual unknowns in the session itself.
+  processCapture: ((options) => ({
+    capture_process_scenario: {
+      admission: "sdk",
+      analyze: (input, _analysis, request) =>
+        captureSessionProcessScenario(options, input, request),
+    },
+  })) satisfies Bind<ProcessSessionCaptureOptions>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
