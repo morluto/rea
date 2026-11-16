@@ -520,3 +520,57 @@ it("charges repeated operations on one blob against the reconstruction budget", 
     },
   });
 });
+
+it("refuses destination extents outside the image and short operation data", () => {
+  const blockSize = 4096;
+  const reconstruct = (
+    dstExtents: readonly { startBlock: number; numBlocks: number }[],
+    data: Buffer,
+  ) => {
+    const bytes = buildAndroidOtaPayload({
+      blockSize,
+      partitions: [
+        {
+          name: "boot",
+          newSize: blockSize,
+          operations: [{ type: 0, data, dstExtents }],
+        },
+      ],
+    });
+    const parsed = parse(bytes);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return parsed;
+    const blob = bytes.subarray(parsed.value.header.blobOffset);
+    return reconstructAndroidOtaPartition(
+      parsed.value.partitions[0]!,
+      blockSize,
+      (offset, length) => blob.subarray(offset, offset + length),
+      { verifyDeclaredHash: false },
+    );
+  };
+  const refused = {
+    ok: false,
+    error: { _tag: "AndroidOtaPayloadFormatFailure" },
+  };
+  expect(
+    reconstruct(
+      [{ startBlock: 1, numBlocks: 1 }],
+      Buffer.alloc(blockSize, 0x41),
+    ),
+  ).toMatchObject(refused);
+  expect(
+    reconstruct(
+      [{ startBlock: 0, numBlocks: 2 }],
+      Buffer.alloc(blockSize * 2, 0x41),
+    ),
+  ).toMatchObject(refused);
+  expect(
+    reconstruct([{ startBlock: 0, numBlocks: 1 }], Buffer.from("BOOT")),
+  ).toMatchObject(refused);
+  expect(
+    reconstruct(
+      [{ startBlock: 0, numBlocks: 1 }],
+      Buffer.alloc(blockSize, 0x41),
+    ),
+  ).toMatchObject({ ok: true });
+});

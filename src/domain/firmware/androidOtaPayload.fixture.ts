@@ -110,19 +110,26 @@ const partitionImage = (
   const size =
     partition.newSize ??
     partition.operations.reduce((largest, operation) => {
-      const dataLength = operation.data?.length ?? 0;
+      const stored = operation.data ?? new Uint8Array();
+      const dataLength =
+        operation.type === 14 && stored.length > 0
+          ? zstdDecompressSync(stored).length
+          : stored.length;
       const extents =
         operation.dstExtents ??
         (dataLength === 0 ? [] : [extentForData(dataLength, blockSize)]);
-      const end = extents.reduce(
-        (extentEnd, extent) =>
-          Math.max(
-            extentEnd,
-            (extent.startBlock + extent.numBlocks) * blockSize,
-          ),
-        0,
-      );
-      return Math.max(largest, end, dataLength);
+      // Size the image so the operation data covers every destination byte;
+      // only the final block may be partial.
+      let remaining = operation.type === 6 ? Infinity : dataLength;
+      let end = 0;
+      for (const extent of extents) {
+        if (remaining <= 0) break;
+        const start = extent.startBlock * blockSize;
+        const extentBytes = extent.numBlocks * blockSize;
+        end = Math.max(end, start + Math.min(extentBytes, remaining));
+        remaining -= extentBytes;
+      }
+      return Math.max(largest, end);
     }, 0);
   const image = Buffer.alloc(size);
   for (const operation of partition.operations) {

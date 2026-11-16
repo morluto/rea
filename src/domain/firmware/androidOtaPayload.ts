@@ -1152,27 +1152,50 @@ const writeExtents = (
   data: Uint8Array,
   fillZero: boolean,
 ): Result<undefined, AndroidOtaPayloadReconstructError> => {
+  // The last block of a partition whose size is not block aligned may be
+  // partially outside the image; every other destination byte must land
+  // inside it, and every written byte must come from the operation data.
+  const blockAlignedEnd = Math.ceil(image.length / blockSize) * blockSize;
   let cursor = 0;
+  let span = 0;
   for (const extent of extents) {
-    if (extent.startBlock === null) continue;
+    if (extent.numBlocks === 0) continue;
+    if (extent.startBlock === null)
+      return err(
+        malformed("InstallOperation destination extent has no start_block"),
+      );
     const start = extent.startBlock * blockSize;
-    if (!Number.isSafeInteger(start) || start < 0)
+    const extentBytes = extent.numBlocks * blockSize;
+    if (
+      !Number.isSafeInteger(start) ||
+      start < 0 ||
+      start >= image.length ||
+      extentBytes > blockAlignedEnd - start
+    )
       return err(
         malformed(
           "InstallOperation destination extent overruns the partition image",
         ),
       );
-    if (start >= image.length) continue;
-    const length = Math.min(extent.numBlocks * blockSize, image.length - start);
+    const length = Math.min(extentBytes, image.length - start);
+    span += extentBytes;
     if (fillZero) {
       image.fill(0, start, start + length);
       continue;
     }
-    const available = Math.min(length, Math.max(0, data.length - cursor));
-    if (available > 0)
-      image.set(data.subarray(cursor, cursor + available), start);
-    cursor += available;
+    if (data.length - cursor < length)
+      return err(
+        malformed(
+          "InstallOperation data is shorter than its destination extents",
+        ),
+      );
+    image.set(data.subarray(cursor, cursor + length), start);
+    cursor += extentBytes;
   }
+  if (!fillZero && data.length > span)
+    return err(
+      malformed("InstallOperation data is longer than its destination extents"),
+    );
   return ok(undefined);
 };
 
