@@ -129,14 +129,6 @@ export const webRoutesSummaryDeliveryShape = {
     webBundleViewRequestSchema,
   ]),
 };
-export const javaScriptRoutesDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
-  z.strictObject(javaScriptRoutesSummaryDeliveryShape),
-]);
-export const webRoutesDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
-  z.strictObject(webRoutesSummaryDeliveryShape),
-]);
 export const javaScriptRouteProvenanceSchema = z.strictObject({
   source_id: javaScriptRouteInventorySourceSchema.shape.id,
   occurrence_id: javaScriptRouteOccurrenceSchema.shape.id.nullable(),

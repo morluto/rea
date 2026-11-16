@@ -146,8 +146,8 @@ still emit metadata; an empty top-level array emits no lines. Bare top-level
 arrays have no synthetic coverage record.
 
 Command and output-validation failures emit `{"$rea":"jsonl/v1","type":"error","ok":false,"result":…}`
-and retain the original diagnostic payload. SDK validation/sentinel errors use
-the SDK's exit status rather than guessing from data fields. `$rea` is reserved
+and retain the original diagnostic payload. The command owner reports failure
+status; error-shaped caller data remains ordinary data. `$rea` is reserved
 at the top level of a data record, so control records are unambiguous; collisions
 are refused before rows are written. Nested `$rea` values are ordinary data.
 A missing final metadata record or nonzero exit can indicate an interrupted
@@ -162,9 +162,7 @@ needs its normal resources. A single record must fit the runtime string limit
 for token estimation; remove `--token-count` to stream a larger record.
 
 Standalone version and MCP doctor diagnostics remain single JSON documents
-in JSON Lines mode. Incur's streaming generator events and successful sentinel
-responses retain their SDK protocol. MCP application results and Evidence
-contracts are unchanged.
+in JSON Lines mode. MCP application results and Evidence contracts are unchanged.
 
 ## Shell completion
 
