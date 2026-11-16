@@ -1,12 +1,15 @@
 import pino from "pino";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../../support/reverseEngineeringService.js";
+import {
+  ownedFailure,
+  ownedOutput,
+} from "../../support/reverseEngineeringCompositionFixtures.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -18,7 +21,7 @@ import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { err, ok } from "../../../src/domain/result.js";
 import type { WithAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
@@ -31,14 +34,11 @@ import {
 
 const createTimedOutRizinService = (): ReverseEngineeringService =>
   new ReverseEngineeringService({
-    run: async () => {
-      throw Object.assign(new Error("timed out"), {
-        stdout: "partial provider output",
-        stderr: "",
-        code: "ETIMEDOUT",
-        signal: null,
-        killed: true,
-      });
+    runOwned: async () => {
+      throw ownedFailure(
+        "timeout",
+        ownedOutput("partial provider output", "", { exitCode: null }),
+      );
     },
   });
 
@@ -125,9 +125,9 @@ it("admits Rizin mutation after invalidating before dispatch", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const events: string[] = [];
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       events.push("dispatch");
-      return { stdout: "rizin output", stderr: "" };
+      return ownedOutput("rizin output");
     },
   });
   registerReverseEngineeringTools(
@@ -157,7 +157,7 @@ it("invalidates the snapshot in the legacy Rizin admission path", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const invalidateSnapshot = vi.fn();
   const service = new ReverseEngineeringService({
-    run: async () => ({ stdout: "rizin output", stderr: "" }),
+    runOwned: async () => ownedOutput("rizin output"),
   });
   registerReverseEngineeringTools(
     server,
@@ -216,7 +216,7 @@ it("skips snapshot invalidation for malformed Rizin input", async () => {
 it("delivers failed Rizin execution after external admission", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       throw new Error("Rizin command failed");
     },
   });
@@ -306,17 +306,16 @@ it.each(["success", "timeout"])(
 
     const { server, handler } = createReverseEngineeringMcpHarness();
     const service = new ReverseEngineeringService({
-      run: async () => {
+      runOwned: async () => {
         await writeFile(alias, "changed by Rizin");
         if (outcome === "timeout")
-          throw Object.assign(new Error("timed out"), {
-            stdout: "partial analysis output",
-            stderr: "timeout diagnostics",
-            code: "ETIMEDOUT",
-            signal: null,
-            killed: true,
-          });
-        return { stdout: "partial analysis output", stderr: "" };
+          throw ownedFailure(
+            "timeout",
+            ownedOutput("partial analysis output", "timeout diagnostics", {
+              exitCode: null,
+            }),
+          );
+        return ownedOutput("partial analysis output");
       },
     });
     const recordEvidence = vi.fn(() => ok("added" as const));
@@ -407,9 +406,11 @@ it("preserves a partial MCP error without claiming failed Evidence retention", a
 
   expect(response.isError).toBe(true);
   expect(response.structuredContent?.error?.details).toMatchObject({
-    partial_observation: expect.objectContaining({
-      operation: "execute_rizin_command",
-    }),
+    partial_observation: {
+      kind: "inline-evidence",
+      retention: "unknown",
+      evidence: { operation: "execute_rizin_command" },
+    },
   });
   expect(
     JSON.stringify(response.structuredContent?.error?.details),
@@ -419,7 +420,7 @@ it("preserves a partial MCP error without claiming failed Evidence retention", a
 it("delivers pathless objdump capability Evidence and input errors through its named tool", async () => {
   const { server, handler } = createReverseEngineeringMcpHarness();
   const service = new ReverseEngineeringService({
-    run: async () => ({ stdout: "objdump output", stderr: "" }),
+    runOwned: async () => ownedOutput("objdump output"),
   });
   const delivery = createToolResultDelivery(2 * 1024 * 1024);
   registerReverseEngineeringTools(
@@ -504,9 +505,9 @@ it("keeps provider execution and Evidence recording inside analysis admission", 
   const { server, handler } = createReverseEngineeringMcpHarness();
   const events: string[] = [];
   const service = new ReverseEngineeringService({
-    run: async () => {
+    runOwned: async () => {
       events.push("provider");
-      return { stdout: "objdump output", stderr: "" };
+      return ownedOutput("objdump output");
     },
   });
   const recordEvidence = vi.fn(() => {

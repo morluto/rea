@@ -1,6 +1,5 @@
 import { withCommandCancellation } from "./cli/commandCancellation.js";
-import { safeParseJson } from "./domain/safeJson.js";
-import { AnalysisInputError } from "./domain/analysisErrorCore.js";
+import { parseCliJsonInput } from "./cli/cliJsonInput.js";
 import { analysisInputErrorFromIssues } from "./domain/inputIssueProjection.js";
 import { bundleComparisonInputSchema } from "./domain/bundleComparison.js";
 import { Cli, z } from "incur";
@@ -12,7 +11,7 @@ import {
 } from "./application/EvidenceBundleCommands.js";
 import { logCliCommand } from "./cliLogging.js";
 import type { Logger } from "pino";
-import { CLI_COMMANDS } from "./cliCommandNames.js";
+import { CLI_COMMANDS } from "./contracts/cliCommandNames.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { AnalysisError } from "./domain/analysisErrorBase.js";
@@ -24,7 +23,8 @@ export const registerEvidenceCommands = (
   logger: Logger,
 ): void => {
   cli.command(CLI_COMMANDS.evidenceImport, {
-    description: "Validate and import a bounded local Evidence bundle",
+    description:
+      "Validate a standalone Evidence bundle and count records and Unknown revisions; does not retain them in an MCP session",
     args: z.object({
       path: localPathStringSchema.describe("Evidence bundle JSON path"),
     }),
@@ -72,7 +72,7 @@ export const registerEvidenceCommands = (
         .string()
         .optional()
         .describe(
-          "JSON array of explicit left_evidence_id/right_evidence_id observation pairs",
+          "Inline JSON array or local JSON file of left_evidence_id/right_evidence_id pairs",
         ),
     }),
     run: ({ args, options }) =>
@@ -81,21 +81,12 @@ export const registerEvidenceCommands = (
           const decoded =
             options.record_pairs === undefined
               ? { ok: true as const, value: [] }
-              : safeParseJson(options.record_pairs);
-          if (!decoded.ok)
-            return cliError(
-              new AnalysisInputError(
-                "compare_bundles",
-                { cause: decoded.cause },
-                [
-                  {
-                    path: ["record_pairs"],
-                    reason: "invalid_format",
-                    expected: "JSON array",
-                  },
-                ],
-              ),
-            );
+              : await parseCliJsonInput(
+                  options.record_pairs,
+                  "compare_bundles",
+                  signal,
+                );
+          if (!decoded.ok) return decoded.error;
           const input = { record_pairs: decoded.value };
           const selected = bundleComparisonInputSchema
             .pick({ record_pairs: true })

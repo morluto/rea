@@ -1,3 +1,4 @@
+import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
@@ -26,9 +27,14 @@ const connect = async (environment: NodeJS.ProcessEnv) => {
   );
   const client = new Client({ name: "composition-parity", version: "1" });
   onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -60,7 +66,6 @@ for (const { jarConfigured, setting } of [
       const cliResult = await cli.run({
         arguments: ["inspect-android-package", apk, "--json"],
         environment,
-        timeoutMs: 10_000,
       });
       expect(cliResult.exitCode).toBe(1);
       expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
@@ -85,7 +90,6 @@ cliTest.skipIf(process.platform === "win32")(
       const cliResult = await cli.run({
         arguments: ["inspect-android-package", apk, "--json"],
         environment: { REA_LOG_LEVEL: "silent", ...environment },
-        timeoutMs: 10_000,
       });
       expect(cliResult.exitCode).toBe(1);
       const client = await connect({ REA_LOG_LEVEL: "silent", ...environment });
@@ -140,7 +144,6 @@ cliTest.skipIf(process.platform !== "linux")(
     const cliResult = await cli.run({
       arguments: ["inspect-firmware-regions", path, "--json"],
       environment,
-      timeoutMs: 10_000,
     });
     expect(cliResult.exitCode).toBe(1);
     expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
@@ -166,7 +169,6 @@ cliTest.skipIf(process.platform !== "linux")(
       arguments: ["inspect-firmware-regions", "input.bin", "--json"],
       cwd: root,
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 10_000,
     });
     // A relative path must pass input validation and reach the provider,
     // which reports the missing firmware engine — not a validation error.
@@ -193,7 +195,6 @@ cliTest(
         "--json",
       ],
       environment,
-      timeoutMs: 10000,
     });
     expect(cliResult.exitCode).toBe(1);
     expect(cliResult.json).toMatchObject({ code: "capability_unavailable" });
@@ -233,7 +234,6 @@ cliTest(
           "--json",
         ],
         environment,
-        timeoutMs: 10_000,
       });
       const response = await client.callTool({
         name: "recover_javascript_sources",
@@ -241,14 +241,34 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response)).toEqual({ error: result.json });
       expect(result.json).toMatchObject({
-        code: "invalid_request",
-        details: {
-          operation: "recover_javascript_sources",
-          issues: [{ path: [field], reason: "invalid_format" }],
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: field === "path" ? "path" : "outputDirectory",
+            code: "invalid_format",
+          }),
+        ],
+      });
+      expect(parseMcpToolError(response)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          details: {
+            operation: "recover_javascript_sources",
+            issues: [
+              {
+                path: [field],
+                reason: "invalid_format",
+                expected: "regex",
+              },
+            ],
+          },
         },
       });
+      expect(JSON.stringify(result.json)).not.toContain("REA_WAKARU_COMMAND");
+      expect(JSON.stringify(parseMcpToolError(response))).not.toContain(
+        "REA_WAKARU_COMMAND",
+      );
     }
   },
 );

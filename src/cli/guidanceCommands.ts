@@ -1,5 +1,5 @@
 import { z } from "incur";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -9,11 +9,13 @@ import {
   searchGuidanceLimitSchema,
   searchGuidanceInputSchema,
 } from "../contracts/guidanceContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
+import { ownCliProcessResource } from "./cliResources.js";
 
 /** Guidance descriptors owned by one CLI host. */
 export class CliGuidanceResources {
@@ -41,6 +43,8 @@ export const closeCliGuidanceResources = (
   resources: CliGuidanceResources = processGuidanceResources,
 ): Promise<void> => resources.close();
 
+ownCliProcessResource("guidance", () => closeCliGuidanceResources());
+
 /** Register offline search and retrieval for the installed REA guide bundle. */
 export const registerGuidanceCommands = (
   cli: CliInstance,
@@ -64,9 +68,10 @@ export const registerGuidanceCommands = (
         locator: readGuidanceSectionInputSchema.shape.locator
           .optional()
           .describe("Required with --action read; locator returned by search"),
-        limit: searchGuidanceLimitSchema
-          .optional()
-          .describe("Maximum search matches; search only, defaults to 8"),
+        // Decimal tokens only: numeric coercion would read "0x2" as 2.
+        limit: cliDecimalField(searchGuidanceLimitSchema.optional()).describe(
+          "Maximum search matches; search only, defaults to 8",
+        ),
         cursor: searchGuidanceInputSchema.shape.cursor
           .optional()
           .describe("Continue a search page; search only"),

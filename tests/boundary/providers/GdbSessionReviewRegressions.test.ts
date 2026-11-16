@@ -1,3 +1,10 @@
+import {
+  createGdbFixtureOwner,
+  expectNoUnmodeledGdbCommands,
+  FAKE_GDB_SESSION_REPLIES,
+  fakeGdbModeledReplies,
+  fakeGdbStartupPreamble,
+} from "./gdbTestHelpers.js";
 import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,20 +17,31 @@ import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
+import { waitForTestPidFile } from "../../support/process/pidFile.js";
 
 // These tests launch controlled fake providers; Linux admission is injected so
 // lifecycle semantics remain testable on hosts that correctly reject GDB.
 const createGdbManagerForInjectedPlatform = (
   options: ConstructorParameters<typeof GdbSessionManager>[0] = {},
 ): GdbSessionManager =>
-  new GdbSessionManager({ platform: "linux", ...options });
+  new GdbSessionManager({
+    spawnProcess: fixtureOwner.spawnProcess,
+    platform: "linux",
+    ...options,
+  });
 
 let directory: string | undefined;
+const fixtureOwner = createGdbFixtureOwner();
 const managers: Array<{ closeAll(): Promise<void> }> = [];
+/** Where a scripted fake records commands it does not model; checked after each test. */
+const unmodeledPath = (): string => {
+  if (directory === undefined) throw new Error("test directory is not set");
+  return join(directory, "unmodeled");
+};
 
-const expectOwnedProcessExited = async (pidText: string): Promise<void> => {
-  const pid = Number(pidText);
-  expect(Number.isInteger(pid)).toBe(true);
+const expectOwnedProcessExited = async (pid: number): Promise<void> => {
+  expect(Number.isSafeInteger(pid)).toBe(true);
+  expect(pid).toBeGreaterThan(0);
   await expect
     .poll(() => {
       try {
@@ -43,6 +61,10 @@ const expectOwnedProcessExited = async (pidText: string): Promise<void> => {
     })
     .toBe(false);
 };
+
+it("rejects an empty PID before observing process exit", async () => {
+  await expect(expectOwnedProcessExited(Number(""))).rejects.toThrow();
+});
 
 it("keeps persistent GDB sessions unavailable on Windows", async () => {
   const gdb = await createGdbManagerForInjectedPlatform({
@@ -73,13 +95,15 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 await import("node:fs/promises").then(({ writeFile }) => writeFile(${JSON.stringify(markerPath)}, "started"));
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + (line.includes("list-thread-groups") ? "^done,groups=[]\\n" : "^done\\n"));
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -112,6 +136,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stderr.write("GDB startup stderr diagnostic\\n");
 process.stdin.setEncoding("utf8");
@@ -172,6 +197,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -210,7 +236,7 @@ process.stdin.on("data", (chunk) => {
           records: expect.arrayContaining([
             '~"automatic loading rejected',
             '"',
-            '1^error,msg="unsupported"',
+            '2^error,msg="unsupported"',
           ]),
           completion_status: "unknown",
         },
@@ -227,6 +253,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -250,7 +277,11 @@ process.stdin.on("data", (chunk) => {
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async (session) => {
         retainedSessionId = session.id;
-        return { status: "incomplete", reason: "startup cleanup is retained" };
+        return {
+          status: "incomplete",
+          code: "stop-failed",
+          reason: "startup cleanup is retained",
+        };
       },
     });
     managers.push(manager);
@@ -284,6 +315,8 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 import { appendFile } from "node:fs/promises";
 await appendFile(${JSON.stringify(countPath)}, "spawn\\n");
 process.stdout.write("(gdb)\\n");
@@ -296,15 +329,17 @@ process.stdin.on("data", (chunk) => {
     if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 1,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "1",
+      },
     });
     managers.push(manager);
 
@@ -343,12 +378,14 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -364,15 +401,17 @@ process.stdin.on("data", (chunk) => {
       releaseSecondSpawn = resolve;
     });
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 2,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "2",
+      },
       spawnProcess: async (options) => {
         spawnCalls += 1;
         if (spawnCalls === 2) {
           enterSecondSpawn?.();
           await secondSpawnGate;
         }
-        return spawnOwnedProviderProcess(options);
+        return fixtureOwner.spawnProcess(options);
       },
     });
     managers.push(manager);
@@ -410,6 +449,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 import { readFile, writeFile } from "node:fs/promises";
 process.on("SIGTERM", async () => {
   await writeFile(${JSON.stringify(signalPath)}, "SIGTERM");
@@ -448,19 +488,7 @@ process.stdin.resume();
     managers.push(manager);
 
     const starting = manager.start();
-    let pidText: string | undefined;
-    for (
-      let attempt = 0;
-      attempt < 100 && pidText === undefined;
-      attempt += 1
-    ) {
-      try {
-        pidText = await readFile(pidPath, "utf8");
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-    }
-    if (pidText === undefined) throw new Error("fake GDB did not start");
+    const pid = await waitForTestPidFile(pidPath, 1_000);
 
     let closeSettled = false;
     const closing = manager.closeAll().then(() => {
@@ -477,11 +505,10 @@ process.stdin.resume();
     }
     const started = await starting;
     await closing;
-    expect(started.ok).toBe(false);
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
-    await expectOwnedProcessExited(pidText);
+    await expectOwnedProcessExited(pid);
     expect(manager.status("unknown-session")).toBeUndefined();
     await expect(manager.start()).resolves.toMatchObject({
       ok: false,
@@ -491,14 +518,15 @@ process.stdin.resume();
 );
 
 afterEach(async () => {
-  await Promise.all(
-    managers
-      .splice(0)
-      .map((manager) => manager.closeAll().catch(() => undefined)),
-  );
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
+  await fixtureOwner.cleanup(managers, async () => {
+    if (directory === undefined) return;
+    try {
+      await expectNoUnmodeledGdbCommands(unmodeledPath());
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+      directory = undefined;
+    }
+  });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -509,13 +537,15 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 process.stdout.write("(gdb)\\n" + Array.from({ length: 300 }, (_, index) =>
   "=thread-group-added,id=\\"i" + index + "\\"\\n").join(""));
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -543,6 +573,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 await import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(join(directory ?? "", "pid"))}, String(process.pid)));
 let input = "";
@@ -563,8 +594,10 @@ setTimeout(() => process.exit(0), 250).unref();
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
     });
     managers.push(manager);
     const started = await manager.start();
@@ -589,7 +622,7 @@ setTimeout(() => process.exit(0), 250).unref();
       expect(result.error.cleanupIncomplete).toBe(true);
     }
     await expectOwnedProcessExited(
-      await readFile(join(directory, "pid"), "utf8"),
+      await waitForTestPidFile(join(directory, "pid"), 1_000),
     );
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
@@ -605,6 +638,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -620,10 +654,13 @@ setTimeout(() => process.exit(0), 250);
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "simulated incomplete stop",
       }),
     });
@@ -670,6 +707,8 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath(), { ...FAKE_GDB_SESSION_REPLIES, '-interpreter-exec console "third"': "^done" })}
 process.stdout.write("(gdb)\\n");
 let input = "";
 let firstActive = false;
@@ -680,13 +719,13 @@ process.stdin.on("data", (chunk) => {
     const boundary = input.indexOf("\\n"); if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line); if (!match) continue;
-    if (line.includes("auto-load off")) process.stdout.write(match[1] + "^done\\n");
-    else if (line.includes("first")) {
+    if (line.slice(match[1].length) === "-gdb-set auto-load off") process.stdout.write(match[1] + "^done\\n");
+    else if (line.slice(match[1].length) === '-interpreter-exec console "first"') {
       firstActive = true;
       setTimeout(() => { firstActive = false; process.stdout.write(match[1] + "^done\\n"); }, 100);
     } else {
-      if (line.includes("third") && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
-      process.stdout.write(match[1] + "^done\\n");
+      if (line.slice(match[1].length) === '-interpreter-exec console "third"' && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
+      answerModeled(match[1], line.slice(match[1].length));
     }
   }
 });
@@ -708,9 +747,14 @@ process.stdin.on("data", (chunk) => {
       controller.signal,
     );
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    controller.abort();
+    const reason = { source: "cancelled while queued" };
+    controller.abort(reason);
     const third = manager.execute(started.value.session_id, "third");
-    expect((await second).ok).toBe(false);
+    const cancelled = await second;
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
     expect((await first).ok).toBe(true);
     expect((await third).ok).toBe(true);
     await expect(readFile(overlapPath, "utf8")).rejects.toThrow();
@@ -725,6 +769,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -797,6 +842,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -863,6 +909,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 let tty = "/tmp/selected-tty";
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
@@ -885,6 +932,7 @@ setTimeout(() => process.exit(0), 500);
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "test cleanup",
       }),
     });
@@ -915,6 +963,8 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(unmodeledPath())}
 process.stderr.write("x".repeat(100000));
 process.stdout.write("(gdb)\\n");
 let input = "";
@@ -926,7 +976,7 @@ process.stdin.on("data", (chunk) => {
     if (boundary < 0) break;
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line);
-    if (match) process.stdout.write(match[1] + "^done\\n");
+    if (match) answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -955,6 +1005,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 import { closeSync, writeFileSync } from "node:fs";
 process.stdout.write("(gdb)\\n");
 let input = "";
@@ -983,7 +1034,7 @@ setInterval(() => {}, 1000);
     const manager = createGdbManagerForInjectedPlatform({
       environment: { REA_GDB_COMMAND: provider },
       spawnProcess: async (options) => {
-        ownedLaunch = await spawnOwnedProviderProcess(options);
+        ownedLaunch = await fixtureOwner.spawnProcess(options);
         ownedProcessExit = new Promise<void>((resolve) => {
           const child = ownedLaunch!.process;
           if (child.exitCode !== null || child.signalCode !== null) resolve();
@@ -996,6 +1047,7 @@ setInterval(() => {}, 1000);
           ? stopOwnedDebuggerProcess(session, name, options)
           : {
               status: "incomplete",
+              code: "stop-failed",
               reason: "fixture-owned process awaits test teardown",
             },
     });
@@ -1033,7 +1085,7 @@ setInterval(() => {}, 1000);
             child.kill("SIGKILL");
         }
         await ownedProcessExit;
-        await expectOwnedProcessExited(String(ownedLaunch.process.pid));
+        await expectOwnedProcessExited(ownedLaunch.process.pid!);
       }
       const retried = await manager.retryCleanupFailures();
       expect(retried.ok).toBe(false);
@@ -1053,6 +1105,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -1113,6 +1166,14 @@ process.stdin.on("data", (chunk) => {
         },
       });
       expect(exited.error.partialObservation).toMatchObject({
+        subject: {
+          identity: {
+            kind: "session",
+            session_kind: "gdb",
+            id: started.value.session_id,
+            target: { kind: "unknown", reason: "not-observed" },
+          },
+        },
         parameters: {
           command: "second command",
           session_id: started.value.session_id,
@@ -1157,6 +1218,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -1178,6 +1240,7 @@ setTimeout(() => process.exit(0), 250);
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "simulated debugger cleanup failure",
       }),
     });

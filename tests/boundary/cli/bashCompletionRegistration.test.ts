@@ -21,7 +21,7 @@ complete -p rea || exit
 rea() {
   [[ "$COMPLETE" == bash && "$_COMPLETE_INDEX" == 1 ]] || return 1
   [[ "$1" == -- && "$2" == rea && "$3" == ana ]] || return 1
-  printf 'analyze\\013analyze-web-bundle\\013'
+  printf 'analyze\\013analyze-web-bundle\\013*.json\\013'
 }
 COMP_WORDS=(rea ana)
 COMP_CWORD=1
@@ -33,7 +33,7 @@ printf '%s\\n' "\${COMPREPLY[@]}"
     );
     expect(stderr).toBe("");
     expect(stdout).toContain("-F _incur_complete_rea rea");
-    expect(stdout).toContain("\nanalyze\nanalyze-web-bundle\n");
+    expect(stdout).toContain("\nanalyze\nanalyze-web-bundle\n*.json\n");
   },
 );
 

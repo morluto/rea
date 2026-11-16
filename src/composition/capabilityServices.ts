@@ -1,4 +1,4 @@
-import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
   selectWiresharkTool,
@@ -12,42 +12,44 @@ import {
 } from "./capabilityDeclarations.js";
 import { isAbsolute } from "node:path";
 import { createGpuCodeObjectsService } from "./gpu.js";
-import { createPacketCaptureService, tsharkHostSupported } from "./captures.js";
-import {
-  createSignalRecordingService,
-  sigrokHostSupported,
-} from "./signals.js";
+import { createPacketCaptureService } from "./captures.js";
+import { tsharkHostSupported } from "../captures/TsharkCaptureProvider.js";
+import { createSignalRecordingService } from "./signals.js";
+import { sigrokHostSupported } from "../signals/SigrokRecordingProvider.js";
 import { wasmArtifactModule } from "./wasm.js";
 import { apkSignatureModule } from "./apkSignature.js";
+import { evmInterfaceModule } from "./evm.js";
 import {
-  evmInterfaceModule,
   evmHostSupported,
   evmLimiterAvailability,
-} from "./evm.js";
+} from "../evm/EvmoleInterfaceProvider.js";
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
+import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
+import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
+import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
-import {
-  createJavaScriptRecoveryProvider,
-  wakaruHostSupported,
-} from "./javascriptRecovery.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
+import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
+import type {
+  ReverseEngineeringService,
+  CommandProviderLaunchFailures,
+} from "../application/reverse/ReverseEngineeringService.js";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
-import {
-  createFirmwareAnalysisProvider,
-  firmwareHostSupported,
-} from "./firmware.js";
+import { createFirmwareAnalysisProvider } from "./firmware.js";
+import { firmwareHostSupported } from "../firmware/FirmwareCommand.js";
 import { createAndroidAnalysisProvider } from "./android.js";
 import { createPcapAnalysisProvider } from "./pcap.js";
 import { createFlutterBuildAnalysisProvider } from "./flutter.js";
@@ -69,14 +71,18 @@ import {
   createPeImportsService,
   createNativeExportsService,
   createPeResourcesService,
+  createWindowsShortcutService,
   createRecordedCrashService,
   createBinaryLayoutService,
-  pwntoolsHostSupported,
   createDevicetreeService,
   createElfNotesService,
+  createNativeInitializersService,
+  createElfUnwindRangesService,
   createAppleIpsService,
   createKernelModuleService,
+  createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
+import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
@@ -90,26 +96,30 @@ import type { ElectronFuseService } from "../application/electron/ElectronFuseSe
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
+import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
-import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
-import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { JavaScriptRecoveryPort } from "../ports/javascript/JavaScriptRecoveryPort.js";
+import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
-import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
+import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
+import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
+import type { ComputerStartTiming } from "../desktop/AgentEnvComputer.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -125,6 +135,7 @@ export interface CapabilityServiceOptions {
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly erlangBeam?: BeamService;
+  readonly v8CodeCache?: V8CodeCacheService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
@@ -147,6 +158,13 @@ export interface CapabilityServiceOptions {
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
+  /** How build computers read an app until its files settle; the shipped timing on real time unless a test shortens or clocks it. */
+  readonly desktopBuildSettle?: BuildSettle;
+  /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
+  readonly desktopBuildDefaults?: BuildComputerDefaults;
+  /** How long a build computer waits for its desktop to draw and how often its start reports progress; the shipped timing unless a test shortens it. */
+  readonly desktopBuildStartTiming?: ComputerStartTiming;
+  readonly reverseEngineering?: ReverseEngineeringService;
 }
 
 const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {
@@ -169,7 +187,7 @@ export interface CapabilityHostContext {
   readonly settings: AnalysisSettingsReader;
   readonly options: CapabilityServiceOptions;
   readonly platform: NodeJS.Platform;
-  readonly arch: string;
+  readonly arch: NodeJS.Architecture;
 }
 
 interface CapabilityInstance<Value> {
@@ -239,8 +257,9 @@ const modules = {
     apkSignatureModule.create(environment, options.apkSignature),
   ),
   evmInterface: service(
-    ({ environment, options }) =>
-      options.evmInterface ?? evmInterfaceModule.create(environment),
+    ({ environment, options, platform, arch }) =>
+      options.evmInterface ??
+      evmInterfaceModule.create(environment, { platform, architecture: arch }),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
         evmInterface: outsideHost(
@@ -259,7 +278,7 @@ const modules = {
         : {
             probes: {
               evmLimiterAvailability: (signal: AbortSignal) =>
-                evmLimiterAvailability(environment, { signal }),
+                evmLimiterAvailability(environment, { platform, arch, signal }),
             },
           }),
     }),
@@ -269,8 +288,9 @@ const modules = {
       options.sqliteDatabase ?? createSqliteDatabaseService(environment),
   ),
   binaryLayout: service(
-    ({ environment, options }) =>
-      options.binaryLayout ?? createBinaryLayoutService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.binaryLayout ??
+      createBinaryLayoutService(environment, { platform, architecture: arch }),
     (context) => ({
       hostUnsupported: {
         binaryLayout: outsideHost(
@@ -286,8 +306,12 @@ const modules = {
     }),
   ),
   recordedCrash: service(
-    ({ environment, options }) =>
-      options.recordedCrash ?? createRecordedCrashService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.recordedCrash ??
+      createRecordedCrashService(environment, {
+        platform,
+        architecture: arch,
+      }),
     (context) => ({
       hostUnsupported: {
         recordedCrash: outsideHost(
@@ -318,6 +342,16 @@ const modules = {
     }),
   ),
   desktopApplication: service(() => createDesktopApplicationService()),
+  desktopBuildComputers: capability(
+    ({ providerEnvironment, options }) =>
+      new DesktopBuildComputers(
+        providerEnvironment,
+        options.desktopBuildSettle,
+        options.desktopBuildDefaults,
+        options.desktopBuildStartTiming,
+      ),
+    (value) => value.closeAll(),
+  ),
   goBinary: service(
     ({ options }) => options.goBinary ?? createGoBinaryService(),
   ),
@@ -326,6 +360,9 @@ const modules = {
   ),
   erlangBeam: service(
     ({ options }) => options.erlangBeam ?? createBeamService(),
+  ),
+  v8CodeCache: service(
+    ({ options }) => options.v8CodeCache ?? createV8CodeCacheService(),
   ),
   modelArtifact: service(() => createModelArtifactService()),
   gpuCodeObjects: service(() => createGpuCodeObjectsService()),
@@ -336,14 +373,21 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
+  nativeInitializers: service(() => createNativeInitializersService()),
+  elfUnwindRanges: service(() => createElfUnwindRangesService()),
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
+  kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
   binaryHardening: service(() => createBinaryHardeningService()),
   peCertificates: service(() => createPeCertificatesService()),
   peImports: service(() => createPeImportsService()),
+  windowsShortcut: service(() => createWindowsShortcutService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
+  ),
+  releaseExposure: service(({ environment, settings }) =>
+    createReleaseExposureService(environment, settings),
   ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
@@ -354,9 +398,12 @@ const modules = {
       createWebNetworkCaptureService(environment, settings),
   ),
   javascriptRecovery: capability(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       options.javascriptRecovery ??
-      createJavaScriptRecoveryProvider(environment),
+      createJavaScriptRecoveryProvider(environment, undefined, {
+        platform,
+        architecture: arch,
+      }),
     (value) => value.close?.() ?? Promise.resolve(),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
@@ -374,13 +421,22 @@ const modules = {
     }),
   ),
   artifactResources: service(() => new ArtifactResourceScope()),
-  reverseEngineering: service(({ providerEnvironment }) =>
-    createReverseEngineeringService(providerEnvironment),
+  reverseEngineering: service(
+    ({ providerEnvironment, options }) =>
+      options.reverseEngineering ??
+      createReverseEngineeringService(providerEnvironment),
+    (_context, value) => ({
+      observeCommandProviderFailures: () => value.observedLaunchFailures(),
+    }),
   ),
   firmwareAnalysis: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       new FirmwareAnalysisService(
-        options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
+        options.firmwareAnalysis ??
+          createFirmwareAnalysisProvider(environment, undefined, {
+            platform,
+            architecture: arch,
+          }),
       ),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
@@ -406,7 +462,8 @@ const modules = {
     }),
   ),
   gdbSessions: capability(
-    ({ providerEnvironment }) => createGdbSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createGdbSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
     ({ platform }) => ({
       hostUnsupported: {
@@ -415,8 +472,8 @@ const modules = {
     }),
   ),
   rizinDebugSessions: capability(
-    ({ providerEnvironment }) =>
-      createRizinDebugSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createRizinDebugSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
   ),
   android: service(
@@ -431,8 +488,8 @@ const modules = {
     }),
   ),
   pcap: service(
-    ({ environment, options }) =>
-      options.pcapAnalysis ?? createPcapAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.pcapAnalysis ?? createPcapAnalysisProvider(environment, platform),
     ({ options, platform }) => ({
       hostUnsupported: {
         pcapCapture: outsideHost(
@@ -460,8 +517,9 @@ const modules = {
     }),
   ),
   packetCapture: service(
-    ({ environment, options }) =>
-      options.packetCapture ?? createPacketCaptureService(environment),
+    ({ environment, options, platform }) =>
+      options.packetCapture ??
+      createPacketCaptureService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         packetCapture: outsideHost(
@@ -477,8 +535,9 @@ const modules = {
     }),
   ),
   signalRecording: service(
-    ({ environment, options }) =>
-      options.signalRecording ?? createSignalRecordingService(environment),
+    ({ environment, options, platform }) =>
+      options.signalRecording ??
+      createSignalRecordingService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         signalRecording: outsideHost(
@@ -499,9 +558,9 @@ const modules = {
     (value) => value.provider.close?.() ?? Promise.resolve(),
   ),
   apktool: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform }) =>
       options.apktoolAnalysis ??
-      createApktoolResourceAnalysisProvider(environment),
+      createApktoolResourceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         apktoolAnalysisAvailability: (signal: AbortSignal) =>
@@ -520,8 +579,9 @@ const modules = {
     }),
   ),
   adbDevice: service(
-    ({ environment, options }) =>
-      options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.adbDeviceAnalysis ??
+      createAdbDeviceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         adbAnalysisAvailability: (signal: AbortSignal) =>
@@ -529,8 +589,8 @@ const modules = {
       },
     }),
   ),
-  cutter: service(({ providerEnvironment }) =>
-    createCutterBridgeService(providerEnvironment),
+  cutter: service(({ providerEnvironment, settings }) =>
+    createCutterBridgeService(providerEnvironment, { read: settings }),
   ),
   browserObservation: capability(
     ({ options }) => options.browserObservation,
@@ -608,6 +668,7 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
   > = {};
   const probes: NonNullable<CapabilityAvailabilityFacts["probes"]> = {};
   const failureObservers: (() => OptionalProviderLoadFailures)[] = [];
+  const commandFailureObservers: (() => CommandProviderLaunchFailures)[] = [];
   const availability = { hostUnsupported, optionalFeatures };
   // This is a key-preserving map of a source-owned typed declaration, not an
   // external value parser or a generic operation dispatcher.
@@ -628,6 +689,10 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign(probes, instance.availability?.probes);
       const observeFailure = instance.availability?.observeProviderLoadFailures;
       if (observeFailure !== undefined) failureObservers.push(observeFailure);
+      const observeCommandFailure =
+        instance.availability?.observeCommandProviderFailures;
+      if (observeCommandFailure !== undefined)
+        commandFailureObservers.push(observeCommandFailure);
       return [
         id,
         instance.ownership === "host"
@@ -642,6 +707,8 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
     probes,
     observeProviderLoadFailures: (): OptionalProviderLoadFailures =>
       Object.assign({}, ...failureObservers.map((observe) => observe())),
+    observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
+      Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
     close: () => scope.close(),
   };
 };

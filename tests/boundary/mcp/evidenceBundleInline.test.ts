@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -16,7 +17,6 @@ import { ANALYSIS_SNAPSHOT_TARGET } from "../../../src/domain/analysisSnapshot.f
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 
 it("exports and imports GameCube DOL Evidence without losing its subject identity", async () => {
   const root = await createTestTempDirectory("rea-dol-bundle-mcp-");
@@ -98,8 +98,14 @@ it("preserves BOM recovery through public bundle import", async () => {
     expect(parseMcpToolError(response)).toMatchObject({
       error: {
         code: "evidence_integrity_mismatch",
-        message: JSON_BYTE_ORDER_MARK_MESSAGE,
-        remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+        message: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+        remediation: {
+          action: expect.stringMatching(
+            /byte-order mark.*UTF-8 without a byte-order mark/iu,
+          ),
+        },
       },
     });
   } finally {
@@ -109,7 +115,7 @@ it("preserves BOM recovery through public bundle import", async () => {
 
 it("returns the complete session Evidence bundle in the tool result", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "observe", parameters: {}, result: { value: "seen" } },
   );
@@ -255,7 +261,7 @@ const createBundleSourceSession = () => {
       result: { completed: true },
       authority: "controlled-replay",
     }),
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
@@ -312,8 +318,8 @@ const unsupportedBundleFields = (
   ["provider manifest", ["providers", 0, "future_field"]],
   ["record subject", ["records", evidenceIndex, "subject", "future_field"]],
   [
-    "subject digest",
-    ["records", evidenceIndex, "subject", "digest", "future_field"],
+    "subject identity",
+    ["records", evidenceIndex, "subject", "identity", "future_field"],
   ],
   ["artifact manifest", ["artifacts", 0, "future_field"]],
   [

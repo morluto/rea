@@ -26,14 +26,18 @@ export const parseDpkgOwners = (
   return [...owners];
 };
 
-/** `/bin/x` and `/usr/bin/x` name the same file on merged-/usr systems, and dpkg may know either. */
+/** Only merged system directories have alternate `/usr` spellings; application, home and shared-data paths retain their own identity. */
 export const ownershipCandidates = (
   paths: readonly string[],
 ): readonly string[] => [
   ...new Set(
-    paths.flatMap((path) =>
-      path.startsWith("/usr/") ? [path, path.slice(4)] : [path, `/usr${path}`],
-    ),
+    paths.flatMap((path) => {
+      if (!/^\/(?:usr\/)?(?:bin|sbin|lib(?:32|64|o32|x32)?)\//u.test(path))
+        return [path];
+      return path.startsWith("/usr/")
+        ? [path, path.slice(4)]
+        : [path, `/usr${path}`];
+    }),
   ),
 ];
 

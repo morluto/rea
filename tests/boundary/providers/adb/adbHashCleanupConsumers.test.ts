@@ -132,14 +132,13 @@ test.each(digestCases)(
     const f = await fixture();
     f.failFirstClose();
     const result = await f.provider.execute(request(f.root));
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected hash descriptor cleanup failure");
     const returnedError = result.error;
     const originalCause = returnedError.cause;
     expect(returnedError.cleanupIncomplete).toBe(true);
     expect(returnedError.diagnostics).toMatchObject({
       primary_error: {
-        details: { partial_observation: { result: expect.any(Object) } },
+        details: { operation: request(f.root).operation },
       },
     });
     expect(
@@ -212,7 +211,6 @@ for (const closeFails of [false, true]) {
         const result = await f.provider.execute(request(f.root), {
           signal: controller.signal,
         });
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected digest read failure");
         expect(projectAnalysisError(result.error).code).not.toBe("cancelled");
         expect(
@@ -272,7 +270,6 @@ for (const closeFails of [false, true]) {
         const result = await f.provider.execute(request(f.root), {
           signal: controller.signal,
         });
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected completion cancellation");
         expect(projectAnalysisError(result.error).code).toBe(
           closeFails ? "cleanup_incomplete" : "cancelled",

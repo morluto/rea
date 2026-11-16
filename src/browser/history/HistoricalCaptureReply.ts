@@ -1,25 +1,24 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { z } from "zod";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  artifactFileCancellationCause,
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/index.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { withCaptureReaderCleanup } from "./CaptureFailures.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  webNetworkCapturePayloadSchema,
-} from "../../domain/webNetworkCapture.js";
+import { webNetworkCapturePayloadSchema } from "../../domain/webNetworkCapture.js";
 
 const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({
@@ -56,7 +55,7 @@ export const readHistoricalCaptureReply = async (
     try {
       file = await readStableArtifact(
         path,
-        WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
+        captureBudgets().outputBytes,
         signal,
         undefined,
         resources,
@@ -98,9 +97,9 @@ export const readHistoricalCaptureReply = async (
       { cause },
     );
     if (finalization?.reason === "cancelled") {
-      const cancellation = new AnalysisCancelledError(
+      const cancellation = cancelledBy(
         "inspect_web_network_capture",
-        { cause: artifactFileCancellationCause(finalization) },
+        carriedReason(artifactFileCancellationCause(finalization)),
       );
       error.retainSecondaryFailure(cancellation, {
         reply_finalization_error: projectAnalysisError(cancellation),
@@ -160,5 +159,6 @@ const excludeNormalizedNumbers = (
   projection.numeric_literals = projection.numeric_literals.filter(
     (number) => !excluded.has(number.pointer),
   );
-  projection.redactions.push(...redaction.redactions);
+  for (const excludedValue of redaction.redactions)
+    projection.redactions.push(excludedValue);
 };

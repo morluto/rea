@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
-import {
-  analysisErrorJsonSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorJsonSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { EvidenceFileError } from "../../../src/domain/evidenceErrors.js";
 import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
@@ -41,6 +39,11 @@ it.each([
     files: [],
   });
   const projected = projectAnalysisError(error);
+  expect(projected.details?.partial_observation).toEqual({
+    kind: "web-artifact-acquisition",
+    analysis: "not-performed",
+    files: [],
+  });
   expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   const validate = new Ajv2020({ strict: false }).compile(
     analysisErrorJsonSchema,

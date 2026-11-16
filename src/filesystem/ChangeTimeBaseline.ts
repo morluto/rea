@@ -1,9 +1,11 @@
 import type { Stats } from "node:fs";
 
 import {
+  applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
   type WindowsChangeTimeSettleLimits,
 } from "../config/windowsChangeTimeSettle.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 /**
  * Windows advances a file's ChangeTime shortly after it is written, without any
@@ -22,6 +24,7 @@ import {
  */
 
 export interface ChangeTimeSettleSeams {
+  /** The host whose filesystem produced the stats; omission is the running host. */
   readonly platform?: NodeJS.Platform | undefined;
   readonly now?: (() => number) | undefined;
   readonly sleep?: ((delayMs: number) => Promise<void>) | undefined;
@@ -49,7 +52,7 @@ const limitsFrom = (
     seams.environment ?? process.env,
   );
   if (!resolved.ok) throw resolved.error;
-  return resolved.value;
+  return applyWindowsChangeTimeSnapshot(resolved.value);
 };
 
 /** Stop settling as soon as the owning operation is cancelled. */
@@ -69,11 +72,11 @@ const changeTimeMs = (stats: Stats): number =>
  * Whether an observed ChangeTime can still move on its own, so recording it now
  * would create a baseline a later observation is entitled to disagree with.
  */
-export const changeTimeMayStillDrift = (
+const changeTimeMayStillDrift = (
   stats: Stats,
   seams: ChangeTimeSettleSeams = {},
 ): boolean => {
-  const platform = seams.platform ?? process.platform;
+  const platform = seams.platform ?? HOST_PLATFORM.platform;
   if (platform !== "win32") return false;
   const changeTime = changeTimeMs(stats);
   // An unreadable ChangeTime cannot establish that it has settled; re-observation
@@ -100,16 +103,21 @@ export const settleChangeTimeBaseline = async (
   read: () => Promise<Stats>,
   seams: ChangeTimeSettleSeams = {},
 ): Promise<Stats> => {
+  throwIfAborted(seams);
+  if ((seams.platform ?? HOST_PLATFORM.platform) !== "win32") {
+    const observed = await read();
+    throwIfAborted(seams);
+    return observed;
+  }
   const limits = limitsFrom(seams);
   const settled = { ...seams, limits };
   const sleep = seams.sleep ?? defaultSleep;
-  throwIfAborted(seams);
   let observed = await read();
   for (let poll = 0; poll < limits.maxPolls; poll += 1) {
+    throwIfAborted(seams);
     if (!changeTimeMayStillDrift(observed, settled)) return observed;
     // A settle window is bounded by driftMs, not by the poll budget, so a
     // cancelled scope must not keep an inventory waiting it out.
-    throwIfAborted(seams);
     await sleep(limits.pollMs);
     throwIfAborted(seams);
     observed = await read();

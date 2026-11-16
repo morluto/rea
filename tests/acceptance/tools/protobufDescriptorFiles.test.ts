@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -147,7 +147,7 @@ cliTest(
           },
         };
         if (change === "declarations") {
-          const output = await cli.sharedCliRun!({
+          const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
               capture,
@@ -254,7 +254,7 @@ cliTest(
       const bytes = writer.finish();
       const descriptor = join(root, `${mode}.pb`);
       await writeFile(descriptor, bytes);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "inspect-web-network-capture",
           capture,

@@ -1,11 +1,15 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
-import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
+} from "../ports/DoctorProviderInspection.js";
+import { admitGhidraInstallation } from "./GhidraAdmission.js";
+import {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+} from "./GhidraProviderCapabilities.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
@@ -17,24 +21,33 @@ import {
   type GhidraTemporaryDirectoryProbe,
 } from "./GhidraTemporaryDirectory.js";
 
+/** Client settings consulted by this readiness probe. */
+export const GHIDRA_DOCTOR_SETTINGS = [
+  "GHIDRA_INSTALL_DIR",
+  "JAVA_HOME",
+  "PATH",
+  "REA_GHIDRA_PROJECT_PATH",
+] as const;
+
 /** Project installation and runtime-authority facts into the doctor contract. */
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
   temporaryDirectory?: GhidraTemporaryDirectoryProbe,
+  selection: { readonly existingProject: boolean } = { existingProject: false },
 ): DoctorProviderInspection => {
+  const admission = admitGhidraInstallation(inspection, selection);
+  const existingProjectRefused =
+    !admission.admitted &&
+    admission.refusal.kind === "existing_project_unsupported_host";
+  // Native authority is reported once the installation itself is usable.
   const readiness =
-    inspection.status === "available" && inspection.platform === "win32"
-      ? inspectWindowsNativeReadiness(inspection.platform)
-      : undefined;
+    inspection.status === "available" ? admission.windowsNative : undefined;
   const windowsAuthorityUnavailable = readiness?.available === false;
   const temporaryDirectoryUnavailable = temporaryDirectory?.ok === false;
   return {
     id: "ghidra",
     configured: inspection.installDir !== null,
-    available:
-      inspection.status === "available" &&
-      !windowsAuthorityUnavailable &&
-      !temporaryDirectoryUnavailable,
+    available: admission.admitted && !temporaryDirectoryUnavailable,
     providerVersion: inspection.providerVersion,
     registrationEnvironment:
       inspection.status === "available"
@@ -60,7 +73,7 @@ export const projectGhidraDoctorInspection = (
               code: !readiness.available ? readiness.code : null,
               detail: !readiness.available
                 ? readiness.reason
-                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS only.",
+                : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS/ReFS only.",
               remediation: !readiness.available ? readiness.remediation : null,
               classification:
                 !readiness.available && readiness.code === "runtime_unavailable"
@@ -74,6 +87,18 @@ export const projectGhidraDoctorInspection = (
       ...(temporaryDirectory === undefined
         ? []
         : [temporaryDirectoryCheck(temporaryDirectory)]),
+      ...(existingProjectRefused
+        ? [
+            {
+              name: "existing_project",
+              ok: false,
+              code: "unsupported_host",
+              detail: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+              remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+              classification: "unsupported_host" as const,
+            },
+          ]
+        : []),
     ],
   };
 };
@@ -95,7 +120,7 @@ const temporaryDirectoryCheck = (
         name: "temp_directory",
         ok: false,
         code: "temp_directory_unwritable",
-        detail: `REA could not ${probe.stage === "write" ? "write" : "delete"} a probe file under the Ghidra session root ${probe.directory}, where session runtimes are created${probe.code === undefined ? "" : ` (${probe.code})`}: ${probe.message}${probe.retainedPath === undefined ? "" : `. The probe file ${probe.retainedPath} remains; REA retains its cleanup and retries removal when doctor finishes.`}`,
+        detail: `REA could not ${probe.stage === "write" ? "write" : "clean up"} a probe file under the Ghidra session root ${probe.directory}, where session runtimes are created${probe.code === undefined ? "" : ` (${probe.code})`}: ${probe.message}${probe.retainedPath === undefined ? "" : `. The probe file ${probe.retainedPath} remains; REA retains its cleanup and retries removal when doctor finishes.`}`,
         remediation: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
         classification: "runtime_failure",
         details: {
@@ -113,14 +138,14 @@ export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   resourceOwner: RetainedResourceScope,
   signal?: AbortSignal,
-  probeTemporaryDirectory: (
-    resourceOwner: RetainedResourceScope,
-  ) => Promise<GhidraTemporaryDirectoryProbe> = probeGhidraTemporaryDirectory,
+  /** The host whose installation is inspected; defaults to the running host. */
+  platform?: NodeJS.Platform,
 ): Promise<DoctorProviderInspection> => {
   try {
     const installation = await inspectGhidraInstallation({
       environment,
       resourceOwner,
+      ...(platform === undefined ? {} : { platform }),
       ...(signal === undefined ? {} : { signal }),
       ...(environment.GHIDRA_INSTALL_DIR === undefined
         ? {}
@@ -132,9 +157,11 @@ export const inspectSystemGhidraProvider = async (
     // The restricted-host denial reported for #7075 is Windows-specific.
     const temporaryDirectory =
       installation.status === "available" && installation.platform === "win32"
-        ? await probeTemporaryDirectory(resourceOwner)
+        ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
-    return projectGhidraDoctorInspection(installation, temporaryDirectory);
+    return projectGhidraDoctorInspection(installation, temporaryDirectory, {
+      existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
+    });
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }

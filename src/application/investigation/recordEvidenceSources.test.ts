@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { createEvidence } from "../../domain/evidence.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
@@ -9,7 +10,7 @@ import {
 } from "./recordEvidenceSources.js";
 
 const source = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   { id: "fixture", name: "Fixture", version: "1" },
   { operation: "health", parameters: {}, result: "historical" },
 );
@@ -32,7 +33,6 @@ it.each([
       withEvidenceSources(cancelled ? err(primary) : ok("complete"), [source]),
       sourceOwner === undefined ? undefined : { sourceOwner },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected recording failure");
     expect(result.error).toBe(cancelled ? primary : failure);
     expect(primary.secondaryFailures).toEqual(cancelled ? [failure] : []);

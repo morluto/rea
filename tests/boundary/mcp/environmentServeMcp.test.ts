@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
 import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { advertisedInputDialectViolations } from "../../../src/contracts/advertisedDialect.js";
 
 import {
   Client,
@@ -22,11 +23,10 @@ import {
   type TestProcesses,
 } from "../../support/process/processFixture.js";
 
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 const CARD_PATH = "/.well-known/agent-env.json";
-/** SHA-256 of the 14,519-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
+/** SHA-256 of the card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
 const REPLAY_CARD_SHA256 =
-  "995c280f0798f77e76f206c068eb6c2c1f8c4210a03ac1c01fba8cc07b5d7f09";
+  "825703b02f48d614b3c4690445b0b6b00333d975406dc7e8dd335836bceb7d59";
 
 /** Serve the fixture pair as pure replay through the built CLI. */
 const serveReplayOnly = async (
@@ -89,7 +89,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -123,7 +122,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -153,7 +151,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -179,7 +176,9 @@ processTest(
         tools.find(({ name }) => name === tool.name)?.inputSchema.properties
           ?.tag,
       ).toMatchObject({
-        oneOf: [
+        // The recorded `oneOf` is advertised as the portable `anyOf`; the
+        // branches are disjoint, so both accept the same values.
+        anyOf: [
           { type: "string" },
           { type: "number" },
           { type: "boolean" },
@@ -199,7 +198,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 describe("rea environment-serve --replay-only", () => {
@@ -217,6 +215,29 @@ describe("rea environment-serve --replay-only", () => {
         expect(tools.map(({ name }) => name).sort()).toEqual(
           source.manifest.tools.map(({ name }) => name).sort(),
         );
+        // A served catalog reaches models through the same clients as REA's.
+        // The dialect has no portable form for a query parameter's
+        // string, number, boolean or string-list union yet, so only that
+        // union's untyped node remains outside it.
+        for (const violation of tools.flatMap(
+          advertisedInputDialectViolations,
+        )) {
+          expect(violation).toMatchObject({ rule: "type", detail: "untyped" });
+          const property = /^\$\.properties\.([^.]+)$/u.exec(violation.path);
+          const name = property?.[1] ?? "";
+          const tool = tools.find(
+            ({ name: listed }) => listed === violation.tool,
+          );
+          expect(tool?.inputSchema.properties?.[name], violation.path).toEqual({
+            description: expect.stringMatching(/^Query parameter /u),
+            anyOf: [
+              { type: "string" },
+              { type: "number" },
+              { type: "boolean" },
+              { type: "array", items: { type: "string" } },
+            ],
+          });
+        }
         const users = tools.find(({ name }) => name === "get_users_by_id");
         expect(users?.description).toContain(
           '; returns a JSON object with fields "id", "uid", "login", "email"; recorded statuses 200;',
@@ -264,7 +285,6 @@ describe("rea environment-serve --replay-only", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -307,7 +327,6 @@ describe("rea environment-serve --replay-only", () => {
       });
       expect(started.stderr()).toContain('"transport":"streamable-http"');
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });
 
@@ -426,6 +445,5 @@ describe("rea environment-serve", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });

@@ -11,8 +11,11 @@ import type { ServedState } from "../application/environment/environmentState.js
 import { z } from "incur";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import {
+  CLI_COMMANDS,
+  DEFAULT_INFO_LOGGING_COMMANDS,
+} from "../contracts/cliCommandNames.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
@@ -22,12 +25,12 @@ import {
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -36,8 +39,9 @@ import { createLogger } from "../logger.js";
 import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.js";
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField, publishArgvInput } from "./options.js";
 
 /** Same envelope label as the other JSON-input commands and `parseCliJsonInput`. */
 const cliError = (error: AnalysisError): JsonValue => ({
@@ -47,10 +51,12 @@ const cliError = (error: AnalysisError): JsonValue => ({
 
 /** The listener announces its URL, and a build its stages, at info like `rea mcp --http`; an explicit REA_LOG_LEVEL still wins. */
 const infoLogger = (
+  command: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   logger: Logger,
 ): Logger =>
-  environment.REA_LOG_LEVEL === undefined
+  environment.REA_LOG_LEVEL === undefined &&
+  DEFAULT_INFO_LOGGING_COMMANDS.has(command)
     ? createLogger("cli", "info")
     : logger;
 
@@ -113,11 +119,7 @@ interface ServeInputs {
 }
 
 const cancelledServe = (signal: AbortSignal): JsonValue =>
-  cliError(
-    new AnalysisCancelledError(CLI_COMMANDS.environmentServe, {
-      cause: signal.reason,
-    }),
-  );
+  cliError(cancelledBy(CLI_COMMANDS.environmentServe, signal));
 
 /** Pure replay, as `--replay-only` asks for: no state is derived. */
 const REPLAY_ONLY: ServedState = {
@@ -178,7 +180,11 @@ const serveEnvironmentCommand = async (
     source,
     served: { state, report },
   } = inputs.value;
-  const commandLogger = infoLogger(environment, logger);
+  const commandLogger = infoLogger(
+    CLI_COMMANDS.environmentServe,
+    environment,
+    logger,
+  );
   if (!report.served && report.reason === "unavailable")
     commandLogger.warn(
       { code: report.code, error: report.message },
@@ -235,11 +241,11 @@ const serveEnvironmentCommand = async (
     if (!(cause instanceof AnalysisError)) throw cause;
     if (listenerError !== undefined)
       return cliError(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           listenerError,
           cause,
           CLI_COMMANDS.environmentServe,
-        ).bindCleanupDependencies([cause]),
+        ),
       );
     cause.retainDiagnostics({
       shutdown_observation: { status: "shutdown_requested", ...observation },
@@ -334,6 +340,7 @@ const conflictingRules = (): JsonValue =>
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
+  callerInputPath: string,
   captureTimeoutMs: number | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
@@ -345,7 +352,8 @@ const inspectBuildHar = async (
   const { ENVIRONMENT_BUILD_OPERATION } =
     await import("../application/environment/environmentBuild.js");
   const service = createWebNetworkCaptureService(environment);
-  const inspected = await finishAnalysisCommand(
+  const inspected = await finishCliEvidenceCommand(
+    callerInputPath,
     () =>
       service.inspect(
         {
@@ -373,7 +381,7 @@ const inspectBuildHar = async (
     inspected.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
-  return file.ok ? ok(file.value) : err(cliError(file.error));
+  return file.ok ? file : err(cliError(file.error));
 };
 
 /** Read the capture once, then build or plan the bundle from it. */
@@ -408,7 +416,11 @@ const buildEnvironmentCommand = async (
         ],
       ),
     );
-  const commandLogger = infoLogger(environment, logger);
+  const commandLogger = infoLogger(
+    CLI_COMMANDS.environmentBuild,
+    environment,
+    logger,
+  );
   const progress = (stage: string): void => {
     commandLogger.info({ stage }, "Building environment");
   };
@@ -417,6 +429,7 @@ const buildEnvironmentCommand = async (
     progress("inspect");
     const inspected = await inspectBuildHar(
       capturePath,
+      input.capture,
       input.captureTimeoutMs,
       environment,
       signal,
@@ -436,11 +449,7 @@ const buildEnvironmentCommand = async (
     capture = read.value;
   }
   if (signal.aborted)
-    return cliError(
-      new AnalysisCancelledError(CLI_COMMANDS.environmentBuild, {
-        cause: signal.reason,
-      }),
-    );
+    return cliError(cancelledBy(CLI_COMMANDS.environmentBuild, signal));
   const captureInput: EnvironmentBuildCaptureInput = kind.value;
   const built = await buildEnvironment({
     capture,
@@ -512,8 +521,10 @@ const registerBuildCommand = (
         .boolean()
         .default(false)
         .describe("Run every stage and report, but write nothing"),
-      captureTimeoutMs:
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -683,11 +694,13 @@ export const registerEnvironmentCommands = (
       host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpPortSchema
-        .optional()
-        .describe(
-          "Listener port; default MCP_PORT, else 0 for an ephemeral port",
-        ),
+      port: publishArgvInput(
+        mcpHttpPortSchema
+          .optional()
+          .describe(
+            "Listener port; default MCP_PORT, else 0 for an ephemeral port",
+          ),
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

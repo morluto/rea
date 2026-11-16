@@ -1,4 +1,6 @@
+import { unknownTarget, sameTargetIdentity } from "./targetIdentity.js";
 import type { Evidence } from "./evidence.js";
+import { createAnalysisProfile } from "./analysisProfile.js";
 import {
   PROCESS_PROVIDER,
   isProcessEvidenceProvider,
@@ -17,6 +19,11 @@ export const FUNCTION_COMPARISON_PROVIDER = {
   name: "REA function comparison",
   version: "1",
 } as const;
+
+export const FUNCTION_COMPARISON_PROFILE = createAnalysisProfile(
+  FUNCTION_COMPARISON_PROVIDER,
+  { workflow_revision: 2 },
+);
 
 const COMPARISON_EVIDENCE_IDENTITIES = {
   compare_artifacts: {
@@ -57,6 +64,9 @@ export const hasComparisonEvidenceIdentity = (evidence: Evidence): boolean => {
     providerMatches &&
     evidence.confidence === "derived" &&
     evidence.authority === "analyst-inference" &&
-    evidence.subject === null
+    sameTargetIdentity(
+      evidence.subject.identity,
+      unknownTarget("derived-from-linked-evidence"),
+    )
   );
 };

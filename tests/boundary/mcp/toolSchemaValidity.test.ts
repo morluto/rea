@@ -6,14 +6,19 @@ import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import {
   arrayItemSchemaError,
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
-import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import {
+  advertisedSchemaErrors,
+  localInputReferences,
+  recursiveReferences,
+  resolveReference,
+} from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { servedCatalog } from "../../../src/application/environment/environmentState.js";
 import { servedFrom } from "../../fixtures/environmentStateServing.js";
@@ -24,6 +29,7 @@ import {
   FIRST_BOOK,
   THIRD_BOOK,
 } from "../../fixtures/environmentStateWrites.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 interface ToolSchemas {
   readonly name: string;
@@ -87,7 +93,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
     },
     open_binary: {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -203,23 +209,6 @@ function expectMeaningfulPropertyDescriptions(
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function resolveReference(schema: unknown, reference: string): unknown {
-  if (reference === "#") return schema;
-  if (!reference.startsWith("#/")) return undefined;
-  let value = schema;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      !Object.hasOwn(value, key)
-    )
-      return undefined;
-    value = Reflect.get(value, key);
-  }
-  return value;
-}
-
 /** Follow SDK-shared local definitions at each schema path component. */
 function schemaAt(
   root: unknown,
@@ -300,89 +289,6 @@ function expectManagedLocalSignatureSchema(
     }),
   ).toBe(false);
   expect(validateLocals({ has_context_dependent_types: false })).toBe(false);
-}
-
-function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
-  return tools.flatMap((tool) =>
-    (["inputSchema", "outputSchema"] as const).flatMap((kind) => {
-      const schema = tool[kind];
-      const found = new Set<string>();
-      const visit = (node: unknown, active: readonly string[]): void => {
-        if (typeof node !== "object" || node === null) return;
-        for (const [key, child] of Object.entries(node)) {
-          if (
-            [
-              "$defs",
-              "definitions",
-              "examples",
-              "default",
-              "const",
-              "enum",
-            ].includes(key)
-          )
-            continue;
-          if (key !== "$ref" || typeof child !== "string") visit(child, active);
-          else if (active.includes(child)) found.add(child);
-          else visit(resolveReference(schema, child), [...active, child]);
-        }
-      };
-      visit(schema, []);
-      return [...found].map(
-        (reference) => `${tool.name}.${kind}: ${reference}`,
-      );
-    }),
-  );
-}
-
-const schemaMapKeywords = new Set([
-  "$defs",
-  "definitions",
-  "properties",
-  "patternProperties",
-  "dependentSchemas",
-  "dependencies",
-]);
-const schemaArrayKeywords = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-const schemaChildKeywords = new Set([
-  "items",
-  "additionalItems",
-  "contains",
-  "additionalProperties",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "propertyNames",
-  "not",
-  "if",
-  "then",
-  "else",
-]);
-
-function localInputReferences(tools: readonly ToolSchemas[]): string[] {
-  return tools.flatMap((tool) => {
-    const references: string[] = [];
-    const visit = (node: unknown, path: string): void => {
-      if (!isRecord(node)) return;
-      if (typeof node.$ref === "string") references.push(`${path}.$ref`);
-      for (const [key, value] of Object.entries(node)) {
-        if (schemaMapKeywords.has(key) && isRecord(value)) {
-          for (const [name, schema] of Object.entries(value))
-            visit(schema, `${path}.${key}.${name}`);
-        } else if (schemaArrayKeywords.has(key) && Array.isArray(value)) {
-          value.forEach((schema, index) =>
-            visit(schema, `${path}.${key}[${index}]`),
-          );
-        } else if (schemaChildKeywords.has(key)) {
-          if (Array.isArray(value))
-            value.forEach((schema, index) =>
-              visit(schema, `${path}.${key}[${index}]`),
-            );
-          else visit(value, `${path}.${key}`);
-        }
-      }
-    };
-    visit(tool.inputSchema, `${tool.name}.inputSchema`);
-    return references;
-  });
 }
 
 it("finds references only in input schema positions, not literal data", () => {
@@ -593,24 +499,6 @@ describe("MCP JSON Schema validity", () => {
             ),
           },
         );
-      const catalogProjection = tools.map((tool) => ({
-        name: tool.name,
-        title: tool.title,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema,
-        annotations: tool.annotations,
-      }));
-      expect(catalogProjection).toEqual(
-        GENERATED_MCP_TOOL_CATALOG.map((tool) => ({
-          name: tool.name,
-          title: tool.title,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          outputSchema: tool.outputSchema,
-          annotations: tool.annotations,
-        })),
-      );
       for (const contract of TOOL_CONTRACTS) {
         const tool = byName.get(contract.name);
         expect(tool?.title?.trim(), contract.name).toBeTruthy();
@@ -689,7 +577,12 @@ describe("MCP root input schemas", () => {
         const tool = advertised.get(name);
         if (contract === undefined || tool === undefined)
           throw new Error(`${name} was not advertised`);
-        const validate = ajv.compile(tool.inputSchema);
+        const validate = ajv.compile(
+          advertiseTool(
+            { inputSchema: tool.inputSchema },
+            advertisedToolPresentation("off"),
+          ).inputSchema ?? {},
+        );
         const base = {
           cdp_endpoint: "http://127.0.0.1:9222",
           target_id: "target",
@@ -705,7 +598,7 @@ describe("MCP root input schemas", () => {
             (name === "inspect_web_page" && flag === false);
           const parsed = contract.inputSchema.safeParse(input);
           expect(parsed.success, `${name}: ${String(flag)}`).toBe(accepted);
-          // The advertisement relaxes Boolean literals; the canonical parser
+          // The advertised dialect relaxes Boolean literals; the canonical parser
           // still rejects false when this operation requires script sources.
           expect(validate(input), `${name}: ${String(flag)}`).toBe(
             flag === undefined || typeof flag === "boolean",
@@ -903,15 +796,6 @@ describe("MCP process input JSON Schema", () => {
   });
 });
 
-it("ships nonrecursive input and output schemas in the generated catalog", () => {
-  expect(advertisedSchemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-  expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-});
-
-it("ships input schemas without local references in the generated catalog", () => {
-  expect(localInputReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-});
-
 it("rejects unresolved output-schema references even for uncalled tools", () => {
   const errors = advertisedSchemaErrors([
     {
@@ -992,6 +876,24 @@ it("checks client array constraints in schema positions while preserving literal
         "literal",
       ),
     ).toBe(`literal.properties.value.${reason}`);
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "array",
+          items: [{ type: "string" }, literal],
+        },
+        "tuple",
+      ),
+    ).toBe(`tuple.items[1].${reason}`);
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "string",
+          contentSchema: literal,
+        },
+        "encoded",
+      ),
+    ).toBe(`encoded.contentSchema.${reason}`);
   }
 });
 

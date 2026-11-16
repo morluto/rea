@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -21,6 +21,7 @@ export const ELF_NOTE_TYPE_NAMES = [
   "core_file",
   "core_siginfo",
   "core_auxv",
+  "android_ident",
   "unknown",
 ] as const;
 export type ElfNoteTypeName = (typeof ELF_NOTE_TYPE_NAMES)[number];
@@ -84,9 +85,13 @@ export const coreNoteTypeName = (type: number): ElfNoteTypeName => {
   }
 };
 
+/** Map Android n_type when the owner is Android; other types stay unknown. */
+export const androidNoteTypeName = (type: number): ElfNoteTypeName =>
+  type === 1 ? "android_ident" : "unknown";
+
 /** Complete bounded inspection of ELF PT_NOTE and SHT_NOTE tables. */
 export const inspectElfNotesInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF image",
   ),
   max_file_bytes: z
@@ -160,6 +165,12 @@ export const coreNoteSchema = z.strictObject({
   auxv: z.array(coreAuxvEntrySchema).nullable(),
 });
 
+const androidIdentSchema = z.strictObject({
+  android_api: uint,
+  ndk_version: z.string().nullable(),
+  ndk_build_number: z.string().nullable(),
+});
+
 const noteEntrySchema = z.strictObject({
   index: uint,
   table_kind: z.enum(["program", "section"]),
@@ -191,6 +202,7 @@ const noteEntrySchema = z.strictObject({
     })
     .nullable(),
   core: coreNoteSchema.nullable(),
+  android: androidIdentSchema.nullable(),
 });
 
 /** Observed ELF note tables; absence is an empty list, not proof notes never existed. */

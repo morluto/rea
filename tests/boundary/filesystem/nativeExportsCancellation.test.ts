@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
 import * as elfSymbols from "../../../src/domain/elfSymbol.js";
 import * as nativeExports from "../../../src/domain/native/nativeExports.js";
-import { parseNativeExports } from "../../../src/native/exports/NativeExportParser.js";
-import { BinaryReader } from "../../../src/native/metadata/BinaryContainer.js";
+import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
+import { BinaryReader } from "../../../src/domain/binaryContainer.js";
 import {
   elfAliasedVersionImage,
   elfExportImage,
@@ -118,7 +118,7 @@ describe("ELF export parsing cancellation", () => {
   });
 
   it.each(["requirements", "definitions"] as const)(
-    "cancels while traversing GNU version %s before decoding symbols",
+    "cancels while traversing GNU version %s before decoding exported symbols",
     async (kind) => {
       const root = await createTestTempDirectory("rea-native-version-cancel-");
       const path = join(root, `${kind}.so`);
@@ -149,7 +149,12 @@ describe("ELF export parsing cancellation", () => {
         if (cancelled.ok)
           throw new Error("Expected cancellation during version traversal");
         expect(cancelled.error.cause).toBe(reason);
-        expect(symbols).not.toHaveBeenCalled();
+        // Main validates STN_UNDEF before version traversal; exported symbols
+        // must still remain unread when the queued cancellation is observed.
+        expect(symbols).toHaveBeenCalledTimes(1);
+        expect(symbols.mock.calls[0]?.[0].every((byte) => byte === 0)).toBe(
+          true,
+        );
       } finally {
         clearImmediate(interrupt);
         decoded.mockRestore();

@@ -2,11 +2,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import * as processOutput from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 it.skipIf(process.platform !== "darwin").each([
   ["success", false, false],
@@ -103,7 +103,7 @@ it.skipIf(process.platform !== "darwin").each([
           category: "integrity_mismatch",
           details: {
             reason: "integrity",
-            detail: expect.stringContaining("Asset catalog changed"),
+            integrity_check: "member-identity",
           },
         });
       if (primary === "timeout")
@@ -164,6 +164,7 @@ it.each(["decode_interface_builder", "inspect_keyed_archive"] as const)(
               throw new ArtifactReaderFailure(
                 "integrity",
                 "controlled Interface Builder source change",
+                { integrityCheck: "container-identity" },
               );
             })
         : undefined;

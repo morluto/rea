@@ -1,6 +1,11 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../../fixtures/evidenceSubject.js";
 import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { minimalElfImage } from "../../../fixtures/nativeHeaders.js";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { describe, expect, it } from "vitest";
@@ -17,7 +22,10 @@ import {
 
 import { projectHarmonyApplicationEvidence } from "../../../../src/application/harmony/HarmonyApplicationService.js";
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
-import { harmonyApplicationProjectionResultSchema } from "../../../../src/domain/harmony/harmonyApplication.js";
+import {
+  harmonyApplicationProjectionResultSchema,
+  type HarmonyApplicationProjectionResult,
+} from "../../../../src/domain/harmony/harmonyApplication.js";
 import { artifactInventoryResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
@@ -27,7 +35,7 @@ import {
 } from "../../../../src/domain/zipPackageFormat.js";
 
 const { runProviderAnalysis } = createDirectAnalysis({});
-const elf = Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]);
+const elf = Uint8Array.from(minimalElfImage());
 
 const stageHapEntries = [
   { path: "module.json", content: '{"module":{"name":"entry"}}' },
@@ -38,6 +46,53 @@ const stageHapEntries = [
   { path: "assets/web/index.js", content: "bridge();" },
   { path: "META-INF/FIXTURE.p7b", content: "opaque signing" },
 ] as const;
+
+const PKG_CONTEXT_NAME = "pkgContextInfo.json";
+
+const unreadDeclarationLimitations = (
+  limitations: readonly string[],
+): string[] => limitations.filter((text) => text.includes(PKG_CONTEXT_NAME));
+
+const projectStageHap = async (
+  label: string,
+  entries: readonly { path: string; content: string | Uint8Array }[],
+): Promise<HarmonyApplicationProjectionResult> => {
+  const path = await writeApplicationZip(label, "Fixture.hap", entries);
+  return requireDeterministicProjection(
+    projectHarmonyApplicationEvidence,
+    await inventoryApplicationPackage(path),
+    harmonyApplicationProjectionResultSchema,
+  );
+};
+
+const stageHapWithDeclaration = stageHapEntries.map(({ path, content }) => ({
+  path,
+  content,
+}));
+
+describe("HarmonyOS N-API declaration disclosure", () => {
+  it("discloses the unread declaration by its names, not its wording", async () => {
+    const projection = await projectStageHap("rea-harmony-pkg-context-", [
+      ...stageHapWithDeclaration,
+      {
+        path: PKG_CONTEXT_NAME,
+        content: '{"libentry.so":{"isSO":true}}',
+      },
+    ]);
+    const control = await projectStageHap(
+      "rea-harmony-pkg-context-control-",
+      stageHapWithDeclaration,
+    );
+
+    const disclosed = unreadDeclarationLimitations(projection.limitations);
+    expect(disclosed).toHaveLength(1);
+    expect(disclosed[0]).toContain("bridge_candidates");
+    expect(disclosed[0]).toMatch(/\bisSO\b/);
+    expect(disclosed[0]).toMatch(/not read|not narrowed/iu);
+    expect(projection.bridge_candidates).toEqual(control.bridge_candidates);
+    expect(unreadDeclarationLimitations(control.limitations)).toEqual([]);
+  });
+});
 
 describe("HarmonyOS unclassified inventory", () => {
   it("retains distinct unclassified paths sharing content with a classified file", async () => {
@@ -169,7 +224,7 @@ describe("HarmonyOS application projection", () => {
       stageHapEntries,
     );
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("hap");
+    expect(fileIdentity(inventory.subject).format).toBe("hap");
     const left = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -235,7 +290,7 @@ describe("HarmonyOS application projection", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("app-pack");
+    expect(fileIdentity(inventory.subject).format).toBe("app-pack");
     const projection = requireDeterministicProjection(
       projectHarmonyApplicationEvidence,
       inventory,
@@ -271,7 +326,7 @@ describe("HarmonyOS packaging boundaries", () => {
       },
     ]);
     const inventory = await inventoryApplicationPackage(path);
-    expect(inventory.subject?.format).toBe("ipa");
+    expect(fileIdentity(inventory.subject).format).toBe("ipa");
     const occurrences = (
       inventory.normalized_result as {
         occurrences: Array<{
@@ -383,15 +438,14 @@ describe("HarmonyOS partial inventory classification", () => {
       ],
     );
     const inventory = await inventoryApplicationPackage(path);
-    if (inventory.subject === null) throw new Error("Missing fixture subject");
     const result = artifactInventoryResultSchema.parse(
       inventory.normalized_result,
     );
     const partial = createEvidence(
       {
-        path: inventory.subject.local_path,
-        sha256: inventory.subject.digest.sha256,
-        format: inventory.subject.format,
+        path: fileSubjectDisplay(inventory.subject).local_path,
+        sha256: fileIdentity(inventory.subject).sha256,
+        format: fileIdentity(inventory.subject).format,
       },
       inventory.provider,
       {

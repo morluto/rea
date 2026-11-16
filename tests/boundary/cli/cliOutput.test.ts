@@ -19,8 +19,6 @@ import {
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
 
-const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
-
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
     expect(
@@ -200,6 +198,9 @@ describe("CLI output value admission", () => {
         "NaN",
         "Infinity",
         "9007199254740992",
+        "0x10",
+        "1e3",
+        " 16 ",
       ]) {
         const validation = parseCliOutputArguments([
           "providers",
@@ -220,7 +221,7 @@ describe("CLI output value admission", () => {
             error: { code: "INVALID_OUTPUT_VALUE" },
           });
       }
-      for (const value of ["0", "1", "9007199254740991"])
+      for (const value of ["0", "1", "010", "9007199254740991"])
         expect(
           parseCliOutputArguments(["providers", flag, value]).validation,
         ).toEqual({ ok: true });
@@ -292,14 +293,12 @@ describe("CLI output flag value forms", () => {
       ]) {
         const result = await cli.run({
           arguments: [...filter, "providers", "--json"],
-          timeoutMs: 10_000,
         });
         expect(result.exitCode).toBe(0);
         expect(JSON.parse(result.stdout)).toEqual({});
         expect(result.stderr).toBe("");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   it("splits only the equals forms of valued output flags", () => {
@@ -393,7 +392,6 @@ describe("unclosed CLI output filter slices", () => {
             "--filter-output",
             "result[0,1].name[",
           ],
-          timeoutMs: 3000,
         });
         expect(result.exitCode).toBe(1);
         expect(result.stdout).toContain("INVALID_OUTPUT_FILTER");
@@ -402,7 +400,6 @@ describe("unclosed CLI output filter slices", () => {
       }
       const splitPath = await cli.run({
         arguments: ["providers", "--json", "--filter-output", "][,]"],
-        timeoutMs: 3000,
       });
       expect(splitPath.exitCode).toBe(1);
       expect(splitPath.json).toMatchObject({
@@ -410,7 +407,6 @@ describe("unclosed CLI output filter slices", () => {
         error: { code: "INVALID_OUTPUT_FILTER" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -423,7 +419,6 @@ describe("unclosed CLI output filter slices", () => {
           "--filter-output",
           "capabilities[0,1].provider.id,open",
         ],
-        timeoutMs: 3000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toEqual({
@@ -431,7 +426,6 @@ describe("unclosed CLI output filter slices", () => {
         open: false,
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -452,7 +446,6 @@ describe("CLI output valued-flag parsing", () => {
         });
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -467,7 +460,6 @@ describe("CLI output valued-flag parsing", () => {
         error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -555,7 +547,6 @@ describe("CLI output valued-flag parsing", () => {
         expect(result.stdout).not.toContain("[truncated:");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -641,7 +632,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -676,7 +666,6 @@ describe("compiled CLI output boundary", () => {
         expect(result.stdout).toContain("expected string");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -707,7 +696,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -732,7 +720,6 @@ describe("compiled CLI output boundary", () => {
       );
       expect(result.stdout).toContain("See below for usage.");
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -763,7 +750,6 @@ describe("compiled CLI artifact diagnostics", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -882,4 +868,181 @@ describe("version report rendering", () => {
       renderVersionReport(parseCliOutputArguments(["--version"]), host, true),
     ).toBeUndefined();
   });
+});
+
+describe("unknown MCP subcommand correction", () => {
+  workspaceCliTest(
+    "keeps the correction on the subcommand after timing globals",
+    async ({ cli }) => {
+      for (const timing of ["--timings", "--no-timings", "--timings=false"]) {
+        const timed = await cli.run({
+          arguments: [timing, "mcp", timing, "ad", "--format", "json"],
+        });
+        expect(timed.json).toMatchObject({
+          cta: {
+            commands: [
+              { command: `rea ${timing} mcp ${timing} add --format json` },
+              {},
+            ],
+          },
+        });
+      }
+    },
+  );
+});
+
+describe("unknown MCP subcommand output", () => {
+  workspaceCliTest(
+    "reports the rejection in the explicitly selected format",
+    async ({ cli }) => {
+      const expected = {
+        code: "COMMAND_NOT_FOUND",
+        message: "'bogus' is not a command for 'rea mcp'.",
+        cta: {
+          commands: [
+            {
+              command: "rea mcp --help",
+              description: "see all available commands",
+            },
+          ],
+        },
+      };
+      for (const selection of [["--format", "json"], ["--json"]]) {
+        const result = await cli.run({
+          arguments: ["mcp", "bogus", ...selection],
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.json).toMatchObject(expected);
+        expect(result.stdout).toBe(`${JSON.stringify(result.json)}\n`);
+      }
+      const yaml = await cli.run({
+        arguments: ["mcp", "bogus", "--format", "yaml"],
+      });
+      expect(yaml.exitCode).toBe(1);
+      expect(yaml.stdout).toContain("    - command: rea mcp --help\n");
+      const markdown = await cli.run({
+        arguments: ["mcp", "bogus", "--format", "md"],
+      });
+      expect(markdown.exitCode).toBe(1);
+      expect(markdown.stdout).toMatch(/^## code\n\nCOMMAND_NOT_FOUND\n/u);
+      const jsonLines = await cli.run({
+        arguments: ["mcp", "bogus", "--format", "jsonl"],
+      });
+      expect(jsonLines.exitCode).toBe(1);
+      expect(JSON.parse(jsonLines.stdout)).toMatchObject({
+        type: "error",
+        ok: false,
+        result: expected,
+      });
+      const suggested = await cli.run({
+        arguments: ["mcp", "ad", "--format", "json"],
+      });
+      expect(suggested.json).toMatchObject({
+        message: "'ad' is not a command for 'rea mcp'. Did you mean 'add'?",
+        cta: { commands: [{ command: "rea mcp add --format json" }, {}] },
+      });
+      // Only the subcommand is corrected; an equal option value is caller input.
+      const optionValue = await cli.run({
+        arguments: ["mcp", "ad", "--command", "ad", "--json"],
+      });
+      expect(optionValue.json).toMatchObject({
+        cta: { commands: [{ command: "rea mcp add --command ad --json" }, {}] },
+      });
+      // Builtins Incur serves before its mcp branch keep their own output.
+      const manifest = await cli.run({
+        arguments: ["mcp", "bogus", "--llms", "--json"],
+      });
+      expect(manifest.exitCode).toBe(0);
+      expect(manifest.stdout).not.toContain("COMMAND_NOT_FOUND");
+      // An output value spelled like a builtin is data, not that builtin.
+      for (const arguments_ of [
+        [
+          "mcp",
+          "ad",
+          "--format",
+          "csv",
+          "--filter-output",
+          "cta.commands",
+          "--columns",
+          "--llms",
+        ],
+        ["mcp", "ad", "--json", "--filter-output", "--llms"],
+      ]) {
+        const builtinValue = await cli.run({ arguments: arguments_ });
+        expect(builtinValue.exitCode).toBe(1);
+        expect(JSON.parse(builtinValue.stdout)).toMatchObject({
+          code: "COMMAND_NOT_FOUND",
+        });
+      }
+      // The suggestion keeps the caller's delimited output selection.
+      const delimited = await cli.run({
+        arguments: [
+          "mcp",
+          "ad",
+          "--format",
+          "csv",
+          "--filter-output",
+          "cta.commands",
+          "--columns",
+          "command",
+        ],
+      });
+      expect(delimited.exitCode).toBe(1);
+      expect(delimited.stdout).toContain(
+        "rea mcp add --format csv --filter-output cta.commands --columns command",
+      );
+      // A suggestion that would not replay the caller's tokens is omitted.
+      const spaced = await cli.run({
+        arguments: ["mcp", "ad", "--command", "/path with spaces", "--json"],
+      });
+      expect(spaced.json).toMatchObject({
+        message: "'ad' is not a command for 'rea mcp'. Did you mean 'add'?",
+        cta: {
+          commands: [
+            {
+              command: "rea mcp --help",
+              description: "see all available commands",
+            },
+          ],
+        },
+      });
+      expect(spaced.stdout).not.toContain("rea mcp add");
+      for (const shellActive of ["@args", "%PATH%", "=node"]) {
+        const result = await cli.run({
+          arguments: ["mcp", "ad", "--command", shellActive, "--json"],
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).not.toContain("rea mcp add");
+        expect(result.json).toMatchObject({
+          cta: { commands: [{ command: "rea mcp --help" }] },
+        });
+      }
+      // Markdown output escapes caller text through REA's document renderer.
+      const emphasis = await cli.run({
+        arguments: ["mcp", "*oops*", "--format", "md"],
+      });
+      expect(emphasis.exitCode).toBe(1);
+      expect(emphasis.stdout).toContain("'\\*oops\\*' is not a command");
+      // A declared literal is redacted from fixed call-to-action text too.
+      const fixedText = await cli.run({
+        arguments: ["mcp", "bogus", "--sensitive-value", "help", "--json"],
+      });
+      expect(fixedText.exitCode).toBe(1);
+      expect(fixedText.stdout).not.toContain("help");
+      const redacted = await cli.run({
+        arguments: ["mcp", "s3cret", "--sensitive-value", "s3cret", "--json"],
+      });
+      expect(redacted.exitCode).toBe(1);
+      expect(redacted.stdout).not.toContain("s3cret");
+      expect(redacted.json).toMatchObject({ code: "COMMAND_NOT_FOUND" });
+      // An empty token keeps Incur's group help.
+      const help = await cli.run({ arguments: ["mcp", "", "--json"] });
+      expect(help.exitCode).toBe(0);
+      expect(help.stdout).toContain("rea mcp");
+      // Without a selected format, Incur's default TOON remains the output.
+      const toon = await cli.run({ arguments: ["mcp", "bogus"] });
+      expect(toon.exitCode).toBe(1);
+      expect(toon.stdout).toMatch(/^code: COMMAND_NOT_FOUND\n/u);
+    },
+  );
 });

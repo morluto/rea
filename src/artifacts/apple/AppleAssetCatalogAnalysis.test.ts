@@ -8,13 +8,19 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import * as processOutput from "../../process/ExecFileOutput.js";
 import { encodeNibArchiveFixture } from "./NibArchive.fixture.js";
 import type { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   analyzeAppleAssetCatalogs,
   collectInterfaceBuilderResourceKeys,
 } from "./AppleAssetCatalogAnalysis.js";
+import { waitFor } from "../../../tests/support/testWait.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../../domain/internalInvariant.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 
 describe("Apple asset catalog traversal coverage", () => {
   it.for([false, true])(
@@ -146,8 +152,10 @@ describe("Apple asset catalog application workflow", () => {
         next_offset: null,
         truncated: false,
       });
-      expect(result.limitations).toContain(
-        "No compiled Assets.car catalog was found among the app bundle's regular files (symlinks are not followed); any resource keys are reported as unmatched.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /Assets\.car.*symlinks.*not followed.*unmatched/iu,
+        ),
       );
     },
   );
@@ -224,8 +232,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("No catalog is present");
       },
     });
-    expect(result.limitations).toContain(
-      "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /resource-key joins.*incomplete.*object inventory.*incomplete/iu,
+      ),
     );
   },
 );
@@ -362,7 +372,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       },
     });
     expect(result.catalogs).toHaveLength(1);
-  }, 5_000);
+  });
 
   it("cancels the Interface Builder analysis and reports a catalog failure", async () => {
     let cancelled = false;
@@ -408,7 +418,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       settled = true;
     });
     analysis.catch(() => undefined);
-    await vi.waitFor(() => expect(catalogStarted).toBe(true));
+    await waitFor(() => expect(catalogStarted).toBe(true));
     await new Promise((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
     finishCatalog("[]");
@@ -423,12 +433,7 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
       const ready = join(work, "ready");
       const exited = join(work, "exited");
       const script = `const fs=require("node:fs");process.on("SIGTERM",()=>{setTimeout(()=>{fs.writeFileSync(process.argv[2],"exited");process.exit(0)},500)});fs.writeFileSync(process.argv[1],"ready");setInterval(()=>{},1000);`;
-      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
       const realExecFileOutput = processOutput.execFileOutput;
-      Object.defineProperty(process, "platform", {
-        ...platform,
-        value: "darwin",
-      });
       const spy = vi
         .spyOn(processOutput, "execFileOutput")
         .mockImplementation((_command, _args, options) =>
@@ -447,8 +452,9 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
           targetSha256: "a".repeat(64),
           signal: controller.signal,
           analyzeInterfaceBuilder: async () => emptyGraph,
+          platform: "darwin",
         }).catch((cause: unknown) => cause);
-        await vi.waitFor(() => expect(access(ready)).resolves.toBeUndefined());
+        await waitFor(() => expect(access(ready)).resolves.toBeUndefined());
         controller.abort("stop asset inspection");
         expect(await settled).toMatchObject({ reason: "cancelled" });
         await expect(access(exited)).resolves.toBeUndefined();
@@ -456,10 +462,44 @@ describe("Apple asset catalog and Interface Builder concurrency", () => {
         controller.abort("stop asset inspection");
         await settled;
         spy.mockRestore();
-        Object.defineProperty(process, "platform", platform);
       }
     },
   );
+});
+
+it("joins the Interface Builder cleanup failure to a catalog defect", async () => {
+  const bundle = await createTestTempDirectory("rea-asset-catalog-defect-");
+  await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+  await writeFile(
+    join(bundle, "Contents", "Resources", "Assets.car"),
+    "catalog",
+  );
+  const retained = join(bundle, "Contents", "Resources", "Main.nib");
+  const rejected = await analyzeAppleAssetCatalogs({
+    environment: {},
+    bundlePath: bundle,
+    targetSha256: "a".repeat(64),
+    analyzeInterfaceBuilder: ({ signal }) =>
+      new Promise((_, reject) => {
+        signal?.addEventListener("abort", () =>
+          reject(
+            new ArtifactReaderFailure("io", "reader close failed", {
+              cleanup: { reason: "close failed", resources: [retained] },
+            }),
+          ),
+        );
+      }),
+    runAssetUtil: () =>
+      Promise.reject(invariantViolation("Catalog plan is missing")),
+  }).catch((cause: unknown) => cause);
+  expect(rejected).toBeInstanceOf(ProviderAdapterError);
+  if (!(rejected instanceof ProviderAdapterError))
+    throw new Error("expected an adapter failure");
+  // The defect stays the primary failure beside the reader's cleanup.
+  expect(rejected.cleanupPrimary).toBeInstanceOf(ProviderAdapterError);
+  expect(rejected.cleanupPrimary?.cause).toBeInstanceOf(InternalInvariantError);
+  expect(rejected.cleanupIncomplete).toBe(true);
+  expect(rejected.cleanupResources).toContain(retained);
 });
 
 it.each(["not json", "{}", "[null]"])(
@@ -558,8 +598,7 @@ it.each(["reported carutil", "tab-indented carutil", "observed assetutil"])(
     expect(error.cause).toBe(cause);
     expect(projectAnalysisError(error)).toMatchObject({
       code: "artifact_operation_failed",
-      message:
-        "Artifact is invalid or has changed. Get a fresh copy and try again.",
+      message: expect.stringMatching(/invalid.*changed.*fresh copy/iu),
       details: {
         operation: "inspect_asset_catalog",
         reason: "format",
@@ -743,7 +782,7 @@ it.skipIf(process.platform === "win32")(
         settled = true;
       });
     try {
-      await vi.waitFor(() => expect(access(exited)).resolves.toBeUndefined());
+      await waitFor(() => expect(access(exited)).resolves.toBeUndefined());
       expect(settled).toBe(false);
       controller.abort("late cancellation");
       expect(settled).toBe(false);

@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 import { traceSourceMap } from "./TraceSourceMap.js";
-import { inspectSourceMap, SourceMapFormatFailure } from "./SourceMapFormat.js";
+import {
+  inspectSourceMap,
+  isSourceMapSectionOverlap,
+} from "../../domain/sourceMapFormat.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const url = "https://app.test/maps/app.js.map?v=2#map";
 const point = { line: 1, column: 0 };
@@ -27,10 +31,32 @@ it("classifies external indexed sections as unsupported with their exact URL", (
     );
     throw new Error("Expected external section rejection");
   } catch (error: unknown) {
-    expect(error).toBeInstanceOf(SourceMapFormatFailure);
+    expect(error).toBeInstanceOf(ParseFailureError);
     expect(error).toMatchObject({
-      reason: "unsupported",
-      message: `External source-map section URL is not fetched: ${externalUrl}`,
+      failure: {
+        kind: "unsupported",
+        format: "source-map",
+        detail: `External source-map section URL is not fetched: ${externalUrl}`,
+      },
+    });
+  }
+});
+
+it.each([
+  ["root field", { ...leaf, version: 2 }],
+  ["leaf field", { ...leaf, mappings: "!" }],
+  [
+    "section field",
+    { version: 3, sections: [{ offset: { line: "0" }, map: leaf }] },
+  ],
+])("reports a %s schema rejection as a format failure", (_, map) => {
+  try {
+    inspectSourceMap(JSON.stringify(map));
+    throw new Error("Expected schema rejection");
+  } catch (error: unknown) {
+    expect(error).toBeInstanceOf(ParseFailureError);
+    expect(error).toMatchObject({
+      failure: { kind: "malformed", format: "source-map" },
     });
   }
 });
@@ -48,7 +74,7 @@ it("uses the same conservative section classification for URL-plus-map and malfo
     );
   expect(external).toThrow(
     expect.objectContaining({
-      reason: "unsupported",
+      failure: expect.objectContaining({ kind: "unsupported" }),
       message: `External source-map section URL is not fetched: ${externalUrl}`,
     }),
   );
@@ -62,9 +88,8 @@ it("uses the same conservative section classification for URL-plus-map and malfo
     );
   expect(malformed).toThrow(
     expect.objectContaining({
-      reason: "format",
-      message:
-        "External source-map section URL must be a string. Section path: [0].",
+      failure: expect.objectContaining({ kind: "malformed" }),
+      message: expect.stringMatching(/section URL.*must be a string.*\[0\]/iu),
     }),
   );
 });
@@ -81,8 +106,8 @@ it("rejects a present non-array sections member through the shared section-list 
     );
   expect(malformed).toThrow(
     expect.objectContaining({
-      reason: "format",
-      message: "Indexed source-map sections must be an array.",
+      failure: expect.objectContaining({ kind: "malformed" }),
+      message: expect.stringMatching(/sections.*must be an array/iu),
     }),
   );
 });
@@ -291,7 +316,7 @@ describe("upstream source-map point evidence", () => {
 });
 
 describe("source-map layout admission", () => {
-  it.each(["ACAA", "AAAAC", "g", "!", "AA", "D"])(
+  it.each(["AAAAC", "g", "!", "AA", "D"])(
     "rejects malformed VLQ/components/indexes: %s",
     (mappings) => {
       expect(() => trace({ ...leaf, mappings })).toThrow();
@@ -317,7 +342,8 @@ describe("source-map layout admission", () => {
     ).toThrow(/offset/u);
   });
   it("rejects overlapping section mappings rather than silently clipping evidence", () => {
-    expect(() =>
+    let overlap: unknown;
+    try {
       trace({
         version: 3,
         sections: [
@@ -327,8 +353,12 @@ describe("source-map layout admission", () => {
           },
           { offset: { line: 0, column: 5 }, map: leaf },
         ],
-      }),
-    ).toThrow(expect.objectContaining({ reason: "section-overlap" }));
+      });
+    } catch (cause) {
+      overlap = cause;
+    }
+    expect(isSourceMapSectionOverlap(overlap)).toBe(true);
+    expect(overlap).toMatchObject({ failure: { kind: "malformed" } });
   });
   it("accepts absent optional names and null contents without changing reported identity", () => {
     expect(

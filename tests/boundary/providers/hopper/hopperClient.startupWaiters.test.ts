@@ -1,3 +1,9 @@
+import {
+  transportReplyContracts,
+  type TransportHopperClient,
+  HopperFixtureLauncher,
+  trackHopperClient,
+} from "./hopperClient.fixture.js";
 import { access } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
@@ -10,20 +16,18 @@ import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { ok } from "../../../../src/domain/result.js";
 import { ProviderRunLineage } from "../../../../src/process/ProviderRunLineage.js";
 import { waitForExit } from "../../../support/process/processFixture.js";
-import {
-  HopperFixtureLauncher,
-  trackHopperClient,
-} from "./hopperClient.fixture.js";
+import { waitFor } from "../../../support/testWait.js";
 
 it("preserves a warm provider when an already cancelled caller joins", async () => {
   const launcher = new HopperFixtureLauncher();
-  const client = trackHopperClient(new HopperClient({ launcher }));
+  const client = trackHopperClient(
+    new HopperClient({ replyContracts: transportReplyContracts, launcher }),
+  );
   await expect(client.start()).resolves.toMatchObject({ ok: true });
   const controller = new AbortController();
   const reason = { source: "caller", opaque: 7 };
   controller.abort(reason);
   const joined = await client.start(controller.signal);
-  expect(joined.ok).toBe(false);
   if (joined.ok) throw new Error("Expected cancellation");
   expect(joined.error).toBeInstanceOf(HopperCancelledError);
   expect(joined.error.cause).toBe(reason);
@@ -41,7 +45,11 @@ it("preserves a warm provider when an already cancelled caller joins", async () 
 it("reports provider closure to live startup callers without cancelling their signals", async () => {
   const launcher = new HopperFixtureLauncher(undefined, "quiet", "gated");
   const client = trackHopperClient(
-    new HopperClient({ launcher, startupTimeoutMs: 10_000 }),
+    new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 10_000,
+    }),
   );
   const first = new AbortController();
   const second = new AbortController();
@@ -67,6 +75,7 @@ it("retains the final caller's cleanup failure and blocks replacement until clos
   let allowCleanup = false;
   const client = trackHopperClient(
     new HopperClient({
+      replyContracts: transportReplyContracts,
       startupTimeoutMs: 10_000,
       launcher: {
         async launch(session) {
@@ -123,6 +132,7 @@ it.each([0, 1])(
     const launcher = new HopperFixtureLauncher();
     const client = trackHopperClient(
       new HopperClient({
+        replyContracts: transportReplyContracts,
         startupTimeoutMs: 10_000,
         launcher: {
           async launch(session) {
@@ -139,13 +149,15 @@ it.each([0, 1])(
     );
     try {
       await launchPending;
-      let cancelled: Awaited<ReturnType<HopperClient["callTool"]>> | undefined;
+      let cancelled:
+        | Awaited<ReturnType<TransportHopperClient["callTool"]>>
+        | undefined;
       void waits[cancelledIndex]?.then((result) => {
         cancelled = result;
       });
       const reason = { source: "caller", opaque: cancelledIndex };
       controllers[cancelledIndex]?.abort(reason);
-      await vi.waitFor(() =>
+      await waitFor(() =>
         expect(cancelled).toMatchObject({
           ok: false,
           error: { _tag: "HopperCancelledError" },
@@ -195,7 +207,11 @@ it.each(["cancelled", "rejected"] as const)(
     });
     const launcher = new HopperFixtureLauncher();
     const client = trackHopperClient(
-      new HopperClient({ launcher, startupTimeoutMs: 10_000 }),
+      new HopperClient({
+        replyContracts: transportReplyContracts,
+        launcher,
+        startupTimeoutMs: 10_000,
+      }),
     );
     const controller = new AbortController();
     const starting = client.start(controller.signal);
@@ -250,7 +266,9 @@ it("keeps a post-connect launcher exit ahead of cancellation during lineage fina
     await original.call(this, launch);
   });
   const launcher = new HopperFixtureLauncher();
-  const client = trackHopperClient(new HopperClient({ launcher }));
+  const client = trackHopperClient(
+    new HopperClient({ replyContracts: transportReplyContracts, launcher }),
+  );
   const controller = new AbortController();
   const starting = client.start(controller.signal);
   try {
@@ -282,7 +300,11 @@ it("keeps a post-connect launcher exit ahead of cancellation during lineage fina
 it("keeps an unstarted client reusable after an already cancelled startup wait", async () => {
   const launcher = new HopperFixtureLauncher();
   const client = trackHopperClient(
-    new HopperClient({ launcher, startupTimeoutMs: 30_000 }),
+    new HopperClient({
+      replyContracts: transportReplyContracts,
+      launcher,
+      startupTimeoutMs: 30_000,
+    }),
   );
   const controller = new AbortController();
   controller.abort();

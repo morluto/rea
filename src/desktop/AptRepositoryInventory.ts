@@ -14,8 +14,12 @@ import {
   type AptSourceStanza,
 } from "../domain/desktop/aptRepositories.js";
 import type { AptRepository } from "../domain/desktop/desktopCapture.js";
-import { withGpgvKeyCheck, type VerifiedKey } from "./GpgvKeyCheck.js";
-import { isHostFile, readHostFile } from "./HostFileRead.js";
+import {
+  withGpgvKeyCheck,
+  type HeldKey,
+  type VerifiedKey,
+} from "./GpgvKeyCheck.js";
+import { hostFileKind, readHostFile } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** Where apt keeps its trusted keys and downloaded lists. */
@@ -134,8 +138,7 @@ const candidateKeys = async (
   entry: AptSourceEntry,
   apt: AptLocations,
 ): Promise<readonly string[]> => {
-  const signedBy = entry.signedBy.filter((value) => value.startsWith("/"));
-  if (signedBy.length > 0) return signedBy;
+  if (entry.signedBy.length > 0) return entry.signedBy;
   return [
     ...(await fileNames(apt.trustedParts))
       .filter((name) => name.endsWith(".gpg") || name.endsWith(".asc"))
@@ -144,27 +147,45 @@ const candidateKeys = async (
   ];
 };
 
-/** The index's signed release beside it in apt's lists folder: InRelease, or Release.gpg with the Release it signs. */
+/**
+ * The index's signed release beside it in apt's lists folder: InRelease, or
+ * Release.gpg with the Release it signs; null when no release representation
+ * could be established because a check could not tell.
+ */
 const signedRelease = async (
   target: AptIndexTarget,
-): Promise<readonly string[] | undefined> => {
+): Promise<readonly string[] | null | undefined> => {
   const prefix = join(
     dirname(target.filename),
     aptListFileName(target.baseUri),
   );
-  if (await isHostFile(`${prefix}InRelease`)) return [`${prefix}InRelease`];
-  return (await isHostFile(`${prefix}Release.gpg`)) &&
-    (await isHostFile(`${prefix}Release`))
-    ? [`${prefix}Release.gpg`, `${prefix}Release`]
-    : undefined;
+  const inRelease = await hostFileKind(`${prefix}InRelease`);
+  if (inRelease) return [`${prefix}InRelease`];
+  // An InRelease that could not be probed does not rule out the detached pair,
+  // so keep looking rather than losing a signature apt still holds. It also
+  // rules out absence: only an InRelease known to be missing lets a missing
+  // detached pair settle that apt holds no signed release here.
+  const noSignedRelease = (): null | undefined =>
+    inRelease === false ? undefined : null;
+  const signed = await hostFileKind(`${prefix}Release.gpg`);
+  if (!signed && signed !== null) return noSignedRelease();
+  const release = await hostFileKind(`${prefix}Release`);
+  // A detached release needs both members, so a Release known to be absent
+  // settles the pair even when Release.gpg could not be probed.
+  if (release === false) return noSignedRelease();
+  if (signed === null || release === null) return null;
+  return [`${prefix}Release.gpg`, `${prefix}Release`];
 };
+
+/** The keys gpgv checks a release with: candidate key files, or the one key the sources entry holds. */
+type KeyCandidates = readonly string[] | HeldKey;
 
 interface RepositoryContext {
   readonly apt: AptLocations;
   readonly targets: ReadonlyMap<string, AptIndexTarget> | undefined;
   readonly sources: (file: string) => Promise<readonly AptSourceStanza[]>;
   readonly verify: (
-    candidates: readonly string[],
+    candidates: KeyCandidates,
     release: readonly string[],
   ) => Promise<VerifiedKey | { readonly reason: string }>;
 }
@@ -178,7 +199,7 @@ const keyCheck = async (
   | { readonly reason: string }
   | {
       readonly release: readonly string[];
-      readonly candidates: readonly string[];
+      readonly candidates: KeyCandidates;
     }
 > => {
   if (target === undefined)
@@ -192,15 +213,25 @@ const keyCheck = async (
     return {
       reason: `no sources entry at ${target.sourcesFile}:${String(target.position)} configures it`,
     };
-  if (entry.inlineKey)
+  const selectors = entry.signedBy.filter((value) => !value.startsWith("/"));
+  if (selectors.length > 0)
     return {
-      reason:
-        "its Signed-By field holds the key itself, which REA does not read",
+      reason: `Signed-By selectors ${selectors.map((value) => JSON.stringify(value)).join(", ")} are not supported; REA cannot verify this repository's fingerprint restrictions, so no signing key is retained`,
     };
   const release = await signedRelease(target);
+  if (release === null)
+    return {
+      reason: `apt's release files for it in ${dirname(target.filename)} could not be checked`,
+    };
   if (release === undefined)
     return {
       reason: `apt holds no signed release file for it in ${dirname(target.filename)}`,
+    };
+  // apt trusts only the key an entry holds, never the keys it trusts for all repositories.
+  if (entry.inlineKey !== null)
+    return {
+      release,
+      candidates: { path: entry.file, bytes: Buffer.from(entry.inlineKey) },
     };
   const candidates = await candidateKeys(entry, context.apt);
   return candidates.length > MAX_CANDIDATE_KEYS
@@ -269,7 +300,8 @@ const repositoryFacts = async (
  * The apt repositories other than Ubuntu's that list the installed version.
  * `apt-get indextargets` names each source's sources entry, release and
  * signed release file; the key is the one whose signature over that release
- * gpgv verified: the entry's Signed-By keyrings, or every key apt trusts.
+ * gpgv verified: the key the entry's Signed-By holds, its Signed-By keyrings,
+ * or every key apt trusts.
  */
 export const inspectAptRepositories = async (
   installed: {
@@ -298,7 +330,9 @@ export const inspectAptRepositories = async (
       targets,
       sources: files.read,
       verify: (candidates, release) =>
-        check.firstVerifying(candidates, release),
+        "bytes" in candidates
+          ? check.heldVerifying(candidates, release)
+          : check.firstVerifying(candidates, release),
     };
     const keys = new Map<string, Buffer>();
     const repositories: AptRepository[] = [];

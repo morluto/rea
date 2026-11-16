@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -8,7 +9,6 @@ import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import { SNAPSHOT_REPLAY_LIMITATION } from "../../../src/application/binary/AnalysisSnapshotCache.js";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -26,12 +26,11 @@ const validateAdvertised = (
   response: CallToolResult,
 ) => {
   const tool = tools.find((candidate) => candidate.name === name);
-  if (tool?.outputSchema === undefined)
-    throw new Error(`missing ${name} output schema`);
+  if (tool === undefined) throw new Error(`missing ${name} output schema`);
   const validate = new Ajv2020({
     strict: false,
     validateFormats: false,
-  }).compile(z.record(z.string(), z.unknown()).parse(tool.outputSchema));
+  }).compile(canonicalOutputSchema(tool.name));
   expect(
     validate(response.structuredContent),
     JSON.stringify(validate.errors),
@@ -137,7 +136,9 @@ it("saves a GameCube DOL snapshot and replays it after reopening", async () => {
   expect(original.normalized_result).toBe("address_name");
   expect(replayed.subject).toEqual(original.subject);
   expect(replayed.normalized_result).toEqual(original.normalized_result);
-  expect(replayed.limitations).toContain(SNAPSHOT_REPLAY_LIMITATION);
+  expect(replayed.limitations).toContainEqual(
+    expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+  );
   expect(calls.filter((operation) => operation === "address_name")).toEqual([
     "address_name",
   ]);

@@ -47,7 +47,7 @@ member comparison CLI still takes two assembly paths; process comparison takes
 two capture Evidence JSON paths. Check command help for the installed version.
 An input bundle grants no implicit file lookup: `evidence-file` and historical
 graph file selectors are accepted only by contracts advertising them. See the
-[CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/cli.md#import-export-and-compare-evidence).
+[CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/getting-started/cli.md#import-export-and-compare-evidence).
 
 Completed `inspect_artifact` inventory also supports a summary and
 `view: {kind: "inventory", collection: "occurrences", logical_paths: ["package.json", "main.js"]}`.

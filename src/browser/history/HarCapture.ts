@@ -1,12 +1,12 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import { createHash } from "node:crypto";
 import { LosslessNumber } from "lossless-json";
 import { parseCaptureJson } from "./CaptureJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { isCanonicalBase64 } from "../../domain/stringPatterns.js";
-import {
-  WEB_NETWORK_CAPTURE_LIMITS,
-  type WebNetworkCapture,
-  type WebNetworkCaptureRecord,
+import type {
+  WebNetworkCapture,
+  WebNetworkCaptureRecord,
 } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import {
@@ -46,7 +46,7 @@ export const decodeHarCapture = (
     !captureObject(raw.log) ||
     !Array.isArray(raw.log.entries)
   )
-    throw new CaptureFormatError("format", "HAR must contain log.entries.");
+    throw new CaptureFormatError("malformed", "HAR must contain log.entries.");
   if (raw.log.version !== "1.2")
     throw new CaptureFormatError(
       "unsupported",
@@ -64,7 +64,7 @@ export const decodeHarCapture = (
   );
   const records = entries.map((entry, ordinal): WebNetworkCaptureRecord => {
     // Validate each original record even when a structural ancestor excludes it.
-    const projected = projectHar(entry, sensitiveValues, "entry");
+    const projected = projectRecordedHarEntry(entry, sensitiveValues);
     const projection: Projection = recordsExcluded
       ? {
           reported: null,
@@ -103,6 +103,12 @@ export const decodeHarCapture = (
   };
 };
 
+/** Project producer-owned HAR entry facts without pretending another format is a HAR document. */
+export const projectRecordedHarEntry = (
+  value: unknown,
+  sensitiveValues: readonly string[],
+): Projection => projectHar(value, sensitiveValues, "entry");
+
 /** Relative HTTP paths belong only to entries, never similarly named container extensions. */
 const projectHar = (
   value: unknown,
@@ -134,10 +140,10 @@ const projectHar = (
     depth: number,
     parent?: Readonly<Record<string, unknown>>,
   ): JsonValue => {
-    if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
-        "HAR exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
+        `HAR exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
         pointer,
       );
     if (
@@ -234,7 +240,7 @@ const projectHar = (
         }),
       );
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR parser returned a non-JSON value.",
       pointer,
     );
@@ -274,7 +280,7 @@ const decodeHarBase64 = (value: string, pointer: string): Buffer => {
   const compact = value.replace(/[\t\n\r ]/g, "");
   if (!isCanonicalBase64(compact))
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "HAR content declares base64 but its text is not valid canonical base64 (ASCII whitespace is allowed).",
       pointer,
     );

@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -13,9 +14,9 @@ import { basename, dirname, join } from "node:path";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 
 import {
   DECOMPILE_DIRECTORY_FUNCTIONS_DIRECTORY,
@@ -34,7 +35,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -43,7 +44,7 @@ import {
   type LeaseFailure,
   type OwnedLease,
 } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
 import { compareProcedureAddresses } from "./selection.js";
@@ -105,6 +106,13 @@ export const classifyOutputPath = async (
       );
 };
 
+/** Retained records whose body ranges are unknown. */
+export interface UnknownBodies {
+  readonly count: number;
+  /** The reason every such record gives, or undefined when they differ. */
+  readonly sharedReason: string | undefined;
+}
+
 /** Owns one export directory and its append-only journal. */
 export class DecompileExport {
   private constructor(
@@ -146,6 +154,27 @@ export class DecompileExport {
    */
   lastWritten(address: string): DecompileDirectoryFunctionRecord | undefined {
     return this.written.get(address);
+  }
+
+  /**
+   * Retained non-external records whose body ranges are unknown, with their
+   * reason when every such record shares one. The index lists every retained
+   * record, so its summary must come from these records rather than from the
+   * functions the latest call attempted. External records have no file for a
+   * body caveat to qualify.
+   */
+  unknownBodies(): UnknownBodies {
+    let count = 0;
+    let sharedReason: string | undefined;
+    for (const record of this.records.values()) {
+      if (record.status === "external" || record.body.available) continue;
+      sharedReason =
+        count === 0 || sharedReason === record.body.reason
+          ? record.body.reason
+          : undefined;
+      count += 1;
+    }
+    return { count, sharedReason };
   }
 
   /**
@@ -327,11 +356,11 @@ export class DecompileExport {
       return closed.ok
         ? opened
         : err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               opened.error,
               closed.error,
               "decompile_all",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
     }
     return ok(
@@ -707,7 +736,13 @@ const parseJournal = (
   // an interrupted append and are not part of the journal. Offsets are bytes,
   // so damaged UTF-8 cannot move the truncation point.
   const committedBytes = bytes.lastIndexOf(0x0a) + 1;
-  const lines = bytes.subarray(0, committedBytes).toString("utf8").split("\n");
+  let committed: string;
+  try {
+    committed = decodeStrictUtf8(bytes.subarray(0, committedBytes), "preserve");
+  } catch {
+    return err(incompatibleJournal());
+  }
+  const lines = committed.split("\n");
   lines.pop();
   const header = decompileJournalHeaderSchema.safeParse(parseJson(lines[0]));
   if (!header.success) return err(incompatibleJournal());

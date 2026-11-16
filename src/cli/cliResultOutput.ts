@@ -4,7 +4,7 @@ import type { Writable } from "node:stream";
 import { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import type { ParsedCliOutputArguments } from "../cliOutput.js";
 import {
   normalizeCliArguments,
@@ -38,6 +38,11 @@ import {
   retainCliPublicationOnError,
   withCliEvidencePublication,
 } from "./cliEvidencePublication.js";
+import {
+  cliResultControls,
+  withCliResultControls,
+  type CliResultControls,
+} from "./cliResultControls.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
 import {
@@ -59,7 +64,27 @@ export interface CliResultOutputMetadata {
   readonly duration: string;
   readonly format: string;
   readonly renderOutput?: boolean;
+  /** Render commands that do not have an Incur output fallback. */
+  readonly forceOutput?: boolean;
+  /** The producer owns a failure document whose complete facts must survive filtering. */
+  readonly failure?: boolean;
+  /**
+   * Flags of the per-call controls the result records, by contract field,
+   * collected only when a full-output envelope will show them.
+   */
+  readonly cliControls?: CliResultControls | undefined;
+  /** Collects `cliControls` on demand. */
+  readonly collectCliControls?: () => CliResultControls | undefined;
 }
+
+/** The full-output envelope's metadata: the CLI's presentation, not the result. */
+const resultMeta = (metadata: CliResultOutputMetadata) => ({
+  command: metadata.command,
+  duration: metadata.duration,
+  ...(metadata.cliControls === undefined
+    ? {}
+    : { cli_controls: { ...metadata.cliControls } }),
+});
 
 /** Optional executable-owned result surface for one CLI invocation. */
 export interface CliResultOutput {
@@ -101,42 +126,45 @@ const wrapCommand = (
 ): void => {
   const run = command.run;
   command.run = (context) =>
-    withCliEvidencePublication(() => {
-      const started = performance.now();
-      const result: unknown = run(context);
-      // Generator results and Incur's sentinel responses retain their own protocol.
-      if (
-        typeof result === "object" &&
-        result !== null &&
-        Symbol.asyncIterator in result
-      ) {
-        output.delegateStreaming();
-        return result;
-      }
-      return Promise.resolve(result).then(async (value: unknown) => {
+    withCliEvidencePublication(() =>
+      withCliResultControls(() => {
+        const started = performance.now();
+        const result: unknown = run(context);
+        // Generator results and Incur's sentinel responses retain their own protocol.
         if (
-          typeof value === "object" &&
-          value !== null &&
-          Symbol.for("incur.sentinel") in value
-        )
-          return value;
-        if (
-          !(await output.write(value, {
-            command: name,
-            format: context.format,
-            renderOutput: context.agent || inheritedPolicy !== "agent-only",
-            duration: `${Math.round(performance.now() - started)}ms`,
-          }))
-        )
-          return value;
-        if (output.error !== undefined)
-          return context.error({
-            code: output.error.code,
-            message: output.error.message,
-          });
-        return undefined;
-      });
-    });
+          typeof result === "object" &&
+          result !== null &&
+          Symbol.asyncIterator in result
+        ) {
+          output.delegateStreaming();
+          return result;
+        }
+        return Promise.resolve(result).then(async (value: unknown) => {
+          if (
+            typeof value === "object" &&
+            value !== null &&
+            Symbol.for("incur.sentinel") in value
+          )
+            return value;
+          if (
+            !(await output.write(value, {
+              command: name,
+              format: context.format,
+              renderOutput: context.agent || inheritedPolicy !== "agent-only",
+              duration: `${Math.round(performance.now() - started)}ms`,
+              collectCliControls: cliResultControls,
+            }))
+          )
+            return value;
+          if (output.error !== undefined)
+            return context.error({
+              code: output.error.code,
+              message: output.error.message,
+            });
+          return undefined;
+        });
+      }),
+    );
 };
 
 /** Preserve Incur output controls and stream JSON while framing failures. */
@@ -242,8 +270,16 @@ export const createCliResultOutput = (
       !((format === "csv" || format === "tsv") && metadata.format === "json")
     )
       return false;
+    // Only the full-output envelope shows the result's control flags, so the
+    // result is read for them only then.
+    const cliControls = options.fullOutput
+      ? metadata.collectCliControls?.()
+      : undefined;
     try {
-      return await writeResult(value, metadata);
+      return await writeResult(
+        value,
+        cliControls === undefined ? metadata : { ...metadata, cliControls },
+      );
     } catch (cause: unknown) {
       if (await recoverFormattingFailure(cause)) return true;
       throw cause;
@@ -426,8 +462,9 @@ export const createCliResultOutput = (
     const filterPaths = options.filterOutput
       ? Filter.parse(options.filterOutput)
       : undefined;
-    const operationFailure =
-      format === "jsonl" || options.fullOutput || filterPaths !== undefined
+    const operationFailure = metadata.failure
+      ? value
+      : format === "jsonl" || options.fullOutput || filterPaths !== undefined
         ? cliOperationFailurePayload(value)
         : undefined;
     const failure = options.fullOutput ? operationFailure : undefined;
@@ -446,10 +483,7 @@ export const createCliResultOutput = (
     )
       return false;
     if (format === "csv" || format === "tsv") {
-      const meta = {
-        command: metadata.command,
-        duration: metadata.duration,
-      };
+      const meta = resultMeta(metadata);
       if (operationFailure !== undefined) {
         const parsedFailure =
           analysisErrorProjectionSchema.safeParse(operationFailure);
@@ -556,28 +590,32 @@ export const createCliResultOutput = (
     const selected = selection.value;
     const refuseUnrepresentableText = async (): Promise<true> => {
       error = projectAnalysisError(
-        new AnalysisInputError(
-          metadata.command,
-          {
-            userMessage:
-              format === "md"
-                ? "Markdown cannot preserve NUL or unpaired UTF-16 surrogates in rendered output."
-                : "TOON cannot preserve unpaired UTF-16 surrogates in UTF-8 output.",
-            remediationAction:
-              "Use --format json or --format yaml to retain the exact code units.",
-            ...(completed?.originalFailure === undefined
-              ? {}
-              : {
-                  diagnostics: { original_failure: completed.originalFailure },
-                }),
-          },
-          [
+        retainCliPublicationOnError(
+          new AnalysisInputError(
+            metadata.command,
             {
-              path: ["--format"],
-              reason: "invalid_value",
-              message: "The selected format cannot preserve this value.",
+              userMessage:
+                format === "md"
+                  ? "Markdown cannot preserve NUL or unpaired UTF-16 surrogates in rendered output."
+                  : "TOON cannot preserve unpaired UTF-16 surrogates in UTF-8 output.",
+              remediationAction:
+                "Use --format json or --format yaml to retain the exact code units.",
+              ...(completed?.originalFailure === undefined
+                ? {}
+                : {
+                    diagnostics: {
+                      original_failure: completed.originalFailure,
+                    },
+                  }),
             },
-          ],
+            [
+              {
+                path: ["--format"],
+                reason: "invalid_value",
+                message: "The selected format cannot preserve this value.",
+              },
+            ],
+          ),
         ),
       );
       const document = options.fullOutput
@@ -616,6 +654,10 @@ export const createCliResultOutput = (
       Array.isArray(selected)
         ? normalizeJsonArrayValues(selected)
         : selected;
+    // A full-output envelope that shows the result's control flags is written
+    // here in every format; Incur's envelope cannot carry them.
+    const ownsControlEnvelope =
+      options.fullOutput && metadata.cliControls !== undefined;
     const ownsSuccessfulTokenWindow =
       operationFailure === undefined &&
       options.tokenWindow &&
@@ -623,14 +665,20 @@ export const createCliResultOutput = (
       format !== "json" &&
       format !== "jsonl";
     // Delegate other human formats to Incur. Markdown stays here so admission
-    // and emitted table text use the same safe formatter.
+    // and emitted table text use the same safe formatter. A full-output token
+    // count stays here too: Incur counts only the selected data, so delegating
+    // it would report the bare result instead of the emitted envelope.
     if (
+      !metadata.forceOutput &&
       format !== "md" &&
       format !== "json" &&
       format !== "jsonl" &&
       operationFailure === undefined &&
       !ownsFilteredOutput &&
-      !ownsSuccessfulTokenWindow
+      !ownsSuccessfulTokenWindow &&
+      !(options.tokenCount && options.fullOutput) &&
+      // Incur's own envelope cannot carry the result's control flags.
+      !ownsControlEnvelope
     )
       return false;
     if (format === "jsonl") {
@@ -645,6 +693,9 @@ export const createCliResultOutput = (
             operationFailure,
             command: metadata.command,
             duration: metadata.duration,
+            ...(metadata.cliControls === undefined
+              ? {}
+              : { cliControls: metadata.cliControls }),
           },
           destination,
         );
@@ -654,10 +705,7 @@ export const createCliResultOutput = (
       }
       return true;
     }
-    const meta = {
-      command: metadata.command,
-      duration: metadata.duration,
-    };
+    const meta = resultMeta(metadata);
     const errorDocument =
       options.fullOutput && failure !== undefined
         ? fullFailureEnvelope(
@@ -771,8 +819,7 @@ export const createCliResultOutput = (
                   ok: true,
                   data: sliced,
                   meta: {
-                    command: metadata.command,
-                    duration: metadata.duration,
+                    ...resultMeta(metadata),
                     ...(window.end < window.total
                       ? { nextOffset: window.end }
                       : {}),
@@ -802,6 +849,8 @@ export const createCliResultOutput = (
     // document from Incur's error formatter.
     const formattedText =
       format === "md" ||
+      ((metadata.forceOutput === true || ownsControlEnvelope) &&
+        format !== "json") ||
       ((operationFailure !== undefined || ownsFilteredOutput) &&
         format !== "json")
         ? formatCliOutput(document, format)

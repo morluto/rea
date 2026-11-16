@@ -55,7 +55,9 @@ and the bundle holds neither the capture host's name nor its user's.
   path and content, escapes decoded, for the host name and `user@host`
   anywhere and the captured home as a whole path, with the replacements set
   aside. `scrubbed_files` lists the rewritten seeds and `unscrubbed_files`
-  every file found, by bundle path; the README lists both.
+  every file found, by bundle path; the README lists both. gzip seeds
+  compressed again only to clear their headers, their documents unchanged,
+  are in `recompressed_files` instead, which the README counts.
 - Tasks: checks whose values name `user@host` or the host name by that rule
   are refused, like those that name the captured home, but not for their
   field names, kind or id; and the checks that must fail on the seed are

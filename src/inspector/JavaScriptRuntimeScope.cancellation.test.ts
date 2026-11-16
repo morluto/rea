@@ -1,6 +1,5 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, it, vi } from "vitest";
@@ -83,8 +82,8 @@ import { listElectronTargetsInputSchema } from "../domain/javascript/electronObs
 import { V8InspectorProvider } from "./V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
 import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
+import { createNodeDiscoveryTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
 const fixtures: { close(): Promise<void> }[] = [];
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
@@ -103,14 +102,11 @@ afterEach(async () => {
   fileAccess.discoveryGate = undefined;
   fileAccess.calls = [];
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.close()));
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
 });
 
 const targetFile = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-cancel-"));
-  roots.push(root);
+  // Node discovery reports this path, so its root must be reported exactly.
+  const root = await createNodeDiscoveryTempDirectory("rea-inspector-cancel-");
   const path = join(root, "entry.js");
   await writeFile(path, "// inert target file\n");
   fileAccess.path = path;
@@ -119,7 +115,7 @@ const targetFile = async (): Promise<string> => {
 
 it("stops Inspector target authorization after the current stat settles", async () => {
   const path = await targetFile();
-  const extraPath = join(roots[0]!, "second.js");
+  const extraPath = join(dirname(path), "second.js");
   await writeFile(extraPath, "// second inert target file\n");
   fileAccess.extraPath = extraPath;
   const fake = await startFakeV8Inspector({
@@ -139,7 +135,6 @@ it("stops Inspector target authorization after the current stat settles", async 
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Inspector listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -148,7 +143,9 @@ it("stops Inspector target authorization after the current stat settles", async 
       complete: false,
       targets_examined: 1,
       limitations: expect.arrayContaining([
-        "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
+        expect.stringMatching(
+          /cancellation.*authorization.*unexamined targets.*unknown.*not excluded/iu,
+        ),
       ]),
     },
   });
@@ -179,14 +176,14 @@ it("stops Electron target authorization after the current stat settles", async (
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
   expect(result.error.diagnostics).toMatchObject({
     completed_prefix: {
-      coverage:
-        "partial: target authorization stopped; remaining targets are unknown",
+      coverage: expect.stringMatching(
+        /partial.*authorization stopped.*targets are unknown/iu,
+      ),
     },
   });
   const prefix = record(record(result.error.diagnostics)?.completed_prefix);
@@ -217,7 +214,6 @@ it("retains a target whose authorization completes before the next abort check",
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);

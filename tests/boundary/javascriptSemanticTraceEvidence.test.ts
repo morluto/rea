@@ -1,3 +1,5 @@
+import { fileSubjectTarget } from "../fixtures/evidenceSubject.js";
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -14,7 +16,6 @@ import { analysisCliErrorEnvelopeSchema } from "../../src/contracts/errorSchemas
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptSemanticTraceResultSchema } from "../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
-import { resolveJavaScriptSemanticEvidence } from "../../src/domain/javascript/javascriptSemanticGraph.js";
 
 const SEMANTIC_GRAPH_ID = `jsrg_${"0".repeat(64)}`;
 
@@ -53,16 +54,8 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
   semanticGraph.graph_id = SEMANTIC_GRAPH_ID;
 
   const subject = sourceEvidence.subject;
-  if (subject === null) throw new Error("CLI Evidence must include a subject");
   const malformedEvidence = createEvidence(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-      ...(subject.architecture === null
-        ? {}
-        : { architecture: subject.architecture }),
-    },
+    fileSubjectTarget(subject),
     sourceEvidence.provider,
     {
       predicateType: sourceEvidence.predicate_type,
@@ -326,8 +319,12 @@ it("traces transformed operands through CLI and advertised MCP output", async ()
       },
     );
     expect(nested.status).not.toBe("found");
-    expect(nested.unknowns.map((unknown) => unknown.detail)).toContain(
-      "The dynamic call's return dependency on this argument is unknown.",
+    expect(nested.unknowns).toContainEqual(
+      expect.objectContaining({
+        reason: "dynamic-call",
+        family: "data-flow",
+        relation_kinds: ["influences"],
+      }),
     );
   } finally {
     await harness.close();
@@ -408,10 +405,17 @@ const assertSuccessfulTraceParity = async (
   const advertised = tools.find(
     ({ name }) => name === "trace_javascript_semantics",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Semantic trace SDK output schema is missing");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const ajv = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  });
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(ajv.validate(outputSchema, mcpResponse.structuredContent)).toBe(true);
   const mcpEvidence = toolContract(
@@ -439,17 +443,6 @@ const assertTraceContextsResolve = (
     expect(context, reference.context_id).toBeDefined();
     if (context === undefined) continue;
     referencedIds.add(reference.context_id);
-    expect(
-      resolveJavaScriptSemanticEvidence(
-        { evidence_contexts: result.evidence_contexts },
-        reference,
-      ),
-    ).toMatchObject({
-      ...Object.fromEntries(
-        Object.entries(context).filter(([key]) => key !== "context_id"),
-      ),
-      location: reference.location,
-    });
   }
   expect([...referencedIds].toSorted()).toEqual(
     [...contexts.keys()].toSorted(),

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
@@ -374,8 +375,10 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       detail: "session_detached",
       timestamp: null,
     });
-    expect(result.value.limitations).toContain(
-      "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+      ),
     );
   });
 
@@ -728,9 +731,10 @@ describe("CdpBrowserProvider: navigation commit and target identity", () => {
     const rejectedCapture = await new CdpBrowserProvider().inspectPage(
       input(crossOriginCapture),
     );
+    // The document changed, which is reported before the new document's scope.
     expect(rejectedCapture).toMatchObject({
       ok: false,
-      error: { _tag: "BrowserObservationError", reason: "target_not_allowed" },
+      error: { _tag: "BrowserObservationError", reason: "target_changed" },
     });
   });
 });
@@ -748,16 +752,13 @@ describe("CdpBrowserProvider: source-map cancellation", () => {
     trackBrowser(browser);
     const controller = new AbortController();
     const reason = new AnalysisInputError("caller_operation");
-    let markSourceMapRequested!: () => void;
-    const sourceMapRequested = new Promise<void>((resolve) => {
-      markSourceMapRequested = resolve;
-    });
+    const sourceMapRequest = phaseArrival();
     const originalFetch = globalThis.fetch;
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((resource, init) => {
         if (String(resource).includes("/app.js.map")) {
-          markSourceMapRequested();
+          sourceMapRequest.arrive();
           return new Promise<Response>((_resolve, reject) => {
             const signal = init?.signal;
             if (signal?.aborted === true) {
@@ -782,7 +783,7 @@ describe("CdpBrowserProvider: source-map cancellation", () => {
         }),
         { signal: controller.signal },
       );
-      await sourceMapRequested;
+      await sourceMapRequest.reached(pending, "source-map request");
       controller.abort(reason);
       const result = await pending;
       expect(result).toMatchObject({

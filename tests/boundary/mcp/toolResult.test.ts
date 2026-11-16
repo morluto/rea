@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -13,8 +14,13 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
+import {
+  annotationsFromEffects,
+  toolEffects,
+} from "../../../src/contracts/toolEffects.js";
 import { err } from "../../../src/domain/result.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
@@ -55,24 +61,9 @@ const contract: ToolContract = {
   kind: "enhanced",
   inputSchema: z.object({}),
   outputSchema: z.object({ value: z.string() }),
-  effects: {
-    mutatesTarget: false,
-    mutatesSession: false,
-    writesFilesystem: false,
-    launchesProcess: false,
-    accessesNetwork: false,
-    changesUiState: false,
-    mayDiscardData: false,
-    executesForeignCode: false,
-    mutatesDevice: false,
-    idempotent: true,
-  },
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  effects: toolEffects(),
+  sessionEffects: toolEffects(),
+  annotations: annotationsFromEffects(toolEffects()),
   returnsTargetContent: false,
   examples: [{ title: "Example fixture request", input: {} }],
 };
@@ -413,7 +404,7 @@ describe("tool result projection", () => {
   });
   it("returns one complete Evidence record with its typed normalized result", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "fixture",
@@ -448,7 +439,7 @@ describe("tool result projection", () => {
     "preserves a complete reusable Evidence record for JSON result %j",
     (value) => {
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "fixture", parameters: {}, result: value },
       );
@@ -502,7 +493,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Partial observation fixture", version: "1" },
       { operation: "fixture", parameters: {}, result: { observed: true } },
     );
@@ -526,10 +517,54 @@ describe("untrusted provenance on failed tool results", () => {
       err(new EvidenceIntegrityError("fixture rejects partial")),
     );
     expect(unrecorded.structuredContent).toMatchObject({
-      error: { details: { partial_observation: evidence } },
+      error: {
+        details: {
+          partial_observation: {
+            kind: "inline-evidence",
+            retention: "unknown",
+            evidence,
+          },
+        },
+      },
     });
     expect(unrecorded._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
     expect(original.partialObservation).toBe(evidence);
+  });
+
+  it("preserves cleanup details when an unretained partial exceeds the response budget", () => {
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "get_call_graph",
+        parameters: {},
+        result: { nodes: "x".repeat(8192) },
+      },
+    );
+    const error = new AnalysisCancelledError("get_call_graph", {
+      cleanup: { reason: "close failed", resources: ["session:fixture"] },
+      partialObservation: evidence,
+    });
+    const result = createToolResultDelivery(4096).toPartialErrorToolResult(
+      error,
+      true,
+      () => err(new EvidenceIntegrityError("fixture rejects partial")),
+    );
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        code: "cleanup_incomplete",
+        details: {
+          cleanup: "incomplete",
+          resources: ["session:fixture"],
+          partial_observation_omitted: {
+            reason: "mcp-response-limit",
+            retention: "unknown",
+            evidence_id: evidence.evidence_id,
+          },
+        },
+      },
+    });
+    expect(result.content).toHaveLength(1);
   });
 
   it("marks the response-budget error that replaces an oversized target-content result", () => {
@@ -544,4 +579,66 @@ describe("untrusted provenance on failed tool results", () => {
     });
     expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
   });
+});
+
+describe("response-budget recovery routes", () => {
+  it.each([
+    ["CLI fallback", "procedure_pseudo_code", {}, {}, undefined],
+    [
+      "retained Evidence",
+      "procedure_pseudo_code",
+      {},
+      {
+        evidence_reference: { kind: "retained-evidence", evidence_id: "e" },
+      },
+      "export_evidence_bundle",
+    ],
+    [
+      "view continuation",
+      "list_strings",
+      {},
+      { continuation: { name: "inspect_analysis_view", arguments: {} } },
+      "inspect_analysis_view",
+    ],
+    [
+      "address context",
+      "inspect_address_context",
+      {},
+      {},
+      "get_evidence_bundle",
+    ],
+    [
+      "bundle summary",
+      "get_evidence_bundle",
+      { kind: "evidence-bundle-summary" },
+      {},
+      "export_evidence_bundle",
+    ],
+    [
+      "bundle records",
+      "get_evidence_bundle",
+      { kind: "evidence-record-selection" },
+      {},
+      "get_evidence_bundle",
+    ],
+  ] as const)(
+    "names the %s overflow recovery's first operation",
+    (_label, tool, shape, recovery, operation) => {
+      const result = createToolResultDelivery(4096).toCallToolResult(
+        { ok: true, value: { ...shape, text: "x".repeat(8192) } },
+        toolContract(tool),
+        recovery,
+      );
+      const limits = z
+        .object({
+          error: z.object({
+            details: z.object({
+              reported_limits: z.record(z.string(), z.unknown()),
+            }),
+          }),
+        })
+        .parse(result.structuredContent).error.details.reported_limits;
+      expect(limits.next_operation).toBe(operation);
+    },
+  );
 });

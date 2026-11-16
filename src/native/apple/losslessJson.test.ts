@@ -131,7 +131,8 @@ it("refuses JSON string escapes for unpaired surrogates", () => {
   for (const text of ['{"a":"\\ud800"}', '{"a":"ok\\udfff"}'])
     expect(() => parseLosslessJson(text, 0)).toThrow(
       expect.objectContaining({
-        message: "JSON string contains an unpaired surrogate",
+        reason: "syntax",
+        message: expect.stringContaining("surrogate"),
       }),
     );
   expect(() => parseLosslessJson('{"a":"\\ud83d\\ude00"}', 0)).not.toThrow();
@@ -146,7 +147,8 @@ it("applies the surrogate check to skipped strings and nested keys", () => {
   ])
     expect(() => parseLosslessJson(text, 0, skipped)).toThrow(
       expect.objectContaining({
-        message: "JSON string contains an unpaired surrogate",
+        reason: "syntax",
+        message: expect.stringContaining("surrogate"),
       }),
     );
   expect(parseLosslessJson('{"extra":"ok"}', 0, skipped).value).toEqual({

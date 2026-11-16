@@ -1,5 +1,6 @@
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { InvestigationRecordPort } from "../investigation/InvestigationRecordPort.js";
+import type { RecoveryAdmission } from "../investigation/InvestigationRetention.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 import type { ExecutableFormatHint } from "../../domain/dosCom.js";
 import type {
@@ -17,7 +18,7 @@ import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import type { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 import type {
@@ -26,10 +27,9 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
-export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
 /** Selection observed at the end of one serialized open attempt. */
 export type OpenSelectionReceipt =
@@ -57,6 +57,7 @@ export type BinaryOpenResult =
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
   extends AnalysisOperationPort, InvestigationRecordPort {
+  readonly admitRecoveryObservation: RecoveryAdmission;
   /** Execute only against a positively ready, already-created provider client. */
   executeIfProviderReady(
     operation: AnalysisOperation,
@@ -140,6 +141,7 @@ export interface BinarySessionPort
   status(options?: {
     readonly signal?: AbortSignal;
     readonly detail?: BinarySessionDetail;
+    readonly refreshCandidates?: boolean;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */

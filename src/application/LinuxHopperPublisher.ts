@@ -7,12 +7,10 @@ import { z } from "zod";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import {
+  type AnalysisCleanupLease,
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/index.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -27,13 +25,17 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { verifyDetachedPgpSignature } from "../process/DetachedPgpSignature.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import {
+  execFileOutput,
+  ExecFileOutputCancelledError,
+} from "../process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
 import { acquireHopperReleaseCacheLease } from "../process/HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
+  isHopperRequestCancellation,
   HOPPER_DOWNLOAD_BYTES,
   HOPPER_METADATA_TIMEOUT_MS,
 } from "./HopperDownload.js";
@@ -49,7 +51,8 @@ import {
   type LinuxHopperRelease,
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
-import { withRegularFile } from "./RegularFileRead.js";
+import { withRegularFile } from "../process/RegularFileRead.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
@@ -232,7 +235,12 @@ export class LinuxHopperPublisher {
               ? "cancelled"
               : "publisher_verification_failed",
             verified.error.message,
-            { cause: verified.error },
+            {
+              cause:
+                verified.error.reason === "cancelled"
+                  ? verified.error.cause
+                  : verified.error,
+            },
           ),
         );
       const mainExeHash = await this.#withTemporary(
@@ -252,7 +260,7 @@ export class LinuxHopperPublisher {
       if (mainExeHash !== release.main_exe_hash)
         return err(
           new HopperReleaseError(
-            "integrity",
+            "launcher_digest_mismatch",
             `The signed ${family} package launcher SHA-256 ${mainExeHash} differs from the release main_exe_hash ${release.main_exe_hash}.`,
           ),
         );
@@ -1073,12 +1081,18 @@ export const retryLinuxHopperPublisherCleanup = async (): Promise<void> => {
 };
 
 const decodeUtf8 = (bytes: Uint8Array): string =>
-  new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  decodeStrictUtf8(bytes, "strip-signature");
 const releaseFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
   fallback: HopperReleaseError["reason"],
 ): HopperReleaseError => {
+  if (isHopperRequestCancellation(cause, signal))
+    return new HopperReleaseError(
+      "cancelled",
+      "Hopper publisher verification was cancelled.",
+      { cause: signal?.reason },
+    );
   if (cause instanceof HopperReleaseError) return cause;
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
     return new HopperReleaseError(
@@ -1093,11 +1107,11 @@ const releaseFailure = (
       "Hopper publisher verification was cancelled.",
       { cause: cancellation.reason },
     );
-  if (!(cause instanceof StableFileHashFailure) && signal?.aborted === true)
+  if (cause instanceof ExecFileOutputCancelledError)
     return new HopperReleaseError(
       "cancelled",
       "Hopper publisher verification was cancelled.",
-      { cause },
+      { cause: cause.cause },
     );
   return new HopperReleaseError(
     fallback,
