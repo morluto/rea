@@ -6,7 +6,7 @@ import {
   historicalSourceGraphSchema,
   type HistoricalSourceGraph,
 } from "../../domain/referenceSourceGraph.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import { cancelledBy, isAborted } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";

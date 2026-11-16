@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
-import type { AnalysisExecution } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisExecution } from "../../../../src/ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import {
   managedArtifactInspectionSchema,
@@ -18,7 +18,7 @@ import { ManagedStaticProvider } from "../../../../src/dotnet/ManagedStaticProvi
 import { buildManagedPeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { readManagedSnapshot } from "../../../../src/dotnet/ManagedSnapshot.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
@@ -67,10 +67,24 @@ it.each([
               detail: expect.stringContaining(
                 "max_metadata_representation_bytes=1",
               ),
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_metadata_representation_bytes",
+                effective_value: 1,
+                unit: "bytes",
+                minimum: 1,
+                maximum: Number.MAX_SAFE_INTEGER,
+                default_value: 64 * 1024 * 1024,
+                applies_at: "next_call",
+              },
             }),
           ],
         },
       });
+      // The issue names the contract field; adapters render their option.
+      expect(JSON.stringify(partial.value.result)).not.toContain(
+        "--max-metadata",
+      );
       const recovered = await client.execute(operation, {
         max_snapshot_bytes: bytes.length,
         max_metadata_representation_bytes: 1024 * 1024,

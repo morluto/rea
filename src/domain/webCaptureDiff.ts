@@ -427,7 +427,7 @@ const sharedNetworkMetadata = (
     for (const request of inspection.network.requests) {
       const identity = networkIdentity(request);
       retainKnownFields(identity, request, networkResponseFields);
-      for (const [index, redirect] of (request.redirects ?? []).entries())
+      for (const [index, redirect] of request.redirects.entries())
         retainKnownFields(
           redirectNetworkIdentity(identity, index),
           redirect,
@@ -642,7 +642,7 @@ const networkMap = (
     values.push(
       digestCanonicalValue({
         ...response,
-        redirects: (request.redirects ?? []).map(
+        redirects: request.redirects.map(
           (
             {
               request_timestamp: _requestTimestamp,
@@ -789,6 +789,7 @@ const webSocketPayloadMaps = (
       beforeGroup.connections.length !== afterGroup.connections.length
     )
       continue;
+    // optional-fact-default: equal connection counts; with none there are no events to pair.
     const eventCount = beforeGroup.connections[0]?.events.length ?? 0;
     const comparableBytes = new Set<number>();
     const comparableShapes = new Set<number>();
@@ -847,6 +848,7 @@ const webMcpDimension = (
 ): Dimension => {
   const groups = (discovery: WebMcpDiscovery | null) => {
     const result = new Map<string, Tool[]>();
+    // optional-fact-default: null discovery fails webMcpComplete, so its values are unknown.
     for (const tool of discovery?.tools.items ?? []) {
       const identity = `webmcp_${digestCanonicalValue({
         name: tool.name,

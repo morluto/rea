@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { mappedFileOffset } from "../../../src/native/metadata/BinaryContainer.js";
+import { mappedFileOffset } from "../../../src/domain/binaryContainer.js";
 
 const selected = { address: 100n, offset: 16, size: 64 };
 

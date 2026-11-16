@@ -97,7 +97,7 @@ const model: ModelArtifact = {
   coverage: {
     header: "complete",
     tensor_data: "not-interpreted",
-    array_values: "preview",
+    array_values: "partial",
     tensor_ranges: "partial",
     storage_sizes: "partial",
   },

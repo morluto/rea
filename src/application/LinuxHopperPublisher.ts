@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendCallerPath } from "../filesystem/callerPath.js";
@@ -7,12 +7,10 @@ import { z } from "zod";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import {
+  type AnalysisCleanupLease,
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/index.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -33,14 +31,17 @@ import {
 } from "../process/ExecFileOutput.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { waitForAbortableDelay } from "../process/ProviderDeadline.js";
-import { acquireHopperReleaseCacheLease } from "../process/HopperLease.js";
+import {
+  acquireHopperReleaseCacheLease,
+  hopperLeaseMessage,
+} from "../process/HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   downloadHopperPackage,
-  isHopperRequestCancellation,
   HOPPER_DOWNLOAD_BYTES,
   HOPPER_METADATA_TIMEOUT_MS,
 } from "./HopperDownload.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
   HOPPER_PUBLIC_KEY_URL,
@@ -53,8 +54,9 @@ import {
   type LinuxHopperRelease,
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
-import { withRegularFile } from "./RegularFileRead.js";
+import { withRegularFile } from "../process/RegularFileRead.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */
 const RELEASE_METADATA_BYTES = 1024 * 1024;
@@ -199,20 +201,18 @@ export class LinuxHopperPublisher {
           });
         publicKey = decodeUtf8(response.value);
       }
-      const packageSha256 = createHash("sha256").update(bytes).digest("hex");
+      const packageSha256 = sha256Hex(bytes);
       // Every read still validates file identity, byte bounds and selected metadata.
       // Reuse only proof of the exact signed bytes/key/signature/payload interpretation.
-      const proofKey = createHash("sha256")
-        .update(
-          JSON.stringify([
-            family,
-            packageSha256,
-            publicKey,
-            release.signature,
-            release.main_exe_hash,
-          ]),
-        )
-        .digest("hex");
+      const proofKey = sha256Hex(
+        JSON.stringify([
+          family,
+          packageSha256,
+          publicKey,
+          release.signature,
+          release.main_exe_hash,
+        ]),
+      );
       signal?.throwIfAborted();
       const existingProof = packageProofs.get(proofKey);
       if (existingProof !== undefined)
@@ -435,6 +435,12 @@ export class LinuxHopperPublisher {
         launcherSha256: digest,
         runId,
         resources,
+        failure: (failure, cause) =>
+          new HopperReleaseError(
+            "verification_unavailable",
+            hopperLeaseMessage(failure),
+            { cause },
+          ),
       });
       if (acquired.acquired) return acquired.lease;
       const remaining = deadline - performance.now();
@@ -1089,7 +1095,7 @@ const releaseFailure = (
   signal: AbortSignal | undefined,
   fallback: HopperReleaseError["reason"],
 ): HopperReleaseError => {
-  if (isHopperRequestCancellation(cause, signal))
+  if (isAbortOf(cause, signal))
     return new HopperReleaseError(
       "cancelled",
       "Hopper publisher verification was cancelled.",

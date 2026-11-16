@@ -473,3 +473,31 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "refuses a selected page without summary delivery before opening the archive",
+  async ({ cli }) => {
+    const missing = join(process.cwd(), "missing-playwright-trace.zip");
+    const view = JSON.stringify({
+      kind: "playwright-trace",
+      collection: "streams",
+    });
+    for (const delivery of [[], ["--detail", "complete"]]) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-playwright-trace",
+          missing,
+          "--view",
+          view,
+          ...delivery,
+          "--json",
+        ],
+      });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: { issues: [{ path: ["view"], reason: "invalid_value" }] },
+      });
+    }
+  },
+);

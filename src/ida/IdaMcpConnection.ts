@@ -1,15 +1,14 @@
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  decodeMcpTextReply,
-  type McpTextReplyKind,
+  decodeMcpJsonText,
 } from "../providers/McpToolResult.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import {
@@ -23,7 +22,6 @@ import {
   snapshotEnvironment,
 } from "../process/snapshotEnvironment.js";
 import {
-  OwnedMcpOutputLimitError,
   OwnedMcpStdioTransport,
   type OwnedMcpLauncher,
 } from "../process/OwnedMcpStdioTransport.js";
@@ -59,7 +57,6 @@ import {
   AnalysisResourceConstraintError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   McpHttpUtf8Error,
@@ -75,8 +72,6 @@ export interface IdaMcpConnection {
     options?: {
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
-      /** The tool's declared text reply kind; JSON unless the tool returns plain text. */
-      readonly reply?: McpTextReplyKind | undefined;
     },
   ): Promise<JsonValue>;
   readResource?(
@@ -192,11 +187,8 @@ const idaStdioLauncher =
     });
   };
 
-const parseIdaTextReply = (
-  text: string,
-  reply: McpTextReplyKind = "json",
-): JsonValue => {
-  const decoded = decodeMcpTextReply(text, reply);
+const parseIdaTextReply = (text: string): JsonValue => {
+  const decoded = decodeMcpJsonText(text);
   if (!decoded.ok)
     throw new AnalysisProtocolError("IDA MCP returned malformed JSON text.");
   return decoded.value;
@@ -204,13 +196,12 @@ const parseIdaTextReply = (
 
 /**
  * Decode Python FastMCP's scalar wrapper without dropping structured
- * dictionaries. A text block is read as the tool's declared reply kind.
+ * dictionaries. A text block is read as JSON.
  */
 export const decodeIdaToolResult = (
   input: unknown,
   protocol?: "native",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
-  reply: McpTextReplyKind = "json",
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
@@ -253,7 +244,7 @@ export const decodeIdaToolResult = (
     throw new AnalysisProtocolError(
       "IDA MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
     );
-  return parseIdaTextReply(text, reply);
+  return parseIdaTextReply(text);
 };
 
 // Retain only producer-sanitized JSON diagnostics, never a native parser cause.
@@ -573,14 +564,11 @@ export const createIdaMcpConnection = (
     operation = "ida_mcp_response",
     requestTimeoutMs = config.timeoutMs,
   ): never => {
-    // The owned transport records the exceeded frame limit before it closes
+    // The owned transport records the exceeded output ceiling before it closes
     // the connection, so the SDK's closed-request error is not the reason.
     const observed = stdio?.observedFailure();
-    const frameLimit =
-      observed?.kind === "protocol" &&
-      observed.cause instanceof OwnedMcpOutputLimitError
-        ? observed.cause.limitBytes
-        : undefined;
+    const outputLimit =
+      observed?.kind === "output_limit" ? observed : undefined;
     if (cause instanceof IdaDiagnosticResourceError) throw cause;
     if (cause instanceof McpHttpUtf8Error) throw cause;
     // The Windows command lookup already classified its own deadline.
@@ -628,28 +616,26 @@ export const createIdaMcpConnection = (
           config.timeoutMs,
         ),
       });
-    if (frameLimit !== undefined)
+    if (outputLimit !== undefined) {
+      const { limit } = outputLimit.ceiling;
       throw new AnalysisResourceConstraintError(
         operation,
         "transport",
-        `Upstream IDA MCP reply exceeded the ${String(frameLimit)}-byte transport limit; no partial Evidence was returned.`,
-        { max_response_bytes: frameLimit },
+        `Upstream IDA MCP reply exceeded the ${String(limit)}-byte transport limit; no partial Evidence was returned.`,
+        { max_response_bytes: limit },
         {
-          cause: observed?.kind === "protocol" ? observed.cause : cause,
+          cause: outputLimit.cause,
           capturedOutput,
           // REA bounds each stdio message at a fixed size with no runtime override.
-          ...fixedAllowanceOptions(
-            `The upstream IDA MCP reply allowance of ${String(frameLimit)} bytes`,
-            "bytes",
-            {
-              limit: frameLimit,
-              unit: "bytes",
-              narrowing:
-                "Request a smaller result from IDA, such as a narrower address range or fewer items.",
-            },
-          ),
+          retryable: false,
+          fixedAllowance: {
+            ...outputLimit.ceiling,
+            narrowing:
+              "Request a smaller result from IDA, such as a narrower address range or fewer items.",
+          },
         },
       );
+    }
     if (stderrBytes === 0) throw failure;
     throw new ProviderAdapterError("ida", "transport", {
       cause: failure,
@@ -752,7 +738,6 @@ export const createIdaMcpConnection = (
         }),
         config.protocol === "native" ? "native" : undefined,
         redactor,
-        options?.reply,
       );
     },
     async readResource(uri, options) {

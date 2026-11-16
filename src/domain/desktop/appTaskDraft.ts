@@ -1,3 +1,4 @@
+import { ellipsisExcerpt } from "../excerpt.js";
 import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
@@ -35,7 +36,7 @@ import {
 import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
 import { DRAFT_VIEW_CHARS } from "./valueCuts.js";
 import { resolvePointer } from "./viewPointer.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -61,7 +62,7 @@ const bounded = (
   const visit = (node: JsonValue): JsonValue => {
     if (typeof node === "string" && node.length > MAX_CHARS) {
       cut = true;
-      return `${node.slice(0, MAX_CHARS)}…`;
+      return ellipsisExcerpt(node, MAX_CHARS);
     }
     if (Array.isArray(node)) {
       cut ||= node.length > MAX_ITEMS;
@@ -351,6 +352,7 @@ const valueSuggestions = (
     valuesCut: cut,
     // The count guard sits outside the cap, as for XML.
     guards: [
+      // generation-cap: suggested checks an author picks among
       ...recordGuards(file, suggested.slice(0, MAX_SUGGESTIONS), ends, added),
       ...counts.guards,
     ],
@@ -398,6 +400,7 @@ const suggestedChecks = (
           : valueSuggestions(file, baseline, final, document);
   return {
     ...content,
+    // generation-cap: suggested checks an author picks among
     suggested: [...created, ...content.suggested].slice(0, MAX_SUGGESTIONS),
   };
 };

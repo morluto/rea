@@ -10,7 +10,7 @@ import {
   decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "../../artifacts/apple/PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 
 import { plistDuplicateKeyLimitations } from "../../domain/apple/plistDuplicateKeys.js";
 import {
@@ -19,7 +19,7 @@ import {
   parsePlistXml,
   parsePlistXmlSource,
 } from "./plist.js";
-import { estimateBinaryPlistExpansion } from "../../artifacts/apple/PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   binaryPlistObjectTable,
   binaryPlistWithOverlappingDateAndData,
@@ -92,11 +92,16 @@ it.each([
         expect(failure).toMatchObject({
           code: "resource_constraint",
           retryable: false,
-          details: { reported_limits: { maximum_nesting_depth: maximum } },
+          details: {
+            reported_limits: { maximum_nesting_depth: maximum },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native plist nesting allowance",
+              limit: maximum,
+              unit: "levels",
+            },
+          },
         });
-        expect(failure.remediation.action).toContain(
-          `${maximum}-level native plist nesting allowance (no runtime override)`,
-        );
       } else {
         if (!parsed.ok) throw parsed.error;
         expect(() =>
@@ -1049,7 +1054,7 @@ it("lists each repeated key once, shortens long keys and marks omitted names", (
   const parsed = parseXmlPropertyList(`{ ${entries} }`).duplicateKeys;
   expect(parsed).toMatchObject({ replaced: 11, namesOmitted: true });
   expect(plistDuplicateKeyLimitations(parsed)[0]).toContain(
-    `"${"k".repeat(64)}" (shortened from 100 characters), "n0"`,
+    `"${"k".repeat(64)}"… (100 UTF-16 code units), "n0"`,
   );
   // One key repeated three times names no further key.
   const single = parseXmlPropertyList("{ a = 1; a = 2; a = 3; }").duplicateKeys;

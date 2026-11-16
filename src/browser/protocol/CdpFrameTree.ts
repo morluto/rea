@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 import {
   observeCdpFrameUrl,

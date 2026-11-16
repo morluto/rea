@@ -3,8 +3,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -15,8 +14,11 @@ import {
 } from "../dist/process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const exec = promisify(execFile);
 const expectedChecks = [
@@ -74,9 +76,11 @@ assert.ok(
 );
 
 const run = createVerifierRun();
-const workspace = await mkdtemp(
-  join(tmpdir(), "rea-ghidra-loader-relocation-"),
-);
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-ghidra-loader-relocation-",
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const project = join(workspace, "project");
 const target = join(workspace, "rea-loader-relocation.elf");
 const provider = join(workspace, "librea-loader-provider.so");
@@ -100,10 +104,17 @@ const compiler = process.env.REA_CC ?? "cc";
 let supervisor;
 let report;
 // Owned Ghidra processes may still use the workspace until cleanup proves
-// they are gone, so the workspace is released only after that proof.
-let workspaceReleasable = true;
+// they are gone, so the fixture removes it only after that proof.
+workspaceFixture.releaseAfter(async () => {
+  if (supervisor === undefined) return;
+  const stopped = await supervisor.stop();
+  assert.ok(
+    stopped.status !== "incomplete",
+    `Owned Ghidra cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
+  );
+});
 
-await withVerifierCleanup(async () => {
+await withVerifierFixture(workspaceFixture, async () => {
   await mkdir(project);
   await buildProvider(compiler, providerFixture, provider);
   await buildFixture(compiler, fixture, provider, target);
@@ -184,22 +195,7 @@ await withVerifierCleanup(async () => {
       ? "native Ghidra baseline folded the file constant; protected pseudocode does not"
       : "native Ghidra baseline did not fold the file constant on this toolchain; protected pseudocode does not use it and GOT callers are unchanged",
   };
-}, [
-  async () => {
-    if (supervisor === undefined) return;
-    const stopped = await supervisor.stop();
-    supervisor.dispose();
-    workspaceReleasable = stopped.status !== "incomplete";
-    assert.ok(
-      workspaceReleasable,
-      `Owned Ghidra cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
-    );
-  },
-  async () => {
-    if (workspaceReleasable)
-      await rm(workspace, { recursive: true, force: true });
-  },
-]);
+});
 
 assert.ok(report);
 console.log(

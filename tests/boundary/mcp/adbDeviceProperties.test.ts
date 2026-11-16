@@ -14,6 +14,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const scenarios = [
   {
@@ -102,7 +103,10 @@ exit 1
           },
         );
         onTestFinished(() => server.close());
-        const client = new Client({ name: "adb-properties", version: "1" });
+        const client = new Client(
+          { name: "adb-properties", version: "1" },
+          { jsonSchemaValidator: createMcpSchemaValidation() },
+        );
         onTestFinished(() => client.close());
         const [clientTransport, serverTransport] =
           InMemoryTransport.createLinkedPair();
