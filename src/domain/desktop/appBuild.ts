@@ -3,7 +3,6 @@ import {
   BUNDLE_SETTING_VARIABLE,
 } from "./buildComputerSettings.js";
 import { buildSecretHandleSchema } from "./buildSecrets.js";
-import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
@@ -35,6 +34,7 @@ import {
 import { INSTALL_SCRIPT, type ExportPackageFile } from "./appExportInstall.js";
 import { isArmoredKey } from "./aptRepositories.js";
 import { DEBIAN_PACKAGE_NAME } from "./debianPackageFile.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The Node.js release the build layer runs REA with: the one REA pins. */
 export const BUILD_NODE_VERSION = "24.22.1";
@@ -272,7 +272,7 @@ const buildInstall = (
             suite: install.suite,
             components: install.components,
             keyFile: `apt-keys/${name}.${isArmoredKey(aptKey) ? "asc" : "gpg"}`,
-            keySha256: createHash("sha256").update(aptKey).digest("hex"),
+            keySha256: sha256Hex(aptKey),
           },
         }
       : undefined;

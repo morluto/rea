@@ -3,7 +3,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { AnalysisInputError } from "../../src/domain/analysisErrorCore.js";
 import { jsonObjectSchema } from "../../src/domain/jsonValue.js";
 import { ok } from "../../src/domain/result.js";

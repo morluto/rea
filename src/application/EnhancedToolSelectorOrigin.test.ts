@@ -3,7 +3,7 @@ import {
   createAnalysisExecution,
   type AnalysisOperation,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,

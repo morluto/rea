@@ -3,6 +3,7 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
 import {
   androidViewRequestSchema,
@@ -145,7 +146,7 @@ export const androidRequestSchema = z.discriminatedUnion("operation", [
 ]);
 
 const textCoverage = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   text: z.string(),
   reported_total_bytes: z.int().nonnegative().nullable(),
 });

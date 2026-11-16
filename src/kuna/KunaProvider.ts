@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 
 import type {
@@ -6,7 +7,7 @@ import type {
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   createAnalysisProfile,
@@ -90,7 +91,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
       readonly regexWorkerHeapRequest?: RegexWorkerHeapRequest;
     } = {},
   ) {
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     this.#environment = snapshotEnvironment(environment, this.#platform);
     this.#deadline =
       options.regexMatchingDeadline ??
@@ -305,6 +306,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
       cache: this.#projectCache(configuration.value),
       runSlots: this.#foregroundSlots(configuration.value),
       environment: this.#environment,
+      platform: this.#platform,
       deadline: this.#deadline,
       heapRequest: this.#heapRequest,
       ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),

@@ -14,7 +14,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../resources/SafeOutputTree.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import * as stableFile from "../../filesystem/readStableFileBytes.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";

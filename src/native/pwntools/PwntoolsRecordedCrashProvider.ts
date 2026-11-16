@@ -1,3 +1,4 @@
+import type { HostPlatform } from "../../platform/HostPlatform.js";
 import {
   AnalysisOutputError,
   cancelledBy,
@@ -10,7 +11,7 @@ import {
   type RecordedCrash,
   type RecordedCrashPartialObservation,
 } from "../../domain/native/recordedCrash.js";
-import type { RecordedCrashPort } from "../../application/binaryDiagnostics/RecordedCrashPort.js";
+import type { RecordedCrashPort } from "../../ports/binaryDiagnostics/RecordedCrashPort.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { PwntoolsDecoder, type PwntoolsLauncher } from "./PwntoolsDecoder.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
@@ -39,6 +40,7 @@ export class PwntoolsRecordedCrashProvider
     createRuntime: () => Promise<
       Pick<PrivateRuntimeRoot, "path" | "close">
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-recorded-crash-" }),
+    host?: HostPlatform,
   ) {
     super(
       {
@@ -195,6 +197,7 @@ export class PwntoolsRecordedCrashProvider
       environment,
       launcher,
       createRuntime,
+      host,
     );
   }
 }

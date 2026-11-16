@@ -112,22 +112,27 @@ describe.skipIf(process.platform !== "darwin")(
           }
           if (native !== undefined && native.exitCode !== 0) {
             expect(output.exitCode, output.stderr).toBe(1);
-            const expectedFailure = {
+            const captured_output = {
+              exit_code: native.exitCode,
+              stdout: native.stdout,
+              stderr: native.stderr,
+            };
+            // The CLI selects the plist as its target; MCP selects it with
+            // the `path` input. Each failure names the input that chose it.
+            expect(output.json).toMatchObject({
+              code: "target_unavailable",
+              retryable: false,
+              details: { path, captured_output },
+            });
+            expect(parseMcpToolError(response).error).toMatchObject({
               code: "invalid_request",
               retryable: false,
               details: {
                 operation: "inspect_plist",
-                captured_output: {
-                  exit_code: native.exitCode,
-                  stdout: native.stdout,
-                  stderr: native.stderr,
-                },
+                issues: [{ path: ["path"] }],
+                captured_output,
               },
-            };
-            expect(output.json).toMatchObject(expectedFailure);
-            expect(parseMcpToolError(response).error).toMatchObject(
-              expectedFailure,
-            );
+            });
             continue;
           }
           expect(

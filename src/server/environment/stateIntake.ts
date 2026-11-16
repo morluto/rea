@@ -5,7 +5,7 @@ import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { paddedBase64ByteLength } from "../../domain/paddedBase64.js";

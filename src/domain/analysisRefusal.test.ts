@@ -11,7 +11,7 @@ import {
   analysisRefusalRemediation,
   type AnalysisRefusal,
 } from "./analysisRefusal.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 
 const budgetError = (
   setting: Parameters<typeof analysisSettingLimit>[0],
@@ -50,6 +50,8 @@ describe("typed refusals", () => {
     expect(projected.remediation.action).toMatch(
       /^The GraphQL nesting allowance is a fixed allowance\..*Select a shallower document\.$/u,
     );
+    // The value comes from the ceiling's facts, so a producer need not write it into the name.
+    expect(projected.remediation.action).toMatch(/\b128 levels\b/u);
     expect(projected.remediation.action).not.toMatch(/worker memory|doctor/u);
     expect(projected.details?.refusal).toEqual({
       kind: "fixed_ceiling",

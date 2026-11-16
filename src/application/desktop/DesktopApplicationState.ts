@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   desktopViewPolicy,
   desktopViewPolicyInputSchema,
@@ -7,7 +8,7 @@ import {
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -43,7 +44,11 @@ import {
   stateRole,
 } from "../../domain/desktop/stateRoles.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  unsupportedEvidenceFormatError,
+} from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
@@ -117,6 +122,10 @@ export const readDesktopCapture = async (
         );
       }
       const evidence = safeParseEvidence(loaded.value);
+      // A capture from another format revision is refused with the recreate
+      // guidance, not reported as some other kind of file.
+      if (!evidence.ok && isUnsupportedEvidenceFormat(evidence.error))
+        throw unsupportedEvidenceFormatError(evidence.error);
       if (
         !evidence.ok ||
         evidence.value.operation !== DESKTOP_OPERATION ||
@@ -551,7 +560,7 @@ const inspectState = async (
     limitations,
   };
   if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
-  return createEvidence(undefined, DESKTOP_PROVIDER, {
+  return createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-state",
     operation: OPERATION,
     parameters: {

@@ -22,6 +22,8 @@ import {
 } from "./ComputerHomeFiles.js";
 import { DRAWN_WAIT_MS, drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -422,7 +424,7 @@ export class AgentEnvComputer {
       if (signal.aborted) throw signal.reason;
       if (cause instanceof ComputerStartFailure) throw cause;
       throw new ComputerStartFailure(
-        `The computer came up but REA could not use it: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `The computer came up but REA could not use it: ${errorMessage(cause)}`,
         undefined,
         { cause, reason: stage === "readiness" ? "not_ready" : "unusable" },
       );
@@ -697,7 +699,9 @@ export class AgentEnvComputer {
   redacted(text: string): string {
     return this.#token === null
       ? text
-      : text.replaceAll(this.#token, "[control token]");
+      : redactExplicitText(text, [this.#token], {
+          replacement: "[control token]",
+        });
   }
 
   /** A framework-only route of the computer, with its control token; its answer is read within `bounds.limit`. */
