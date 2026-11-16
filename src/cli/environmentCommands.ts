@@ -8,7 +8,7 @@ import type {
 } from "../application/environment/environmentExport.js";
 import type { EnvironmentSource } from "../application/environment/environmentSource.js";
 import type { ServedState } from "../application/environment/environmentState.js";
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import {

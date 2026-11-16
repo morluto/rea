@@ -23,7 +23,9 @@ import {
 } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
-import { registerOfficialTools } from "../../../src/server/registerOfficialTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
+import type { WithAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { mcpResponseOverflowProjection } from "../../../src/server/ToolResultDelivery.js";
 import {
@@ -61,20 +63,29 @@ const callPseudoCode = async (
     recordEvidence,
     delivery,
   );
-  registerOfficialTools(server, {
-    logger: silentLogger,
-    activeTarget: undefined,
-    recordEvidence,
-    withAdmittedAnalysis: async (_operationName, _signal, operation) =>
-      ok(
-        await operation({
-          execute: () =>
-            Promise.resolve(
-              ok(createAnalysisExecution(payload, provider, { rawResult })),
-            ),
-        }),
-      ),
-  });
+  const withAdmittedAnalysis: WithAdmittedAnalysis = async (
+    _operationName,
+    _signal,
+    operation,
+  ) =>
+    ok(
+      await operation({
+        execute: () =>
+          Promise.resolve(
+            ok(createAnalysisExecution(payload, provider, { rawResult })),
+          ),
+      }),
+    );
+  registerServiceTools(
+    server,
+    {
+      providerOperations: {
+        contracts: OFFICIAL_TOOL_CONTRACTS,
+        activeTarget: undefined,
+      },
+    },
+    { logger: silentLogger, recordEvidence, withAdmittedAnalysis },
+  );
   const client = new Client({ name: "complete-evidence-client", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

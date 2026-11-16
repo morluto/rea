@@ -217,6 +217,17 @@ export class ReducibleValue {
 }
 
 /**
+ * A value followed by content blocks an upstream tool returned (a build
+ * computer's screenshot, say), delivered unchanged after REA's JSON.
+ */
+export class ForwardedValue {
+  constructor(
+    readonly value: JsonValue,
+    readonly content: readonly Readonly<Record<string, JsonValue>>[],
+  ) {}
+}
+
+/**
  * A failure delivered with facts its operation observed alongside the error
  * (an open's selection at failure, say), added to the error's details.
  */
@@ -229,7 +240,7 @@ export class DetailedFailure {
 
 /** What a value workflow returns. */
 export type ValueOutcome = Result<
-  JsonValue | CommittedValue | ReducibleValue,
+  JsonValue | CommittedValue | ReducibleValue | ForwardedValue,
   AnalysisError | DetailedFailure
 >;
 
@@ -295,7 +306,13 @@ export const createValueToolHandler =
                 {},
                 value.alternatives,
               )
-            : server.delivery.toCallToolResult(ok(value), contract);
+            : value instanceof ForwardedValue
+              ? server.delivery.toForwardedToolResult(
+                  ok(value.value),
+                  contract,
+                  value.content,
+                )
+              : server.delivery.toCallToolResult(ok(value), contract);
       },
     );
 

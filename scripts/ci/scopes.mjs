@@ -87,7 +87,6 @@ const PATH_SCOPES = {
     "src/rizin/**",
     "src/contracts/*ToolContracts.ts",
     "src/server/externalMutationAdmission.ts",
-    "src/server/registerReverseEngineeringTools.ts",
     "src/server/providerEnvironment.ts",
     "src/process/ExecFileOutput.ts",
     "src/process/ExecFileOutput.test.ts",

@@ -4,7 +4,7 @@ import { desktopViewPolicyInputSchema } from "../domain/desktop/desktopViewPolic
 import { safeParseJson } from "../domain/safeJson.js";
 import { createInterface } from "node:readline";
 
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";

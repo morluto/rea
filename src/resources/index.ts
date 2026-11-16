@@ -56,6 +56,7 @@ export {
 export { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 export type {
   ArtifactEntry,
+  ArtifactFixedLimit,
   ArtifactReader,
   ArtifactReaderFailureOptions,
   ArtifactReaderTraversal,

@@ -1,4 +1,5 @@
-import { Cli, Completions, z } from "incur";
+import { Cli, Completions } from "incur";
+import { z } from "zod";
 
 import {
   CLI_COMPLETION_SHELLS,

@@ -506,8 +506,7 @@ export class ArtifactAnalysisResources {
           },
         };
       },
-      dialect: (_outcome, _details, unclassified) =>
-        unclassified(),
+      dialect: (_outcome, _details, unclassified) => unclassified(),
     };
   }
 
