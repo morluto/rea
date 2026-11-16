@@ -433,7 +433,10 @@ const render = (
         ? JSON.stringify(argument)
         : argument,
     );
-  const stdout = /^(?:terminal-)?help-root/u.test(testCase.name)
+  // The root page, whichever invocation printed it, opens with `rea@<version>`.
+  const stdout = result.stdout.startsWith(
+    `rea@${PRODUCT_IDENTITY.packageVersion} `,
+  )
     ? elideRootCommandRows(result.stdout)
     : result.stdout;
   return [
