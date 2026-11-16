@@ -167,9 +167,15 @@ for (const missingSource of [false, true])
         expect(parseMcpToolError(response)).toMatchObject({
           error: { code: "target_unavailable" },
         });
-        expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
+        expect({
+          ...session.evidenceById(parent.evidence_id),
+          provider_selection: parent.provider_selection,
+        }).toEqual(parent);
         expect(session.evidenceById(source.evidence_id)).toBeUndefined();
-        expect(session.evidenceById(ancestor.evidence_id)).toEqual(ancestor);
+        expect({
+          ...session.evidenceById(ancestor.evidence_id),
+          provider_selection: ancestor.provider_selection,
+        }).toEqual(ancestor);
         expect((await readFile(snapshotPath)).equals(historicalBytes)).toBe(
           true,
         );
@@ -183,10 +189,22 @@ for (const missingSource of [false, true])
         parent.evidence_id,
       ]);
       expect(replayed.evidence_links).not.toContain(ancestor.evidence_id);
-      expect(session.evidenceById(replayed.evidence_id)).toEqual(replayed);
-      expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
-      expect(session.evidenceById(source.evidence_id)).toEqual(source);
-      expect(session.evidenceById(ancestor.evidence_id)).toEqual(ancestor);
+      expect({
+        ...session.evidenceById(replayed.evidence_id),
+        provider_selection: replayed.provider_selection,
+      }).toEqual(replayed);
+      expect({
+        ...session.evidenceById(parent.evidence_id),
+        provider_selection: parent.provider_selection,
+      }).toEqual(parent);
+      expect({
+        ...session.evidenceById(source.evidence_id),
+        provider_selection: source.provider_selection,
+      }).toEqual(source);
+      expect({
+        ...session.evidenceById(ancestor.evidence_id),
+        provider_selection: ancestor.provider_selection,
+      }).toEqual(ancestor);
       expect(session.evidenceById(source.evidence_id)?.evidence_links).toEqual([
         ancestor.evidence_id,
       ]);
@@ -225,7 +243,10 @@ for (const missingSource of [false, true])
       expect(refreshed.value.sourceEvidence?.[0]).toBe(
         session.evidenceForAnalysis(source.evidence_id),
       );
-      expect(refreshed.value.sourceEvidence?.[0]).toEqual(relocated);
+      expect({
+        ...refreshed.value.sourceEvidence?.[0],
+        provider_selection: relocated.provider_selection,
+      }).toEqual(relocated);
       expect(refreshed.value.sourceEvidence?.[0]?.evidence_links).toEqual([
         ancestor.evidence_id,
       ]);
@@ -250,9 +271,10 @@ for (const missingSource of [false, true])
       expect(refreshedParent.value.sourceEvidence?.[1]).toBe(
         session.evidenceForAnalysis(parent.evidence_id),
       );
-      expect(refreshedParent.value.sourceEvidence?.[1]).toEqual(
-        relocatedParent,
-      );
+      expect({
+        ...refreshedParent.value.sourceEvidence?.[1],
+        provider_selection: relocatedParent.provider_selection,
+      }).toEqual(relocatedParent);
       const refreshedResponse = await client.callTool({
         name: "inspect_managed_artifact",
         arguments: {},
@@ -264,7 +286,10 @@ for (const missingSource of [false, true])
       expect(
         parseEvidence(refreshedResponse.structuredContent).evidence_links,
       ).toEqual([source.evidence_id, parent.evidence_id]);
-      expect(session.evidenceById(source.evidence_id)).toEqual(relocated);
+      expect({
+        ...session.evidenceById(source.evidence_id),
+        provider_selection: relocated.provider_selection,
+      }).toEqual(relocated);
       expect((await readFile(snapshotPath)).equals(historicalBytes)).toBe(true);
     },
   );

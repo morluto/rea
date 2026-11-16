@@ -1,7 +1,10 @@
 import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { expect } from "vitest";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  evidenceDisplayMetadataAgree,
+  parseEvidence,
+} from "../../../src/domain/evidence.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import type { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -116,7 +119,12 @@ export const connectGhidraMcp = async (
 
 export const sessionEvidence = (session: BinarySession, value: unknown) => {
   const evidence = parseEvidence(value);
-  expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+  const retained = session.evidenceById(evidence.evidence_id);
+  // A tool handler stamps the recording session's provider selection onto the
+  // copy it delivers, so the two differ in display metadata only.
+  expect(retained !== undefined && evidenceDisplayMetadataAgree(retained, evidence)).toBe(
+    true,
+  );
   return evidence;
 };
 

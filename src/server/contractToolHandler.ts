@@ -80,6 +80,7 @@ export const deliverEvidenceResult = (
   contract: ToolContract,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   viewSource?: JsonValue,
+  evidenceById?: (id: string) => Evidence | undefined,
 ): CallToolResult => {
   if (!result.ok)
     return server.delivery.toPartialErrorToolResult(
@@ -88,8 +89,11 @@ export const deliverEvidenceResult = (
       recordEvidence,
     );
   const recorded = recordEvidence?.(result.value);
+  // Recording stamps the active session's provider selection onto the retained
+  // record, so a producer that built its own Evidence value would otherwise
+  // deliver an unattributed copy of the same evidence_id.
   return server.delivery.toEvidenceToolResult(
-    result.value,
+    stampSessionSelection(evidenceById, result.value),
     contract,
     recorded,
     viewSource,
@@ -185,11 +189,19 @@ export const createEvidenceToolHandler =
     recordEvidence?: EvidenceWriter["recordEvidence"],
     withAdmittedAnalysis?: WithAdmittedAnalysis,
     viewSource?: (input: unknown) => JsonValue | undefined,
+    evidenceById?: (id: string) => Evidence | undefined,
   ) =>
   <TOperation extends string>(contract: ToolContract<TOperation>) =>
   (input: unknown, context: ServerContext) =>
     runEvidenceToolOperation(
-      { server, logger, recordEvidence, withAdmittedAnalysis, viewSource },
+      {
+        server,
+        logger,
+        recordEvidence,
+        evidenceById,
+        withAdmittedAnalysis,
+        viewSource,
+      },
       contract,
       undefined,
       { input, context },
@@ -488,6 +500,8 @@ export const runEvidenceToolOperation = async <Input>(
     readonly server: EvidenceMcpServer;
     readonly logger: Logger;
     readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+    /** The retained record for a delivered id, whose display metadata carries the session stamp. */
+    readonly evidenceById?: ((id: string) => Evidence | undefined) | undefined;
     readonly withAdmittedAnalysis?: WithAdmittedAnalysis | undefined;
     /** The source a view's overflow recovery may name again, when it has one. */
     readonly viewSource?: ((input: Input) => JsonValue | undefined) | undefined;
@@ -527,6 +541,7 @@ export const runEvidenceToolOperation = async <Input>(
         contract,
         options.recordEvidence,
         options.viewSource?.(input),
+        options.evidenceById,
       );
     },
   );
