@@ -16,8 +16,14 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { parse as parseToml } from "smol-toml";
 
-import { manualRegistrationRemediation } from "../../../src/application/SupportedClients.js";
-import type { SetupResult } from "../../../src/application/SetupTypes.js";
+import {
+  manualRegistrationRemediation,
+  supportedClientRegistrationProfile,
+} from "../../../src/application/SupportedClients.js";
+import type {
+  SetupClientState,
+  SetupResult,
+} from "../../../src/application/SetupTypes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
@@ -97,9 +103,10 @@ const clientStates = [
   {
     client: {
       name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
       format: "toml",
-      configPath: [".codex", "config.toml"],
-      marker: [".codex"],
+      configPath: join(".codex", "config.toml"),
+      markerPath: ".codex",
     },
     detected: true,
     configured: false,
@@ -108,15 +115,16 @@ const clientStates = [
   {
     client: {
       name: "opencode",
+      registrationProfile: supportedClientRegistrationProfile("opencode"),
       format: "opencode",
-      configPath: [".config", "opencode", "opencode.json"],
-      marker: [".config", "opencode"],
+      configPath: join(".config", "opencode", "opencode.json"),
+      markerPath: join(".config", "opencode"),
     },
     detected: false,
     configured: false,
     status: "missing",
   },
-] as const;
+] as const satisfies readonly SetupClientState[];
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 
@@ -676,12 +684,13 @@ describe("interactive setup client hints", () => {
   it.for(["unknown", "invalid"] as const)(
     "names an unresolved %s client location instead of a repair (#11697)",
     async (status) => {
-      const unresolved = {
+      const unresolved: SetupClientState = {
         client: {
           name: "claude_desktop",
+          registrationProfile:
+            supportedClientRegistrationProfile("claude_desktop"),
           format: "json",
-          configPath: [],
-          marker: [],
+          configPath: "",
           configPathError:
             "Found migrated Claude Desktop storage. Register REA manually in the active file.",
         },
@@ -870,7 +879,7 @@ const runJourney = async (
     states = clientStates,
   }: {
     readonly initialClientIds?: readonly string[];
-    readonly states?: readonly object[];
+    readonly states?: readonly SetupClientState[];
   } = {},
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
