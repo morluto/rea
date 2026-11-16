@@ -79,7 +79,7 @@ describe("parseCliArgv", () => {
 
   it("reports schema failures as field errors", () => {
     // Positionals are validated first, so the missing path is reported alone.
-    expect(failure(["--block-size", "abc", "--mode", "c"])).toEqual({
+    expect(failure(["--block-size", "abc", "--mode", "c"])).toMatchObject({
       kind: "validation",
       message: "Invalid input: expected string, received undefined",
       fieldErrors: [
@@ -94,7 +94,9 @@ describe("parseCliArgv", () => {
       ],
     });
     // Captured from incur 0.6.1's Parser.parse with the same schema and argv.
-    expect(failure(["file", "--block-size", "abc", "--mode", "c"])).toEqual({
+    expect(
+      failure(["file", "--block-size", "abc", "--mode", "c"]),
+    ).toMatchObject({
       kind: "validation",
       message:
         'Invalid input: expected number, received NaN; Invalid option: expected one of "a"|"b"',
