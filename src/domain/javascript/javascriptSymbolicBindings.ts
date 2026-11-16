@@ -1424,9 +1424,7 @@ export class JavaScriptSymbolicBindings {
   }
 
   #chargeLoaderProof(): boolean {
-    if (--this.#remainingEvaluations >= 0) return true;
-    this.resourceLimits.add("wrapper_visits");
-    return false;
+    return this.#spendWrapperVisits(1);
   }
 
   #calleeInvocation(
