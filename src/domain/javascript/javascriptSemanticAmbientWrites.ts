@@ -6,11 +6,20 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  semanticArgumentStaysInSource,
+  semanticDirectInvocationArgument,
+} from "./javascriptSemanticDirectInvocations.js";
+import {
   collectJavaScriptIdentityWritesSteps,
   electronMemberPath,
 } from "./javascriptElectronMemberWrites.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
-import { ambientEffectCovers } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientEffectCovers,
+  ambientPathMayObserveAt,
+  semanticEffectMayFollow,
+  semanticEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -20,7 +29,6 @@ import {
   isUnshadowedGlobal,
   semanticBindingAtRead,
   semanticDefiniteEffectPrecedesReference,
-  semanticEffectTiming,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import type { SemanticIterationSource } from "./javascriptSemanticIterationFacts.js";
@@ -37,6 +45,62 @@ import {
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
+
+/**
+ * Own static methods of `Object` and `Reflect` in the language. A native one
+ * ignores its receiver; any other member, including one `Object` inherits
+ * from `Function.prototype`, may be user code that receives the constructor.
+ */
+const NATIVE_STATIC_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  [
+    [
+      "Object",
+      new Set([
+        "assign",
+        "create",
+        "defineProperties",
+        "defineProperty",
+        "entries",
+        "freeze",
+        "fromEntries",
+        "getOwnPropertyDescriptor",
+        "getOwnPropertyDescriptors",
+        "getOwnPropertyNames",
+        "getOwnPropertySymbols",
+        "getPrototypeOf",
+        "groupBy",
+        "hasOwn",
+        "is",
+        "isExtensible",
+        "isFrozen",
+        "isSealed",
+        "keys",
+        "preventExtensions",
+        "seal",
+        "setPrototypeOf",
+        "values",
+      ]),
+    ],
+    [
+      "Reflect",
+      new Set([
+        "apply",
+        "construct",
+        "defineProperty",
+        "deleteProperty",
+        "get",
+        "getOwnPropertyDescriptor",
+        "getPrototypeOf",
+        "has",
+        "isExtensible",
+        "ownKeys",
+        "preventExtensions",
+        "set",
+        "setPrototypeOf",
+      ]),
+    ],
+  ],
+);
 
 /** Global self references retain object identity, rather than adding a property. */
 const canonicalAmbientPath = (
@@ -364,6 +428,13 @@ export const createAmbientPathResolver = (
             : stable === undefined
               ? []
               : [stable];
+          // A directly invoked function's parameter starts as its argument,
+          // which therefore did not escape at the call.
+          const argument = possibleWrites
+            ? semanticDirectInvocationArgument(root, binding, state)
+            : undefined;
+          if (argument !== undefined)
+            queue({ node: argument, readsAtSelf: true, suffix });
           for (const initializer of initializers) {
             if (semanticReferenceSourcesInactive(initializer, state)) continue;
             // Pattern assignments share the source selection owner with member
@@ -601,6 +672,12 @@ export function* indexJavaScriptAmbientWritesSteps(
     browserReceiver: boolean;
     projection?: AmbientProjection;
   }[] = [];
+  // Object/Reflect static calls, settled once every ambient write is known.
+  const staticReceivers: {
+    node: t.Node;
+    target: t.Node;
+    method: readonly string[];
+  }[] = [];
   const stores = new WeakMap<
     t.Node,
     Map<SemanticIterationSource, AmbientProjection>
@@ -670,10 +747,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       const retainEscape = (target: t.Node, browserReceiver = false) => {
         escapes.push({ target, node, browserReceiver });
       };
-      for (const argument of t.isTaggedTemplateExpression(node)
+      for (const [index, argument] of (t.isTaggedTemplateExpression(node)
         ? node.quasi.expressions
-        : node.arguments)
-        if (t.isNode(argument))
+        : node.arguments
+      ).entries())
+        if (
+          t.isNode(argument) &&
+          !semanticArgumentStaysInSource(node, index, state)
+        )
           retainEscape(
             t.isSpreadElement(argument) ? argument.argument : argument,
           );
@@ -688,16 +769,23 @@ export function* indexJavaScriptAmbientWritesSteps(
           : undefined;
       if (
         !t.isNewExpression(node) &&
-        (t.isMemberExpression(callee) ||
-          t.isOptionalMemberExpression(callee)) &&
-        !(
-          invocation?.kind === "known" &&
-          ["Object", "Reflect"].includes(invocation.path[1] ?? "")
-        )
+        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee))
       ) {
-        if (browserMethod !== undefined)
-          browserReceiverMethods.add(browserMethod);
-        retainEscape(callee.object, browserMethod !== undefined);
+        const owner = invocation?.path[1];
+        const method =
+          invocation?.kind === "known" &&
+          invocation.path.length === 3 &&
+          owner !== undefined &&
+          NATIVE_STATIC_METHODS.get(owner)?.has(invocation.path[2] ?? "")
+            ? invocation.path.slice(1)
+            : undefined;
+        if (method !== undefined)
+          staticReceivers.push({ node, target: callee.object, method });
+        else {
+          if (browserMethod !== undefined)
+            browserReceiverMethods.add(browserMethod);
+          retainEscape(callee.object, browserMethod !== undefined);
+        }
       }
     },
   );
@@ -757,6 +845,8 @@ export function* indexJavaScriptAmbientWritesSteps(
     }
     yield;
   }
+  for (const node of state.escapingThrows)
+    escapes.push({ node, target: node.argument, browserReceiver: false });
   for (const source of storedReferences) {
     if (source.target === undefined) continue;
     const receiver = ambientWrites(source.target.object, source.mutation);
@@ -821,8 +911,8 @@ export function* indexJavaScriptAmbientWritesSteps(
       );
       return (
         matches.length === 0 ||
-        matches.some(
-          (entry) => semanticEffectTiming(node, entry.node, state) !== "after",
+        matches.some((entry) =>
+          semanticEffectMayPrecede(state, node, entry.node),
         )
       );
     };
@@ -841,6 +931,14 @@ export function* indexJavaScriptAmbientWritesSteps(
       continue;
     retainEscapeEffect(effect);
   }
+  // A native static method ignores its receiver. A source write or escape
+  // that may replace the method before this call makes it user code, which
+  // receives the constructor. (Its prototype chain is not consulted: the
+  // method is an own property.)
+  for (const { node, target, method } of staticReceivers)
+    if (ambientPathMayObserveAt(state, node, ["global", ...method], "contents"))
+      retainEscapeEffect({ node, target, browserReceiver: false });
+    else state.retainedGlobalCallReceivers.add(target);
   function retainEscapeEffect({
     node,
     target,
@@ -951,7 +1049,7 @@ const createGlobalPathRead = (
         node.callee === site
       )
         return false;
-      return semanticEffectTiming(site, node, state) !== "after";
+      return semanticEffectMayPrecede(state, site, node);
     });
     if (
       (escapesCovered && effects.escapes.length === 0) ||
@@ -959,8 +1057,8 @@ const createGlobalPathRead = (
       (writesCovered && effects.writes.length === 0)
     )
       return { status: "unknown" };
-    const active = effects.writes.filter(
-      (effect) => semanticEffectTiming(site, effect.node, state) !== "after",
+    const active = effects.writes.filter((effect) =>
+      semanticEffectMayPrecede(state, site, effect.node),
     );
     if (active.length === 0) return { status: "unmodified" };
     if (
@@ -1013,7 +1111,7 @@ const globalPathReplacement = (
     effects.some(
       (effect) =>
         effect.node !== confirmed &&
-        semanticEffectTiming(confirmed, effect.node, state) !== "before" &&
+        semanticEffectMayFollow(state, confirmed, effect.node) &&
         (effect.node === undefined ||
           !semanticDefiniteEffectPrecedesReference(
             effect.node,

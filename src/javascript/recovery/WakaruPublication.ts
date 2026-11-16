@@ -1,7 +1,9 @@
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import type { SafeOutputTree } from "../../resources/index.js";
-import type { ArtifactResourceScope } from "../../resources/index.js";
+import type {
+  SafeOutputTree,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   javascriptRecoveryResultSchema,
@@ -10,9 +12,9 @@ import {
 } from "../../domain/javascript/javascriptRecovery.js";
 import {
   readRecoveryFile,
-  recoveryDigest,
   type RecoveryInputSnapshot,
 } from "./RecoveryFiles.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 import {
   recoveryRanges,
   validateRecoverySourceMap,
@@ -47,7 +49,7 @@ export const publishWakaruArtifacts = async (
 ): Promise<JavaScriptRecoveryResult> => {
   const { tree, sources, parsed, staging, signal, resources } = context;
   const write = async (path: string, bytes: Buffer) => {
-    const sha256 = recoveryDigest(bytes);
+    const sha256 = sha256Hex(bytes);
     const file = await tree.write(
       path,
       Readable.from([bytes]),
@@ -69,7 +71,7 @@ export const publishWakaruArtifacts = async (
       signal,
       resources,
     );
-    if (recoveryDigest(snapshot) !== source.sha256)
+    if (sha256Hex(snapshot) !== source.sha256)
       throw new AnalysisOutputError(
         "recover_javascript_sources",
         `The input snapshot changed during recovery: ${source.path}`,

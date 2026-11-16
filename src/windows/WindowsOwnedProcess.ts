@@ -9,6 +9,7 @@ import {
   windowsHandleSchema,
   type WindowsNativeAuthority,
 } from "./WindowsNativeLoader.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const launchSchema = z.strictObject({
   pid: z.int().positive().max(0xffff_ffff),
@@ -130,7 +131,7 @@ export class WindowsNativeSpawnControlError extends RuntimeControlUnavailableErr
       typeof Reflect.get(cause, "win32Code") === "number"
         ? Reflect.get(cause, "win32Code")
         : undefined;
-    super(message ?? (cause instanceof Error ? cause.message : String(cause)), {
+    super(message ?? errorMessage(cause), {
       cause,
       retryable: true,
       remediationAction: WINDOWS_SPAWN_CONTROL_REMEDIATION,
@@ -434,7 +435,7 @@ export class WindowsOwnedProcess extends EventEmitter {
       } catch (cause: unknown) {
         return {
           cleaned: false,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         };
       }
     }
@@ -460,7 +461,7 @@ export class WindowsOwnedProcess extends EventEmitter {
     } catch (cause: unknown) {
       return {
         cleaned: false,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);

@@ -3,7 +3,6 @@ import {
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
@@ -671,6 +671,9 @@ const expectedOpenSelection = (path: string, sha256: string) => ({
   sha256,
 });
 
+const firstSha = sha256Hex("first fixture");
+const secondSha = sha256Hex("second fixture");
+
 const expectQueuedOpenReceipt = async (
   mcp: Client,
   session: BinarySession,
@@ -704,16 +707,14 @@ const expectQueuedOpenReceipt = async (
       provider_id: "beta",
     });
     expect(nextReply.isError).not.toBe(true);
-    const sha = (value: string) =>
-      createHash("sha256").update(value).digest("hex");
     expect((await call("binary_session", {})).structuredContent).toMatchObject({
-      result: { path: second, sha256: sha("second fixture") },
+      result: { path: second, sha256: secondSha },
     });
     failedSnapshotOpen.release();
     const failedReply = await failedSwitch;
     expect(
       parseMcpToolError(failedReply).error.details?.selection_at_failure,
-    ).toEqual(expectedOpenSelection(first, sha("first fixture")));
+    ).toEqual(expectedOpenSelection(first, firstSha));
   } finally {
     failedSnapshotOpen.release();
     await failedSwitch.catch(() => undefined);
@@ -733,11 +734,49 @@ const writeSnapshotMismatchTargets = async () => {
   return { testDirectory, first, second, snapshotPath };
 };
 
+/** A raw-binary snapshot names the entry point its target was opened with. */
+const expectRawEntryPointMismatch = async (
+  call: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => ReturnType<Client["callTool"]>,
+  testDirectory: string,
+) => {
+  const raw = join(testDirectory, "raw.bin");
+  const rawSnapshot = join(testDirectory, "raw-snapshot.json");
+  await writeFile(raw, Buffer.from([0, 1, 2, 3]));
+  const rawTarget = {
+    path: raw,
+    provider_id: "alpha",
+    format: "raw-binary",
+    architecture: "arm64",
+  };
+  expect(
+    (await call("open_binary", { ...rawTarget, entry_point: "0x1000" }))
+      .isError,
+  ).not.toBe(true);
+  expect(
+    (await call("close_binary", { snapshot_path: rawSnapshot })).isError,
+  ).not.toBe(true);
+  const differentEntry = await call("open_binary", {
+    ...rawTarget,
+    entry_point: "0x2000",
+    snapshot_path: rawSnapshot,
+  });
+  expect(differentEntry.isError).toBe(true);
+  expect(parseMcpToolError(differentEntry).error.details).toMatchObject({
+    binding_mismatch: {
+      target: {
+        snapshot: { identity: { selection: { entry_point: "0x1000" } } },
+        selected: { identity: { selection: { entry_point: "0x2000" } } },
+      },
+    },
+  });
+};
+
 it("reports confirmed snapshot binding differences and keeps the active session", async () => {
   const { testDirectory, first, second, snapshotPath } =
     await writeSnapshotMismatchTargets();
-  const sha = (value: string) =>
-    createHash("sha256").update(value).digest("hex");
   let revision = 1;
   const alphaProfile = createAnalysisProfile(
     { id: "alpha", name: "alpha provider", version: "1" },
@@ -795,8 +834,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     const error = parseMcpToolError(result).error;
     expect(error.code).toBe("evidence_integrity_mismatch");
     expect(error.details).toMatchObject({
-      target_at_open_completion: { sha256: sha("first fixture") },
-      selection_at_failure: expectedOpenSelection(first, sha("first fixture")),
+      target_at_open_completion: { sha256: firstSha },
+      selection_at_failure: expectedOpenSelection(first, firstSha),
     });
     expect(error.remediation.action).toBe(
       analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
@@ -812,10 +851,19 @@ it("reports confirmed snapshot binding differences and keeps the active session"
     });
     return error.details?.binding_mismatch;
   };
+  // A snapshot names its target by the target identity it persisted.
   expect(await mismatch(second, "alpha")).toEqual({
     target: {
-      snapshot: expect.objectContaining({ sha256: sha("first fixture") }),
-      selected: expect.objectContaining({ sha256: sha("second fixture") }),
+      snapshot: expect.objectContaining({
+        identity: expect.objectContaining({
+          sha256: firstSha,
+        }),
+      }),
+      selected: expect.objectContaining({
+        identity: expect.objectContaining({
+          sha256: secondSha,
+        }),
+      }),
     },
   });
   const otherProvider = await mismatch(first, "beta");
@@ -840,8 +888,8 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   const combined = await mismatch(second, "beta");
   expect(combined).toMatchObject({
     target: {
-      snapshot: { sha256: sha("first fixture") },
-      selected: { sha256: sha("second fixture") },
+      snapshot: { identity: { sha256: firstSha } },
+      selected: { identity: { sha256: secondSha } },
     },
     provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
   });
@@ -852,36 +900,7 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   await expectQueuedOpenReceipt(mcp, session, first, second, snapshotPath);
 
   revision = 1;
-  const raw = join(testDirectory, "raw.bin");
-  const rawSnapshot = join(testDirectory, "raw-snapshot.json");
-  await writeFile(raw, Buffer.from([0, 1, 2, 3]));
-  const rawTarget = {
-    path: raw,
-    provider_id: "alpha",
-    format: "raw-binary",
-    architecture: "arm64",
-  };
-  expect(
-    (await call("open_binary", { ...rawTarget, entry_point: "0x1000" }))
-      .isError,
-  ).not.toBe(true);
-  expect(
-    (await call("close_binary", { snapshot_path: rawSnapshot })).isError,
-  ).not.toBe(true);
-  const differentEntry = await call("open_binary", {
-    ...rawTarget,
-    entry_point: "0x2000",
-    snapshot_path: rawSnapshot,
-  });
-  expect(differentEntry.isError).toBe(true);
-  expect(parseMcpToolError(differentEntry).error.details).toMatchObject({
-    binding_mismatch: {
-      target: {
-        snapshot: { entry_point: "0x1000" },
-        selected: { entry_point: "0x2000" },
-      },
-    },
-  });
+  await expectRawEntryPointMismatch(call, testDirectory);
 });
 
 it.each([true, false])(
@@ -1264,9 +1283,7 @@ const checkQueuedSwitchReceipt = async (
       arguments: { path: other, provider_id: "alpha" },
     });
     expect(switched.isError).not.toBe(true);
-    expect(session.activeTarget()?.sha256).toBe(
-      createHash("sha256").update("other fixture").digest("hex"),
-    );
+    expect(session.activeTarget()?.sha256).toBe(sha256Hex("other fixture"));
     failedOpenReceipt.release();
     const queuedRefusal = await pending;
     for (const result of [structured(queuedRefusal), refusal])

@@ -1,4 +1,3 @@
-import { assertArtifactSelectedSource } from "./ArtifactSelectedSource.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
@@ -25,16 +24,15 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "../resources/index.js";
-import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
-import {
+  readArtifactFileChunks,
+  assertArtifactSelectedSource,
   admitAsarHeader,
   readAsarHeader,
   type AsarHeaderExtents,
-} from "./AsarHeader.js";
+} from "../resources/index.js";
+import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
-import { readArtifactFileChunks } from "../resources/index.js";
 import {
   assertAsarReadActive,
   asarCancellationFailure,

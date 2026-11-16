@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { analysisParameterLimitSchema } from "./analysisSettingDefinitions.js";
+
 /** Opaque producer text and the command capture's explicit completion facts. */
 export const commandObservationSchema = z.strictObject({
   stdout: z.string(),
@@ -9,6 +11,12 @@ export const commandObservationSchema = z.strictObject({
   output_budget_bytes: z.int().positive().exactOptional(),
   output_budget_source: z.enum(["default", "request"]).exactOptional(),
   output_truncated: z.boolean(),
+  /**
+   * The request parameter whose budget stopped output collection, present
+   * only when the capture reached it.
+   */
+  output_limit: analysisParameterLimitSchema.exactOptional(),
+  // lifecycle-state: whether the provider process finished the command.
   completion_status: z
     .enum(["complete", "rejected", "unknown"])
     .describe(
@@ -46,6 +54,7 @@ export const gdbCommandResultSchema = z.strictObject({
   output_truncated: z.boolean(),
   output_limits: z.array(gdbOutputLimitSchema).min(1).exactOptional(),
   output_invalid_utf8: z.literal(true).exactOptional(),
+  // lifecycle-state: whether GDB finished the command.
   completion_status: z.enum(["complete", "unknown"]),
 });
 

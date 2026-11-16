@@ -3,21 +3,5 @@
   "src/apktool/ApktoolProvider.ts": 1,
   "src/application/environment/environmentReplay.ts": 1,
   "src/desktop/DesktopSessionObservations.ts": 1,
-  "src/domain/desktop/appTaskDraft.ts": 4,
-  "src/domain/desktop/appTaskDraftAdded.ts": 3,
-  "src/domain/desktop/appTaskDraftAlternatives.ts": 1,
-  "src/domain/desktop/appTaskDraftCounts.ts": 2,
-  "src/domain/desktop/appTaskDraftFileNotes.ts": 4,
-  "src/domain/desktop/appTaskDraftGuards.ts": 2,
-  "src/domain/desktop/appTaskDraftItems.ts": 1,
-  "src/domain/desktop/appTaskDraftJson.ts": 4,
-  "src/domain/desktop/appTaskDraftLineGuards.ts": 1,
-  "src/domain/desktop/appTaskDraftNamed.ts": 2,
-  "src/domain/desktop/appTaskDraftNested.ts": 2,
-  "src/domain/desktop/appTaskDraftNotes.ts": 1,
-  "src/domain/desktop/appTaskDraftText.ts": 1,
-  "src/domain/desktop/appTaskDraftValues.ts": 1,
-  "src/domain/desktop/memberPairing.ts": 1,
-  "src/domain/desktop/selectorCandidates.ts": 1,
-  "src/domain/releaseExposure.ts": 2
+  "src/domain/desktop/appTaskDraft.ts": 2
 }

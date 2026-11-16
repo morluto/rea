@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -98,7 +99,7 @@ it.each([
       );
     });
     const prior = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "prior_observation",

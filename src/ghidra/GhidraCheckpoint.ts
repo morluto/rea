@@ -34,6 +34,8 @@ import {
   ghidraFileFailure,
   readGhidraProfileArtifact,
 } from "./GhidraFileArtifacts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const sourceSchema = z
@@ -184,9 +186,7 @@ export async function resolveGhidraCheckpoint(
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<GhidraCheckpointSelection> {
-  const key = createHash("sha256")
-    .update(JSON.stringify([targetSha256, profile.digest]))
-    .digest("hex");
+  const key = sha256Hex(JSON.stringify([targetSha256, profile.digest]));
   const selection = {
     directory: appendCallerPath(root, key),
     key,
@@ -403,7 +403,7 @@ export class GhidraCheckpoint {
           "ghidra",
           [...this.#pendingRemoval],
           {
-            reason: `Checkpoint file cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            reason: `Checkpoint file cleanup failed: ${errorMessage(cause)}`,
             checkpoint: this.observation,
           },
           { cause },

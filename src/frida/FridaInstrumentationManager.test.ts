@@ -21,7 +21,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { FridaInstrumentationManager } from "./FridaInstrumentationManager.js";
-import { fridaCaptureLimitations } from "./fridaCaptureLimits.js";
+import { fridaCaptureLimitations } from "../domain/fridaCaptureLimits.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";

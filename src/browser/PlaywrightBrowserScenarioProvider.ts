@@ -2,7 +2,7 @@ import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
 } from "./PlaywrightExecutionBoundary.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -62,6 +62,7 @@ import {
 
 const OPERATION = "capture_browser_scenario" as const;
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SnapshotKind = BrowserScenario["capture"]["after_each_step"][number];
 const SNAPSHOT_KINDS = [
@@ -475,11 +476,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
       );
       this.#bindCleanup(cleanup, retained);
       return err(
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          OPERATION,
-        ).bindCleanupDependencies([primary, cleanup]),
+        analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION),
       );
     }
   }
@@ -544,9 +541,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
           PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY.id,
           (pending.cleanupResources ?? []).map(redactText),
           {
-            reason: redactText(
-              cause instanceof Error ? cause.message : String(cause),
-            ),
+            reason: redactText(errorMessage(cause)),
           },
           { operation: OPERATION, cause },
         );

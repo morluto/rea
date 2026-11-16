@@ -24,6 +24,9 @@ import {
 } from "./HopperDiagnostics.js";
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
 import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { retainProcessInspectionOwners } from "../providers/OwnedCommandCleanup.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 interface CleanupIssue {
   readonly resource: string;
@@ -58,6 +61,8 @@ export interface HopperOwnedResources {
         readonly identity: ProcessIdentityObservation;
       }
     | undefined;
+  /** Descriptors a failed bridge identity read left open, released by cleanup. */
+  readonly inspections: ArtifactResourceScope;
 }
 
 export interface HopperCleanupInput {
@@ -141,11 +146,30 @@ export const cleanupHopperSession = async (
       state.resources.add("hopper-lease");
       state.issues.push({
         resource: "hopper-lease",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
   }
+  await releaseInspections(input, state);
   return cleanupOutcome(input, state);
+};
+
+/** Retry descriptors whose identity read could not close them. */
+const releaseInspections = async (
+  input: HopperCleanupInput,
+  state: CleanupState,
+): Promise<void> => {
+  try {
+    await input.resources.inspections.retryCleanup();
+  } catch (cause: unknown) {
+    const resources = input.resources.inspections.cleanupResources;
+    for (const resource of resources.length === 0
+      ? ["hopper-process-inspection"]
+      : resources) {
+      state.resources.add(resource);
+      state.issues.push({ resource, reason: errorMessage(cause) });
+    }
+  }
 };
 
 export const confirmExternalApplicationExit = async (
@@ -161,10 +185,24 @@ export const confirmExternalApplicationExit = async (
     application?.identity.state !== "readable"
   )
     return undefined;
-  const observed = await observeExit(
-    application.pid,
-    application.identity.identity,
-  );
+  let observed: Awaited<ReturnType<typeof observeExit>>;
+  try {
+    observed = await observeExit(
+      application.pid,
+      application.identity.identity,
+    );
+  } catch (cause: unknown) {
+    // Exit stays unverified; descriptors the read left open stay owned.
+    if (
+      retainProcessInspectionOwners(
+        cause,
+        resources.inspections,
+        "close_binary",
+      ).length === 0
+    )
+      throw cause;
+    return "unverified";
+  }
   if (observed === "exited") {
     resources.shutdownConfirmed = true;
     releaseTransport(socket);

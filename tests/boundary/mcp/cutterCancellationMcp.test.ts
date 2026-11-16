@@ -1,5 +1,4 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 import { chmod, rm, writeFile } from "node:fs/promises";
@@ -14,11 +13,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { registerCutterTools } from "../../../src/server/registerCutterTools.js";
-import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
-import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { silentLogger } from "../../../src/logger.js";
+import { cutterMcpServer } from "../../fixtures/debuggerMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -61,13 +56,7 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
       };
     },
   });
-  const server = new McpServer({ name: "cutter-cancellation", version: "1" });
-  registerCutterTools(
-    server,
-    service,
-    silentLogger,
-    createToolResultDelivery(undefined),
-  );
+  const server = cutterMcpServer("cutter-cancellation", service);
   const client = new Client(
     { name: "cutter-cancellation", version: "1" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
@@ -137,13 +126,7 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
       };
     },
   });
-  const server = new McpServer({ name: "cutter-cleanup-race", version: "1" });
-  registerCutterTools(
-    server,
-    service,
-    silentLogger,
-    createToolResultDelivery(undefined),
-  );
+  const server = cutterMcpServer("cutter-cleanup-race", service);
   const client = new Client(
     { name: "cutter-cleanup-race", version: "1" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
@@ -234,17 +217,7 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       settled = true;
     }
   };
-  const server = new EvidenceMcpServer(
-    { name: "cutter-discovery-cancel", version: "1" },
-    {},
-    undefined,
-    createToolResultDelivery(undefined),
-  );
-  registerServiceTools(
-    server,
-    { cutterSessions: service },
-    { logger: silentLogger },
-  );
+  const server = cutterMcpServer("cutter-discovery-cancel", service);
   const client = new Client(
     { name: "cutter-discovery-cancel", version: "1" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
@@ -355,16 +328,7 @@ it.skipIf(process.platform === "win32")(
     const service = new CutterBridgeService(
       new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: directory }),
     );
-    const server = new McpServer({
-      name: "cutter-generation-proof",
-      version: "1",
-    });
-    registerCutterTools(
-      server,
-      service,
-      silentLogger,
-      createToolResultDelivery(undefined),
-    );
+    const server = cutterMcpServer("cutter-generation-proof", service);
     const client = new Client(
       {
         name: "cutter-generation-proof",

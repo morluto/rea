@@ -522,7 +522,7 @@ async function call(name, args = {}) {
   if (["open_binary", "close_binary"].includes(name))
     return requireMcpLifecycleResult(value, name);
   const evidence = parseEvidence(requireMcpOutput(value, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   return evidence.normalized_result;
 }
 async function cli(command, address, options = []) {
@@ -543,8 +543,8 @@ async function cli(command, address, options = []) {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(stdout));
-  assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.equal(evidence.subject.format, "dos-com");
+  assert.equal(evidence.subject.identity.sha256, sha256);
+  assert.equal(evidence.subject.identity.format, "dos-com");
   assert.equal(evidence.analysis_profile.parameters.loader, "BinaryLoader");
   assert.equal(
     evidence.analysis_profile.parameters.language_id,

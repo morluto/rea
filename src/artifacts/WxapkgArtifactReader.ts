@@ -290,9 +290,13 @@ export class WxapkgArtifactReader implements ArtifactReader {
   #reserveMemberRead(): void {
     if (this.#remainingReadOperations <= 0)
       throw artifactFixedLimitFailure(
-        "wxapkg directory-and-chunk I/O work",
-        this.#admittedReadOperations,
-        "operations",
+        {
+          name: "The wxapkg directory-and-chunk I/O work allowance",
+          kind: "parser",
+          limit: this.#admittedReadOperations,
+          unit: "operations",
+        },
+        `The wxapkg members need more than ${String(this.#admittedReadOperations)} directory-and-chunk read operations.`,
       );
     this.#remainingReadOperations--;
   }

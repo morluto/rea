@@ -10,7 +10,7 @@ import {
   ArtifactReaderFailure,
   bindArtifactFileCleanup,
 } from "../../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -24,7 +24,7 @@ import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
@@ -99,6 +99,8 @@ import {
   javaScriptWorkerAdmissionSchema,
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
@@ -199,7 +201,7 @@ export class JavaScriptAnalysisWorker {
           "JavaScript worker control frame is unterminated or oversized",
         );
     } catch (cause: unknown) {
-      this.#latchOutputFailure(message(cause));
+      this.#latchOutputFailure(errorMessage(cause));
     }
   };
 
@@ -391,7 +393,7 @@ export class JavaScriptAnalysisWorker {
           this.limits.memberMutationAllowance ??
             DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
         ),
-        text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
+        text_sha256: sha256Hex(file.text.value),
         file: metadata,
         package_type: packageType,
         purpose,
@@ -636,7 +638,7 @@ export class JavaScriptAnalysisWorker {
               }),
             )
           : previous;
-        const error = this.#cleanupError(message(cause), primary);
+        const error = this.#cleanupError(errorMessage(cause), primary);
         this.#runtime.bindCleanupFailure(error);
         result = err({
           javascript,
@@ -706,11 +708,11 @@ export class JavaScriptAnalysisWorker {
           ? runtime.reason
           : this.#failure(runtime.reason, "worker close", undefined);
       if (inspectionError !== undefined)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           runtimeError,
           inspectionError,
           OPERATION,
-        ).bindCleanupDependencies([runtimeError, inspectionError]);
+        );
       throw runtimeError;
     }
     if (inspectionError !== undefined) throw inspectionError;
@@ -865,10 +867,7 @@ export class JavaScriptAnalysisWorker {
         },
       );
     const checkpoint = await readFile(path);
-    if (
-      expected !== undefined &&
-      createHash("sha256").update(checkpoint).digest("hex") !== expected.sha256
-    )
+    if (expected !== undefined && sha256Hex(checkpoint) !== expected.sha256)
       throw new AnalysisOutputError(
         OPERATION,
         "JavaScript static checkpoint digest does not match",
@@ -1454,7 +1453,7 @@ export class JavaScriptAnalysisWorker {
     )
       return new AnalysisOutputError(
         OPERATION,
-        `${path} during ${this.#phase}: ${message(cause)}`,
+        `${path} during ${this.#phase}: ${errorMessage(cause)}`,
         { cause, capturedOutput: this.#captured() },
       );
     return cause instanceof RuntimeControlUnavailableError
@@ -1465,7 +1464,7 @@ export class JavaScriptAnalysisWorker {
           diagnostics: {
             source_path: path,
             phase: this.#phase,
-            message: message(cause),
+            message: errorMessage(cause),
           },
         });
   }
@@ -1536,6 +1535,3 @@ export class JavaScriptAnalysisWorker {
     this.#terminalResponseId = undefined;
   }
 }
-
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

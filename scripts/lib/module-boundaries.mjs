@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readImportSpecifiers } from "./import-specifiers.mjs";
 import { isLayerException } from "./module-layers.mjs";
 
-const PURE_LAYERS = new Set(["domain", "contracts"]);
+const PURE_LAYERS = new Set(["kernel", "domain", "contracts"]);
 const MIGRATED_PROVIDER_ROOTS = new Set([
   "sqlite",
   "evm",
@@ -109,7 +109,7 @@ const failedBoundary = (file, target, typeOnly) => {
     return "process-capture";
   if (
     file.startsWith("src/application/javascript/") &&
-    /^src\/artifacts\/(?:Asar|Directory)ArtifactReader\.(?:js|ts)$/u.test(
+    /^src\/(?:artifacts\/AsarArtifactReader|resources\/DirectoryArtifactReader)\.(?:js|ts)$/u.test(
       target,
     )
   )

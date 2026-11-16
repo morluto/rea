@@ -85,6 +85,7 @@ import type {
   DesktopBuildFactsInput,
   OwnedProviderSetting,
 } from "../ports/DesktopBuildHost.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
@@ -411,7 +412,7 @@ const closeDoctorHost = async (
     return await host.close?.();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    return `Doctor host cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    return `Doctor host cleanup failed: ${errorMessage(cause)}`;
   }
 };
 

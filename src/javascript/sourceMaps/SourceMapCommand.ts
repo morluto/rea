@@ -49,6 +49,7 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "trace_web_source_location";
 const PROVIDER = "source-map-decoder";
@@ -143,7 +144,7 @@ export const runSourceMapCommand = async (
               : { capturedOutput: preparation.capturedOutput }),
             diagnostics: {
               map_path: path,
-              error_message: message(cause),
+              error_message: errorMessage(cause),
               phase: "process_ownership_preparation",
             },
           });
@@ -236,7 +237,7 @@ class PreparationCleanup implements SourceMapCleanupOwner {
     } catch (cause: unknown) {
       return new SourceMapCleanupFailure(cleanup.cleanupResources, {
         map_path: this.path,
-        cleanup_failures: [message(cause)],
+        cleanup_failures: [errorMessage(cause)],
       }).bindCleanupDependencies([cleanup], this);
     }
     return cleanup.cleanupIncomplete
@@ -423,7 +424,10 @@ class OwnedCodec implements SourceMapCleanupOwner {
       ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
       : new ProviderAdapterError(PROVIDER, OPERATION, {
           cause,
-          diagnostics: { map_path: this.path, error_message: message(cause) },
+          diagnostics: {
+            map_path: this.path,
+            error_message: errorMessage(cause),
+          },
         });
   }
 
@@ -602,7 +606,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
         await this.#runtime.close();
         this.#runtime = undefined;
       } catch (cause: unknown) {
-        failures.push(message(cause));
+        failures.push(errorMessage(cause));
       }
     }
     if (failures.length === 0) {
@@ -620,5 +624,3 @@ class OwnedCodec implements SourceMapCleanupOwner {
     );
   }
 }
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

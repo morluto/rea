@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 
 import { contractsForToolFamilies } from "../toolFamilies.js";
@@ -30,6 +28,7 @@ import {
   type McpOutputSchemaProfile,
   COMPACT_INPUT_SCHEMA_PRESENTATION,
 } from "../mcpSchemaPresentation.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /**
  * Digested per-tool projection. Every contract field that changes what a
@@ -113,11 +112,37 @@ const sortByName = (
     compareUnicodeCodePoints(left.name, right.name),
   );
 
-const digest = (value: unknown): string => {
+const canonicalJson = (value: unknown): string => {
   const encoded = canonicalize(value);
   if (encoded === undefined)
     throw new TypeError("Catalog is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
+  return encoded;
+};
+
+/**
+ * Digests of an already presented tool and prompt catalog. Exported so tests
+ * can compare the composed combined document with whole-document
+ * canonicalization.
+ */
+export const digestPresentedCatalogs = (
+  catalog: ReturnType<typeof presentToolCatalog>,
+  prompts: ReturnType<typeof createPromptCatalog>,
+  outputSchemaProfile: McpOutputSchemaProfile,
+) => {
+  const tools = canonicalJson({
+    output_schema_profile: outputSchemaProfile,
+    catalog,
+  });
+  const promptCatalog = canonicalJson(prompts);
+  // RFC 8785 writes an object as its members in key order, each value in its
+  // own canonical form, so the combined document reuses the canonical tool and
+  // prompt texts instead of canonicalizing the whole catalog a second time.
+  const combined = `{"cli":${canonicalJson(CLI_COMMAND_NAMES)},"prompts":${promptCatalog},"tools":${tools}}`;
+  return {
+    tools_sha256: sha256Hex(tools),
+    prompts_sha256: sha256Hex(promptCatalog),
+    combined_sha256: sha256Hex(combined),
+  } as const;
 };
 
 const digestCatalogs = (
@@ -125,24 +150,15 @@ const digestCatalogs = (
   prompts: ReturnType<typeof createPromptCatalog>,
   compactPresentation: CompactInputSchemaPresentation,
   outputSchemaProfile: McpOutputSchemaProfile,
-) => {
-  const tools = {
-    output_schema_profile: outputSchemaProfile,
-    catalog: presentToolCatalog(
+) =>
+  digestPresentedCatalogs(
+    presentToolCatalog(
       catalog,
       advertisedToolPresentation(outputSchemaProfile, compactPresentation),
     ),
-  };
-  return {
-    tools_sha256: digest(tools),
-    prompts_sha256: digest(prompts),
-    combined_sha256: digest({
-      cli: CLI_COMMAND_NAMES,
-      tools,
-      prompts,
-    }),
-  } as const;
-};
+    prompts,
+    outputSchemaProfile,
+  );
 
 /**
  * Catalog digests over the given tool contracts. Exported so tests can prove

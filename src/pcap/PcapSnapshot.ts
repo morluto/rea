@@ -27,6 +27,7 @@ import {
   runtimeControlCapabilityError,
 } from "../domain/runtimeControlUnavailableError.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_pcap_capture";
 const MAX_CAPTURE_BYTES = 2 * 1024 ** 3;
@@ -129,7 +130,7 @@ export class PcapSnapshot {
           {
             path: ["path"],
             reason: "invalid_value",
-            message: `Cannot read selected capture ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `Cannot read selected capture ${path}: ${errorMessage(cause)}`,
           },
         ]);
       }
@@ -164,6 +165,7 @@ export class PcapSnapshot {
           fixedAllowanceOptions(
             "the owned capture snapshot allowance",
             "input",
+            { limit: MAX_CAPTURE_BYTES, unit: "bytes" },
           ),
         );
       const destination = this.own(

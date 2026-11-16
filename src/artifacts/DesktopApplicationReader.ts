@@ -1,19 +1,18 @@
 import { desktopPathConventions } from "../domain/nativeConvention.js";
 import { basename, isAbsolute } from "node:path";
 import {
-  DirectoryArtifactReader,
-  DirectoryArtifactRootFailure,
-  DirectoryArtifactTraversalLimit,
-  type DirectoryArtifactEntry,
-} from "./DirectoryArtifactReader.js";
-import {
   ArtifactReaderFailure,
   artifactFileCompletion,
   ArtifactResourceScope,
   type ArtifactResourceOwner,
+  abortIfNeeded,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+  DirectoryArtifactTraversalLimit,
+  type DirectoryArtifactEntry,
+  translateArtifactFailure,
 } from "../resources/index.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import {
   inspectDesktopFile,
   RETAINED_FACT_BYTES,
@@ -44,7 +43,6 @@ import type {
   AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
-import { abortIfNeeded } from "../resources/index.js";
 
 const RETAINED_METADATA_BYTES = 32 * 1024 * 1024;
 /**

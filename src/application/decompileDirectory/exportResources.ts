@@ -20,7 +20,7 @@ import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js"
 import { DECOMPILE_DIRECTORY_JOURNAL_NAME } from "../../contracts/decompileDirectory.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
@@ -202,11 +202,11 @@ export class ExportResources {
     return closed.ok
       ? err(error)
       : err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             error,
             closed.error,
             "decompile_all",
-          ).bindCleanupDependencies([closed.error]),
+          ),
         );
   }
 

@@ -2,7 +2,7 @@ import {
   JsonSchemaReferences,
   type JsonSchemaScope,
 } from "./jsonSchemaReferences.js";
-import { isRecord as isObject } from "../domain/isRecord.js";
+import { isRecord as isObject } from "../kernel/isRecord.js";
 import { advertisedSchemaPatterns } from "./advertisedDialect.js";
 import { projectPortablePattern } from "./portablePattern.js";
 import {

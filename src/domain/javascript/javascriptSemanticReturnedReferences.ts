@@ -1,10 +1,10 @@
 import * as t from "@babel/types";
 import {
-  ambientPathMayObserveAt,
-  semanticAmbientWriteGeneration,
+  semanticAmbientEffectGeneration,
   semanticBindingEffectGeneration,
   semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
+import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
 
 import {
   semanticStaticPropertyKey,
@@ -48,6 +48,7 @@ import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
 } from "./javascriptSemanticAliasSelections.js";
+import { semanticDirectInvocationArgument } from "./javascriptSemanticDirectInvocations.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -113,7 +114,8 @@ export const createSemanticReturnedReferences = (
       existing !== undefined &&
       existing.invocation === invocation &&
       existing.iterationUnknown === state.arrayIterationUnknown &&
-      existing.ambientGeneration === semanticAmbientWriteGeneration(state) &&
+      existing.ambientGeneration ===
+        semanticAmbientEffectGeneration(state, "contents") &&
       existing.dependencies.every(
         ({ binding, generation }) =>
           semanticBindingEffectGeneration(binding) === generation,
@@ -152,12 +154,12 @@ export const createSemanticReturnedReferences = (
       javaScriptGenericInvocationMethod(invocation.callee) !== undefined;
     const inheritedInvocationChanged = (method: "call" | "apply"): boolean =>
       invocation !== undefined &&
-      ambientPathMayObserveAt(state, invocation, [
-        "global",
+      intrinsicPrototypeMemberMayHaveChanged(
+        state,
         "Function",
-        "prototype",
         method,
-      ]);
+        invocation,
+      );
     // Exact finite alternatives retain unrelated keys and cross-path
     // correlations. Growing/shrinking cycles still converge at any depth;
     // selector-budget widening retains the complete may-target closure.
@@ -310,6 +312,18 @@ export const createSemanticReturnedReferences = (
           continue;
         }
         dependencies.set(binding, semanticBindingEffectGeneration(binding));
+        // A directly invoked function's parameter starts as its argument,
+        // which therefore did not escape at the call.
+        const argument = semanticDirectInvocationArgument(node, binding, state);
+        if (argument !== undefined)
+          enqueue(
+            argument,
+            current.path,
+            current.path?.length === 0 ? undefined : (current.readAt ?? node),
+            current.capturedSelections,
+            current.invocation,
+            current.classKind,
+          );
         if (current.path !== undefined) {
           if (
             sourceGenericInvocation &&
@@ -725,7 +739,7 @@ export const createSemanticReturnedReferences = (
       result,
       invocation,
       iterationUnknown: state.arrayIterationUnknown,
-      ambientGeneration: semanticAmbientWriteGeneration(state),
+      ambientGeneration: semanticAmbientEffectGeneration(state, "contents"),
       dependencies: [...dependencies].map(([binding, generation]) => ({
         binding,
         generation,
