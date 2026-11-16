@@ -101,7 +101,7 @@ export const parseV8CodeCache = (
   if (
     payloadOffset === V8_CODE_CACHE_NARROW_HEADER_BYTES &&
     bytes.length >= V8_CODE_CACHE_HEADER_BYTES &&
-    bytes.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES) === 0
+    field(V8_CODE_CACHE_NARROW_HEADER_BYTES / 4) === 0
   )
     malformed(
       `Header declares a ${String(declaredPayload)}-byte payload, which resolves to the ${String(V8_CODE_CACHE_NARROW_HEADER_BYTES)}-byte header size only if the ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} zero alignment bytes a wide header carries are payload; the container is ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} bytes short of that layout and is truncated or corrupt.`,
