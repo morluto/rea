@@ -86,6 +86,32 @@ it("reports a browser request whose URL is not a literal as an unknown endpoint 
   });
 });
 
+it("reads an XMLHttpRequest URL from open's second argument on an inline receiver", () => {
+  const scriptKey = `scr_${"1".repeat(64)}`;
+  const result = analyzeWebBundleFixture(
+    inspection(
+      [
+        "new XMLHttpRequest().open('GET', url);",
+        "new XMLHttpRequest().open('POST', '/inline-xhr');",
+      ].join("\n"),
+    ),
+  );
+  expect(result.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/inline-xhr" }),
+  );
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        {
+          mechanism: "call:open",
+          location: { script_key: scriptKey, line: 1, column: 0 },
+        },
+      ],
+    }),
+  );
+});
+
 it.each([
   {
     kind: "recovered",
