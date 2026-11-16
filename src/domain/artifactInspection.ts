@@ -382,9 +382,8 @@ const espFlashDumpProbes = (
     ({ logical_path }) => logical_path === ".",
   )?.format_metadata;
   if (root?.kind !== "esp-image") return [];
-  // Evidence recorded before REA reported the origin has no hint to offer.
   const dump = root.flash_dump;
-  if (dump === null || dump === undefined) return [];
+  if (dump === null) return [];
   const offset = offsetText(dump.flash_offset);
   return [
     {

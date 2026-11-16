@@ -16,7 +16,7 @@ import { afterEach, expect, it, vi, onTestFinished } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ok, err } from "../domain/result.js";
@@ -24,7 +24,7 @@ import {
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";

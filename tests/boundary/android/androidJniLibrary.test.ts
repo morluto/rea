@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { inspectAndroidJniLibrary } from "../../../src/native/android/AndroidJniLibrary.js";
+import { inspectAndroidJniLibrary } from "../../../src/domain/android/androidJniLibrary.js";
 import { androidJniLibraryFactsSchema } from "../../../src/domain/android/androidJniLibraryFacts.js";
 import { projectAndroidJniBindings } from "../../../src/domain/android/androidJniBindings.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";

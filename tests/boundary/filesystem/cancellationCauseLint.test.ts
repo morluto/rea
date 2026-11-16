@@ -9,7 +9,7 @@ RuleTester.it = it;
 const core =
   'import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";';
 const options =
-  'import type { ExecutionOptions } from "./application/AnalysisProvider.js";';
+  'import type { ExecutionOptions } from "./ports/AnalysisProvider.js";';
 
 new RuleTester({
   languageOptions: { parserOptions: { lang: "ts" }, sourceType: "module" },
@@ -115,7 +115,7 @@ new RuleTester({
     },
     {
       code: `${core}\nimport type { ExecutionOptions as Options } from
-        "./application/AnalysisProvider.js";
+        "./ports/AnalysisProvider.js";
         function run(options?: Options) {
           if (options?.signal?.aborted)
             return err(new AnalysisCancelledError("inspect"));

@@ -6,11 +6,6 @@ import { Uint8ArrayReader, ZipReader } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
 import { readZipView } from "../../../src/application/desktop/DesktopZipView.js";
-import {
-  decodeZipEntryText,
-  ZIP_READER_OPTIONS,
-  zipEntryPath,
-} from "../../../src/artifacts/ZipArtifactReader.js";
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { detectStateFormat } from "../../../src/domain/desktop/stateFormats.js";
@@ -30,6 +25,11 @@ import {
   pythonFileViews,
   writeFiles,
 } from "../../support/desktopExportPython.js";
+import {
+  decodeZipEntryText,
+  ZIP_READER_OPTIONS,
+  zipEntryPath,
+} from "../../../src/resources/index.js";
 
 const MIB = 1024 * 1024;
 const FIXTURES = join(import.meta.dirname, "../../fixtures/freecad");

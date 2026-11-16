@@ -1,6 +1,7 @@
+import { browserUrlTargetIdentity } from "../domain/browserObservation.js";
 import { z } from "zod";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
-import type { WebRuntimePort } from "./WebRuntimePort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { WebRuntimePort } from "../ports/WebRuntimePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -155,15 +156,19 @@ export class WebRuntimeService {
         ),
       );
     return completeProviderEvidence(
-      createEvidence(undefined, this.provider.identity(), {
-        predicateType: `rea.${operation.replaceAll("_", "-")}`,
-        operation,
-        parameters: input,
-        result,
-        confidence: "observed",
-        authority: "external-service",
-        limitations: result.limitations,
-      }),
+      createEvidence(
+        browserUrlTargetIdentity(result.target.initial_url),
+        this.provider.identity(),
+        {
+          predicateType: `rea.${operation.replaceAll("_", "-")}`,
+          operation,
+          parameters: input,
+          result,
+          confidence: "observed",
+          authority: "external-service",
+          limitations: result.limitations,
+        },
+      ),
       options?.signal,
     );
   }

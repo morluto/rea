@@ -35,6 +35,7 @@
   },
   "type": "module",
   "imports": {
+    "#dist/*": "./dist/*",
     "#javascript-analysis-worker": "./dist/composition/javascriptAnalysisWorkerProcess.js",
     "#web-bundle-analysis-worker": "./dist/composition/webBundleAnalysisWorkerProcess.js"
   },
@@ -192,7 +193,7 @@
     "test:watch": "vitest --project domain --project services --project adapters --project composition --project conformance --project evaluation --changed",
     "pretest:watch:all": "npm run test:prepare",
     "test:watch:all": "vitest --changed",
-    "typecheck": "node scripts/run-typescript.mjs --noEmit",
+    "typecheck": "node scripts/run-typescript.mjs --noEmit && node scripts/run-typescript.mjs --noEmit -p tsconfig.scripts.json",
     "verify:test-temp-hygiene": "npm run test:prepare && node scripts/verify-test-temp-hygiene.mjs",
     "verify:hopper": "npm run verify:fixtures && npm run build:cached && node scripts/verify-real-hopper.mjs",
     "verify:hopper:callers": "npm run build:cached && node scripts/verify-real-hopper-callers.mjs",
@@ -378,6 +379,7 @@
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
     "@msgpack/msgpack": "3.1.3",
+    "@toon-format/toon": "2.3.1",
     "@xmldom/xmldom": "0.9.12",
     "@xterm/addon-serialize": "0.14.0",
     "@xterm/headless": "6.0.0",
@@ -429,7 +431,6 @@
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/typescript-checker": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
-    "@toon-format/toon": "2.3.1",
     "@types/cross-spawn": "6.0.6",
     "@types/node": "26.6.4",
     "@types/semver": "7.7.1",

@@ -11,7 +11,7 @@ import * as owned from "../process/OwnedCommand.js";
 import { systemDoctorHost } from "../application/Doctor.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 

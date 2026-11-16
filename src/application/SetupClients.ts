@@ -6,7 +6,7 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientEnvironment } from "./SetupPlan.js";
-import { assertSetupActive } from "./SetupCancellation.js";
+import { assertSetupActive } from "../domain/setupCancellation.js";
 
 export const failedConfigurationMessage = (
   result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,

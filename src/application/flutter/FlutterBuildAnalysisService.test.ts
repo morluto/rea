@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { FlutterBuildAnalysisService } from "./FlutterBuildAnalysisService.js";
 import type { FlutterBuildAnalysisPort } from "./FlutterBuildAnalysisPort.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
