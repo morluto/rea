@@ -232,8 +232,11 @@ it("reports a signed TOC without claiming the signature is valid", async () => {
 });
 
 it("refuses pbzx payload expansion while keeping PackageInfo and Scripts", async () => {
-  const { reader, entries } = await entriesOf(buildPbzxPayloadPackage());
+  const { reader, entries, coverage } = await entriesOf(
+    buildPbzxPayloadPackage(),
+  );
   try {
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
     const metadata = reader.formatMetadata();
     expect(metadata?.payload).toMatchObject({
       present: true,
@@ -300,11 +303,12 @@ it("keeps the header when TOC inflate fails", async () => {
 });
 
 it("keeps other members when a heap range is out of bounds", async () => {
-  const { reader, entries } = await entriesOf(
+  const { reader, entries, coverage } = await entriesOf(
     buildHeapOutOfBoundsPackage(),
     "heap-oob.pkg",
   );
   try {
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
     expect(reader.formatMetadata()?.refusals).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "heap-out-of-bounds" }),
@@ -319,11 +323,12 @@ it("keeps other members when a heap range is out of bounds", async () => {
 });
 
 it("keeps PackageInfo when Payload cpio headers are garbage", async () => {
-  const { reader, entries } = await entriesOf(
+  const { reader, entries, coverage } = await entriesOf(
     buildBadCpioPackage(),
     "bad-cpio.pkg",
   );
   try {
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
     expect(reader.formatMetadata()?.refusals).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "cpio-malformed" }),

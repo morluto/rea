@@ -555,8 +555,14 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       signal,
     );
     this.#metadata = metadata;
+    // Completeness comes from examined coverage: a budget skip or any refusal
+    // that left content unread (heap range, encoding, decode, cpio, pbzx)
+    // keeps coverage unknown. A version notice still reads every field.
+    const unexamined =
+      skipped.length > 0 ||
+      metadata.refusals.some((item) => item.code !== "header-version");
     this.#coverage = {
-      status: skipped.length > 0 ? "unknown" : "complete",
+      status: unexamined ? "unknown" : "complete",
       limitations: [
         ...limitations,
         ...skipped,
