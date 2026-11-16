@@ -9,7 +9,7 @@ import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js"
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { DesktopSessionCleanupError } from "../../desktop/DesktopApplicationSession.js";
+import { DesktopSessionCleanupError } from "../../ports/DesktopApplicationSession.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import { walkHomeState } from "../../desktop/HomeStateWalker.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";

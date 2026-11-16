@@ -1,4 +1,6 @@
 import type { X11WindowProperties } from "../domain/desktop/x11Windows.js";
+import type { ProviderProcessInspectionCleanup } from "../process/ProviderProcess.js";
+import type { AnalysisCleanupLease } from "../resources/index.js";
 
 /**
  * What a desktop application capture reports about the application and its
@@ -33,6 +35,27 @@ export interface WindowMatching {
   readonly names: ReadonlySet<string>;
   /** False when window pids live in another pid namespace, as in a flatpak sandbox. */
   readonly byPid: boolean;
+}
+
+/** A cleanup that could not be confirmed, and the exact owners that can retry it. */
+export interface UnresolvedCleanup {
+  readonly reason: string;
+  readonly leases: readonly AnalysisCleanupLease[];
+  /** Failure-time facts remain available after the lease releases its owners. */
+  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
+}
+
+/** A session failed, and the processes it launched could not all be removed. */
+export class DesktopSessionCleanupError extends Error {
+  constructor(
+    readonly primary: unknown,
+    readonly cleanup: UnresolvedCleanup,
+  ) {
+    super(`desktop session cleanup is incomplete: ${cleanup.reason}`, {
+      cause: primary,
+    });
+    this.name = "DesktopSessionCleanupError";
+  }
 }
 
 /** Why the request does not name a launchable application. */
