@@ -1,3 +1,10 @@
+import { readLeb128, ULEB32, type Leb128Encoding } from "../domain/leb128.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
+
+/** The ParseFailure format of a wasm32 module image. */
+const WASM_MODULE_FORMAT = "wasm-module";
+const SLEB32: Leb128Encoding = { signed: true, bits: 32 };
+
 /**
  * Static image of an uncompressed wasm32 module: function counts, the one
  * memory, the one funcref table as active MVP element segments fill it, and
@@ -5,18 +12,57 @@
  * reader would have to evaluate or relocate is refused as unsupported.
  */
 
-export class WasmModuleFailure extends Error {
+/** What a wasm module capacity maximum counts. */
+export type WasmModuleLimitUnit = "entries" | "bytes";
+
+/**
+ * A module this reader cannot image. A capacity refusal is a ParseFailure
+ * `limit` naming the exceeded WASM_MODULE_LIMITS entry and its unit.
+ */
+export class WasmModuleFailure extends ParseFailureError<
+  "malformed" | "unsupported" | "limit"
+> {
+  /** What the exceeded maximum counts; set only for a limit. */
+  readonly unit: WasmModuleLimitUnit | undefined;
+  constructor(kind: "malformed" | "unsupported", message: string);
   constructor(
-    readonly kind: "unsupported" | "malformed" | "capacity",
+    kind: "limit",
     message: string,
-    /** The exceeded maximum and what it counts; set only for capacity. */
-    readonly limit?: {
-      readonly maximum: number;
-      readonly unit: "entries" | "bytes";
+    limit: {
+      readonly name: keyof typeof WASM_MODULE_LIMITS;
+      readonly unit: WasmModuleLimitUnit;
+    },
+  );
+  constructor(
+    kind: "malformed" | "unsupported" | "limit",
+    message: string,
+    limit?: {
+      readonly name: keyof typeof WASM_MODULE_LIMITS;
+      readonly unit: WasmModuleLimitUnit;
     },
   ) {
-    super(message);
+    super(
+      kind === "limit" && limit !== undefined
+        ? {
+            kind,
+            format: WASM_MODULE_FORMAT,
+            detail: message,
+            limit: {
+              name: limit.name,
+              maximum: WASM_MODULE_LIMITS[limit.name],
+            },
+          }
+        : kind === "unsupported"
+          ? {
+              kind,
+              format: WASM_MODULE_FORMAT,
+              detail: message,
+              undecodedContent: true,
+            }
+          : { kind: "malformed", format: WASM_MODULE_FORMAT, detail: message },
+    );
     this.name = "WasmModuleFailure";
+    this.unit = limit?.unit;
   }
 }
 
@@ -127,32 +173,29 @@ class Cursor {
     return this.bytes[this.at++]!;
   }
   u32(): number {
-    let result = 0;
-    for (let shift = 0; shift < 35; shift += 7) {
-      const byte = this.byte();
-      result += (byte & 0x7f) * 2 ** shift;
-      if ((byte & 0x80) === 0) {
-        if (result > 0xffffffff) throw malformed("u32 overflows");
-        return result;
-      }
-    }
-    throw malformed("u32 is longer than 5 bytes");
+    return Number(this.leb128(ULEB32, "u32"));
   }
   i32(): number {
-    let result = 0n;
-    let shift = 0n;
-    let byte: number;
-    do {
-      if (shift >= 35n) throw malformed("i32 is longer than 5 bytes");
-      byte = this.byte();
-      // The fifth byte holds bits 28 to 31; its upper bits must repeat the sign.
-      if (shift === 28n && (byte & 0x78) !== 0 && (byte & 0x78) !== 0x78)
-        throw malformed("i32 has unused bits set in its fifth byte");
-      result |= BigInt(byte & 0x7f) << shift;
-      shift += 7n;
-    } while (byte & 0x80);
-    if (byte & 0x40) result -= 1n << shift;
-    return Number(BigInt.asIntN(32, result));
+    return Number(this.leb128(SLEB32, "i32"));
+  }
+  /** One 32-bit LEB128 through the shared decoder, with this reader's wording. */
+  private leb128(encoding: Leb128Encoding, label: "u32" | "i32"): bigint {
+    const start = this.at;
+    const read = readLeb128(this.bytes, start, this.end, encoding);
+    if ("value" in read) {
+      this.at = read.next;
+      return read.value;
+    }
+    if (read.failure === "truncated")
+      throw malformed(`truncated at byte ${read.at}`);
+    if (read.at - start >= 5)
+      throw malformed(`${label} is longer than 5 bytes`);
+    // The fifth byte holds bits 28 to 31; its upper bits must be zero or repeat the sign.
+    throw malformed(
+      label === "u32"
+        ? "u32 overflows"
+        : "i32 has unused bits set in its fifth byte",
+    );
   }
   span(size: number): number {
     if (size > this.end - this.at)
@@ -198,9 +241,9 @@ export function* readWasmModuleImageSteps(
     throw unsupported("module is gzip compressed; decompress the .wasm first");
   if (bytes.length > WASM_MODULE_LIMITS.inputBytes)
     throw new WasmModuleFailure(
-      "capacity",
+      "limit",
       `module has ${bytes.length} bytes, above ${WASM_MODULE_LIMITS.inputBytes}`,
-      { maximum: WASM_MODULE_LIMITS.inputBytes, unit: "bytes" },
+      { name: "inputBytes", unit: "bytes" },
     );
   if (bytes.length < 8 || !bytes.subarray(0, 4).equals(WASM_MAGIC))
     throw malformed("not a WebAssembly module");
@@ -290,9 +333,9 @@ export function* readWasmModuleImageSteps(
         );
       if (count > WASM_MODULE_LIMITS.elementSegments)
         throw new WasmModuleFailure(
-          "capacity",
+          "limit",
           `module has ${count} element segments, above ${WASM_MODULE_LIMITS.elementSegments}`,
-          { maximum: WASM_MODULE_LIMITS.elementSegments, unit: "entries" },
+          { name: "elementSegments", unit: "entries" },
         );
       for (let index = 0; index < count; index++) {
         if (tick()) yield;
@@ -309,9 +352,9 @@ export function* readWasmModuleImageSteps(
         slots += length;
         if (slots > WASM_MODULE_LIMITS.tableSlots)
           throw new WasmModuleFailure(
-            "capacity",
+            "limit",
             `element segments fill more than ${WASM_MODULE_LIMITS.tableSlots} slots`,
-            { maximum: WASM_MODULE_LIMITS.tableSlots, unit: "entries" },
+            { name: "tableSlots", unit: "entries" },
           );
         // Typed storage keeps a retained slot at four bytes.
         const functions = new Uint32Array(length);
@@ -337,9 +380,9 @@ export function* readWasmModuleImageSteps(
         );
       if (count > WASM_MODULE_LIMITS.dataSegments)
         throw new WasmModuleFailure(
-          "capacity",
+          "limit",
           `module has ${count} data segments, above ${WASM_MODULE_LIMITS.dataSegments}`,
-          { maximum: WASM_MODULE_LIMITS.dataSegments, unit: "entries" },
+          { name: "dataSegments", unit: "entries" },
         );
       for (let index = 0; index < count; index++) {
         if (tick()) yield;
@@ -390,9 +433,9 @@ export function* readWasmModuleImageSteps(
   }
   if (high - low > WASM_MODULE_LIMITS.tableSlots)
     throw new WasmModuleFailure(
-      "capacity",
+      "limit",
       `element segments span ${high - low} table slots, above ${WASM_MODULE_LIMITS.tableSlots}`,
-      { maximum: WASM_MODULE_LIMITS.tableSlots, unit: "entries" },
+      { name: "tableSlots", unit: "entries" },
     );
   const words = new Uint32Array(high > low ? high - low : 0).fill(EMPTY_SLOT);
   for (const { base, functions } of elements) {
@@ -475,9 +518,9 @@ export function* readInitialLinearMemorySteps(
   // The source module stays live while the view exists, so both count.
   if (high - low + sourceBytes > WASM_MODULE_LIMITS.linearMemoryBytes)
     throw new WasmModuleFailure(
-      "capacity",
+      "limit",
       `data segments span ${high - low} bytes beside a ${sourceBytes}-byte module, above ${WASM_MODULE_LIMITS.linearMemoryBytes} together`,
-      { maximum: WASM_MODULE_LIMITS.linearMemoryBytes, unit: "bytes" },
+      { name: "linearMemoryBytes", unit: "bytes" },
     );
   // Sparse segments would make a small file allocate (and searches walk) a
   // large zero span, so the zero bytes the view adds are bounded too.
@@ -492,9 +535,9 @@ export function* readInitialLinearMemorySteps(
   }
   if (high - low - stored > WASM_MODULE_LIMITS.linearMemoryGapBytes)
     throw new WasmModuleFailure(
-      "capacity",
+      "limit",
       `data segments leave ${high - low - stored} zero bytes in their span, above ${WASM_MODULE_LIMITS.linearMemoryGapBytes}`,
-      { maximum: WASM_MODULE_LIMITS.linearMemoryGapBytes, unit: "bytes" },
+      { name: "linearMemoryGapBytes", unit: "bytes" },
     );
   // Zero the view in bounded chunks too, so allocation does not block cancellation.
   const memory = Buffer.allocUnsafe(high - low);

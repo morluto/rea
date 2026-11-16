@@ -151,12 +151,12 @@ function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
     memory = yield* readInitialLinearMemorySteps(module, bytes.length);
   } catch (cause) {
     if (cause instanceof WasmModuleFailure) {
-      if (cause.kind === "capacity" && cause.limit !== undefined)
+      if (cause.failure.kind === "limit" && cause.unit !== undefined)
         throw new Il2cppBinaryFormatFailure(
           rebuilding ? "wasm-memory-capacity" : "wasm-module-capacity",
           cause.message,
-          cause.limit.maximum,
-          cause.limit.unit,
+          cause.failure.limit.maximum,
+          cause.unit,
         );
       throw new Il2cppBinaryFormatFailure(
         cause.kind === "unsupported"
