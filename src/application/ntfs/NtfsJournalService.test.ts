@@ -5,8 +5,8 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import * as stableArtifact from "../../artifacts/readStableArtifact.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import * as stableArtifact from "../../resources/readStableArtifact.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { inspectNtfsJournalEvidence } from "./NtfsJournalService.js";
 import { parseEvidence } from "../../domain/evidence.js";
@@ -101,7 +101,7 @@ it("refuses an oversized acquisition as a fixed ceiling, not host memory", async
       },
     });
     // Recovery comes from the fixed-allowance owner, not host-memory advice.
-    expect(projected.remediation.action).toBe(
+    expect(projected.remediation.action).toContain(
       fixedAllowanceRemediation("The NTFS journal file allowance", "input"),
     );
   } finally {

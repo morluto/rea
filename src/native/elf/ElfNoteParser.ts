@@ -6,9 +6,11 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+  type ArtifactFixedLimit,
+} from "../../resources/index.js";
 import {
   readElfFixedHeader,
   type ElfFixedHeader,
@@ -28,9 +30,10 @@ import {
   elfObjectTypeName,
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -40,6 +43,17 @@ const HEX_DESCRIPTOR_LIMIT = 64;
 /** The existing Linux note layouts do not establish another declared ABI. */
 const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
   (header.osAbi === 0 || header.osAbi === 3) && header.abiVersion === 0;
+
+/**
+ * The note text, hash, and scan ceiling. It equals the admitted image length
+ * plus decoded section names, so host memory cannot raise it.
+ */
+const noteTextAllowance = (budget: TextBudget): ArtifactFixedLimit => ({
+  name: "The ELF note text, hash, and scan allowance (derived from the image length and section names)",
+  kind: "parser",
+  limit: budget.limit,
+  unit: "bytes",
+});
 
 interface TextBudget {
   limit: number;
@@ -111,13 +125,10 @@ const chargeText = (
     throw new ArtifactReaderFailure(
       "limit",
       `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
-      { boundary: "memory" },
+      { boundary: "memory", fixedAllowance: noteTextAllowance(budget) },
     );
   budget[field] += bytes;
 };
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const GNU_OS_NAMES: Readonly<Record<number, string>> = {
   0: "linux",
@@ -454,7 +465,7 @@ const decodeCoreFile = (
     throw new ArtifactReaderFailure(
       "limit",
       `ELF note text exceeds the ${String(text.limit)}-byte budget.`,
-      { boundary: "memory" },
+      { boundary: "memory", fixedAllowance: noteTextAllowance(text) },
     );
   }
 
@@ -976,7 +987,7 @@ const toEntry = (
   let digest = text.hashes.get(range);
   if (digest === undefined) {
     chargeText(text, note.descriptor.length, "hashed");
-    digest = sha256(note.descriptor);
+    digest = sha256Hex(note.descriptor);
     text.hashes.set(range, digest);
   }
   return {

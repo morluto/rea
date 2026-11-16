@@ -1,9 +1,10 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { desktopLibraryPolicyInputSchema } from "../domain/desktop/libraryPolicy.js";
 import { desktopViewPolicyInputSchema } from "../domain/desktop/desktopViewPolicy.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { createInterface } from "node:readline";
 
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
@@ -11,8 +12,10 @@ import type { DesktopStateReaders } from "../application/desktop/DesktopApplicat
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type { Evidence } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { err, ok } from "../domain/result.js";
@@ -20,16 +23,19 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { cliDecimalField } from "./options.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   DESKTOP_CAPTURE_DEFAULTS,
   type DesktopCaptureProgress,
 } from "../domain/desktop/desktopCapture.js";
+import { createDesktopCaptureProvider } from "../desktop/DesktopCaptureProvider.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { writeCliProgressLine } from "./cliProgress.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** One coherent view policy; invalid JSON and unknown controls fail at admission. */
 const viewPolicyOption = z
@@ -228,8 +234,7 @@ const withStateReaders = async (
                 ? ArtifactReaderFailure.cleanupObservation(cause, [])
                 : {
                     resources: [],
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
+                    reason: errorMessage(cause),
                   };
             const failure = new ProviderCleanupError(
               "rea-desktop",
@@ -302,7 +307,7 @@ const registerDesktopExportCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.exportDesktopApplication, {
+  registerCliCommand(cli, CLI_COMMANDS.exportDesktopApplication, {
     description:
       "Export a desktop application capture folder as an agentenv computer app bundle: class, env.toml, skill and seed",
     args: z.object({
@@ -418,7 +423,7 @@ const registerDesktopTaskCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.describeDesktopApplicationTask, {
+  registerCliCommand(cli, CLI_COMMANDS.describeDesktopApplicationTask, {
     description:
       "Describe how a desktop application capture's files changed from the seed checkpoint to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
     args: z.object({
@@ -464,7 +469,7 @@ const registerDesktopStateCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectDesktopApplicationState, {
+  registerCliCommand(cli, CLI_COMMANDS.inspectDesktopApplicationState, {
     description:
       "Read a desktop application capture folder into the application's state: roles, typed JSON views of each version and kinds of change",
     args: z.object({
@@ -516,7 +521,7 @@ export const registerDesktopCaptureCommands = (
   registerDesktopStateCommand(cli, logger, environment);
   registerDesktopExportCommand(cli, logger, environment);
   registerDesktopTaskCommand(cli, logger, environment);
-  cli.command(CLI_COMMANDS.captureDesktopApplication, {
+  registerCliCommand(cli, CLI_COMMANDS.captureDesktopApplication, {
     description:
       "Launch a Linux desktop application, watch it while it is used and record its windows and state at checkpoints read from stdin",
     options: captureOptions,
@@ -551,9 +556,10 @@ export const registerDesktopCaptureCommands = (
                       : absoluteCallerPath(options.packageFile),
                 },
                 {
-                  platform: process.platform,
+                  platform: HOST_PLATFORM.platform,
                   environment,
                   callerDirectory: process.cwd(),
+                  desktop: createDesktopCaptureProvider(),
                   nextRequest: () => requests.next(),
                   report: async (message, event) => {
                     const progress: DesktopCaptureProgress = {

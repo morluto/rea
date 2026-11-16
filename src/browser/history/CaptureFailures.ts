@@ -1,23 +1,23 @@
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { captureBudgets } from "./CaptureBudgets.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/index.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCleanupDependencies,
+} from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -55,6 +55,7 @@ import {
   CAPTURE_LIMITS,
   type CaptureFormatError,
 } from "./CaptureFormatError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 const OPERATION = "inspect_web_network_capture";
 
 /** A refused protobuf body decode; a limit names the budget that owns it. */
@@ -301,12 +302,7 @@ export const historicalCaptureFailure = (
     // Bare syscall rejections remain physical even when they equal the abort reason.
     phase === "decoder" &&
     origin === "owned-or-classified" &&
-    options?.signal?.aborted === true &&
-    (cause === options.signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
+    isAbortOf(cause, options?.signal)
   )
     return cancelledBy(OPERATION, options.signal);
   return new ProviderAdapterError(input.format, OPERATION, {
@@ -317,7 +313,7 @@ export const historicalCaptureFailure = (
       ...(descriptorRead
         ? { source_path: sourcePath, input_path: inputPath }
         : {}),
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       ...(origin === "owned-or-classified" &&
       cause instanceof ArtifactReaderFailure
         ? { failure_kind: cause.reason }
@@ -443,11 +439,11 @@ export const withCaptureReaderCleanup = (
       cleanup.retainPartialObservation(primary.partialObservation);
     return cleanup;
   }
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     OPERATION,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };

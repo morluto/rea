@@ -1,4 +1,5 @@
 import { decodeMarshalUtf8 } from "./marshalUtf8.js";
+import { Budget } from "../budget.js";
 import { ParseFailureError } from "../parseFailure.js";
 
 const FLAG_REF = 0x80;
@@ -122,14 +123,21 @@ export interface MarshalReaderOptions {
  */
 export abstract class MarshalReader<V extends { readonly kind: string }> {
   offset = 0;
-  objects = 0;
   depthReached = 0;
   readonly #refs: (V | undefined)[] = [];
+  readonly #objects: Budget;
 
   constructor(
     readonly bytes: Buffer,
     readonly options: MarshalReaderOptions,
-  ) {}
+  ) {
+    this.#objects = new Budget(options.limits.maxObjects);
+  }
+
+  /** Objects read so far, within `maxObjects`. */
+  get objects(): number {
+    return this.#objects.used;
+  }
 
   /** View a core value as this reader's value type. */
   protected abstract wrap(value: MarshalCoreValue<V>): V;
@@ -171,9 +179,7 @@ export abstract class MarshalReader<V extends { readonly kind: string }> {
 
   readObject(depth: number): V {
     const { limits } = this.options;
-    this.objects += 1;
-    if (this.objects > limits.maxObjects)
-      this.limitExceeded({ limit: "objects" });
+    if (!this.#objects.tryCharge(1)) this.limitExceeded({ limit: "objects" });
     if (depth > limits.maxDepth) this.limitExceeded({ limit: "depth" });
     this.depthReached = Math.max(this.depthReached, depth);
     const raw = this.u8();

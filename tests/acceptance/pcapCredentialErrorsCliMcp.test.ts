@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { pcapResultSchemas } from "../../src/domain/pcap/pcapAnalysis.js";
@@ -38,6 +38,11 @@ const verifyOriginalError = (document: unknown) => {
       resource: z.literal("memory"),
       reported_limits: z.object({
         max_output_bytes: z.literal(8 * 1024 * 1024),
+      }),
+      refusal: z.object({
+        kind: z.literal("fixed_ceiling"),
+        limit: z.literal(8 * 1024 * 1024),
+        unit: z.literal("bytes"),
       }),
       captured_output: z.object({
         stdout: z.string(),

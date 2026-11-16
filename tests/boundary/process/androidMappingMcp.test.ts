@@ -1,5 +1,5 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createHash } from "node:crypto";
 import { readFile, truncate, unlink, writeFile } from "node:fs/promises";
@@ -19,6 +19,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -37,19 +38,15 @@ const connect = async () => {
       },
     },
   );
-  const client = new Client({
+  const mcp = createTestMcp();
+  onTestFinished(async () => {
+    await mcp.close();
+    await session.close();
+  });
+  const client = await mcp.connect(server, {
     name: "android-mapping-regression",
     version: "1",
   });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
-  });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
   const inspect = (mapping_path: string) =>
     client.callTool({
       name: "inspect_android_class",
@@ -169,7 +166,7 @@ it("annotates class inspection with a caller-selected mapping and reuses one eng
       contract.outputSchema.parse(response.structuredContent),
     );
     expect(evidence.parameters.mapping_path).toBe(path);
-    expect(evidence.subject?.digest.sha256).toBe(apkSha256);
+    expect(fileIdentity(evidence.subject).sha256).toBe(apkSha256);
     expect(evidence.limitations.join(" ")).toContain("pg_map_id");
     const result = androidResultSchemas.inspect_android_class.parse(
       evidence.normalized_result,
