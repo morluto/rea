@@ -1111,13 +1111,16 @@ describe("later initializer precision", () => {
 });
 
 describe("later initializer alias write bounds", () => {
-  it("indexes 8,000 aliases and writes without exhausting the worker heap", () => {
+  // 64 million alias and write pairs, as many as 8,000 of each. Member writes
+  // to one object cost quadratic time in the ambient write index, which this
+  // bound does not exercise, so the pairs come from more aliases.
+  it("indexes 32,000 aliases and 2,000 writes without exhausting the worker heap", () => {
     const aliases = Array.from(
-      { length: 8_000 },
+      { length: 32_000 },
       (_, index) => `const alias${index} = value;`,
     ).join("\n");
     const writes = Array.from(
-      { length: 8_000 },
+      { length: 2_000 },
       (_, index) => `value.property${index} = ${index};`,
     ).join("\n");
     const result = analyze(`
@@ -1128,7 +1131,7 @@ describe("later initializer alias write bounds", () => {
 
     expect(result.parse_error_count).toBe(0);
     expect(result.parse_status).toBe("complete");
-  }, 30_000);
+  });
 
   it("indexes one very large alias group without exceeding the argument limit", () => {
     const aliases = Array.from(
@@ -1143,7 +1146,7 @@ describe("later initializer alias write bounds", () => {
 
     expect(result.parse_error_count).toBe(0);
     expect(result.parse_status).toBe("complete");
-  }, 30_000);
+  });
 });
 
 it("keeps require.resolve-only Electron references outside the call-path gate", () => {
