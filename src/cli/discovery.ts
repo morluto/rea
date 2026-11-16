@@ -26,7 +26,7 @@ import {
   refreshUpdateCache,
   UPDATE_CHECK_FLAG,
   updateNoticeCta,
-  type EnvironmentVariable,
+  type UpdateEnvironment,
 } from "./updateNotice.js";
 import {
   formatCommandHelp,
@@ -196,7 +196,7 @@ const schemaAnswer = (
 
 /** Facts about one invocation's process that discovery output depends on. */
 interface Invocation {
-  readonly variable: EnvironmentVariable;
+  readonly environment: UpdateEnvironment;
   readonly stdoutIsTerminal: boolean;
   /** `performance.now()` when the dispatcher received the invocation. */
   readonly started: number;
@@ -211,7 +211,7 @@ interface Invocation {
 const unknownCommandAnswer = (
   cli: CliInstance,
   global: CliGlobalArguments,
-  { variable, stdoutIsTerminal, started }: Invocation,
+  { environment, stdoutIsTerminal, started }: Invocation,
 ): DiscoveryAnswer | undefined => {
   const controls = readCliOutputArguments(global);
   const format = controls.formatExplicit ? controls.format : "toon";
@@ -237,7 +237,7 @@ const unknownCommandAnswer = (
     },
   ];
   const update = human
-    ? availableUpdate(cli.name, PRODUCT_IDENTITY.packageVersion, variable)
+    ? availableUpdate(cli.name, PRODUCT_IDENTITY.packageVersion, environment)
     : undefined;
   const notice =
     update === undefined ? [] : updateNoticeCta(cli.name, update).commands;
@@ -362,7 +362,7 @@ export const serveDiscovery = (
   cli: CliInstance,
   arguments_: readonly string[],
   options: ServeOptions,
-  variable: EnvironmentVariable,
+  environment: UpdateEnvironment,
 ): Promise<void> | undefined => {
   const global = parseCliGlobalArguments(arguments_);
   // The refresh writes nothing and answers before every other flag.
@@ -370,10 +370,10 @@ export const serveDiscovery = (
     return refreshUpdateCache(
       cli.name,
       PRODUCT_IDENTITY.packageVersion,
-      variable,
+      environment,
     );
   const result = discoveryAnswer(cli, global, {
-    variable,
+    environment,
     stdoutIsTerminal: process.stdout.isTTY === true,
     started: performance.now(),
   });

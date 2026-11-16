@@ -23,7 +23,7 @@
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
@@ -45,11 +45,18 @@ const REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const REGISTRY_TIMEOUT_MS = 10_000;
 
 /**
- * Reads one environment variable by its conventional spelling. Windows
- * environments are case-insensitive, so the reader resolves the platform's
- * spelling.
+ * The selected CLI snapshot and the platform that gave its keys identity.
+ * Both notice decisions and the refresh child consume this same snapshot.
  */
-export type EnvironmentVariable = (name: string) => string | undefined;
+export interface UpdateEnvironment {
+  readonly variables: Readonly<Record<string, string | undefined>>;
+  readonly platform: NodeJS.Platform;
+}
+
+const variable = (environment: UpdateEnvironment, name: string) =>
+  environment.variables[
+    environment.platform === "win32" ? name.toUpperCase() : name
+  ];
 
 export interface AvailableUpdate {
   readonly name: string;
@@ -111,11 +118,11 @@ export const isNewerVersion = (candidate: string, current: string): boolean => {
   return false;
 };
 
-const notificationsDisabled = (variable: EnvironmentVariable): boolean => {
-  const ci = variable("CI");
+const notificationsDisabled = (environment: UpdateEnvironment): boolean => {
+  const ci = variable(environment, "CI");
   return (
-    Boolean(variable("NO_UPDATE_NOTIFIER")) ||
-    variable("npm_config_update_notifier") === "false" ||
+    Boolean(variable(environment, "NO_UPDATE_NOTIFIER")) ||
+    variable(environment, "npm_config_update_notifier") === "false" ||
     Boolean(ci && ci !== "false")
   );
 };
@@ -181,15 +188,33 @@ const updatePackage = (cli: string, version: string) => {
 };
 
 const cacheFile = (
-  variable: EnvironmentVariable,
+  environment: UpdateEnvironment,
   packageName: string,
-): string =>
-  join(
-    variable("XDG_CACHE_HOME") || join(homedir(), ".cache"),
+): string | undefined => {
+  let root = variable(environment, "XDG_CACHE_HOME");
+  if (!root) {
+    let home = variable(
+      environment,
+      environment.platform === "win32" ? "USERPROFILE" : "HOME",
+    );
+    if (home === undefined) {
+      try {
+        // Match the child without consulting the parent's ambient HOME.
+        home = userInfo().homedir;
+      } catch {
+        // A notice is optional when the OS account has no readable home.
+        return undefined;
+      }
+    }
+    root = join(home, ".cache");
+  }
+  return join(
+    root,
     "incur",
     "updates",
     `${encodeURIComponent(packageName)}.json`,
   );
+};
 
 const readCache = (file: string): UpdateCache | undefined => {
   try {
@@ -216,6 +241,7 @@ const scheduleRefresh = (
   file: string,
   checkedAt: number,
   latest: string | undefined,
+  environment: UpdateEnvironment,
 ): void => {
   const script = process.argv[1];
   if (!script) return;
@@ -233,6 +259,7 @@ const scheduleRefresh = (
     const child = spawn(process.execPath, args, {
       detached: true,
       stdio: "ignore",
+      env: environment.variables,
     });
     child.once("error", () => {});
     child.unref();
@@ -249,19 +276,20 @@ const scheduleRefresh = (
 export const availableUpdate = (
   cli: string,
   version: string,
-  variable: EnvironmentVariable,
+  environment: UpdateEnvironment,
 ): AvailableUpdate | undefined => {
-  if (notificationsDisabled(variable)) return undefined;
+  if (notificationsDisabled(environment)) return undefined;
   const target = updatePackage(cli, version);
   if (target === undefined) return undefined;
-  const file = cacheFile(variable, target.name);
+  const file = cacheFile(environment, target.name);
+  if (file === undefined) return undefined;
   const cached = readCache(file);
   const checkedAt = Date.now();
   if (
     cached === undefined ||
     checkedAt - cached.checkedAt >= REFRESH_INTERVAL_MS
   )
-    scheduleRefresh(file, checkedAt, cached?.latest);
+    scheduleRefresh(file, checkedAt, cached?.latest, environment);
   if (!cached?.latest || !isNewerVersion(cached.latest, target.current))
     return undefined;
   return { name: target.name, current: target.current, latest: cached.latest };
@@ -282,13 +310,16 @@ export const updateNoticeCta = (cli: string, update: AvailableUpdate) => ({
 export const refreshUpdateCache = async (
   cli: string,
   version: string,
-  variable: EnvironmentVariable,
+  environment: UpdateEnvironment,
 ): Promise<void> => {
   try {
     const target = updatePackage(cli, version);
     if (target === undefined) return;
+    const file = cacheFile(environment, target.name);
+    if (file === undefined) return;
     const registry =
-      variable("npm_config_registry") || "https://registry.npmjs.org";
+      variable(environment, "npm_config_registry") ||
+      "https://registry.npmjs.org";
     const response = await fetch(
       new URL(
         encodeURIComponent(target.name),
@@ -309,7 +340,7 @@ export const refreshUpdateCache = async (
     const latest = metadata["dist-tags"]?.latest;
     if (typeof latest !== "string" || parseVersion(latest) === undefined)
       return;
-    writeCache(cacheFile(variable, target.name), {
+    writeCache(file, {
       checkedAt: Date.now(),
       latest,
     });
