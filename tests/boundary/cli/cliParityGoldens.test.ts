@@ -176,6 +176,27 @@ const CASES: readonly ParityCase[] = [
     name: "llms-command-json",
     arguments: fixed("inspect-byte-entropy", "--llms", "--format", "json"),
   },
+  // Which discovery document wins when several are asked for.
+  {
+    name: "discovery-llms-over-help",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--help"),
+  },
+  {
+    name: "discovery-llms-over-version",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--version"),
+  },
+  {
+    name: "discovery-llms-full-over-llms",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--llms-full"),
+  },
+  {
+    name: "discovery-version-over-schema",
+    arguments: fixed("inspect-byte-entropy", "--schema", "--version"),
+  },
+  {
+    name: "discovery-help-over-schema",
+    arguments: fixed("inspect-byte-entropy", "--schema", "--help"),
+  },
   {
     name: "llms-full-command-yaml",
     arguments: fixed("inspect-byte-entropy", "--llms-full", "--format", "yaml"),
