@@ -12,6 +12,8 @@ import {
   readerCommand,
   PYTHON_READER_CLEANUP,
 } from "../../../src/domain/desktop/appTaskReaders.js";
+import { processIdentityHasExited } from "../../../src/process/ProcessLifecycle.js";
+import { systemProcessOwnershipHost } from "../../../src/process/ProcessOwnershipObservation.js";
 import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
 import { parseExactJson } from "../../../src/domain/exactJsonNumber.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -448,10 +450,18 @@ it("stops the reader, the processes it started and its folder when the export is
     }
     throw new Error("the reader never started");
   };
-  const reader = await pid();
-  controller.abort(new Error("cancelled"));
-  await expect(read).rejects.toThrow();
-  expect(() => process.kill(reader, 0)).toThrow();
-  const folder = (await readFile(join(out, "cwd"), "utf8")).trim();
-  await expect(access(folder)).rejects.toThrow();
+  try {
+    const reader = await pid();
+    controller.abort(new Error("cancelled"));
+    await expect(read).rejects.toThrow();
+    const identities = await systemProcessOwnershipHost.processIdentities?.([
+      { pid: reader },
+    ]);
+    expect(processIdentityHasExited(identities?.get(reader))).toBe(true);
+    const folder = (await readFile(join(out, "cwd"), "utf8")).trim();
+    await expect(access(folder)).rejects.toThrow();
+  } finally {
+    controller.abort(new Error("test cleanup"));
+    await read.catch(() => undefined);
+  }
 });
