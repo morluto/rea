@@ -93,18 +93,30 @@ describe("parseCliArgv", () => {
         },
       ],
     });
-    const options = failure(["file", "--block-size", "abc", "--mode", "c"]);
-    expect(options.message).toBe(
-      'Invalid input: expected number, received NaN; Invalid option: expected one of "a"|"b"',
-    );
-    expect(
-      options.kind === "validation"
-        ? options.fieldErrors.map(({ path, missing }) => ({ path, missing }))
-        : undefined,
-    ).toEqual([
-      { path: "blockSize", missing: false },
-      { path: "mode", missing: false },
-    ]);
+    // Captured from incur 0.6.1's Parser.parse with the same schema and argv.
+    expect(failure(["file", "--block-size", "abc", "--mode", "c"])).toEqual({
+      kind: "validation",
+      message:
+        'Invalid input: expected number, received NaN; Invalid option: expected one of "a"|"b"',
+      fieldErrors: [
+        {
+          code: "invalid_type",
+          missing: false,
+          path: "blockSize",
+          expected: "number",
+          received: "NaN",
+          message: "Invalid input: expected number, received NaN",
+        },
+        {
+          code: "invalid_value",
+          missing: false,
+          path: "mode",
+          expected: "",
+          received: "",
+          message: 'Invalid option: expected one of "a"|"b"',
+        },
+      ],
+    });
   });
 
   it("adds one per occurrence of a count option, stacked or spelled out", () => {
