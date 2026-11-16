@@ -1,8 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
+import { rizinDebugMcpServer } from "../../fixtures/rizinDebugMcp.js";
 import { expect, it } from "vitest";
 
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -49,13 +48,7 @@ test.each([
         spawnProcess: injected.spawnProcess,
       },
     );
-    const server = new McpServer({ name: "rizin-partial-test", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
-    );
+    const server = rizinDebugMcpServer("rizin-partial-test", manager);
     const client = new Client({ name: "rizin-partial-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

@@ -19,13 +19,19 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import { ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
+import {
+  optionalProviderUnavailable,
+  type OptionalProviderLoadFailure,
+} from "../ports/OptionalObservationProviders.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   type AnalysisWorkflow,
+  type AnalysisWorkflowOutcome,
   type ApplicationWorkflowRequest,
   createAnalysisToolHandler,
   createApplicationToolHandler,
@@ -35,10 +41,16 @@ import {
   createEvidenceToolHandler,
   createRetainedSummaryToolHandler,
   createValueToolHandler,
+  type CommittedValue,
   type ContractToolService,
   type ValueToolRequest,
 } from "./contractToolHandler.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
+import {
+  createExternalMutationToolHandler,
+  type ExternalMutation,
+} from "./externalMutationToolHandler.js";
 import {
   applicationToolRegistrationOptions,
   toolRegistrationOptions,
@@ -86,6 +98,7 @@ type EvidenceBinding<Input = unknown> = (
       readonly acquire?: never;
       readonly workflow?: never;
       readonly analyze?: never;
+      readonly mutation?: never;
     }
   | {
       readonly admission: "application";
@@ -96,6 +109,7 @@ type EvidenceBinding<Input = unknown> = (
       readonly acquire?: never;
       readonly workflow?: never;
       readonly analyze?: never;
+      readonly mutation?: never;
     }
 ) & {
   /**
@@ -103,12 +117,17 @@ type EvidenceBinding<Input = unknown> = (
    * the raw request, when the operation projects a view of other Evidence.
    */
   readonly viewSource?: (input: unknown) => JsonValue | undefined;
+  /**
+   * Why the optional provider behind this operation failed to load. Every
+   * call is then refused as unavailable before admission, naming the tool.
+   */
+  readonly unavailable?: OptionalProviderLoadFailure | undefined;
 };
 
 type ValueOperation<Input> = (
   input: Input,
   request: ValueToolRequest,
-) => Promise<Result<JsonValue, AnalysisError>>;
+) => Promise<Result<JsonValue | CommittedValue, AnalysisError>>;
 
 /**
  * Run a workflow that returns a plain JSON value rather than Evidence, and
@@ -129,6 +148,7 @@ type ValueBinding<Input = unknown> = {
       readonly acquire?: never;
       readonly workflow?: never;
       readonly analyze?: never;
+      readonly mutation?: never;
     }
   | {
       readonly admission: "application";
@@ -139,6 +159,7 @@ type ValueBinding<Input = unknown> = {
       readonly acquire?: never;
       readonly workflow?: never;
       readonly analyze?: never;
+      readonly mutation?: never;
     }
 );
 
@@ -166,6 +187,7 @@ type DerivedBinding = {
   readonly workflow?: never;
   readonly view?: never;
   readonly analyze?: never;
+  readonly mutation?: never;
 } & (
   | {
       readonly derive: (
@@ -202,6 +224,7 @@ interface RetainedSummaryBinding<Input> {
   readonly workflow?: never;
   readonly view?: never;
   readonly analyze?: never;
+  readonly mutation?: never;
 }
 
 /**
@@ -224,6 +247,7 @@ interface ApplicationWorkflowBinding<Input> {
   readonly derive?: never;
   readonly acquire?: never;
   readonly analyze?: never;
+  readonly mutation?: never;
 }
 
 /** An application-admitted workflow validates the raw request itself. */
@@ -247,6 +271,7 @@ type AnalysisBinding<Input> = {
   readonly acquire?: never;
   readonly workflow?: never;
   readonly view?: never;
+  readonly mutation?: never;
 } & (Input extends { readonly detail: "complete" | "summary" }
   ? {
       readonly detail: "delivery";
@@ -261,7 +286,24 @@ type AnalysisOperation<Input> = (
   input: Input,
   analysis: AnalysisOperationPort,
   request: ApplicationWorkflowRequest,
-) => Promise<Result<Evidence, AnalysisError>>;
+) => Promise<Result<AnalysisWorkflowOutcome, AnalysisError>>;
+
+/**
+ * Run a command that may change the bound artifact under the session's
+ * external-mutation admission, with owned cleanup (see `ExternalMutation`).
+ */
+interface ExternalMutationBinding<Input> {
+  readonly admission: "sdk";
+  readonly session: ExternalMutationAdmission | undefined;
+  readonly mutation: ExternalMutation<Input>;
+  readonly run?: never;
+  readonly summary?: never;
+  readonly value?: never;
+  readonly derive?: never;
+  readonly acquire?: never;
+  readonly workflow?: never;
+  readonly analyze?: never;
+}
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
 export type ContractToolBinding<Name extends CatalogToolName> =
@@ -272,6 +314,7 @@ export type ContractToolBinding<Name extends CatalogToolName> =
   | ApplicationBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
   | DerivedBinding
   | AnalysisBinding<ContractInput<Name>>
+  | ExternalMutationBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
   | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
@@ -303,6 +346,19 @@ const derivedAcquisition = (binding: DerivedBinding): DerivedAcquisition => {
   return async (input, { evidenceForAnalysis, signal }) =>
     ok(() => derive(input, evidenceForAnalysis, signal));
 };
+
+/** Refuse every call of an operation whose optional provider failed to load. */
+const unavailableToolHandler =
+  (
+    server: EvidenceMcpServer,
+    contract: ToolContract,
+    failure: OptionalProviderLoadFailure,
+  ) =>
+  async (): Promise<CallToolResult> =>
+    server.delivery.toCallToolResult(
+      err(optionalProviderUnavailable(failure, contract.name)),
+      contract,
+    );
 
 /** A provider-backed workflow runs only on the analysis admission grants. */
 const requiredAdmission = (
@@ -377,7 +433,9 @@ export const registerContractTools = (
           readonly derive?: never;
           readonly acquire?: never;
           readonly run?: never;
+          readonly mutation?: never;
         }
+      | ExternalMutationBinding<unknown>
       | RetainedSummaryBinding<Readonly<Record<string, unknown>>>
       | undefined
     >
@@ -393,54 +451,65 @@ export const registerContractTools = (
         ? toolRegistrationOptions(contract)
         : applicationToolRegistrationOptions(contract);
     const handler =
-      binding.analyze !== undefined
-        ? createAnalysisToolHandler(
-            server,
-            binding.analyze,
-            logger,
-            retention,
-            requiredAdmission(withAdmittedAnalysis, contract.name),
-            binding.detail === "delivery",
-          )(contract)
-        : binding.value !== undefined
-          ? createValueToolHandler(
+      binding.run !== undefined && binding.unavailable !== undefined
+        ? unavailableToolHandler(server, contract, binding.unavailable)
+        : binding.mutation !== undefined
+          ? createExternalMutationToolHandler(
               server,
-              binding.value,
+              binding.session,
+              binding.mutation,
               logger,
-              binding.admitted === true ? withAdmittedAnalysis : undefined,
+              retention,
             )(contract)
-          : binding.workflow !== undefined
-            ? createApplicationToolHandler(
+          : binding.analyze !== undefined
+            ? createAnalysisToolHandler(
                 server,
-                binding,
+                binding.analyze,
                 logger,
-                { recordEvidence, recordEvidenceWithUnknown, evidenceById },
-                withAdmittedAnalysis,
+                retention,
+                requiredAdmission(withAdmittedAnalysis, contract.name),
+                binding.detail === "delivery",
               )(contract)
-            : binding.derive !== undefined || binding.acquire !== undefined
-              ? createDerivedToolHandler(
+            : binding.value !== undefined
+              ? createValueToolHandler(
                   server,
-                  binding.session,
-                  derivedAcquisition(binding),
+                  binding.value,
                   logger,
+                  binding.admitted === true ? withAdmittedAnalysis : undefined,
+                  recordEvidence,
                 )(contract)
-              : binding.run !== undefined
-                ? createEvidenceToolHandler(
+              : binding.workflow !== undefined
+                ? createApplicationToolHandler(
                     server,
-                    binding.run,
+                    binding,
                     logger,
-                    recordEvidence,
+                    { recordEvidence, recordEvidenceWithUnknown, evidenceById },
                     withAdmittedAnalysis,
-                    binding.viewSource,
                   )(contract)
-                : createRetainedSummaryToolHandler(
-                    server,
-                    contract as SummaryContract,
-                    binding.summary,
-                    logger,
-                    retention,
-                    withAdmittedAnalysis,
-                  );
+                : binding.derive !== undefined || binding.acquire !== undefined
+                  ? createDerivedToolHandler(
+                      server,
+                      binding.session,
+                      derivedAcquisition(binding),
+                      logger,
+                    )(contract)
+                  : binding.run !== undefined
+                    ? createEvidenceToolHandler(
+                        server,
+                        binding.run,
+                        logger,
+                        recordEvidence,
+                        withAdmittedAnalysis,
+                        binding.viewSource,
+                      )(contract)
+                    : createRetainedSummaryToolHandler(
+                        server,
+                        contract as SummaryContract,
+                        binding.summary,
+                        logger,
+                        retention,
+                        withAdmittedAnalysis,
+                      );
     server.registerTool(contract.name, registration, handler);
   }
   if (unbound.size > 0)

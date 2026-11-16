@@ -15,7 +15,7 @@ import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
-import { registerFridaTools } from "./registerFridaTools.js";
+import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
@@ -34,7 +34,6 @@ import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
-import { registerBrowserTools } from "./registerBrowserTools.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
@@ -57,7 +56,6 @@ import {
 import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
 import { registerCutterTools } from "./registerCutterTools.js";
 import { registerGdbTools } from "./registerGdbTools.js";
-import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -413,13 +411,10 @@ export const createServer = (
         session,
         evidenceById,
       );
-      registerRizinDebugTools(
+      registerServiceTools(
         server,
-        rizinDebugSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
+        { rizinDebug: { manager: rizinDebugSessions, session } },
+        { logger: toolLogger, recordEvidence, evidenceById },
       );
       registerBinaryDiagnosticsTools(
         server,
@@ -512,13 +507,12 @@ export const createServer = (
       );
     },
     frida: () =>
-      registerFridaTools(
+      // Frida instruments a live process the caller selects, outside
+      // analysis admission.
+      registerServiceTools(
         server,
-        fridaInstrumentation,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        evidenceById,
+        { frida: new FridaInstrumentationService(fridaInstrumentation) },
+        { logger: toolLogger, recordEvidence, evidenceById },
       ),
     apktool: () =>
       registerServiceTools(
@@ -539,12 +533,17 @@ export const createServer = (
         contractTools,
       ),
     browser: () => {
-      registerBrowserTools(server, {
-        ...common,
-        evidenceById,
-        browser: options.browserObservation,
-        loadFailure: options.optionalProviderLoadFailures?.browserObservation,
-      });
+      registerServiceTools(
+        server,
+        {
+          browserObservation: {
+            browser: options.browserObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.browserObservation,
+          },
+        },
+        contractTools,
+      );
       registerBrowserScenarioTool(server, {
         ...common,
         evidenceById,

@@ -8,6 +8,8 @@ import { inspectAndroidPackage } from "../application/android/AndroidPackageInsp
 import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import {
   inspectAnalysisView,
+  projectRetainedAnalysis,
+  requireAnalysisViewRetention,
   type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
 import { z } from "zod";
@@ -117,9 +119,44 @@ import {
 import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import {
+  RIZIN_DEBUG_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
+import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
+import {
+  analyzeWebBundle,
+  captureWebScreenshot,
+  compareWebCaptureEvidence,
+  compareWebScreenshotEvidence,
+  discoverWebMcpTools,
+  inspectWebPage,
+  listBrowserTargets,
+  observeWebSession,
+} from "../application/BrowserObservationService.js";
+import {
+  fridaDeviceSelection,
+  fridaRemoteConnection,
+  instrumentWithFrida,
+  loadFridaScript,
+  startFridaSession,
+} from "../application/frida/fridaContractRequests.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
+import { CommittedValue } from "./contractToolHandler.js";
+import type { ResidualUnknown } from "../domain/residualUnknown.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
+import {
+  evidenceBundleExportReceipt,
+  readImmutableEvidenceBundle,
+  writeEvidenceBundle,
+} from "../application/EvidenceBundleFiles.js";
+import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";
 import {
   contractServiceBindings,
   registerContractTools,
@@ -146,6 +183,44 @@ export interface AnalysisSettingsToolOptions {
 export interface SessionDerivedToolOptions {
   readonly session: BinarySessionPort;
   readonly resources: ArtifactResourceScope;
+}
+
+/**
+ * A committed residual unknown, with the receipt naming its revision and
+ * mutation Evidence for a response too large to deliver.
+ */
+const committedUnknown = (
+  result: Result<ResidualUnknown, AnalysisError>,
+): Result<CommittedValue, AnalysisError> =>
+  result.ok
+    ? ok(
+        new CommittedValue(result.value, {
+          committed_unknown: {
+            unknown_id: result.value.unknown_id,
+            revision: result.value.revision,
+            mutation_evidence_ids: result.value.mutation_evidence_ids,
+          },
+          evidence_reference: {
+            kind: "retained-evidence",
+            evidence_id: result.value.mutation_evidence_ids[0]!,
+          },
+        }),
+      )
+    : result;
+
+/** Rizin debugger sessions a manager owns and the session they may change. */
+export interface RizinDebugToolOptions {
+  readonly manager: Pick<
+    RizinDebugSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** The browser observation provider, or why it failed to load. */
+export interface BrowserObservationToolOptions {
+  readonly browser: BrowserObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
 /** The artifact resource scope application workflows read caller-named files under. */
@@ -1038,6 +1113,281 @@ const SERVICE_TOOL_BINDINGS = {
         executeSessionFunctionAnalysis(input, analysis, session, request),
     },
   })) satisfies Bind<{ readonly session: WorkflowSession | undefined }>,
+  // The session's Evidence bundle and residual unknowns, read and written
+  // under session admission.
+  sessionRecords: (({ session, resources }) => ({
+    export_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input, { signal }) => {
+        const bundle = session.immutableEvidenceBundle();
+        const written = await writeEvidenceBundle(
+          bundle,
+          input.path,
+          input.overwrite,
+          resources,
+          signal,
+        );
+        return written.ok
+          ? ok(evidenceBundleExportReceipt(bundle, written.value))
+          : written;
+      },
+    },
+    import_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input, { signal }) => {
+        const loaded = await readImmutableEvidenceBundle(
+          input.path,
+          signal,
+          resources,
+          "import_evidence_bundle",
+        );
+        if (!loaded.ok) return loaded;
+        if (signal.aborted)
+          return err(cancelledBy("import_evidence_bundle", signal));
+        const imported = session.importEvidenceBundle(loaded.value);
+        return imported.ok
+          ? ok({
+              imported: imported.value.recordsAdded,
+              unknowns_added: imported.value.unknownsAdded,
+              total: imported.value.totalRecords,
+            })
+          : imported;
+      },
+    },
+    get_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) =>
+        inspectEvidenceBundle(session.immutableEvidenceBundle(), input),
+    },
+    list_unknowns: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) =>
+        ok(
+          session.listUnknownsPage({
+            ...(input.status === undefined ? {} : { status: input.status }),
+            ...(input.severity === undefined
+              ? {}
+              : { severity: input.severity }),
+            ...(input.domain === undefined ? {} : { domain: input.domain }),
+            offset: input.offset,
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          }),
+        ),
+    },
+    record_unknown: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => committedUnknown(session.recordUnknown(input)),
+    },
+    update_unknown: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => committedUnknown(session.updateUnknown(input)),
+    },
+    verify_unknown_resolution: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => session.verifyUnknownResolution(input.unknown_id),
+    },
+  })) satisfies Bind<SessionDerivedToolOptions>,
+  // Rizin debugger sessions may change the bound artifact; each command
+  // runs under external-mutation admission and keeps a failed cleanup owned.
+  rizinDebug: (({ manager, session }) => {
+    const retryCleanup = () => manager.retryCleanupFailures();
+    return {
+      start_rizin_debug_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "value",
+          retryCleanup,
+          run: async (input, signal) => {
+            const started = await manager.start(
+              {
+                path: input.path,
+                inferior_tty: input.inferior_tty,
+                ...(input.backend === undefined
+                  ? {}
+                  : { backend: input.backend }),
+              },
+              signal,
+            );
+            return started.ok
+              ? ok({
+                  value: started.value,
+                  retained: { session_id: started.value.session_id },
+                })
+              : started;
+          },
+        },
+      },
+      rizin_debug_command: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "evidence",
+          retryCleanup,
+          run: async (input, signal) => {
+            const executed = await manager.execute(
+              input.session_id,
+              input.command,
+              signal,
+            );
+            return executed.ok ? ok(executed.value.evidence) : executed;
+          },
+        },
+      },
+      rizin_debug_session_status: {
+        admission: "sdk",
+        value: async (input) => {
+          const status = manager.status(input.session_id);
+          return status === undefined
+            ? err(
+                unknownDebuggerSessionError(
+                  RIZIN_DEBUG_SESSION_TOOLS,
+                  "rizin_debug_session_status",
+                ),
+              )
+            : ok({ ...status, recent_output: [...status.recent_output] });
+        },
+      },
+      close_rizin_debug_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "owned-cleanup",
+          resource: (input) => input.session_id,
+          run: (input) => manager.close(input.session_id),
+        },
+      },
+    };
+  }) satisfies Bind<RizinDebugToolOptions>,
+  // Browser observation runs through an optional provider; when it failed
+  // to load, every call reports it unavailable before admission.
+  browserObservation: (({ browser, loadFailure }, retention) => {
+    const optional = { unavailable: loadFailure };
+    return {
+      list_browser_targets: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => listBrowserTargets(browser, input, options),
+      },
+      inspect_web_page: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => inspectWebPage(browser, input, options),
+      },
+      analyze_web_bundle: {
+        admission: "sdk",
+        ...optional,
+        run: async ({ detail, view, ...request }, options) => {
+          if (detail === "summary") {
+            const ready = requireAnalysisViewRetention(
+              "analyze_web_bundle",
+              retention,
+            );
+            if (!ready.ok) return ready;
+          }
+          const analyzed = await analyzeWebBundle(browser, request, options);
+          return analyzed.ok && view !== undefined
+            ? projectRetainedAnalysis(analyzed.value, retention, view)
+            : analyzed;
+        },
+      },
+      observe_web_session: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => observeWebSession(browser, input, options),
+      },
+      discover_webmcp_tools: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => discoverWebMcpTools(browser, input, options),
+      },
+      compare_web_captures: {
+        admission: "sdk",
+        ...optional,
+        run: (input) => compareWebCaptureEvidence(browser, input),
+      },
+      capture_web_screenshot: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => captureWebScreenshot(browser, input, options),
+      },
+      compare_web_screenshots: {
+        admission: "sdk",
+        ...optional,
+        run: (input) => compareWebScreenshotEvidence(browser, input),
+      },
+    };
+  }) satisfies Bind<BrowserObservationToolOptions>,
+  // Frida sessions instrument a live process the caller selects, not the
+  // session's target; compose them without analysis admission.
+  frida: ((service, retention) => ({
+    list_frida_devices: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          await service.listDevices(fridaRemoteConnection(input.remote)),
+        ),
+    },
+    list_frida_processes: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          await service.listProcesses(fridaDeviceSelection(input)),
+        ),
+    },
+    start_frida_session: {
+      admission: "sdk",
+      value: async (input, { signal }) =>
+        jsonValueResult(await startFridaSession(service, input, signal)),
+    },
+    load_frida_script: {
+      admission: "sdk",
+      run: (input, { signal }) => loadFridaScript(service, input, signal),
+    },
+    resume_frida_session: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const resumed = await service.resumeSession(input.session_id, signal);
+        return resumed.ok ? ok({ state: "running" }) : resumed;
+      },
+    },
+    unload_frida_script: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const unloaded = await service.unloadScript(
+          input.session_id,
+          input.script_id,
+          signal,
+        );
+        return unloaded.ok ? ok({ unloaded: true }) : unloaded;
+      },
+    },
+    frida_session_status: {
+      admission: "sdk",
+      run: async (input) => service.inspectStatus(input, retention),
+    },
+    close_frida_session: {
+      admission: "sdk",
+      value: async (input) => {
+        const closed = await service.closeSession(input.session_id);
+        return closed.ok ? ok({ target_state: "unknown" }) : closed;
+      },
+    },
+    instrument_with_frida: {
+      admission: "sdk",
+      run: async (input, { signal }) => {
+        const instrumented = await instrumentWithFrida(service, input, signal);
+        return instrumented.ok ? ok(instrumented.value.evidence) : instrumented;
+      },
+    },
+  })) satisfies Bind<FridaInstrumentationService>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
