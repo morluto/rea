@@ -7,6 +7,7 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -169,7 +170,7 @@ export const runAdbCapture = async (
       );
     }
     const stderr = failure.stderr.trim();
-    const excerpt = stderr.slice(0, STDERR_EXCERPT_CHARACTERS);
+    const excerpt = ellipsisExcerpt(stderr, STDERR_EXCERPT_CHARACTERS);
     // Device-state words inside a reported file name are not device verdicts.
     // Only leading notices need line parsing. Do not expand a capture-sized
     // stderr into an array whose entries can exceed the byte capture budget.

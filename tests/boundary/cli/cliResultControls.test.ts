@@ -1,6 +1,7 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
@@ -219,7 +220,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
     }),
     outputSchema: partialResultSchema,
   };
-  const cli = Cli.create("rea-result-controls", { version: "1", sync: false });
+  const cli = createCommandCli();
   registerContractCommand(
     cli as unknown as CliInstance,
     silentLogger,
@@ -231,7 +232,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
     },
     async () => produce() as never,
   );
-  const command = Cli.toCommands.get(cli)?.get("inspect-control-fixture");
+  const command = cliCommand(cli, "inspect-control-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
     (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
@@ -287,13 +288,11 @@ const written = async (
     destination,
   );
   if (output === undefined) throw new Error("Missing output surface");
-  const format = argv[argv.indexOf("--format") + 1] ?? "json";
   let collected = 0;
   // The ordinary command path: no forced output, controls collected on demand.
   const handled = await output.write(partialResult(), {
     command: "fixture",
     duration: "0ms",
-    format,
     collectCliControls: () => {
       collected += 1;
       return cliControls;

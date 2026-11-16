@@ -2,10 +2,45 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 
-// Named types come from the declaration file TypeScript consumers import.
-/** @typedef {import("./verifier-run.mjs").VerifierRunStart} VerifierRunStart */
-/** @typedef {import("./verifier-run.mjs").VerifierRun} VerifierRun */
-/** @typedef {import("./verifier-run.mjs").VerifierProcessLineage} VerifierProcessLineage */
+/**
+ * @typedef {{
+ *   readonly run_id: string;
+ *   readonly verifier_pid: number;
+ *   readonly parent_pid: number;
+ * }} VerifierRunStart
+ */
+/**
+ * @typedef {{
+ *   readonly pid: number;
+ *   readonly parent_pid: number;
+ *   readonly process_group_id: number;
+ * }} VerifierRunDescendant
+ */
+/**
+ * @typedef {(
+ *   | {
+ *       readonly status: "verified";
+ *       readonly observed_at: string;
+ *       readonly launcher_pid: number;
+ *       readonly launcher_parent_pid: number;
+ *       readonly process_group_id: number;
+ *       readonly descendants: readonly VerifierRunDescendant[];
+ *     }
+ *   | {
+ *       readonly status: "unavailable";
+ *       readonly observed_at: string;
+ *       readonly launcher_pid: number;
+ *       readonly launcher_parent_pid: number;
+ *       readonly process_group_id: number | null;
+ *       readonly reason: string;
+ *     }
+ * )} VerifierProcessLineage
+ */
+/**
+ * @typedef {VerifierRunStart & {
+ *   readonly process_lineage: VerifierProcessLineage;
+ * }} VerifierRun
+ */
 /** @typedef {{ readonly pid: number; readonly parentPid: number; readonly processGroupId: number }} ProcessMember */
 
 /** @type {VerifierRunStart | undefined} */

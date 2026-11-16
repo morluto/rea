@@ -709,6 +709,10 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign({}, ...failureObservers.map((observe) => observe())),
     observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
       Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
+    createManagedBinarySession: async () => {
+      const { createManagedBinarySession } = await import("./binary.js");
+      return createManagedBinarySession();
+    },
     close: () => scope.close(),
   };
 };

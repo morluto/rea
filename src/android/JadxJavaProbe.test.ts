@@ -1,4 +1,5 @@
 import { validateJadxConfiguration } from "./JadxConfiguration.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ArtifactResourceRetryFailure } from "../resources/ArtifactResourceScope.js";
 import { expect, it, vi } from "vitest";
@@ -287,3 +288,43 @@ it.each([
     }
   },
 );
+
+it("reports EMFILE during macOS ownership helper preparation as a resource constraint", async () => {
+  const resources = createInspectionResources();
+  const emfile = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(
+      new DarwinProcessOwnershipInspectionError("helper capacity exhausted", {
+        cause: emfile,
+      }),
+    );
+  try {
+    const result: unknown = await inspectJadxJava(
+      "/selected/java",
+      {},
+      {
+        resourceOwner: resources.owner,
+        launcher: async (input) => {
+          await prepareProcessOwnershipInspection(input.signal);
+          throw new Error("Java must not start");
+        },
+      },
+    ).catch((cause: unknown) => cause);
+    expect(result).toBeInstanceOf(AnalysisError);
+    if (!(result instanceof AnalysisError)) throw result;
+    expect(projectAnalysisError(result)).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      details: {
+        diagnostics: {
+          system_code: "EMFILE",
+          java_executable: "/selected/java",
+        },
+      },
+    });
+  } finally {
+    prepare.mockRestore();
+    await resources.close();
+  }
+});
