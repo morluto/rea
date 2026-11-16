@@ -2,7 +2,7 @@ import { buffer } from "node:stream/consumers";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { deflateSync } from "node:zlib";
+import { deflateSync, gzipSync } from "node:zlib";
 
 import { expect, it, vi } from "vitest";
 
@@ -335,6 +335,42 @@ it("keeps PackageInfo when Payload cpio headers are garbage", async () => {
       ]),
     );
     expect(entries.map((entry) => entry.path)).toContain("PackageInfo");
+  } finally {
+    await reader.close();
+  }
+});
+
+it("keeps members read before a damaged cpio tail next to the refusal", async () => {
+  const complete = buildCpioOdc([
+    { name: "preinstall", mode: 0o100755, data: Buffer.from("#!/bin/sh\n") },
+  ]);
+  // Drop the TRAILER!!! record so the archive ends after a complete member.
+  const trailerless = complete.subarray(0, complete.indexOf("070707", 1));
+  const { reader, entries, coverage } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "PackageInfo", bytes: Buffer.from("<pkg-info/>") },
+        { path: "Scripts", bytes: gzipSync(trailerless) },
+      ],
+    }),
+    "damaged-tail.pkg",
+  );
+  try {
+    const metadata = reader.formatMetadata();
+    expect(metadata?.scripts).toMatchObject({
+      present: true,
+      compression: "gzip-cpio-odc",
+      preinstall: true,
+      members: [expect.objectContaining({ name: "preinstall" })],
+    });
+    expect(metadata?.refusals).toEqual([
+      expect.objectContaining({
+        path: "Scripts",
+        message: expect.stringContaining("header is truncated"),
+      }),
+    ]);
+    expect(entries.map((entry) => entry.path)).toContain("Scripts/preinstall");
+    expect(coverage).toEqual([expect.objectContaining({ status: "unknown" })]);
   } finally {
     await reader.close();
   }

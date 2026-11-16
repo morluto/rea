@@ -103,14 +103,10 @@ export const isInstallScriptName = (name: string): boolean => {
   return base === "preinstall" || base === "postinstall";
 };
 
-/**
- * Parse an uncompressed odc (`070707`) cpio archive. Member bytes are retained
- * only for files and symlink targets so the reader can hash/extract them.
- */
-export const parseCpioOdc = (
+const parseCpioOdcInto = (
   bytes: Buffer,
+  members: CpioMember[],
 ): Result<readonly CpioMember[], MacosPkgParseError> => {
-  const members: CpioMember[] = [];
   let cursor = 0;
   for (;;) {
     if (cursor + CPIO_ODC_HEADER_BYTES > bytes.length)
@@ -220,6 +216,34 @@ export const parseCpioOdc = (
   }
 };
 
+export interface CpioOdcPrefix {
+  /** Members read completely before the archive ended or failed. */
+  readonly members: readonly CpioMember[];
+  /** Why parsing stopped before the trailer, or null when it reached it. */
+  readonly failure: MacosPkgParseError | null;
+}
+
+/**
+ * Parse an uncompressed odc (`070707`) cpio archive, keeping every member read
+ * before a damaged or missing tail alongside the reason parsing stopped.
+ */
+export const parseCpioOdcPrefix = (bytes: Buffer): CpioOdcPrefix => {
+  const members: CpioMember[] = [];
+  const parsed = parseCpioOdcInto(bytes, members);
+  return { members, failure: parsed.ok ? null : parsed.error };
+};
+
+/**
+ * Parse an uncompressed odc (`070707`) cpio archive. Member bytes are retained
+ * only for files and symlink targets so the reader can hash/extract them.
+ */
+export const parseCpioOdc = (
+  bytes: Buffer,
+): Result<readonly CpioMember[], MacosPkgParseError> => {
+  const parsed = parseCpioOdcPrefix(bytes);
+  return parsed.failure === null ? ok(parsed.members) : err(parsed.failure);
+};
+
 const cpioArchiveLimit = (maximum: number): MacosPkgParseError =>
   macosPkgLimitFailure(
     `cpio archive exceeds the ${String(maximum)}-byte decode allowance`,
@@ -278,6 +302,31 @@ export const parseGzipCpioOdc = (
   return parseCpioOdc(inflated.value);
 };
 
+export interface ArchiveInventory {
+  readonly compression: PayloadCompression;
+  readonly members: readonly CpioMember[];
+  readonly decodedBytes: number;
+  /** Set when members were read but the archive tail was damaged. */
+  readonly partialFailure: MacosPkgParseError | null;
+}
+
+const inventoryParsedArchive = (
+  compression: PayloadCompression,
+  parsed: CpioOdcPrefix,
+  decodedBytes: number,
+): Result<ArchiveInventory, MacosPkgParseError> => {
+  // A failure before any complete member has nothing to keep; otherwise the
+  // members read safely stay in the inventory next to the refusal.
+  if (parsed.failure !== null && parsed.members.length === 0)
+    return err(parsed.failure);
+  return ok({
+    compression,
+    members: parsed.members,
+    decodedBytes,
+    partialFailure: parsed.failure,
+  });
+};
+
 /**
  * Inventories a Scripts or Payload archive. `maximum` caps the decoded cpio
  * bytes; `decodedBytes` reports what the decode produced so a caller can
@@ -286,14 +335,7 @@ export const parseGzipCpioOdc = (
 export const inventoryCompressedArchive = (
   bytes: Buffer,
   maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
-): Result<
-  {
-    readonly compression: PayloadCompression;
-    readonly members: readonly CpioMember[];
-    readonly decodedBytes: number;
-  },
-  MacosPkgParseError
-> => {
+): Result<ArchiveInventory, MacosPkgParseError> => {
   const compression = detectPayloadCompression(bytes);
   if (compression === "pbzx")
     return err(
@@ -313,19 +355,19 @@ export const inventoryCompressedArchive = (
   if (compression === "gzip-cpio-odc") {
     const inflated = gunzipBounded(bytes, maximum);
     if (!inflated.ok) return inflated;
-    const parsed = parseCpioOdc(inflated.value);
-    if (!parsed.ok) return parsed;
-    return ok({
+    return inventoryParsedArchive(
       compression,
-      members: parsed.value,
-      decodedBytes: inflated.value.length,
-    });
+      parseCpioOdcPrefix(inflated.value),
+      inflated.value.length,
+    );
   }
   if (bytes.length > Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES))
     return err(
       cpioArchiveLimit(Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES)),
     );
-  const parsed = parseCpioOdc(bytes);
-  if (!parsed.ok) return parsed;
-  return ok({ compression, members: parsed.value, decodedBytes: bytes.length });
+  return inventoryParsedArchive(
+    compression,
+    parseCpioOdcPrefix(bytes),
+    bytes.length,
+  );
 };

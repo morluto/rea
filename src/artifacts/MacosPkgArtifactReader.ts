@@ -865,6 +865,12 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         });
       return 0;
     }
+    // A damaged tail keeps the members read before it and records why the
+    // rest of the archive could not be read.
+    if (parsed.value.partialFailure !== null)
+      metadata.refusals.push(
+        refusalFromParse(parsed.value.partialFailure, entry.path),
+      );
     const members = parsed.value.members;
     const names = members.map((member) => basename(member.name));
     this.#keepStoredArchive(entry, parsed.value.compression);
