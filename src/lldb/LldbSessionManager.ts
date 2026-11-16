@@ -14,6 +14,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { coverageStatusSchema } from "../domain/coverage.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -148,6 +149,7 @@ interface ActiveSession {
   readonly pending: Map<number, PendingRpc>;
   nextId: number;
   closed: boolean;
+  closing: boolean;
   closeRequested: boolean;
   exited: boolean;
   state: "ready" | "closed";
@@ -156,6 +158,13 @@ interface ActiveSession {
   target: string | null;
   commandTail: Promise<void>;
   pendingCommandCount: number;
+  targetStateUnknown: boolean;
+  lastObservedTargetState:
+    | "terminated"
+    | "detached"
+    | "exited"
+    | "none_observed"
+    | "unknown";
   detachInferior: () => Promise<OwnedDebuggerDetachResult>;
 }
 
@@ -220,7 +229,7 @@ export class LldbSessionManager {
       provider: "lldb",
       displayName: "LLDB",
       sealSession: (session) => {
-        session.closed = true;
+        session.closing = true;
       },
       stopProcess: (session) =>
         this.#stopProcess(session, "LLDB", { platform: this.#platform }),
@@ -398,6 +407,7 @@ export class LldbSessionManager {
       pending,
       nextId: 1,
       closed: false,
+      closing: false,
       closeRequested: false,
       exited: false,
       state: "ready",
@@ -406,13 +416,19 @@ export class LldbSessionManager {
       target: options.path ?? null,
       commandTail: Promise.resolve(),
       pendingCommandCount: 0,
+      targetStateUnknown: false,
+      lastObservedTargetState: "none_observed",
       detachInferior: async (): Promise<OwnedDebuggerDetachResult> => {
         if (
           session.pid === null ||
           session.processState === "no_process" ||
           session.processState === "none"
         ) {
+          session.lastObservedTargetState = "none_observed";
           return { status: "no-inferior" };
+        }
+        if (session.targetStateUnknown) {
+          throw new Error("LLDB target cleanup was not confirmed.");
         }
         try {
           const res = await this.#sendSessionRpc(
@@ -424,15 +440,26 @@ export class LldbSessionManager {
             undefined,
             "close_lldb_session",
           );
+          session.lastObservedTargetState = res?.target_state ?? "unknown";
           if (
             res?.target_state === "none_observed" ||
             res?.target_state === "exited"
           ) {
             return { status: "no-inferior" };
           }
-          return { status: "detached", outputSink: "durable" };
-        } catch {
-          return { status: "no-inferior" };
+          if (
+            res?.target_state === "detached" ||
+            res?.target_state === "terminated"
+          ) {
+            return { status: "detached", outputSink: "durable" };
+          }
+          session.targetStateUnknown = true;
+          throw new Error(
+            `LLDB target cleanup unconfirmed: state is ${res?.target_state ?? "unknown"}`,
+          );
+        } catch (cause) {
+          session.targetStateUnknown = true;
+          throw cause;
         }
       },
     };
@@ -485,15 +512,10 @@ export class LldbSessionManager {
         );
 
         if (launchRes.error || launchRes.status === "failed") {
-          await this.#sessions.stop(session);
-          supervisor.dispose();
-          rl.close();
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              "lldb",
-              "start_lldb_session",
-              launchRes.error ?? "Failed to launch target",
-            ),
+          throw new AnalysisCapabilityUnavailableError(
+            "lldb",
+            "start_lldb_session",
+            launchRes.error ?? "Failed to launch target",
           );
         }
         session.pid = launchRes.pid ?? null;
@@ -512,15 +534,10 @@ export class LldbSessionManager {
           "start_lldb_session",
         );
         if (attachRes.error || attachRes.status === "failed") {
-          await this.#sessions.stop(session);
-          supervisor.dispose();
-          rl.close();
-          return err(
-            new AnalysisCapabilityUnavailableError(
-              "lldb",
-              "start_lldb_session",
-              attachRes.error ?? "Failed to attach to target",
-            ),
+          throw new AnalysisCapabilityUnavailableError(
+            "lldb",
+            "start_lldb_session",
+            attachRes.error ?? "Failed to attach to target",
           );
         }
         session.pid = attachRes.pid ?? null;
@@ -541,11 +558,39 @@ export class LldbSessionManager {
         ...(session.target !== null ? { target: session.target } : {}),
       });
     } catch (cause) {
-      session.closed = true;
+      session.closing = true;
       session.closeRequested = true;
+      const stopped = await this.#sessions.stop(session);
+      if (stopped.status === "incomplete") {
+        this.#sessions.add(session);
+        const cleanupFailure = this.#sessions.retainCleanupFailure(
+          session,
+          "start_lldb_session",
+          stopped,
+          { cause },
+        );
+        const primary =
+          (signal?.aborted && cause === signal.reason) ||
+          cause instanceof AnalysisCancelledError
+            ? cancelledBy("start_lldb_session", carriedReason(cause))
+            : cause instanceof AnalysisError
+              ? cause
+              : new AnalysisCapabilityUnavailableError(
+                  "lldb",
+                  "start_lldb_session",
+                  errorMessage(cause),
+                );
+        return err(
+          analysisErrorWithCleanupDependencies(
+            primary,
+            cleanupFailure,
+            "start_lldb_session",
+          ),
+        );
+      }
+      session.closed = true;
       session.state = "closed";
       rl.close();
-      await this.#sessions.stop(session);
       supervisor.dispose();
 
       if (
@@ -576,7 +621,7 @@ export class LldbSessionManager {
     >
   > {
     const session = this.#sessions.get(sessionId);
-    if (!session || session.closed) {
+    if (!session || session.closed || session.closing) {
       return err(
         new AnalysisInputError("lldb_command", undefined, [
           {
@@ -661,7 +706,7 @@ export class LldbSessionManager {
       AnalysisError
     >
   > {
-    if (session.closed) {
+    if (session.closed || session.closing) {
       return err(
         new AnalysisInputError("lldb_command", undefined, [
           {
@@ -708,31 +753,32 @@ export class LldbSessionManager {
       lldbSessionSubject(session),
       LLDB_PROVIDER_IDENTITY,
       {
-      predicateType: "rea.debugger.console-observation",
-      operation: "lldb_command",
-      parameters: { session_id: sessionId, command },
-      result: {
-        command: cmdResult.command,
-        output: cmdResult.output,
-        ...(cmdResult.process_state !== undefined
-          ? { process_state: cmdResult.process_state }
-          : {}),
-        output_truncated: cmdResult.output_truncated,
-        completion_status: cmdResult.completion_status,
+        predicateType: "rea.debugger.console-observation",
+        operation: "lldb_command",
+        parameters: { session_id: sessionId, command },
+        result: {
+          command: cmdResult.command,
+          output: cmdResult.output,
+          ...(cmdResult.process_state !== undefined
+            ? { process_state: cmdResult.process_state }
+            : {}),
+          output_truncated: cmdResult.output_truncated,
+          completion_status: cmdResult.completion_status,
+        },
+        rawResult: {
+          command: cmdResult.command,
+          output: cmdResult.output,
+          ...(cmdResult.process_state !== undefined
+            ? { process_state: cmdResult.process_state }
+            : {}),
+          output_truncated: cmdResult.output_truncated,
+          completion_status: cmdResult.completion_status,
+        },
+        limitations: [
+          "LLDB commands run unrestricted against the local target inferior and host runtime.",
+        ],
       },
-      rawResult: {
-        command: cmdResult.command,
-        output: cmdResult.output,
-        ...(cmdResult.process_state !== undefined
-          ? { process_state: cmdResult.process_state }
-          : {}),
-        output_truncated: cmdResult.output_truncated,
-        completion_status: cmdResult.completion_status,
-      },
-      limitations: [
-        "LLDB commands run unrestricted against the local target inferior and host runtime.",
-      ],
-    });
+    );
 
     if (signal?.aborted) {
       throw cancelledBy("lldb_command", signal, {
@@ -809,48 +855,29 @@ export class LldbSessionManager {
 
     try {
       await waitForLldbCommandTurn(previous, signal, "close_lldb_session");
-      let targetState:
-        | "terminated"
-        | "detached"
-        | "exited"
-        | "none_observed"
-        | "unknown" = "none_observed";
 
-      try {
-        if (!session.closed) {
-          const res = await this.#sendSessionRpc(
-            closeResponseSchema,
-            session,
-            "close",
-            {},
-            5000,
-            signal,
-            "close_lldb_session",
-          );
-          if (res?.target_state) {
-            targetState = res.target_state;
-          }
-        }
-      } catch {
-        targetState = "unknown";
-      } finally {
-        session.closed = true;
-        session.closeRequested = true;
-        session.state = "closed";
-        session.rl.close();
-      }
+      session.closing = true;
+      session.closeRequested = true;
 
       const stopResult = await this.#sessions.stop(session);
-      if (stopResult.status === "incomplete") {
+      if (stopResult.status === "incomplete" || session.targetStateUnknown) {
         return err(
           this.#sessions.retainCleanupFailure(
             session,
             "close_lldb_session",
-            stopResult,
+            stopResult.status === "incomplete"
+              ? stopResult
+              : {
+                  code: "detach-failed",
+                  reason: "LLDB target cleanup could not be confirmed.",
+                },
           ),
         );
       }
 
+      session.closed = true;
+      session.state = "closed";
+      session.rl.close();
       session.supervisor.dispose();
       this.#sessions.remove(session);
 
@@ -858,17 +885,7 @@ export class LldbSessionManager {
         return err(cancelledBy("close_lldb_session", signal));
       }
 
-      if (targetState === "unknown") {
-        return err(
-          new AnalysisCapabilityUnavailableError(
-            "lldb",
-            "close_lldb_session",
-            "LLDB target cleanup could not be confirmed.",
-          ),
-        );
-      }
-
-      return ok({ target_state: targetState });
+      return ok({ target_state: session.lastObservedTargetState });
     } finally {
       release?.();
     }

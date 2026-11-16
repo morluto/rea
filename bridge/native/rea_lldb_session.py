@@ -475,23 +475,33 @@ class ReaLldbSessionDaemon:
                 state = self.process.GetState()
                 if state not in (lldb.eStateExited, lldb.eStateDetached):
                     if self.is_attached:
-                        self.process.Detach()
-                        target_state = "detached"
+                        err = self.process.Detach()
+                        if err.Fail():
+                            target_state = "unknown"
+                        else:
+                            target_state = "detached"
                     else:
-                        self.process.Kill()
-                        target_state = "terminated"
+                        err = self.process.Kill()
+                        if err.Fail():
+                            target_state = "unknown"
+                        else:
+                            target_state = "terminated"
                 else:
                     target_state = "exited"
         except Exception:
             target_state = "unknown"
 
-        try:
-            if self.debugger.IsValid():
-                lldb.SBDebugger.Destroy(self.debugger)
-        except Exception:
-            pass
+        if target_state != "unknown":
+            try:
+                if self.debugger.IsValid():
+                    lldb.SBDebugger.Destroy(self.debugger)
+            except Exception:
+                pass
 
-        return {"status": "closed", "target_state": target_state}
+        return {
+            "status": "closed" if target_state != "unknown" else "failed",
+            "target_state": target_state,
+        }
 
     def serve(self):
         """Processes line-delimited JSON-RPC requests over stdin."""
