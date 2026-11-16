@@ -1,6 +1,6 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it, vi } from "vitest";
 
@@ -87,10 +87,7 @@ const createTraceFixture = () => {
 type DirectAnalysisRunner = Parameters<typeof registerCoreNativeCommands>[2];
 
 const createTraceCli = (run: DirectAnalysisRunner) => {
-  const cli = Cli.create("rea-trace-evidence-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   registerCoreNativeCommands(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
@@ -100,7 +97,7 @@ const createTraceCli = (run: DirectAnalysisRunner) => {
 };
 
 const runJsonCli = async (
-  cli: ReturnType<typeof Cli.create>,
+  cli: ReturnType<typeof createCommandCli>,
   args: string[],
 ) => {
   let stdout = "";

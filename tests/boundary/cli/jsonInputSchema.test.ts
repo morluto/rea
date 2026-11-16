@@ -41,7 +41,7 @@ import {
   jsonInputContentSchema,
 } from "../../../src/cli/jsonInputArgument.js";
 import { cliJsonCallerPathSchema } from "../../../src/cli/cliJsonInput.js";
-import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
 const frame = (schema: z.ZodType): z.ZodType =>
@@ -185,7 +185,7 @@ interface InputJsonSchema {
 
 const jsonInputCommands = (cli: CliInstance): string[] => {
   const names: string[] = [];
-  visitRegisteredCommands(cli, (command, path) => {
+  cliCommands(cli).forEach(({ definition: command, name: path }) => {
     if (
       command.args instanceof z.ZodObject &&
       Object.hasOwn(command.args.shape, "inputJson")
