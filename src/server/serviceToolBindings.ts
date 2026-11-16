@@ -8,6 +8,8 @@ import { inspectAndroidPackage } from "../application/android/AndroidPackageInsp
 import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import {
   inspectAnalysisView,
+  projectRetainedAnalysis,
+  requireAnalysisViewRetention,
   type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
 import { z } from "zod";
@@ -118,6 +120,18 @@ import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
+import {
+  analyzeWebBundle,
+  captureWebScreenshot,
+  compareWebCaptureEvidence,
+  compareWebScreenshotEvidence,
+  discoverWebMcpTools,
+  inspectWebPage,
+  listBrowserTargets,
+  observeWebSession,
+} from "../application/BrowserObservationService.js";
 import {
   fridaDeviceSelection,
   fridaRemoteConnection,
@@ -154,6 +168,12 @@ export interface AnalysisSettingsToolOptions {
 export interface SessionDerivedToolOptions {
   readonly session: BinarySessionPort;
   readonly resources: ArtifactResourceScope;
+}
+
+/** The browser observation provider, or why it failed to load. */
+export interface BrowserObservationToolOptions {
+  readonly browser: BrowserObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
 /** The artifact resource scope application workflows read caller-named files under. */
@@ -1046,6 +1066,65 @@ const SERVICE_TOOL_BINDINGS = {
         executeSessionFunctionAnalysis(input, analysis, session, request),
     },
   })) satisfies Bind<{ readonly session: WorkflowSession | undefined }>,
+  // Browser observation runs through an optional provider; when it failed
+  // to load, every call reports it unavailable before admission.
+  browserObservation: (({ browser, loadFailure }, retention) => {
+    const optional = { unavailable: loadFailure };
+    return {
+      list_browser_targets: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => listBrowserTargets(browser, input, options),
+      },
+      inspect_web_page: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => inspectWebPage(browser, input, options),
+      },
+      analyze_web_bundle: {
+        admission: "sdk",
+        ...optional,
+        run: async ({ detail, view, ...request }, options) => {
+          if (detail === "summary") {
+            const ready = requireAnalysisViewRetention(
+              "analyze_web_bundle",
+              retention,
+            );
+            if (!ready.ok) return ready;
+          }
+          const analyzed = await analyzeWebBundle(browser, request, options);
+          return analyzed.ok && view !== undefined
+            ? projectRetainedAnalysis(analyzed.value, retention, view)
+            : analyzed;
+        },
+      },
+      observe_web_session: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => observeWebSession(browser, input, options),
+      },
+      discover_webmcp_tools: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => discoverWebMcpTools(browser, input, options),
+      },
+      compare_web_captures: {
+        admission: "sdk",
+        ...optional,
+        run: (input) => compareWebCaptureEvidence(browser, input),
+      },
+      capture_web_screenshot: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => captureWebScreenshot(browser, input, options),
+      },
+      compare_web_screenshots: {
+        admission: "sdk",
+        ...optional,
+        run: (input) => compareWebScreenshotEvidence(browser, input),
+      },
+    };
+  }) satisfies Bind<BrowserObservationToolOptions>,
   // Frida sessions instrument a live process the caller selects, not the
   // session's target; compose them without analysis admission.
   frida: ((service, retention) => ({
