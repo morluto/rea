@@ -14,6 +14,7 @@ import {
   type ArtifactTraversalOptions,
   ArtifactResourceScope,
   assertArtifactReadActive,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
@@ -22,7 +23,6 @@ import type {
   UnityFsMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { UNITYFS_COMPRESSION_NONE } from "../domain/unityfsFormat.js";
 import {
   decodeUnityFsLz4,

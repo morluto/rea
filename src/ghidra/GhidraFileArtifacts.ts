@@ -26,6 +26,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Bounded serial read; the caller owns admission and final descriptor cleanup. */
 export const readGhidraProfileArtifact = <Value>(
@@ -142,9 +143,7 @@ export const ghidraFileDialect = (
     const { cause: primary } = artifactFilePrimaryFacts(cause);
     const admission =
       primary instanceof GhidraAdmissionError ? primary : undefined;
-    const reason =
-      admission?.code ??
-      (primary instanceof Error ? primary.message : String(primary));
+    const reason = admission?.code ?? errorMessage(primary);
     const systemCode =
       admission === undefined &&
       primary instanceof Error &&

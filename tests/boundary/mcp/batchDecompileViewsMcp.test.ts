@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -612,7 +613,7 @@ it("reads historical batch Evidence with the prior null-pseudocode error", async
     limitations: [NO_BODY_REASON],
   } as const;
   const historical = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "batch_decompile",
@@ -646,7 +647,7 @@ it("keeps the caller's own source when a page cannot fit, without retaining its 
     pseudocode: body,
   };
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "batch_decompile",
@@ -889,7 +890,7 @@ it("binds views to their parent and each page to its own collection", async () =
       {
         kind: "inline",
         evidence: createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture", name: "Fixture", version: "1" },
           {
             operation: "batch_decompile",

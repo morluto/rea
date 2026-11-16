@@ -15,6 +15,7 @@ import {
   mcpHttpListenFailed,
 } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface ServerContext {
   readonly analysisSettings?: AnalysisSettings;
@@ -57,7 +58,7 @@ export const startMcpTransport = async (
   } catch (cause: unknown) {
     serverLogger.warn(
       {
-        error: cause instanceof Error ? cause.message : String(cause),
+        error: errorMessage(cause),
       },
       "Optional MCP providers could not load; affected tools remain unavailable",
     );
@@ -185,7 +186,7 @@ export const startMcpTransport = async (
           : MCP_CONNECTION_START_FAILED;
       serverLogger.error(
         {
-          error: cause instanceof Error ? cause.message : String(cause),
+          error: errorMessage(cause),
         },
         startFailure,
       );
@@ -197,10 +198,7 @@ export const startMcpTransport = async (
       optionalProviderCleanup,
     ]) {
       if (cleanup.status === "rejected") {
-        const reason =
-          cleanup.reason instanceof Error
-            ? cleanup.reason.message
-            : String(cleanup.reason);
+        const reason = errorMessage(cleanup.reason);
         serverLogger.error(
           { cleanup_error: reason },
           "Provider cleanup rejected after MCP startup",

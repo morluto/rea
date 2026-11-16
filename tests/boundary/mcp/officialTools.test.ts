@@ -75,7 +75,7 @@ it("advertises strict masked-byte arguments and bounded pages", () => {
 });
 
 describe("read_bytes contract", () => {
-  it("accepts lengths above the former arbitrary ceiling and rejects zero", () => {
+  it("accepts any positive read length and rejects zero", () => {
     const contract = OFFICIAL_TOOL_CONTRACTS.find(
       ({ name }) => name === "read_bytes",
     );

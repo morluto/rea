@@ -25,11 +25,8 @@ import {
   electronFuseReportSchema,
   type ElectronFuseReport,
 } from "../../domain/electron/electronFuses.js";
-import {
-  createEvidence,
-  evidenceSchema,
-  type Evidence,
-} from "../../domain/evidence.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { recognizeEvidence } from "../../domain/evidenceValidation.js";
 import { evidenceSubjectFormatSchema } from "../../domain/evidenceSubject.js";
 import { goBinarySchema } from "../../domain/go/goBinary.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
@@ -56,6 +53,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { goBuildPaths } from "../../domain/releaseExposureGoPaths.js";
 import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
 import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export interface ReleaseExposureOwners {
   readonly reader: ReleaseExposurePort;
@@ -324,7 +322,7 @@ export class ReleaseExposureService {
         return err(cause);
       return ok({
         family: "unknown",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         archivePaths: [],
       });
     }
@@ -348,7 +346,7 @@ export class ReleaseExposureService {
         kind: "failed",
         role: candidate.role,
         path: candidate.path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
     if (!result.ok) {
@@ -432,12 +430,7 @@ export class ReleaseExposureService {
     } catch (cause) {
       if (cause instanceof AnalysisError && stopsAudit(cause))
         return err(cause);
-      return ok(
-        failedMetadata(
-          cause instanceof Error ? cause.message : String(cause),
-          path,
-        ),
-      );
+      return ok(failedMetadata(errorMessage(cause), path));
     }
   }
 }
@@ -458,10 +451,9 @@ interface OwnerOutcome {
  * completeProviderEvidence carries as the error's partial observation.
  */
 const completedOwnerEvidence = (error: AnalysisError): Evidence | undefined => {
-  const partial = error.partialObservation;
-  return evidenceSchema.safeParse(partial).success
-    ? (partial as Evidence)
-    : undefined;
+  // Only authenticated Evidence settles the owner; otherwise it did not run.
+  const partial = recognizeEvidence(error.partialObservation);
+  return partial.ok ? partial.value : undefined;
 };
 
 /** Settle one fuse image from its owner's Evidence. */
@@ -584,7 +576,7 @@ const ownerCloseFailure = (
           cause instanceof AnalysisError
             ? projectAnalysisError(cause)
             : {
-                message: cause instanceof Error ? cause.message : String(cause),
+                message: errorMessage(cause),
               },
       })),
     },

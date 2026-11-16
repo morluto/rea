@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { classifyProviderFailure } from "../../../../src/providers/classifyProviderFailure.js";
 import { join } from "node:path";
@@ -73,7 +74,7 @@ const retainForeignFailure = async (path: string) => {
   const owner = new OwnedFileHandle(await open(path, "r"));
   const lease = AnalysisCleanupLease.forCloseOwner(owner, path);
   const partial = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "foreign", name: "foreign", version: null },
     {
       operation: "inspect_artifact",

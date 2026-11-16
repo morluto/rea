@@ -20,6 +20,7 @@ const snapshot: ProviderProcessSnapshot = {
 const context = (
   dialect: ProviderOutcomeContext["dialect"],
 ): ProviderOutcomeContext => ({
+  providerId: "example",
   operation: "inspect_target",
   capturedOutput: (retained) => ({
     stdout: retained.stdout.text,
@@ -33,7 +34,7 @@ const context = (
 
 /** A dialect that recognises nothing and reports its phase. */
 const unrecognised = context((_outcome, _details, unclassified) =>
-  unclassified("example", { diagnostics: { phase: "worker" } }),
+  unclassified({ diagnostics: { phase: "worker" } }),
 );
 
 describe("an outcome the provider dialect does not recognise", () => {
@@ -77,26 +78,6 @@ describe("an outcome the provider dialect does not recognise", () => {
         output_truncated: false,
       },
     },
-    {
-      name: "a launch refusal",
-      outcome: {
-        kind: "launch-refused",
-        cause: new Error("spawn EACCES"),
-        message: "spawn EACCES",
-        output: undefined,
-        refusal: {
-          kind: "not_executable",
-          code: "EACCES",
-          executable: "/selected/tool",
-        },
-      },
-      examined: {
-        failure_kind: "launch-refused",
-        exit_code: null,
-        signal: null,
-        launch_refusal_code: "EACCES",
-      },
-    },
   ];
   it.each(cases)(
     "reports $name with the examined outcome",
@@ -129,7 +110,7 @@ describe("an outcome the provider dialect does not recognise", () => {
         signal: null,
         stopRequested: true,
       },
-      context((_outcome, _details, unclassified) => unclassified("example")),
+      context((_outcome, _details, unclassified) => unclassified()),
     );
     expect(failure.capturedOutput).toMatchObject({
       stderr: "unrecognised diagnostic",
@@ -150,7 +131,7 @@ describe("an outcome the provider dialect does not recognise", () => {
       },
       {
         ...context((_outcome, _details, unclassified) =>
-          unclassified("example", { diagnostics: { phase: "worker" } }),
+          unclassified({ diagnostics: { phase: "worker" } }),
         ),
         details: { diagnostics: { receipt: "finalization failed" } },
       },

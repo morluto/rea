@@ -5,22 +5,19 @@ import {
 
 /**
  * What the shared outcome classifier examined for one owned command whose
- * launch refusal, exit or stream failure the provider's dialect did not
- * recognise. Field names are the reported diagnostic keys.
+ * exit or stream failure the provider's dialect did not recognise. Field names are the reported diagnostic keys.
  */
 export interface ExaminedProviderOutcome {
   /** The physical outcome kind the supervisor observed. */
-  readonly failure_kind: "launch-refused" | "exited" | "protocol";
+  readonly failure_kind: "exited" | "protocol";
   readonly reason: string;
-  /** Null when the process did not exit with a status, or never started. */
+  /** Null when the process did not exit with a status. */
   readonly exit_code: number | null;
   readonly signal: string | null;
   /** For an exit: whether the owner had begun stopping the process. */
   readonly stop_requested?: boolean;
   /** Whether the retained output omits bytes; absent when none was retained. */
   readonly output_truncated?: boolean;
-  /** For a launch refusal: the launcher's error code. */
-  readonly launch_refusal_code?: string;
 }
 
 /**

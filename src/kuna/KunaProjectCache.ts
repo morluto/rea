@@ -9,7 +9,7 @@ import {
   assertKunaProjectState,
   type KunaProjectFileStates,
 } from "./KunaProjectState.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   mkdir,
   lstat,
@@ -33,7 +33,7 @@ import {
   bindArtifactFileCleanup,
   AnalysisCleanupLease,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisResourceConstraintError,
@@ -72,9 +72,9 @@ import type {
   KunaProjectFunction,
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
-
-/** Bumped whenever the entry layout or manifest meaning changes. */
-const CACHE_LAYOUT = 3;
+import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** A manifest names five files and their digests; anything larger is not ours. */
 const MANIFEST_MAX_BYTES = 64 * 1024;
@@ -100,20 +100,20 @@ export interface KunaProjectKeyInputs {
 
 /** Content address of one export: every input that can change its bytes. */
 export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
-  createHash("sha256")
-    .update(
-      canonicalize({
-        layout: CACHE_LAYOUT,
-        target_sha256: inputs.targetSha256,
-        target_basename: inputs.targetBasename,
-        kuna_sha256: inputs.kunaSha256,
-        kuna_command: inputs.kunaCommand,
-        kuna_executable: inputs.kunaExecutable,
-        kuna_version: inputs.kunaVersion,
-        export: { command: "decompile-project", jobs: inputs.jobs },
-      }) ?? "",
-    )
-    .digest("hex");
+  sha256Hex(
+    canonicalize({
+      // The entry layout and manifest meaning are REA's code: a new release
+      // keys new entries, and older ones are retired as foreign manifests.
+      producer: releaseProducerIdentity(),
+      target_sha256: inputs.targetSha256,
+      target_basename: inputs.targetBasename,
+      kuna_sha256: inputs.kunaSha256,
+      kuna_command: inputs.kunaCommand,
+      kuna_executable: inputs.kunaExecutable,
+      kuna_version: inputs.kunaVersion,
+      export: { command: "decompile-project", jobs: inputs.jobs },
+    }) ?? "",
+  );
 
 const fileSchema = z.strictObject({
   path: z.string().min(1),
@@ -123,7 +123,7 @@ const fileSchema = z.strictObject({
 
 const manifestSchema = z
   .strictObject({
-    layout: z.literal(CACHE_LAYOUT),
+    producer: z.strictObject({ rea_version: z.string().min(1) }),
     key: z.string().regex(KEY_PATTERN),
     inputs: z.strictObject({
       target_sha256: z.string().regex(SHA256_PATTERN),
@@ -147,7 +147,13 @@ const manifestSchema = z
     }),
     created_at: utcDateTimeSchema,
   })
-  .superRefine(({ files, inputs, key }, context) => {
+  .superRefine(({ files, inputs, key, producer }, context) => {
+    if (producer.rea_version !== releaseProducerIdentity().rea_version)
+      context.addIssue({
+        code: "custom",
+        path: ["producer"],
+        message: "Export cache entry was produced by another REA release",
+      });
     if (
       key !==
       kunaProjectKey({
@@ -726,7 +732,7 @@ export class KunaProjectCache {
           const closeFailure = new ProviderCleanupError(
             KUNA_PROVIDER_ID,
             [retained.resource],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             {
               operation: KUNA_EXPORT_OPERATION,
               cause:
@@ -899,7 +905,7 @@ export class KunaProjectCache {
         const failure = new ProviderCleanupError(
           KUNA_PROVIDER_ID,
           copying.resources.cleanupResources,
-          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { reason: errorMessage(cause) },
           { cause, operation: KUNA_EXPORT_OPERATION },
         );
         bindArtifactFileCleanup(cause, failure);
@@ -1051,11 +1057,11 @@ export class KunaProjectCache {
       return err(
         built.result.ok
           ? new KunaPublishedProjectCleanupError(built.result.value, retired)
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               built.result.error,
               retired,
               KUNA_EXPORT_OPERATION,
-            ).bindCleanupDependencies([built.result.error, retired]),
+            ),
       );
     if (built.result.ok)
       // The entry is published either way; a failed eviction retries on the next publish.
@@ -1127,7 +1133,7 @@ export class KunaProjectCache {
     signal: AbortSignal,
   ): Promise<Result<KunaProject, AnalysisError>> {
     const manifest: KunaProjectManifest = {
-      layout: CACHE_LAYOUT,
+      producer: releaseProducerIdentity(),
       key,
       inputs: {
         target_sha256: request.targetSha256,
@@ -1378,7 +1384,7 @@ export class KunaProjectCache {
     const error = new ProviderCleanupError(
       KUNA_PROVIDER_ID,
       [path],
-      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { reason: errorMessage(cause) },
       { operation: KUNA_EXPORT_OPERATION, cause },
     );
     const retained = {

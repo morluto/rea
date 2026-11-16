@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 
@@ -218,7 +219,7 @@ mcpTest(
     };
     const evidence = (result: JsonValue) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "ghidra", name: "Controlled bridge result", version: "12.1.4" },
         { operation: contract.name, parameters: {}, result },
       );

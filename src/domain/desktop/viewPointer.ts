@@ -7,7 +7,7 @@ import {
   selectorOf,
   type Condition,
 } from "./viewSelector.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {

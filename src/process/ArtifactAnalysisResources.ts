@@ -467,6 +467,7 @@ export class ArtifactAnalysisResources {
     budgetParameter?: "producer_limits",
   ): ProviderOutcomeContext {
     return {
+      providerId: this.providerId,
       operation,
       capturedOutput: capturedProviderOutput,
       timeout: {
@@ -506,7 +507,7 @@ export class ArtifactAnalysisResources {
         };
       },
       dialect: (_outcome, _details, unclassified) =>
-        unclassified(this.providerId),
+        unclassified(),
     };
   }
 

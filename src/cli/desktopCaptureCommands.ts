@@ -23,7 +23,7 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { cliDecimalField } from "./options.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   DESKTOP_CAPTURE_DEFAULTS,
@@ -33,6 +33,7 @@ import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 import { writeCliProgressLine } from "./cliProgress.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** One coherent view policy; invalid JSON and unknown controls fail at admission. */
 const viewPolicyOption = z
@@ -231,8 +232,7 @@ const withStateReaders = async (
                 ? ArtifactReaderFailure.cleanupObservation(cause, [])
                 : {
                     resources: [],
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
+                    reason: errorMessage(cause),
                   };
             const failure = new ProviderCleanupError(
               "rea-desktop",

@@ -54,6 +54,7 @@ import {
   FirmwareFileAccess,
   inventoryFirmwareOutput,
 } from "./FirmwareFiles.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Injectable owned launcher for production protocol and lifecycle tests. */
 export type FirmwareLauncher = (
@@ -74,9 +75,6 @@ export const firmwareToolUnavailable = (
 export const firmwareHostSupported = (platform: NodeJS.Platform): boolean =>
   platform === "linux";
 
-const failureReason = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /**
  * Why a configured tool path cannot run, or undefined when `accessPath` grants
  * `mode` and `statPath` is a regular file.
@@ -92,7 +90,7 @@ const executableRegularFileRefusal = async (
       ? undefined
       : "Configured path is not a regular file";
   } catch (cause: unknown) {
-    return failureReason(cause);
+    return errorMessage(cause);
   }
 };
 
@@ -124,7 +122,7 @@ export const resolveFirmwareCommand = async (
       throw firmwareToolUnavailable(
         engine,
         operation,
-        `${variable} is unavailable: ${failureReason(cause)}`,
+        `${variable} is unavailable: ${errorMessage(cause)}`,
       );
     },
   );
@@ -146,7 +144,7 @@ export const resolveFirmwareCommand = async (
     sha256 = await files.hash(selection.resolvedPath, signal);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    throw engineUnavailable(failureReason(cause));
+    throw engineUnavailable(errorMessage(cause));
   }
   const limiter =
     environment.REA_FIRMWARE_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
@@ -167,7 +165,7 @@ export const resolveFirmwareCommand = async (
     limiterSelection = await selectArtifactCommandPath(limiter, signal);
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    throw limiterUnavailable(failureReason(cause));
+    throw limiterUnavailable(errorMessage(cause));
   }
   const limiterRefusal = await executableRegularFileRefusal(
     limiterSelection.resolvedPath,
@@ -496,7 +494,7 @@ export const readFirmwareCommandReport = async (context: {
     const reportFailure =
       cause instanceof AnalysisOutputError
         ? cause.reason
-        : `Report could not be read: ${cause instanceof Error ? cause.message : String(cause)}`;
+        : `Report could not be read: ${errorMessage(cause)}`;
     const diagnostics = {
       ...(cause instanceof AnalysisOutputError ? cause.diagnostics : {}),
       report_path: context.path,

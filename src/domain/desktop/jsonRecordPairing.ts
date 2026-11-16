@@ -6,7 +6,7 @@ import {
   isPlaceholder,
 } from "./attributeRank.js";
 import { MAX_INSIDE_STEPS, spellCondition } from "./viewSelector.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** A field naming a JSON record, as TreeLine's `uid`: `id`, `uid`, `uuid`, `guid`, `key`, or a name ending in `_id`, `-id` or `Id`. */
 const ID_FIELD = /^(?:_?id|uid|uuid|guid|key)$|[_-]id$|[a-z]Id$/u;

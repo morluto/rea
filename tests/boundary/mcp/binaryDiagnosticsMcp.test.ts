@@ -17,7 +17,6 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -32,7 +31,7 @@ import {
   peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
-import { parseNativeExports } from "../../../src/native/exports/NativeExportParser.js";
+import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
 
 it("reports the exhausted native export allowance through MCP", async () => {
@@ -189,12 +188,15 @@ it.each([false, true])(
         withAdmittedAnalysis: admission,
       },
     );
-    registerAnalysisViewTool(
+    registerServiceTools(
       server,
-      silentLogger,
-      evidenceById,
-      recordEvidence,
-      admission,
+      { analysisView: {} },
+      {
+        logger: silentLogger,
+        evidenceById,
+        recordEvidence,
+        withAdmittedAnalysis: admission,
+      },
     );
     const client = new Client({ name: "entropy-cleanup-client", version: "1" });
     onTestFinished(async () => {

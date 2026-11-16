@@ -29,6 +29,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface AndroidMappingReadDeadline {
   readonly timeout: AbortSignal;
@@ -121,7 +122,7 @@ const readFailurePrimary = (
     cause: primary,
     diagnostics: {
       mapping_path: read.path,
-      reason: primary instanceof Error ? primary.message : String(primary),
+      reason: errorMessage(primary),
     },
   });
 };

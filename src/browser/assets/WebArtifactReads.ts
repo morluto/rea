@@ -26,12 +26,13 @@ import {
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
   malformedInput,
   ParseFailureError,
 } from "../../domain/parseFailure.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** The selected artifact and input field owning a reader failure. */
 export interface WebArtifactReadContext {
@@ -157,11 +158,11 @@ export const webArtifactReadError = (
       { cause, operation: context.operation },
     );
     bindArtifactFileCleanup(cause, cleanup);
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       context.operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    );
   }
   return primary;
 };
@@ -251,7 +252,7 @@ const webArtifactPrimaryError = (
     diagnostics: {
       target_path: context.targetPath,
       field: context.field.join("."),
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 };

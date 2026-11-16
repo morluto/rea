@@ -1,5 +1,9 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readyReviewedLedgerRequest } from "../../src/application/ReconstructionObligationLedger.fixture.js";
-import { createEvidence } from "../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 
 import { reconstructionObligationProofSchema } from "../../src/domain/reconstructionObligationProof.js";
@@ -12,14 +16,18 @@ const replaceProof = (
   const original = input.evidence_bundle.records.find(
     (record) => record.predicate_type === "rea.reconstruction-proof",
   )!;
-  const replacement = createEvidence(undefined, original.provider, {
-    predicateType: original.predicate_type,
-    operation: original.operation,
-    parameters: original.parameters,
-    result: result,
-    confidence: original.confidence,
-    authority: original.authority,
-  });
+  const replacement = createEvidence(
+    evidenceSubjectInput(original.subject),
+    original.provider,
+    {
+      predicateType: original.predicate_type,
+      operation: original.operation,
+      parameters: original.parameters,
+      result: result,
+      confidence: original.confidence,
+      authority: original.authority,
+    },
+  );
   input.evidence_bundle = createEvidenceBundle(
     input.evidence_bundle.records.map((record) =>
       record.evidence_id === original.evidence_id ? replacement : record,
@@ -244,7 +252,7 @@ export const reconstructionProofApplicabilityCases = () =>
         if (specification.name === "passing fixture with stale failed proof")
           proof.owner_sha256 = "2".repeat(64);
         const failed = createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           {
             id: "failed-fixture",
             name: "Fixture verifier",

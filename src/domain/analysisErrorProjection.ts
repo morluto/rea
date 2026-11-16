@@ -48,6 +48,7 @@ import {
   type AnalysisCallerLifetime,
   type AnalysisError,
   type AnalysisErrorOptions,
+  type AnalysisRelatedInputs,
 } from "./analysisErrorBase.js";
 import { invocationLimit } from "./analysisSettingDefinitions.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
@@ -56,6 +57,7 @@ import {
   classifyAnalysisError,
   RETRYABLE_CODES,
 } from "./analysisErrorClassification.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -64,6 +66,21 @@ import {
  * releases its provider session and runtime after this request, such as a
  * one-shot CLI command, passes `"invocation"`.
  */
+/**
+ * Inputs the recovery names, by contract field and operation name. Each
+ * adapter renders them in its own spelling.
+ */
+const relatedInputDetails = (
+  related: AnalysisRelatedInputs | undefined,
+): Record<string, JsonValue> => ({
+  ...(related?.parameters === undefined || related.parameters.length === 0
+    ? {}
+    : { related_parameters: [...related.parameters] }),
+  ...(related?.operations === undefined || related.operations.length === 0
+    ? {}
+    : { related_operations: [...related.operations] }),
+});
+
 export const projectAnalysisError = (
   error: AnalysisError,
   callerLifetime: AnalysisCallerLifetime = "continuing",
@@ -125,9 +142,7 @@ export function* unretainedEvidenceCandidates(
   ] as const) {
     const value = projected.details?.[field];
     if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
+      isRecord(value) &&
       (value.kind === "unretained-evidence" ||
         value.kind === "unretained-observation" ||
         value.kind === "inline-evidence")
@@ -208,12 +223,7 @@ export const omitUnretainedEvidenceFromError = (
   }
   const { [field]: _partial, ...details } = projected.details!;
   const evidence = partial.evidence;
-  const evidenceId =
-    typeof evidence === "object" &&
-    evidence !== null &&
-    !Array.isArray(evidence)
-      ? evidence.evidence_id
-      : undefined;
+  const evidenceId = isRecord(evidence) ? evidence.evidence_id : undefined;
   const retention =
     partial.kind === "inline-evidence"
       ? typeof partial.retention === "string"
@@ -438,6 +448,7 @@ const projectError = (
     ...(refusal === undefined
       ? {}
       : { refusal: analysisRefusalDetails(refusal) }),
+    ...relatedInputDetails(primary.related),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {

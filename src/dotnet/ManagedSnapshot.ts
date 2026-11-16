@@ -4,7 +4,6 @@ import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
-import { classifyBinaryTargetFilesystemFailure } from "../application/BinaryTargetResolver.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -15,7 +14,7 @@ import {
   type RegularFileReadOptions,
 } from "../process/RegularFileRead.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
@@ -28,6 +27,8 @@ import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../domain/managed/managedInspect
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 interface ManagedSourceObservation {
   readonly byteLength: number;
@@ -111,7 +112,7 @@ export const readManagedSnapshot = async (
       signal?.throwIfAborted();
       return {
         byteLength: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes,
       };
     },
@@ -280,11 +281,7 @@ export const managedCleanupError = (
         failure.retainPartialObservation(observation);
     }
     return failure instanceof AnalysisError
-      ? analysisErrorWithCleanupFailure(
-          failure,
-          cleanup,
-          operation,
-        ).bindCleanupDependencies([failure, cleanup])
+      ? analysisErrorWithCleanupDependencies(failure, cleanup, operation)
       : cleanup;
   }
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
@@ -307,11 +304,7 @@ export const managedCleanupError = (
         ),
         { partialObservation: cause.partialObservation },
       );
-      return analysisErrorWithCleanupFailure(
-        cancelled,
-        error,
-        operation,
-      ).bindCleanupDependencies([cancelled, error]);
+      return analysisErrorWithCleanupDependencies(cancelled, error, operation);
     }
     return error;
   }

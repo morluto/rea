@@ -1138,7 +1138,7 @@ describe("GhidraClient", () => {
     },
   );
 
-  it("accepts an owned-socket result above the former 64 MiB ceiling", async () => {
+  it("accepts an owned-socket result above 64 MiB", async () => {
     const client = clientFor(new FixtureLauncher("oversized_result"));
     const result = await client.callTool("list_strings", { document: null });
 

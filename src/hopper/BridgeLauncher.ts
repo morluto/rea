@@ -59,6 +59,7 @@ import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
 import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
@@ -333,9 +334,9 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         } catch (cause: unknown) {
           const failure = new HopperStartError({
             cause,
-            userMessage: `Previous Hopper image cleanup remains incomplete: ${cause instanceof Error ? cause.message : String(cause)}`,
+            userMessage: `Previous Hopper image cleanup remains incomplete: ${errorMessage(cause)}`,
             cleanup: {
-              reason: cause instanceof Error ? cause.message : String(cause),
+              reason: errorMessage(cause),
               resources: this.#preparedImageResources.cleanupResources,
             },
           });

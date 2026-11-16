@@ -98,6 +98,7 @@ import {
   admitGhidraInstallation,
   type GhidraAdmission,
 } from "./GhidraAdmission.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86",
@@ -375,7 +376,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         cause instanceof ArtifactReaderFailure
           ? (cause.cleanup?.resources ?? [])
           : [],
-        { reason: providerFailureText(cause) },
+        { reason: errorMessage(cause) },
         { cause },
       );
       bindArtifactFileCleanup(cause, error);
@@ -757,9 +758,6 @@ const existingProjectUnsupported = (): ConfigurationError => {
     settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
   });
 };
-
-const providerFailureText = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const inspectWindowsP0TargetSupport = (
   target: BinaryTarget,

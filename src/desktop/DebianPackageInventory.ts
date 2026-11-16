@@ -37,6 +37,7 @@ import {
   installableLibraries,
   installablePackages,
 } from "./LibraryPackageInventory.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The host commands and apt folders Debian package identification reads. */
 export type DebianPackageHost = AptRepositoryHost;
@@ -73,9 +74,7 @@ const bothFailed = (first: unknown, second: unknown): unknown => {
   const causes = [first, second];
   const both = new AggregateError(
     causes,
-    causes
-      .map((cause) => (cause instanceof Error ? cause.message : String(cause)))
-      .join("; "),
+    causes.map((cause) => errorMessage(cause)).join("; "),
   );
   const cleanups = causes.flatMap((cause) =>
     cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined

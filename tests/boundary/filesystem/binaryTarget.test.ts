@@ -169,8 +169,7 @@ it.each([{ cpus: [0x0100000c] }, { cpus: [0x01000007, 0x0100000c] }])(
     expect(
       parseEvidence(JSON.parse(JSON.stringify(evidence))).subject,
     ).toMatchObject({
-      format: "mach-o-universal",
-      architecture: "arm64",
+      identity: { format: "mach-o-universal", architecture: "arm64" },
     });
   },
 );

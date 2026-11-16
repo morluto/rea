@@ -9,6 +9,7 @@ import { readLeb128, type Leb128Read } from "../leb128.js";
 import { issue } from "./appleDispatchDecodeFacts.js";
 import type { DecodeIssue } from "./appleDispatchDecodeFacts.js";
 import { decodeMachoName, type MachoName } from "./appleMachoNames.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Where a Mach-O stores pointer fixups, from its load commands. */
 export interface FixupCommands {
@@ -425,7 +426,7 @@ const readChainedPage = (
   } catch (cause: unknown) {
     // A decode failure stays with this record; a host limit is not one.
     if (isHostLimitFailure(cause)) throw cause;
-    failure = cause instanceof Error ? cause.message : String(cause);
+    failure = errorMessage(cause);
   }
   return { locations, lastOffset, failure };
 };
@@ -880,7 +881,7 @@ const chainedFixups = (
       } catch (cause: unknown) {
         // A decode failure stays with this record; a host limit is not one.
         if (isHostLimitFailure(cause)) throw cause;
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         recordPointerFailure(reason, address, chainIndex);
         return { kind: "unsupported", reason };
       }
@@ -1168,9 +1169,7 @@ function* parseLegacyRebasesSteps(
     } catch (cause: unknown) {
       // A decode failure stays with this record; a host limit is not one.
       if (isHostLimitFailure(cause)) throw cause;
-      failures.push(
-        `rebase opcodes: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      failures.push(`rebase opcodes: ${errorMessage(cause)}`);
       unreadBytes += stream.size;
     }
   }
@@ -1347,7 +1346,7 @@ function* readBindStreamSteps(
       if (isHostLimitFailure(cause)) throw cause;
       binding = {
         kind: "unsupported",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       };
     }
     const previous = binds.at(-1);
@@ -1525,9 +1524,7 @@ function* parseLegacyBindsSteps(
     } catch (cause: unknown) {
       // A decode failure stays with this record; a host limit is not one.
       if (isHostLimitFailure(cause)) throw cause;
-      failures.push(
-        `${stream.stream} bind opcodes: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      failures.push(`${stream.stream} bind opcodes: ${errorMessage(cause)}`);
     }
   }
   const complete = failures.length === 0;

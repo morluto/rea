@@ -4,7 +4,7 @@ import {
   chromiumLaunchRemediation,
   chromiumSandboxEnabled,
 } from "./ChromiumSandbox.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   AnalysisCleanupLeaseGroup,
@@ -42,6 +42,7 @@ import {
   type PlaywrightCdpSession,
 } from "./PlaywrightCdpSession.js";
 import { CdpMalformedReply } from "./protocol/CdpCommands.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -142,7 +143,7 @@ export class PlaywrightScenarioBrowserCleanupOwner {
       const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
         cause,
         cleanup: {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           resources: this.cleanupResources,
         },
       });
@@ -702,16 +703,12 @@ export const failBrowserScenarioOperation = async (
     const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
       cause,
       cleanup: {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         resources: cleanup.cleanupResources ?? [],
       },
     });
     new AnalysisCleanupLeaseGroup(failure, [cleanup]);
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      failure,
-      OPERATION,
-    ).bindCleanupDependencies([primary, failure]);
+    throw analysisErrorWithCleanupDependencies(primary, failure, OPERATION);
   }
   throw primaryFailure;
 };
@@ -959,8 +956,7 @@ export const openPlaywrightScenarioBrowser = async (
               remediationAction: chromiumLaunchRemediation(chromiumSandbox),
               diagnostics: {
                 executable_path: executablePath,
-                startup_error:
-                  cause instanceof Error ? cause.message : String(cause),
+                startup_error: errorMessage(cause),
               },
             },
           )

@@ -15,6 +15,7 @@ import {
   PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 import { z } from "zod";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Actual limits reported by the owned bridge after lowering inherited soft limits. */
 export const pwntoolsResourceLimitsSchema = z.strictObject({
@@ -76,8 +77,7 @@ export const readPwntoolsFailureEvidence = async (
       ).catch((cause: unknown) => {
         const completed = completedStableArtifact(cause);
         if (completed === undefined) throw cause;
-        finalizationFailures["resource.failure"] =
-          cause instanceof Error ? cause.message : String(cause);
+        finalizationFailures["resource.failure"] = errorMessage(cause);
         return completed;
       });
       const expected =
@@ -92,10 +92,7 @@ export const readPwntoolsFailureEvidence = async (
     } catch (markerFailure: unknown) {
       marker = {
         resource: null,
-        failure:
-          markerFailure instanceof Error
-            ? markerFailure.message
-            : String(markerFailure),
+        failure: errorMessage(markerFailure),
       };
     }
   }
@@ -118,8 +115,7 @@ export const readPwntoolsFailureEvidence = async (
       ).catch((cause: unknown) => {
         const completed = completedStableArtifact(cause);
         if (completed === undefined) throw cause;
-        finalizationFailures["limits.json"] =
-          cause instanceof Error ? cause.message : String(cause);
+        finalizationFailures["limits.json"] = errorMessage(cause);
         return completed;
       });
       const decoded = safeParseUtf8Json(reported.bytes);
@@ -133,10 +129,7 @@ export const readPwntoolsFailureEvidence = async (
     } catch (reportFailure: unknown) {
       limitReport = {
         limits: null,
-        failure:
-          reportFailure instanceof Error
-            ? reportFailure.message
-            : String(reportFailure),
+        failure: errorMessage(reportFailure),
       };
     }
   }

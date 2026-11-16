@@ -27,6 +27,7 @@ import {
   KUNA_VERIFIED_VERSION,
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Client settings consulted by this readiness probe. */
 export const KUNA_DOCTOR_SETTINGS = [
@@ -309,7 +310,7 @@ const cacheCheck = async (
       name: "cache",
       ok: false,
       code: "open_options_invalid",
-      detail: `REA cannot write the Kuna cache root ${cacheRoot}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `REA cannot write the Kuna cache root ${cacheRoot}: ${errorMessage(cause)}`,
       remediation:
         "Set REA_KUNA_CACHE_DIR to a directory the REA process user can write.",
       classification: "config_drift",
@@ -354,7 +355,7 @@ const nearestDirectoryWritable = async (
           reason:
             typeof absent === "string"
               ? absent
-              : `${candidate} is not writable: ${cause instanceof Error ? cause.message : String(cause)}`,
+              : `${candidate} is not writable: ${errorMessage(cause)}`,
         };
       candidate = parent;
     }
@@ -373,7 +374,7 @@ const entryAbsent = async (path: string): Promise<true | string> => {
   } catch (cause: unknown) {
     return isMissing(cause)
       ? true
-      : `${path} cannot be inspected: ${cause instanceof Error ? cause.message : String(cause)}`;
+      : `${path} cannot be inspected: ${errorMessage(cause)}`;
   }
 };
 

@@ -4,7 +4,7 @@ import { CdpConnection } from "../../dist/browser/CdpConnection.js";
 import { discoverCdpEndpoint } from "../../dist/browser/CdpEndpoint.js";
 import { captureCdpScreenshot } from "../../dist/browser/CdpScreenshot.js";
 import { newPlaywrightCdpSession } from "../../dist/browser/PlaywrightCdpSession.js";
-import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
+import { comparePngScreenshots } from "../../dist/domain/pngVisualDiff.js";
 import { createWebScreenshotArtifact } from "../../dist/domain/webScreenshot.js";
 
 /** Exercise the production capture boundary on a real, undersized surface. */

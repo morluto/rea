@@ -14,7 +14,10 @@ import {
   artifactFilePrimaryFacts,
   artifactSelectedPathErrno,
 } from "../../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCleanupDependencies,
+} from "../../domain/analysisErrorCleanup.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -52,6 +55,7 @@ import {
   CAPTURE_LIMITS,
   type CaptureFormatError,
 } from "./CaptureFormatError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 const OPERATION = "inspect_web_network_capture";
 
 /** A refused protobuf body decode; a limit names the budget that owns it. */
@@ -309,7 +313,7 @@ export const historicalCaptureFailure = (
       ...(descriptorRead
         ? { source_path: sourcePath, input_path: inputPath }
         : {}),
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       ...(origin === "owned-or-classified" &&
       cause instanceof ArtifactReaderFailure
         ? { failure_kind: cause.reason }
@@ -435,11 +439,11 @@ export const withCaptureReaderCleanup = (
       cleanup.retainPartialObservation(primary.partialObservation);
     return cleanup;
   }
-  const composed = analysisErrorWithCleanupFailure(
+  const composed = analysisErrorWithCleanupDependencies(
     primary,
     cleanup,
     OPERATION,
-  ).bindCleanupDependencies([primary, cleanup]);
+  );
   bindArtifactFileCleanup(cause, composed);
   return composed;
 };

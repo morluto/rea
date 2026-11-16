@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { processInspectionCleanupFailures } from "../../process/ProcessInspectionCleanup.js";
 import { samplingInspectionFailures } from "../../process/capture/ProcessSamplingObservation.js";
 import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
@@ -173,7 +174,7 @@ const captureEvidence = (
   request: DesktopCaptureRequest,
   capture: DesktopApplicationCapture,
 ): Evidence =>
-  createEvidence(undefined, DESKTOP_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-capture",
     operation: DESKTOP_OPERATION,
     parameters: {

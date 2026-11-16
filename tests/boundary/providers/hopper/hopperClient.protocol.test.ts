@@ -205,7 +205,7 @@ describe("HopperClient response lifecycle", () => {
     });
   });
 
-  it("accepts an owned-socket response above the former 10 MiB ceiling", async () => {
+  it("accepts an owned-socket response above 10 MiB", async () => {
     const client = await startClient();
     const label = "x".repeat(10 * 1024 * 1024 + 1);
 

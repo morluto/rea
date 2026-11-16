@@ -11,6 +11,7 @@ import {
   assertRuntimeRetention,
   RuntimeRetention,
 } from "./CdpRuntimeRetention.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 type RuntimeRequestSources = Pick<
   CdpRuntimeSources,
@@ -114,7 +115,7 @@ export class CdpRuntimeRequests {
           ? cause
           : new AnalysisOutputError(
               this.sources.session.operation,
-              cause instanceof Error ? cause.message : String(cause),
+              errorMessage(cause),
             );
     }
   }

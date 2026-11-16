@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { open, writeFile, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
@@ -1192,7 +1193,7 @@ it("retains GGUF declarations and metadata when storage overlap is refused", asy
     ...INVALID_FORMAT,
   });
   const evidence = parseEvidence(result.error.partialObservation);
-  expect(evidence.subject).toBeNull();
+  expect(evidence.subject.identity.kind).toBe("unknown");
   expect(evidence.normalized_result).toMatchObject({
     artifact: {
       header_sha256: null,
@@ -1536,7 +1537,7 @@ it("retains explicit scoped identity through shared service and preserves caller
   onTestFinished(() => service.close());
   const result = await service.inspect({ path, detail: "complete" });
   if (!result.ok) throw result.error;
-  expect(result.value.subject).toBeNull();
+  expect(result.value.subject.identity.kind).toBe("unknown");
   expect(
     modelArtifactSchema.parse(result.value.normalized_result).artifact.sha256,
   ).toBeNull();
@@ -1546,7 +1547,7 @@ it("retains explicit scoped identity through shared service and preserves caller
     detail: "complete",
   });
   if (!full.ok) throw full.error;
-  expect(full.value.subject?.digest.sha256).toBe(hash(fixture.bytes));
+  expect(fileIdentity(full.value.subject).sha256).toBe(hash(fixture.bytes));
   const controller = new AbortController();
   const reason = new Error("selected caller stop");
   controller.abort(reason);

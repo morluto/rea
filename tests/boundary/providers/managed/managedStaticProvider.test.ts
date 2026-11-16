@@ -67,10 +67,24 @@ it.each([
               detail: expect.stringContaining(
                 "max_metadata_representation_bytes=1",
               ),
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_metadata_representation_bytes",
+                effective_value: 1,
+                unit: "bytes",
+                minimum: 1,
+                maximum: Number.MAX_SAFE_INTEGER,
+                default_value: 64 * 1024 * 1024,
+                applies_at: "next_call",
+              },
             }),
           ],
         },
       });
+      // The issue names the contract field; adapters render their option.
+      expect(JSON.stringify(partial.value.result)).not.toContain(
+        "--max-metadata",
+      );
       const recovered = await client.execute(operation, {
         max_snapshot_bytes: bytes.length,
         max_metadata_representation_bytes: 1024 * 1024,

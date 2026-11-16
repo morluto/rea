@@ -1,8 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import {
-  evidenceSchema,
-  withEvidenceCallerInputPath,
-} from "../domain/evidence.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import { createFlutterBuildAnalysisProvider } from "../composition/flutter.js";
@@ -46,9 +44,10 @@ export const registerFlutterCommands = (
         undefined,
         {
           recoverCompletedObservation: (observation) => {
-            const parsed = evidenceSchema.safeParse(observation);
-            return parsed.success
-              ? withEvidenceCallerInputPath(parsed.data, input.path)
+            // Only authenticated Evidence is recovered; otherwise the error stands.
+            const parsed = recognizeEvidence(observation);
+            return parsed.ok && parsed.value !== undefined
+              ? withEvidenceCallerInputPath(parsed.value, input.path)
               : undefined;
           },
         },

@@ -219,6 +219,16 @@ cliTest(
           initial_url: `${browser.allowedOrigin}/app?caller=retained#details`,
         },
       });
+      // The observation names the page it was armed on.
+      expect(evidence.subject).toEqual({
+        identity: {
+          kind: "url",
+          url: `${browser.allowedOrigin}/app?caller=retained#details`,
+          origin: browser.allowedOrigin,
+        },
+        name: null,
+        local_path: null,
+      });
       expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
       const cliResult = await cli.run({
         arguments: [

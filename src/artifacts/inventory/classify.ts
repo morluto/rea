@@ -1,6 +1,10 @@
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
+  openRootArtifact,
+  releaseRootArtifact,
+  abortIfNeeded,
+  assertArtifactSelectedSource,
 } from "../../resources/index.js";
 import {
   nesContainerFormat,
@@ -18,7 +22,6 @@ import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../../domain/firmware/espFlashLocation.js";
-import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
@@ -41,7 +44,6 @@ import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
 import { readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
 import { claimsExecutableHeader } from "../../domain/binaryTarget.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
@@ -51,12 +53,10 @@ import {
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import type { HashResult } from "../ArtifactHash.js";
 import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "./hashStableRootArtifact.js";
+  classifyStableRootArtifactHandle,
+  type HashResult,
+} from "../ArtifactHash.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import { readMachoHeaderPrefixFacts } from "../../domain/apple/machoContainer.js";
 import { hasDiskImageSignature } from "../../domain/apple/diskImageFormat.js";
@@ -160,7 +160,7 @@ export const classifyAndHashRootForInventory = async (
     const admittedDigest =
       options.expectedRootSha256 === undefined
         ? undefined
-        : await hashStableRootArtifactHandle(
+        : await classifyStableRootArtifactHandle(
             path,
             handle,
             initial,
@@ -186,7 +186,7 @@ export const classifyAndHashRootForInventory = async (
       typeof classified === "string" ? classified : classified.kind;
     const digest =
       admittedDigest ??
-      (await hashStableRootArtifactHandle(
+      (await classifyStableRootArtifactHandle(
         path,
         handle,
         initial,
