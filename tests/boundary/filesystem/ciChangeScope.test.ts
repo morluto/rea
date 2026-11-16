@@ -1133,7 +1133,7 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
-  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  ["src/hopper/HopperErrors.ts", { code: true, apple: true }],
   [
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
     { code: true, apple: true },

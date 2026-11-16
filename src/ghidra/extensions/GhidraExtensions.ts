@@ -1,4 +1,5 @@
 import { GhidraAdmissionError } from "../GhidraAdmissionError.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
@@ -17,7 +18,7 @@ import {
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
-  ghidraFileFailure,
+  ghidraFileDialect,
 } from "../GhidraFileArtifacts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
@@ -125,10 +126,13 @@ export const resolveGhidraExtensions = async (
           });
         } catch (cause: unknown) {
           return err(
-            ghidraFileFailure(cause, "resolve_analysis_profile", {
-              extension: adapter.id,
-              path: configured,
-            }),
+            classifyProviderFailure(
+              cause,
+              ghidraFileDialect("resolve_analysis_profile", {
+                extension: adapter.id,
+                path: configured,
+              }),
+            ),
           );
         }
       }
@@ -136,7 +140,12 @@ export const resolveGhidraExtensions = async (
       return ok(extensions);
     })
     .catch((cause: unknown) =>
-      err(ghidraFileFailure(cause, "resolve_analysis_profile")),
+      err(
+        classifyProviderFailure(
+          cause,
+          ghidraFileDialect("resolve_analysis_profile"),
+        ),
+      ),
     );
 
 /** Require explicit local configuration before admitting executable code from a profile. */
@@ -235,7 +244,7 @@ export const snapshotGhidraExtensions = async (
       return result;
     })
     .catch((cause: unknown) => {
-      throw ghidraFileFailure(cause, "open_binary");
+      throw classifyProviderFailure(cause, ghidraFileDialect("open_binary"));
     });
 
 /** Require every configured producer result to match its artifact and registered ABI. */

@@ -275,12 +275,12 @@ export const wabtFailureDialect = (
       },
       launchUnavailable: (_failure, details) =>
         wabtUnavailable(outcome.message, outcome.cause, details),
-      dialect: (exit, details) =>
+      dialect: (exit, details, unclassified) =>
         // A version probe that exits or whose output cannot be collected
         // leaves the configured installation unusable for this call.
         phase === "configuration"
           ? wabtUnavailable(exit.message, exit.cause, details)
-          : new AnalysisOutputError(OPERATION, exit.message, details),
+          : unclassified(),
     }),
     ...(phase === "artifact"
       ? {

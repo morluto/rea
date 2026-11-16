@@ -234,6 +234,32 @@ it("keeps an unrelated digest ABORT_ERR as an adapter failure", async () => {
   }
 });
 
+it("does not report a command ABORT_ERR without the caller's abort as cancellation", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-command-abort-"));
+  const path = join(directory, "fixture.bin");
+  await writeFile(path, "fixture");
+  const failure = Object.assign(new Error("aborted by another signal"), {
+    code: "ABORT_ERR",
+  });
+  const service = new TestReverseEngineeringService({
+    runOwned: async () => {
+      throw failure;
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump(
+      { path, operation: "symbols" },
+      { signal: new AbortController().signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).not.toBe("AnalysisCancelledError");
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it.each([
   {
     captured: false,

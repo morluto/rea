@@ -9,7 +9,7 @@ import {
   HopperCancelledError,
   HopperProcessError,
   HopperStartError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
@@ -49,7 +49,7 @@ import {
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
-} from "../process/HopperLease.js";
+} from "./HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,

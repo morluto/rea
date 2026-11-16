@@ -1,4 +1,5 @@
 import { captureBudgets } from "./CaptureBudgets.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { CaptureRedaction, capturePointer } from "./CaptureRedaction.js";
@@ -100,15 +101,7 @@ export const readHistoricalCaptureReply = async (
     };
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    if (
-      signal?.aborted === true &&
-      (cause === signal.reason ||
-        (cause instanceof Error &&
-          cause.name === "AbortError" &&
-          "code" in cause &&
-          cause.code === "ABORT_ERR"))
-    )
-      throw cause;
+    if (isAbortOf(cause, signal)) throw cause;
     const error = new AnalysisOutputError(
       "inspect_web_network_capture",
       `Owned capture decoder reply failed for ${capturePath}: ${replyFailureReason(cause)}`,

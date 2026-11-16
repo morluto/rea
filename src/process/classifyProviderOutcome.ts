@@ -12,6 +12,11 @@ import {
   type ResourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { ProviderAdapterErrorOptions } from "../domain/providerAdapterError.js";
+import {
+  UnclassifiedProviderFailure,
+  type ExaminedProviderOutcome,
+} from "../domain/unclassifiedProviderFailure.js";
 import type { AnalysisLimit } from "../domain/analysisSettings.js";
 import {
   describeLaunchFailure,
@@ -183,6 +188,38 @@ export const classifyLaunchFailure = (
 
 type ReportedLimits = Readonly<Record<string, JsonValue>> | null;
 
+/**
+ * Reports the dialect outcome being classified as unrecognised by the
+ * context's provider. The report always carries the examined outcome and the
+ * classifier's details; `options` add provider facts to those details.
+ */
+export type UnclassifiedOutcomeReport = (
+  options?: ProviderAdapterErrorOptions,
+) => UnclassifiedProviderFailure;
+
+/** The facts the classifier examined for one dialect outcome. */
+const examinedOutcome = (
+  outcome: ProviderDialectOutcome,
+): ExaminedProviderOutcome => {
+  const snapshot = outcome.output?.snapshot;
+  return {
+    failure_kind: outcome.kind,
+    reason: outcome.message,
+    exit_code:
+      outcome.kind === "exited"
+        ? outcome.exitCode
+        : (snapshot?.exitCode ?? null),
+    signal:
+      outcome.kind === "exited" ? outcome.signal : (snapshot?.signal ?? null),
+    ...(outcome.kind === "exited"
+      ? { stop_requested: outcome.stopRequested }
+      : {}),
+    ...(outcome.output === undefined
+      ? {}
+      : { output_truncated: outcome.output.truncated }),
+  };
+};
+
 /** What one provider command needs to turn its outcome into a typed error. */
 export interface ProviderOutcomeContext {
   readonly providerId: string;
@@ -235,10 +272,15 @@ export interface ProviderOutcomeContext {
    * provider's to interpret.
    */
   readonly launchUnavailable?: LaunchFailureContext["unavailable"];
-  /** Provider-specific meaning of an exit or a stream failure. */
+  /**
+   * Provider-specific meaning of an exit or a stream failure. What the
+   * provider does not recognise it reports through `unclassified`, which
+   * carries the examined outcome.
+   */
   readonly dialect: (
     outcome: ProviderDialectOutcome,
     details: AnalysisErrorOptions,
+    unclassified: UnclassifiedOutcomeReport,
   ) => AnalysisError;
 }
 
@@ -359,6 +401,22 @@ export const classifyProviderOutcome = (
       });
     case "exited":
     case "protocol":
-      return context.dialect(outcome, details);
+      return context.dialect(
+        outcome,
+        details,
+        (options) =>
+          new UnclassifiedProviderFailure(
+            context.providerId,
+            operation,
+            examinedOutcome(outcome),
+            {
+              ...details,
+              ...options,
+              // Provider facts join the context's diagnostics; neither
+              // replaces the other.
+              diagnostics: { ...details.diagnostics, ...options?.diagnostics },
+            },
+          ),
+      );
   }
 };

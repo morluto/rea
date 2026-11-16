@@ -28,6 +28,7 @@ import {
 import { createEvidence } from "../domain/evidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { ArtifactAnalysisResources } from "./ArtifactAnalysisResources.js";
@@ -812,7 +813,12 @@ it("retains a physical command failure when the owner also observed late cancell
       { command_timeout_ms: 100, output_bytes: 1024 },
       undefined,
     );
-    expect(error).toMatchObject({ _tag: "AnalysisOutputError" });
+    expect(error).toBeInstanceOf(UnclassifiedProviderFailure);
+    expect(error).toMatchObject({
+      providerId: "fixture",
+      examined: { failure_kind: "protocol", reason: "physical failure" },
+    });
+    expect(projectAnalysisError(error).code).toBe("execution_failure");
     expect(error.cause).toBe(failure);
   } finally {
     await resources.close();
