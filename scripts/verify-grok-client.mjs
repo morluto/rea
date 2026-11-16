@@ -55,6 +55,13 @@ let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
 let catalogSize = null;
+// Native search_tool takes a uint8 limit, so one query cannot list a catalog
+// larger than 255 tools. Discovery pages by querying each name the earlier
+// pages did not return, until the union covers the catalog.
+const searchLimit = 255;
+const discovered = new Map();
+const searchedNames = new Set();
+const discoveryPages = [];
 let schemasChecked = 0;
 let analysisRequested = false;
 let evidenceSeen = false;
@@ -106,10 +113,6 @@ await withVerifierCleanup(async () => {
           (_, index) =>
             `export function extra${index}() { return { index: ${index}, tag: "GROK_LARGE_FIXTURE" }; }`,
         ).join("\n"),
-    );
-    assert(
-      expectedNames.length <= 255,
-      "Native search_tool limit is uint8; this full-catalog query cannot cover more than 255 tools",
     );
     const schemaValidator = new Ajv2020({
       strict: false,
@@ -253,10 +256,23 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: 255 });
-          const inventory = discovery.results
+            return call("search_tool", { query: "rea", limit: searchLimit });
+          discoveryPages.push(discovery);
+          for (const tool of discovery.results
             .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools);
+            .flatMap((result) => result.tools))
+            discovered.set(tool.tool_name, tool);
+          const missing = expectedNames.filter(
+            (name) => !discovered.has(name) && !searchedNames.has(name),
+          );
+          if (missing.length > 0) {
+            searchedNames.add(missing[0]);
+            return call("search_tool", {
+              query: missing[0],
+              limit: searchLimit,
+            });
+          }
+          const inventory = [...discovered.values()];
           catalogSize = inventory.length;
           assert.deepEqual(
             inventory.map((tool) => tool.tool_name).sort(),
@@ -274,7 +290,10 @@ await withVerifierCleanup(async () => {
             );
             schemasChecked++;
           }
-          await writeFile(join(lab, "native-discovery.json"), last);
+          await writeFile(
+            join(lab, "native-discovery.json"),
+            JSON.stringify(discoveryPages),
+          );
           catalogChecked = true;
           analysisRequested = true;
           return call("use_tool", {
