@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **cli:** Markdown argument diagnostics use REA's literal escaping, table widths and token counts. Flag-shaped unknown MCP subcommands honor the selected format. Completion --schema/--version routes use the canonical REA-owned hook rather than the retired SDK generator. Refresh affected literal snapshots and regenerate completion hooks with rea completions <shell>.
 * **cli:** rea <command> --mcp is removed. Start REA's MCP server with rea mcp or rea --mcp.
 * **mcp:** MCP calls to inspect_pcap_capture, start_rizin_debug_session and start_gdb_session with a relative path or inferior_tty are refused with invalid_request. Pass absolute paths.
 * **frida:** MCP `load_frida_script` and `instrument_with_frida` refuse a relative script `path` with `invalid_request`; send an absolute path. CLI `--script-file` still accepts a relative path, and Evidence `source_path` is now the resolved absolute path.
@@ -442,6 +443,7 @@
 * **cli:** declare CLI schema facts through the typed constraint helpers ([#11205](https://github.com/morluto/rea/issues/11205)) ([6cbfb9f](https://github.com/morluto/rea/commit/6cbfb9f6dcaf03381686cee6d9fe3fc8e8ba3935))
 * **cli:** derive build catalogs from the REA command registry ([4ea24b6](https://github.com/morluto/rea/commit/4ea24b6f8e63081ec5077c8e88370a8632aeeb0c))
 * **cli:** derive contract-backed command options from the tool contract ([#10571](https://github.com/morluto/rea/issues/10571)) ([f3b697d](https://github.com/morluto/rea/commit/f3b697da5a698a5548afd3b19d044ec623bdda0b))
+* **cli:** dispatch commands through REA-owned execution ([62014b5](https://github.com/morluto/rea/commit/62014b566d79c563933e32182c4e7515fd9a54e2))
 * **cli:** import zod directly instead of through incur ([#11655](https://github.com/morluto/rea/issues/11655)) ([07c5a54](https://github.com/morluto/rea/commit/07c5a54feee8de5ed5079fdebbdd122fa70d108a))
 * **cli:** name a failure's per-call control flag at the CLI boundary ([#11413](https://github.com/morluto/rea/issues/11413)) ([49d4991](https://github.com/morluto/rea/commit/49d4991a18b6c6385aa4e993b3bf40249cee7dce))
 * **cli:** own builtin refusals and retire per-command MCP ([7d502dd](https://github.com/morluto/rea/commit/7d502ddb0d8d80d0e16a80b0edc813f704e3ac31))
