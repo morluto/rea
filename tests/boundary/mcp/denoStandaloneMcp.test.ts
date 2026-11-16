@@ -12,6 +12,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("exposes Deno compile metadata through the existing MCP artifact tool", async () => {
   const root = await createTestTempDirectory("rea-deno-mcp-");
@@ -19,7 +20,10 @@ it("exposes Deno compile metadata through the existing MCP artifact tool", async
   await writeFile(path, denoElf());
   const session = createTestBinarySession(new ArtifactProvider({}));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "deno-contract-test", version: "1" });
+  const client = new Client(
+    { name: "deno-contract-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

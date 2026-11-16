@@ -2,14 +2,18 @@ import {
   BinaryResourceFailure,
   type BinaryContainer,
   type ImageSection,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
-import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
+import { readBinaryContainer } from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
 } from "../domain/rust/rustBinary.js";
-import { DEFAULT_RUSTC_HASH_LIMIT } from "../domain/rust/rustBinary.js";
+import {
+  DEFAULT_RUSTC_HASH_LIMIT,
+  rustcPartialCoverage,
+} from "../domain/rust/rustBinary.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
   readAuditableSection,
@@ -81,13 +85,16 @@ const dependencySection = (
   sections: readonly ImageSection[],
 ): ImageSection | null => {
   const expected = format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
-  const matches = sections.filter((section) => section.name === expected);
-  if (matches.length > 1)
+  const selected = uniqueKeyed(
+    keyedBy(sections, ({ name }) => name),
+    expected,
+  );
+  if (!selected.ok)
     throw malformedInput(
       RUST_AUDITABLE_FORMAT,
       "Image contains more than one dependency section",
     );
-  const section = matches[0];
+  const section = selected.value;
   if (section === undefined) return null;
   if (section.compressed)
     throw unsupportedInput(
@@ -161,14 +168,12 @@ const rustcCommit = (
         hashes: retention.hashes,
         ...(retention.reason !== undefined
           ? {
-              coverage: {
-                status: "partial" as const,
-                reason: retention.reason,
-                effective_limit:
-                  retention.reason === "report_bytes"
-                    ? maxOutputBytes
-                    : maxHashes,
-              },
+              coverage: rustcPartialCoverage(
+                retention.reason,
+                retention.reason === "report_bytes"
+                  ? maxOutputBytes
+                  : maxHashes,
+              ),
             }
           : {}),
       };

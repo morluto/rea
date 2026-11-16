@@ -1,4 +1,4 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { retainProcessInspectionCleanup } from "../providers/OwnedCommandCleanup.js";
@@ -25,10 +25,10 @@ import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { ProcessOwnershipIdentityBatchFailure } from "../process/ProcessInspectionCancellation.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import {
-  DesktopSessionCleanupError,
   runDesktopSession,
   type DesktopSessionOutcome,
 } from "./DesktopApplicationSession.js";
+import { DesktopSessionCleanupError } from "../ports/DesktopApplicationSession.js";
 import type { X11WindowObserver } from "./X11WindowObserver.js";
 
 const inspectionContext = (

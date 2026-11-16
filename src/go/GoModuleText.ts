@@ -1,6 +1,7 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import type { GoModule, GoModuleMetadata } from "../domain/go/goBinary.js";
 
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const escapes = new Map([
   ["a", 7],
   ["b", 8],

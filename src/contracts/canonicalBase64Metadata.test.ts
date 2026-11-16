@@ -5,6 +5,8 @@ import { z } from "zod";
 
 import { canonicalBase64Schema } from "../domain/stringPatterns.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { ADVERTISED_INPUT_SCHEMA_MAX_BYTES } from "./advertisedDialect.js";
+import { advertiseToolInput } from "./advertisedTool.js";
 import { toolContract } from "./toolContracts.js";
 import {
   toolInputSchemaWithMetadata,
@@ -34,6 +36,37 @@ it.each(["draft-2020-12", "draft-07"] as const)(
     expect($id).toBe(
       `urn:rea:tool-output:sha256:${digestCanonicalValue({ target, schema: withoutId }, "Tool output schema")}`,
     );
+    // The registered input keeps the canonical patterns; the client receives
+    // the dialect projection of it. The output presentation re-emits its own.
+    const advertisedInput = advertiseToolInput(
+      undefined,
+      projectedInput as Record<string, unknown>,
+      { budgetBytes: ADVERTISED_INPUT_SCHEMA_MAX_BYTES },
+    ).inputSchema;
+    const Validator = target === "draft-2020-12" ? Ajv2020 : Ajv;
+    const compile = (schema: unknown) =>
+      new Validator({ strict: false }).compile(schema as object);
+    for (const [schema, exact] of [
+      [projectedInput, true],
+      [advertisedInput, false],
+      [projectedOutput, false],
+    ] as const) {
+      const validate = compile(schema);
+      // Neither advertisement keeps the negated pad-bit probe, so each admits
+      // `AB==` while the registered schema and the server still refuse it.
+      for (const [encoded, valid] of [
+        ["AA==", true],
+        ["AB==", false],
+        ["AAAAAA==", false],
+      ] as const) {
+        const value = { encoded, literal };
+        expect(validate(value), encoded).toBe(
+          valid || (!exact && encoded === "AB=="),
+        );
+        expect(input.safeParse(value).success, encoded).toBe(valid);
+        expect(output.safeParse(value).success, encoded).toBe(valid);
+      }
+    }
     for (const projected of [projectedInput, projectedOutput]) {
       const properties = projected.properties as Record<string, unknown>;
       const literalProperty = properties.literal as Record<string, unknown>;
@@ -51,18 +84,6 @@ it.each(["draft-2020-12", "draft-07"] as const)(
         default: literal,
         examples: [literal],
       });
-      const Validator = target === "draft-2020-12" ? Ajv2020 : Ajv;
-      const validate = new Validator({ strict: false }).compile(projected);
-      for (const [encoded, valid] of [
-        ["AA==", true],
-        ["AB==", false],
-        ["AAAAAA==", false],
-      ] as const) {
-        const value = { encoded, literal };
-        expect(validate(value), encoded).toBe(valid);
-        expect(input.safeParse(value).success, encoded).toBe(valid);
-        expect(output.safeParse(value).success, encoded).toBe(valid);
-      }
     }
   },
 );

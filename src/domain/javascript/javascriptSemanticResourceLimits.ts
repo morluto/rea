@@ -1,3 +1,4 @@
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
 import type {
   JavaScriptSemanticResourceLimit,
   JavaScriptSemanticValue,
@@ -35,6 +36,48 @@ export const semanticResourceLimitFacts = (
   };
 };
 
+/** One `semantic_precision` field. */
+export type JavaScriptSemanticPrecisionControl =
+  keyof JavaScriptSemanticPrecision;
+
+/**
+ * The per-call control of one evaluator budget, named by its contract field
+ * (`semantic_precision.<field>`). Each adapter names the option that sets it.
+ */
+export const semanticPrecisionControl = (
+  control: JavaScriptSemanticPrecisionControl,
+  precision: JavaScriptSemanticPrecision = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: `semantic_precision.${control}`,
+  effective_value: precision[control],
+  unit: control === "primitive_bytes" ? "bytes" : "count",
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS[control],
+  applies_at: "next_call",
+});
+
+/**
+ * The evaluator budgets that limited a source, once each in field order:
+ * the controls of exhausted value budgets and of bounded wrapper expansion.
+ */
+export const semanticPrecisionControls = (
+  resourceLimits: Iterable<JavaScriptSemanticResourceLimit>,
+  controls: Iterable<JavaScriptSemanticPrecisionControl>,
+  precision: JavaScriptSemanticPrecision = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
+): AnalysisParameterLimit[] => {
+  const reached = new Set(controls);
+  for (const limit of resourceLimits) reached.add(resourceControls[limit][0]);
+  return (
+    Object.keys(
+      JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
+    ) as JavaScriptSemanticPrecisionControl[]
+  )
+    .filter((control) => reached.has(control))
+    .map((control) => semanticPrecisionControl(control, precision));
+};
+
 /** Exact caller control and effective value at the evaluator boundary. */
 export const semanticResourceLimitReason = (
   resourceLimit: JavaScriptSemanticResourceLimit,
@@ -49,7 +92,7 @@ export const semanticResourceLimitReason = (
     "getter-expansion": `Getter expansion was conservatively bounded (maximum ${String(precision.getter_expansions)} scheduled states or a growing receiver cycle).`,
     "alias-selections": `Alias selection expansion was conservatively bounded (maximum ${String(precision.alias_selections)} additional selector states); selected paths remain unknown.`,
   };
-  return `${prefixes[resourceLimit]} Semantic ${resourceLimit} budget reached: semantic_precision.${control}=${String(value)} ${displayUnit} (default ${String(defaultValue)}). Increase semantic_precision.${control} on the next analysis call (analyze_javascript_application or analyze_web_bundle), or pass --semantic-precision JSON on the CLI; no REA restart is required. Worker memory, transfer and graph-retention limits remain independent. Cyclic or unsupported evaluations remain unknown regardless of budget.`;
+  return `${prefixes[resourceLimit]} Semantic ${resourceLimit} budget reached: semantic_precision.${control}=${String(value)} ${displayUnit} (default ${String(defaultValue)}). Increase semantic_precision.${control} on the next analysis call (analyze_javascript_application or analyze_web_bundle); no REA restart is required. Worker memory, transfer and graph-retention limits remain independent. Cyclic or unsupported evaluations remain unknown regardless of budget.`;
 };
 
 /** Check UTF-16 length against worst-case JSON escaping without flattening. */

@@ -1,5 +1,5 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type {
   TOOL_CONTRACTS,
   ToolContractGroupId,

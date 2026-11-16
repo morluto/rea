@@ -1,12 +1,14 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { createCanonicalizeService } from "../composition/canonicalize.js";
 import { CANONICALIZE_TOOL_CONTRACTS } from "../contracts/canonicalize/canonicalizeToolContracts.js";
-import { canonicalizeArtifactInputSchema } from "../domain/canonicalize/canonicalizeArtifact.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { contractNamed } from "./contractCliDescription.js";
-import { registerContractCommand } from "./contractCommand.js";
+import {
+  callerTargetPath,
+  registerContractCommand,
+} from "./contractCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import type { CliInstance } from "./types.js";
 
@@ -54,12 +56,8 @@ export const registerCanonicalizeCommands = (
     (input, context) => {
       const canonicalize = createCanonicalizeService();
       return finishCliEvidenceCommand(
-        context.callerInputs.path ?? "",
-        () =>
-          canonicalize.canonicalize(
-            canonicalizeArtifactInputSchema.parse(input),
-            { signal: context.signal },
-          ),
+        callerTargetPath(context),
+        () => canonicalize.canonicalize(input, { signal: context.signal }),
         canonicalize,
         "rea-canonicalize",
         context.operation,

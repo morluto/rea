@@ -283,9 +283,17 @@ it.each(["after-replay", "before-replay", "replacement", "malformed"])(
         observation_ms: 0,
       }),
     );
+    // A root navigation to another loader proves the selected document
+    // changed, even though the final frame tree shows the selected loader.
+    if (kind === "replacement") {
+      expect(result).toMatchObject({
+        ok: false,
+        error: { reason: "target_changed" },
+      });
+      return;
+    }
     if (!result.ok) throw result.error;
-    if (kind === "replacement" || kind === "malformed")
-      expect(result.value.tools.items).toEqual([]);
+    if (kind === "malformed") expect(result.value.tools.items).toEqual([]);
     else
       expect(result.value.tools.items).toEqual([
         expect.objectContaining({
@@ -749,7 +757,9 @@ describe("CdpBrowserProvider: WebMCP replay inventory", () => {
     );
   });
 
-  it("retains registrations from authorized frames beyond the former frame cap", async () => {
+  // Frame count has no ceiling: the last of many authorized frames still
+  // contributes its registration.
+  it("retains registrations from every authorized frame of a page with many frames", async () => {
     const browser = await startFakeCdpBrowser({
       webMcpTools: true,
       webMcpFrameCount: 1_001,
@@ -768,7 +778,7 @@ describe("CdpBrowserProvider: WebMCP replay inventory", () => {
     expect(result.value.tools.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          name: "beyond_frame_limit_tool",
+          name: "last_frame_tool",
           frame_id: "webmcp-frame-1000",
         }),
       ]),

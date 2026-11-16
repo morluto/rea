@@ -1,3 +1,4 @@
+import { evidenceFileTarget } from "./evidence.js";
 import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
@@ -329,6 +330,7 @@ const readValidatedSourceFacts = (
       const capture = readEvidencePayload(
         processCaptureSchema,
         source.normalized_result,
+        { within: ["normalized_result"] },
       );
       if (!capture.ok) throw capture.error;
       processSources.push({
@@ -339,6 +341,7 @@ const readValidatedSourceFacts = (
       const parsedDossier = readEvidencePayload(
         functionDossierSchema,
         source.normalized_result,
+        { within: ["normalized_result"] },
       );
       if (!parsedDossier.ok) throw parsedDossier.error;
       const dossier = parsedDossier.value;
@@ -495,7 +498,7 @@ const authorityLimitations = (
     );
   if (
     claim.kind !== "behavioral" &&
-    sources.some(({ subject }) => subject === null)
+    sources.some((source) => evidenceFileTarget(source) === undefined)
   )
     limitations.push("Structural source artifact identity is unavailable.");
   if (claim.kind === "behavioral") {

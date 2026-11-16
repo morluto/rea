@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 import type {
   CanonicalizeArtifact,
@@ -52,8 +52,7 @@ export interface CanonicalizeProfile {
 }
 
 /** Hex SHA-256 of a region, so collapsed padding stays lossless by reference. */
-export const canonicalizeDigest = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
+export const canonicalizeDigest = (bytes: Buffer): string => sha256Hex(bytes);
 
 /**
  * A bounded, printable, NUL-free exemplar of a region. Control and non-ASCII

@@ -1,4 +1,9 @@
 import {
+  registerMcpClientOnHost,
+  registerMcpClientsOnHost,
+} from "../../tests/fixtures/mcpRegistration.js";
+import {
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -12,18 +17,15 @@ import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { ok } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 let resources: ArtifactResourceScope;
 beforeEach(() => {
   resources = new ArtifactResourceScope();
 });
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
-import {
-  registerMcpClient,
-  registerMcpClients,
-} from "./McpClientRegistration.js";
+import { mcpClientRegistrationWritten } from "./McpClientRegistration.js";
 import {
   mcpClientRegistrationProfile,
   resolveMcpRegistrationClients,
@@ -47,9 +49,9 @@ const register = (
   path: string,
   launcher: { command: string; args: readonly string[] },
   signal?: AbortSignal,
-) => registerMcpClient(clientFor(path), launcher, signal, resources);
+) => registerMcpClientOnHost(clientFor(path), launcher, signal, resources);
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
-import * as regularReads from "./RegularFileRead.js";
+import * as regularReads from "../process/RegularFileRead.js";
 
 const launcher = {
   command: "/fixture/server path",
@@ -138,7 +140,7 @@ it("registers Cline CLI in the settings file selected by its environment", async
     if (client === undefined)
       throw new Error("Missing selected Cline CLI client");
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toEqual(ok({ status: unchanged ? "unchanged" : "configured" }));
     expect(JSON.parse(await readFile(expected, "utf8"))).toMatchObject({
       mcpServers: { rea: launcher },
@@ -323,62 +325,90 @@ it("refuses global Junie registration when known configuration disables or obscu
   const home = await createTestTempDirectory("rea-junie-selection-");
   await mkdir(join(home, ".junie"));
   const config = join(home, ".junie", "config.json");
-  const selection = {
-    agents: ["junie"],
-    global: true,
-    home,
-    cwd: home,
-    platform: process.platform,
+  const registration = join(home, ".junie", "mcp", "mcp.json");
+  const register = async (environment: NodeJS.ProcessEnv) => {
+    const selected = await resolveMcpRegistrationClients(
+      {
+        agents: ["junie"],
+        global: true,
+        home,
+        cwd: home,
+        platform: process.platform,
+        environment,
+      },
+      resources,
+    );
+    if (!selected.ok) throw selected.error;
+    const [client] = selected.value;
+    if (client === undefined) throw new Error("Junie was not selected");
+    return registerMcpClientOnHost(client, launcher, undefined, resources);
   };
   await writeFile(config, JSON.stringify({ "mcp-default-locations": false }));
-  const disabled = await resolveMcpRegistrationClients(
-    { ...selection, environment: {} },
-    resources,
-  );
-  expect(disabled.ok).toBe(false);
-  const configDisabled = await resolveMcpRegistrationClients(
-    { ...selection, environment: { JUNIE_CONFIG_DEFAULT_LOCATIONS: "false" } },
-    resources,
-  );
-  expect(configDisabled.ok).toBe(true);
-  const envDisabled = await resolveMcpRegistrationClients(
-    {
-      ...selection,
-      environment: {
-        JUNIE_CONFIG_DEFAULT_LOCATIONS: "false",
-        JUNIE_MCP_DEFAULT_LOCATIONS: "false",
-      },
-    },
-    resources,
-  );
-  expect(envDisabled.ok).toBe(false);
-  const extra = await resolveMcpRegistrationClients(
-    {
-      ...selection,
-      environment: { JUNIE_CONFIG_LOCATION: "/fixture/extra.json" },
-    },
-    resources,
-  );
-  expect(extra.ok).toBe(false);
+  expect(await register({})).toMatchObject({
+    ok: false,
+    error: { message: expect.stringContaining("disables its default MCP") },
+  });
+  await expect(lstat(registration)).rejects.toMatchObject({ code: "ENOENT" });
+  expect(
+    await register({ JUNIE_CONFIG_DEFAULT_LOCATIONS: "false" }),
+  ).toMatchObject({ ok: true });
+  expect(
+    await register({
+      JUNIE_CONFIG_DEFAULT_LOCATIONS: "false",
+      JUNIE_MCP_DEFAULT_LOCATIONS: "false",
+    }),
+  ).toMatchObject({ ok: false });
+  expect(
+    await register({ JUNIE_CONFIG_LOCATION: "/fixture/extra.json" }),
+  ).toMatchObject({ ok: false });
   await writeFile(config, JSON.stringify({ "mcp-default-locations": true }));
-  const enabled = await resolveMcpRegistrationClients(
-    { ...selection, environment: {} },
-    resources,
+  expect(await register({})).toMatchObject({ ok: true });
+  await writeFile(config, JSON.stringify({ "mcp-default-locations": "no" }));
+  expect(await register({})).toMatchObject({ ok: false });
+  // Junie reads strict JSON, so a document it cannot load decides nothing.
+  for (const source of [
+    '{ // comment\n "mcp-default-locations": true }',
+    '{ "mcp-default-locations": true, }',
+    " ",
+  ]) {
+    await writeFile(config, source);
+    expect(await register({})).toMatchObject({ ok: false });
+  }
+});
+
+it("selects an absolute JUNIE_HOME and refuses a relative one before writing", async () => {
+  const home = await createTestTempDirectory("rea-junie-home-");
+  const select = (JUNIE_HOME: string) =>
+    resolveMcpRegistrationClients(
+      {
+        agents: ["junie"],
+        global: true,
+        home,
+        cwd: home,
+        platform: process.platform,
+        environment: { JUNIE_HOME },
+      },
+      resources,
+    );
+  const selectedHome = join(home, "selected-junie");
+  const absolute = await select(selectedHome);
+  if (!absolute.ok) throw absolute.error;
+  expect(absolute.value[0]?.configPath).toBe(
+    join(selectedHome, "mcp", "mcp.json"),
   );
-  expect(enabled.ok).toBe(true);
-  await mkdir(join(home, ".cursor"));
-  await rm(join(home, ".junie"), { recursive: true });
-  const automatic = await resolveMcpRegistrationClients(
-    {
-      ...selection,
-      agents: [],
-      environment: { JUNIE_MCP_DEFAULT_LOCATIONS: "false" },
+  // Junie resolves a relative home against its own working directory, which
+  // REA cannot know; resolving it against `cwd` would write the wrong file.
+  const relative = await select("selected-junie");
+  expect(relative).toMatchObject({
+    ok: false,
+    error: {
+      message:
+        "JUNIE_HOME is relative, so the location Junie reads depends on its working directory. Set an absolute JUNIE_HOME before configuring Junie.",
     },
-    resources,
-  );
-  expect(automatic.ok).toBe(true);
-  if (!automatic.ok) throw automatic.error;
-  expect(automatic.value.some((client) => client.id === "cursor")).toBe(true);
+  });
+  await expect(
+    lstat(join(home, "selected-junie", "mcp")),
+  ).rejects.toMatchObject({ code: "ENOENT" });
 });
 const settingsFixture = async (original?: string) => {
   const directory = await createTestTempDirectory("rea-amp-writer-");
@@ -534,6 +564,13 @@ describe("Registration cancellation and mixed outcomes", () => {
       _tag: "AnalysisCancelledError",
       diagnostics: { configured: true },
     });
+    // Callers that warn about written settings still see this write.
+    expect(mcpClientRegistrationWritten(result)).toBe(true);
+    expect(
+      mcpClientRegistrationWritten(
+        await register(path, launcher, before.signal),
+      ),
+    ).toBe(false);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
       "amp.mcpServers": { rea: launcher },
     });
@@ -556,7 +593,7 @@ describe("Registration cancellation with independent failures", () => {
         throw physical;
       },
     );
-    const outcomes = await registerMcpClients(
+    const outcomes = await registerMcpClientsOnHost(
       [clientFor(first.path), clientFor(second.path)],
       launcher,
       controller.signal,
@@ -592,7 +629,7 @@ describe("Registration cancellation with independent failures", () => {
         }
         throw new Error("Unexpected staging owner");
       });
-    const outcomes = await registerMcpClients(
+    const outcomes = await registerMcpClientsOnHost(
       [clientFor(first.path), clientFor(second.path)],
       launcher,
       controller.signal,
@@ -623,24 +660,16 @@ describe("Registration cancellation with independent failures", () => {
 describe("Registration cancellation and sibling outcomes", () => {
   it("cancels queued registration after the existing transaction settles", async () => {
     const { path } = await settingsFixture("{}");
-    let unblock!: () => void;
-    let entered!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      unblock = resolve;
-    });
-    const admitted = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const first = withClientConfigurationTransaction(path, async () => {
-      entered();
-      await blocked;
-    });
+    const transaction = phaseGate();
+    const first = withClientConfigurationTransaction(path, () =>
+      transaction.hold(),
+    );
     try {
-      await awaitAcknowledgement(admitted, first, "registration transaction");
+      await transaction.reached(first, "registration transaction");
       const controller = new AbortController();
       const queued = register(path, launcher, controller.signal);
       controller.abort("queued cancellation");
-      unblock();
+      transaction.release();
       await first;
       expect(await queued).toMatchObject({
         ok: false,
@@ -648,7 +677,7 @@ describe("Registration cancellation and sibling outcomes", () => {
       });
       expect(await readFile(path, "utf8")).toBe("{}");
     } finally {
-      unblock();
+      transaction.release();
       await first;
     }
   });
@@ -660,7 +689,7 @@ describe("Registration cancellation and sibling outcomes", () => {
       clientFor(bad.path),
       clientFor(good.path, "json", "cursor"),
     ];
-    const outcomes = await registerMcpClients(
+    const outcomes = await registerMcpClientsOnHost(
       clients,
       launcher,
       undefined,
@@ -675,7 +704,7 @@ describe("Registration cancellation and sibling outcomes", () => {
     ]);
     const controller = new AbortController();
     controller.abort("before batch");
-    const cancelled = await registerMcpClients(
+    const cancelled = await registerMcpClientsOnHost(
       clients,
       launcher,
       controller.signal,
@@ -698,7 +727,7 @@ describe("Registration cancellation and sibling outcomes", () => {
         return publication;
       },
     );
-    const partial = await registerMcpClients(
+    const partial = await registerMcpClientsOnHost(
       [clients[1]!, clients[0]!],
       { command: "next", args: [] },
       late.signal,
@@ -805,7 +834,7 @@ describe("Client registration publication recovery", () => {
           },
         ];
         const outcomes = await resources.run(() =>
-          registerMcpClients(clients, launcher, undefined, resources),
+          registerMcpClientsOnHost(clients, launcher, undefined, resources),
         );
         expect(outcomes).toMatchObject([
           {

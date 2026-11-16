@@ -1,12 +1,12 @@
 import {
   parseAsarHeaderExtents,
   parseAsarHeaderJson,
-} from "../artifacts/AsarHeader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   readAsarListing,
   type AsarListedEntry,
 } from "../artifacts/AsarListing.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { DEFAULT_ASAR_LISTING_ADMISSION } from "../config/asarListingAdmission.js";
 import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../domain/analysisResourceLimits.js";
 import {

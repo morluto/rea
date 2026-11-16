@@ -10,6 +10,8 @@ import {
   type NormalizedArtifactFacts,
   type NormalizerBudget,
 } from "./normalizer.js";
+import { ellipsisExcerpt } from "../excerpt.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Path length beyond which an inventory entry reads as inflation, not a real module. */
 const MAX_PLAUSIBLE_ENTRY_PATH_UNITS = 512;
@@ -53,7 +55,7 @@ const MAX_LIMITATION_UNITS = 512;
 const boundLimitation = (text: string): string =>
   text.length <= MAX_LIMITATION_UNITS
     ? text
-    : `${text.slice(0, MAX_LIMITATION_UNITS)}… (${String(text.length)} units; sha256 ${createHash("sha256").update(text, "utf8").digest("hex")})`;
+    : `${ellipsisExcerpt(text, MAX_LIMITATION_UNITS)} (${String(text.length)} units; sha256 ${sha256Hex(text)})`;
 
 /** An unknown declared size must stay distinct from a genuine zero-byte member. */
 const sizeSuffix = (entry: AsarInventoryEntry): string =>

@@ -3,13 +3,13 @@ import { PassThrough, Writable } from "node:stream";
 
 import { z } from "zod";
 
-import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import {
   requireWindowsNativeAuthority,
   windowsHandleSchema,
   type WindowsNativeAuthority,
 } from "./WindowsNativeLoader.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const launchSchema = z.strictObject({
   pid: z.int().positive().max(0xffff_ffff),
@@ -31,6 +31,16 @@ const limitedPollSchema = pollSchema.extend({
   memoryLimitReached: z.boolean(),
   peakJobMemoryBytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 });
+
+/**
+ * The outcome of stopping one Job Object tree: settled (and whether this call
+ * signalled it), or the reason it did not settle. It is the subset of
+ * process-ownership cleanup results a Windows job can report; the process
+ * supervisor reads it as one.
+ */
+export type WindowsJobCleanupResult =
+  | { readonly cleaned: true; readonly signaled: boolean }
+  | { readonly cleaned: false; readonly reason: string };
 
 /** Optional native job controls for one owned Windows process tree. */
 export interface WindowsOwnedProcessOptions {
@@ -121,7 +131,7 @@ export class WindowsNativeSpawnControlError extends RuntimeControlUnavailableErr
       typeof Reflect.get(cause, "win32Code") === "number"
         ? Reflect.get(cause, "win32Code")
         : undefined;
-    super(message ?? (cause instanceof Error ? cause.message : String(cause)), {
+    super(message ?? errorMessage(cause), {
       cause,
       retryable: true,
       remediationAction: WINDOWS_SPAWN_CONTROL_REMEDIATION,
@@ -155,6 +165,25 @@ export const isWindowsExecutableLaunchFailure = (cause: unknown): boolean => {
   }
   const code = Reflect.get(cause, "code");
   return typeof code === "string" && code !== "ERR_REA_WINDOWS_NATIVE";
+};
+
+/**
+ * The executable path the native launcher refused to start, when its error
+ * names an executable-launch constraint; undefined for host-control
+ * rejections and errors from elsewhere.
+ */
+export const windowsExecutableLaunchPath = (
+  cause: unknown,
+): string | undefined => {
+  if (!(cause instanceof Error)) return undefined;
+  const constraint = Reflect.get(cause, "constraint");
+  const requestedPath = Reflect.get(cause, "requestedPath");
+  return typeof constraint === "string" &&
+    WINDOWS_EXECUTABLE_SPAWN_CONSTRAINTS.has(constraint) &&
+    typeof requestedPath === "string" &&
+    requestedPath.length > 0
+    ? requestedPath
+    : undefined;
 };
 
 /** Wrap a raw native process_spawn host-control rejection as a RuntimeControlUnavailableError. */
@@ -211,7 +240,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   #blockedWake: NodeJS.Timeout | undefined;
   readonly #blockedOutput = new Set<PassThrough>();
   #unreferenced = false;
-  #cleanup: Promise<ProcessCleanupResult> | undefined;
+  #cleanup: Promise<WindowsJobCleanupResult> | undefined;
   readonly #memoryLimitBytes: number | undefined;
   #memoryLimitReached = false;
   #peakJobMemoryBytes: number | undefined;
@@ -375,7 +404,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   }
 
   /** Terminate and verify that the entire job has settled before releasing it. */
-  cleanup(): Promise<ProcessCleanupResult> {
+  cleanup(): Promise<WindowsJobCleanupResult> {
     this.#cleanup ??= this.#stop().then((result) => {
       if (!result.cleaned) this.#cleanup = undefined;
       return result;
@@ -397,7 +426,7 @@ export class WindowsOwnedProcess extends EventEmitter {
     this.#blockedWake?.ref();
   }
 
-  async #stop(): Promise<ProcessCleanupResult> {
+  async #stop(): Promise<WindowsJobCleanupResult> {
     if (this.#closed) return { cleaned: true, signaled: false };
     if (this.#releasePending) {
       try {
@@ -406,7 +435,7 @@ export class WindowsOwnedProcess extends EventEmitter {
       } catch (cause: unknown) {
         return {
           cleaned: false,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         };
       }
     }
@@ -432,7 +461,7 @@ export class WindowsOwnedProcess extends EventEmitter {
     } catch (cause: unknown) {
       return {
         cleaned: false,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);

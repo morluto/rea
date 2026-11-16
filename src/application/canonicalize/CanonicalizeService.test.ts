@@ -66,7 +66,11 @@ it("assembles observed Evidence with a file subject and the facts", async () => 
   expect(result.value).toMatchObject({
     operation: "canonicalize_artifact",
     confidence: "observed",
-    subject: { format: "file", digest: { sha256: report.artifact.sha256 } },
+    subject: {
+      identity: { format: "file", sha256: report.artifact.sha256 },
+      local_path: path,
+      name: "core.wasm",
+    },
     normalized_result: { detected_format: "wasm", normalizer: "wasm-sections" },
   });
 });

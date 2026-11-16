@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { CanonicalizePort } from "./CanonicalizePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { CanonicalizePort } from "../../ports/canonicalize/CanonicalizePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";

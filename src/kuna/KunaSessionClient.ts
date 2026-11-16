@@ -1,18 +1,19 @@
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   snapshotRegexConfiguration,
   type RegexConfigurationSnapshot,
 } from "../process/RegexMatcher.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { basename, join } from "node:path";
 import {
-  regularFileCancellation,
-  RegularFileCleanupFailure,
-} from "../filesystem/OwnedRegularFile.js";
-import {
+  bindArtifactFileCleanup,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceOwner,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
+import { basename, join } from "node:path";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { z } from "zod";
 
 import {
@@ -22,9 +23,8 @@ import {
   type AnalysisOperation,
   type ExecutionOptions,
   type RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -53,13 +53,16 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import {
   KUNA_INVENTORY_OUTPUT_BYTES,
-  kunaFileCleanupError,
-  kunaRetainedResourceCleanupError,
+  kunaInstallationDialect,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import {
@@ -126,11 +129,10 @@ import {
   type KunaProjectFileSpan,
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
 import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
 const WAIT_PROGRESS_INTERVAL_MS = 10_000;
@@ -220,8 +222,8 @@ const waitFor = async <T>(
   operation: string,
 ): Promise<Result<T, AnalysisError>> => {
   const result = await waitForAbortable(work, signal);
-  return result === ABORTED
-    ? err(cancelledBy(operation, carriedReason(signal?.reason)))
+  return result instanceof AbortedWait
+    ? err(cancelledBy(operation, result))
     : result;
 };
 
@@ -233,17 +235,16 @@ const isUnavailableProject = (cause: unknown): boolean =>
     cause.code === "ENOTDIR" ||
     cause.code === "ESTALE");
 
-/** Read through a call so a check before an await does not narrow later ones. */
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
-const failure = (operation: string, cause: unknown): AnalysisError =>
-  cause instanceof AnalysisError
-    ? cause
-    : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
-        cause,
-        userMessage: `Kuna ${operation} failed: ${message(cause)}`,
-      });
+/** How one Kuna session operation reports a failure nothing typed it as. */
+const kunaSessionDialect = (operation: string): ProviderFailureDialect => ({
+  providerId: KUNA_PROVIDER_ID,
+  operation,
+  unclassified: (cause) =>
+    new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
+      cause,
+      userMessage: `Kuna ${operation} failed: ${errorMessage(cause)}`,
+    }),
+});
 
 /** Bind a refused descriptor retry to the leases that still own those handles. */
 const descriptorCleanupError = (
@@ -371,6 +372,7 @@ export class KunaSessionClient implements AnalysisClient {
   readonly #profile: AnalysisProfileCommitment | undefined;
   readonly #cache: KunaProjectCache;
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
+  readonly #platform: NodeJS.Platform;
   readonly #runSlots: KunaRunSlots;
   readonly #launcher: KunaProcessLauncher | undefined;
   readonly #resourceScope = new ArtifactResourceScope();
@@ -438,6 +440,7 @@ export class KunaSessionClient implements AnalysisClient {
       readonly cache: KunaProjectCache;
       readonly runSlots: KunaRunSlots;
       readonly environment: Readonly<NodeJS.ProcessEnv>;
+      readonly platform: NodeJS.Platform;
       readonly deadline: RegexMatchingDeadline;
       readonly heapRequest: RegexWorkerHeapRequest;
       readonly launcher?: KunaProcessLauncher;
@@ -448,6 +451,7 @@ export class KunaSessionClient implements AnalysisClient {
     this.#cache = dependencies.cache;
     this.#runSlots = dependencies.runSlots;
     this.#environment = dependencies.environment;
+    this.#platform = dependencies.platform;
     this.#launcher = dependencies.launcher;
     this.#commands = new KunaTargetCommands(target, {
       signal: this.#session.signal,
@@ -584,8 +588,10 @@ export class KunaSessionClient implements AnalysisClient {
           parameters.analysis !== "independent_fresh") ||
         operation === "procedure_assembly" ||
         operation === "analyze_function"
-      )
-        await this.#startProject(installation.value);
+      ) {
+        const project = await this.#startProject(installation.value);
+        if (!project.ok) return project;
+      }
       const answer = await this.#answer(
         operation,
         parameters,
@@ -617,7 +623,7 @@ export class KunaSessionClient implements AnalysisClient {
           ),
         );
       }
-      return err(failure(operation, cause));
+      return err(classifyProviderFailure(cause, kunaSessionDialect(operation)));
     }
   }
 
@@ -1414,7 +1420,8 @@ export class KunaSessionClient implements AnalysisClient {
             : kunaEntryLimitations(index.layout, placement),
       });
     }
-    await this.#startProject(installation);
+    const project = await this.#startProject(installation);
+    if (!project.ok) return project;
     return this.#withProject(
       "address_name",
       installation,
@@ -1469,7 +1476,8 @@ export class KunaSessionClient implements AnalysisClient {
           if (!isUnavailableProject(cause) || recovered) throw cause;
           recovered = true;
           this.#invalidateProject(reader);
-          await this.#startProject(installation);
+          const project = await this.#startProject(installation);
+          if (!project.ok) return project;
           continue;
         }
       }
@@ -1567,7 +1575,9 @@ export class KunaSessionClient implements AnalysisClient {
             address,
             installation,
             AbortSignal.any([this.#session.signal, controller.signal]),
-          ).catch((cause: unknown) => err(failure(operation, cause))),
+          ).catch((cause: unknown) =>
+            err(classifyProviderFailure(cause, kunaSessionDialect(operation))),
+          ),
         ),
       };
       this.#singleFunctionRuns.set(address, created);
@@ -1649,13 +1659,20 @@ export class KunaSessionClient implements AnalysisClient {
       admitted();
       return err(cancelledBy(operation, signal));
     }
-    let deadline: KunaDeadline;
+    let selected: Result<KunaDeadline, ConfigurationError>;
     try {
-      deadline = kunaFunctionDeadline(installation.configuration);
+      selected = readRuntimeSetting(() =>
+        kunaFunctionDeadline(installation.configuration),
+      );
     } catch (cause: unknown) {
       admitted();
       throw cause;
     }
+    if (!selected.ok) {
+      admitted();
+      return selected;
+    }
+    const deadline = selected.value;
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["decompile", input, address, "--addr"],
@@ -1694,7 +1711,7 @@ export class KunaSessionClient implements AnalysisClient {
       ? slot
       : Promise.race([slot, exported]));
     if (admitted !== EXPORT_READY) return admitted;
-    yielded.abort();
+    yielded.abort(OwnerCancellation.noLongerNeeded);
     // A slot granted in the same turn is returned rather than leaked.
     void slot.then((release) => release?.());
     return EXPORT_READY;
@@ -1753,9 +1770,13 @@ export class KunaSessionClient implements AnalysisClient {
       operation,
       signal,
     );
+    // A deadline refusal is the request's own setting failure with its own
+    // recovery, not a missing fact the dossier can report as unavailable.
     if (
       !relationships.ok &&
-      (relationships.error.cleanupIncomplete || signal?.aborted === true)
+      (relationships.error.cleanupIncomplete ||
+        relationships.error instanceof ConfigurationError ||
+        signal?.aborted === true)
     )
       return relationships;
     const callAvailability = relationships.ok
@@ -1937,7 +1958,9 @@ export class KunaSessionClient implements AnalysisClient {
       const head = await this.#commands.inputHead("list_procedures");
       return head.ok ? ok(await readKunaMachoLayout(head.value)) : head;
     } catch (cause: unknown) {
-      return err(failure("list_procedures", cause));
+      return err(
+        classifyProviderFailure(cause, kunaSessionDialect("list_procedures")),
+      );
     }
   }
 
@@ -2002,6 +2025,7 @@ export class KunaSessionClient implements AnalysisClient {
     const kunaResources = createKunaResourceScope(parentResourceScope);
     try {
       const inspected = await inspectKunaInstallation(this.#environment, {
+        platform: this.#platform,
         resourceScope: kunaResources.owner,
         signal,
         ...(this.#launcher === undefined
@@ -2057,38 +2081,53 @@ export class KunaSessionClient implements AnalysisClient {
         );
       return ok(inspected.value);
     } catch (cause: unknown) {
-      const retainedCleanup = kunaRetainedResourceCleanupError(cause, "health");
-      if (retainedCleanup !== undefined) return err(retainedCleanup);
-      if (!(cause instanceof RegularFileCleanupFailure)) {
-        const cancellation = kunaResources.installationCancellationError(
+      return err(
+        classifyProviderFailure(
           cause,
-          "health",
-        );
-        if (cancellation !== undefined) return err(cancellation);
-      }
-      if (!(cause instanceof RegularFileCleanupFailure))
-        return err(failure("health", cause));
-      const error = kunaFileCleanupError(cause, "health");
-      kunaResources.bindFailure(cause, error);
-      return err(error);
+          kunaInstallationDialect(
+            "health",
+            kunaResources,
+            kunaSessionDialect("health").unclassified,
+          ),
+        ),
+      );
     }
   }
 
-  /** Reuse a verified export, or start building one in the background. */
-  #startProject(installation: KunaInstallation): Promise<void> {
-    if (this.#project !== undefined) return Promise.resolve();
+  /**
+   * Reuse a verified export, or start building one in the background. The
+   * export's deadline is read once, in the first requesting operation's
+   * snapshot; a malformed launch seed without an override is returned as that
+   * request's refusal, and the next request reads it again.
+   */
+  async #startProject(
+    installation: KunaInstallation,
+  ): Promise<Result<null, ConfigurationError>> {
+    if (this.#project !== undefined) return ok(null);
+    let deadline = this.#acceptedProjectDeadline;
+    if (deadline === undefined) {
+      const admitted = readRuntimeSetting(() =>
+        kunaProjectDeadline(installation.configuration),
+      );
+      if (!admitted.ok) return admitted;
+      deadline = admitted.value;
+      this.#acceptedProjectDeadline = deadline;
+    }
     // Concurrent first requests share one lookup, which verifies every
     // export file's digest on a fresh server.
-    this.#starting ??= this.#lookupOrBuild(installation).finally(() => {
-      this.#starting = undefined;
-    });
-    return this.#starting;
+    this.#starting ??= this.#lookupOrBuild(installation, deadline).finally(
+      () => {
+        this.#starting = undefined;
+      },
+    );
+    await this.#starting;
+    return ok(null);
   }
 
-  async #lookupOrBuild(installation: KunaInstallation): Promise<void> {
-    this.#acceptedProjectDeadline ??= kunaProjectDeadline(
-      installation.configuration,
-    );
+  async #lookupOrBuild(
+    installation: KunaInstallation,
+    deadline: KunaDeadline,
+  ): Promise<void> {
     const key = kunaProjectKey({
       targetSha256: this.#target.sha256,
       targetBasename: basename(this.#target.path),
@@ -2117,9 +2156,7 @@ export class KunaSessionClient implements AnalysisClient {
         targetPath: this.#target.path,
         targetSha256: this.#target.sha256,
         signal: this.#session.signal,
-        ...(this.#acceptedProjectDeadline === undefined
-          ? {}
-          : { deadline: this.#acceptedProjectDeadline }),
+        deadline,
         onStatus: (status) => {
           this.#status = status;
           if (status.inventory !== null) listed(status.inventory);
@@ -2161,7 +2198,8 @@ export class KunaSessionClient implements AnalysisClient {
       } catch (cause: unknown) {
         if (!isUnavailableProject(cause) || attempt !== 0) throw cause;
         this.#invalidateProject(reader.value);
-        await this.#startProject(installation);
+        const project = await this.#startProject(installation);
+        if (!project.ok) return project;
       }
     }
   }
@@ -2280,11 +2318,7 @@ export class KunaSessionClient implements AnalysisClient {
       KUNA_PROVIDER_ID,
       failures.map(({ path }) => path),
       {
-        reason: failures
-          .map(({ cause }) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: failures.map(({ cause }) => errorMessage(cause)).join("; "),
       },
       {
         operation,
@@ -2404,13 +2438,11 @@ export class KunaSessionClient implements AnalysisClient {
     if (exported !== undefined) return ok(exported);
     if (this.#session.signal.aborted)
       return err(cancelledBy("list_procedures", this.#session.signal));
-    let deadline: KunaDeadline;
-    try {
-      deadline = kunaFunctionDeadline(installation.configuration);
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+    const admitted = readRuntimeSetting(() =>
+      kunaFunctionDeadline(installation.configuration),
+    );
+    if (!admitted.ok) return admitted;
+    const deadline = admitted.value;
     const run = await this.#commands.run({
       installation,
       arguments: (input) => ["functions", input, "--json"],

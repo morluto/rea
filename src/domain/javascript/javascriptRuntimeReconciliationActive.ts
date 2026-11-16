@@ -43,29 +43,22 @@ export const parseActiveElectronCapture = (
   const parameters = parseInputAtPath(
     z
       .object({
-        application_path: absolutePathSchema,
-        application_root: absolutePathSchema.optional(),
-        resolved_paths: z
-          .strictObject({
-            executable_path: absolutePathSchema,
-            application_path: absolutePathSchema,
-            application_root: absolutePathSchema,
-          })
-          .optional(),
+        resolved_paths: z.strictObject({
+          executable_path: absolutePathSchema,
+          application_path: absolutePathSchema,
+          application_root: absolutePathSchema,
+        }),
       })
       .passthrough(),
     evidence.parameters,
     [...path, "parameters"],
   );
-  // Older captures committed canonical paths directly in parameters. New
-  // captures keep request spelling separate from the admitted execution paths.
-  const executionPaths = parameters.resolved_paths ?? parameters;
+  // Request spelling stays in the scenario; the admitted execution paths are
+  // committed separately and must agree with the observed application.
+  const executionPaths = parameters.resolved_paths;
   if (
-    executionPaths.application_root === undefined ||
     result.application.application_path !== executionPaths.application_path ||
-    (parameters.resolved_paths !== undefined &&
-      result.application.executable_path !==
-        parameters.resolved_paths.executable_path) ||
+    result.application.executable_path !== executionPaths.executable_path ||
     !isPathWithinRoot(
       executionPaths.application_root,
       result.application.application_path,

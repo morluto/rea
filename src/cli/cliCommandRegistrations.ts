@@ -193,7 +193,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
       module.registerManagedCommands(
         context.cli,
         context.logger,
-        context.analysis.runProviderAnalysis,
+        context.analysis,
       ),
   ),
   firmware: plain(
@@ -267,7 +267,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
   browser: plain(
     () => import("./browserCommands.js"),
     (module, context) =>
-      module.registerBrowserCommands(context.cli, context.logger),
+      module.registerBrowserCommands(
+        context.cli,
+        context.logger,
+        context.environment,
+      ),
   ),
   webRuntime: plain(
     () => import("./webRuntimeCommands.js"),

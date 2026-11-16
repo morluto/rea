@@ -3,20 +3,16 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
   projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { CanonicalizePort } from "../application/canonicalize/CanonicalizePort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import type { CanonicalizePort } from "../ports/canonicalize/CanonicalizePort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {

@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -25,11 +26,18 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { protobufFrame } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../fixtures/zipZstandard.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 
 import {
   CAPTURE_DECODER_HAS_MEMORY_BOUND as hasMemoryBound,
   CAPTURE_RUNTIME_SUPPORTED as runtimeSupported,
 } from "../../fixtures/captureDecoderLimits.js";
+import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
 
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
 
@@ -515,15 +523,14 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   const tool = (await client.listTools()).tools.find(
     (item) => item.name === "inspect_web_network_capture",
   );
-  if (tool?.outputSchema === undefined)
-    throw new Error("Missing capture schema");
+  if (tool === undefined) throw new Error("Missing capture schema");
   const args = { capture_path: path, format: "saz", record_ordinals: [1, 0] };
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validate(tool.inputSchema, args)).toBe(true);
   const response = await call("inspect_web_network_capture", args);
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(getValidator).toHaveBeenCalled();
-  const expectedSchema = JSON.stringify(tool.outputSchema);
+  const expectedSchema = JSON.stringify(canonicalOutputSchema(tool.name));
   expect(
     getValidator.mock.calls.some(
       ([schema]) => JSON.stringify(schema) === expectedSchema,
@@ -907,7 +914,7 @@ it.each([
     expect(error.code).toBe("invalid_request");
     expect(error.details.issues).toEqual([
       expect.objectContaining({
-        path: ["capture_path", ""],
+        path: ["capturePath", ""],
         reason: "out_of_range",
         expected: {
           maximum_expanded_capture_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
@@ -922,11 +929,15 @@ it.each([
     });
     expect(response.isError).toBe(true);
     const mcpFailure = parseMcpToolError(response);
+    // The CLI names the capture by its argument, otherwise as MCP does.
+    const cliError = issuesByContractField(error, {
+      capturePath: "capture_path",
+    }) as typeof error;
     expect(mcpFailure).toMatchObject({
       error: {
-        code: error.code,
-        category: error.category,
-        details: error.details,
+        code: cliError.code,
+        category: cliError.category,
+        details: cliError.details,
       },
     });
     expect(error).not.toHaveProperty("normalized_result");
@@ -944,6 +955,51 @@ it.each([
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   }
   expect(JSON.stringify(result)).not.toContain("malformed-private-input");
+});
+
+it("names the ZIP decoder window instead of the expanded-input budget for a large-window member", async () => {
+  // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+  const { content, compressed } = zstandardWindowFrameFixture(0x90);
+  const path = await fixture(
+    zstandardZipFixture(content, { compressed, name: "raw/1_c.txt" }),
+  );
+  const result = await cliResponse(path);
+  expect(result.ok, result.stdout).toBe(false);
+  const error = JSON.parse(result.stdout);
+  expect(error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      refusal: {
+        kind: "fixed_ceiling",
+        operation: "inspect_web_network_capture",
+        allowance: ZIP_ZSTANDARD_WINDOW_CEILING.name,
+        allowance_kind: ZIP_ZSTANDARD_WINDOW_CEILING.kind,
+        limit: 2 ** 27,
+        unit: "bytes",
+        narrowing: ZIP_ZSTANDARD_WINDOW_CEILING.narrowing,
+      },
+    },
+    // The recovery is the reader's ceiling through the refusal formatter.
+    remediation: {
+      action: analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_web_network_capture",
+        ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+      }),
+    },
+  });
+  expect(JSON.stringify(error)).not.toContain("max_input_bytes");
+  const { call } = await connectSazMcp();
+  const response = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "saz",
+  });
+  expect(response.isError).toBe(true);
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: error.code,
+    details: { refusal: error.details.refusal },
+    remediation: error.remediation,
+  });
 });
 
 runtimeTest.runIf(!hasMemoryBound && runtimeSupported)(

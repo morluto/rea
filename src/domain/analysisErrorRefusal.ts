@@ -4,6 +4,7 @@ import {
 } from "./analysisErrorCore.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
 import type { AnalysisRefusal } from "./analysisRefusal.js";
+import { ArtifactOperationError } from "./artifactOperationError.js";
 
 /**
  * The typed refusal an error carries, attributed to the error's operation so
@@ -22,6 +23,7 @@ export const analysisErrorRefusal = (
       };
     if (
       error.limit !== undefined &&
+      !("control_kind" in error.limit) &&
       !(
         "measuredExhaustion" in error.recovery &&
         error.recovery.measuredExhaustion === true
@@ -34,6 +36,15 @@ export const analysisErrorRefusal = (
       };
     return undefined;
   }
+  if (
+    error instanceof ArtifactOperationError &&
+    error.fixedAllowance !== undefined
+  )
+    return {
+      kind: "fixed_ceiling",
+      operation: error.operation,
+      ceiling: error.fixedAllowance,
+    };
   if (
     error instanceof AnalysisInputError &&
     error.ambiguousSelector !== undefined

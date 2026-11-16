@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -62,7 +63,6 @@ export const CANONICALIZE_FACT_CLASSES = [
   "decoy-unreachable",
   "unverified",
 ] as const;
-export type CanonicalizeFactClass = (typeof CANONICALIZE_FACT_CLASSES)[number];
 
 /** One classified structural region or item, with lossless-by-reference identity. */
 export const canonicalizeFactSchema = z.strictObject({
@@ -114,12 +114,11 @@ export type CanonicalizeReduction = z.infer<typeof canonicalizeReductionSchema>;
 
 /** Examined-versus-total coverage with explicit truncation, never inferred absence. */
 export const canonicalizeCoverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   examined: safeCount,
   total: safeCount.nullable(),
   truncated: z.boolean(),
 });
-export type CanonicalizeCoverage = z.infer<typeof canonicalizeCoverageSchema>;
 
 /** Bounded, deterministic extraction of behavior-relevant facts from one artifact. */
 export const canonicalizeArtifactInputSchema = z.strictObject({

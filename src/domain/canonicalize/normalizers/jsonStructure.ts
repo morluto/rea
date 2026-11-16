@@ -1,4 +1,6 @@
-import { createHash } from "node:crypto";
+import { ellipsisExcerpt } from "../../excerpt.js";
+import { decodeStrictUtf8 } from "../../strictUtf8.js";
+import { sha256Hex } from "../../../kernel/sha256Hex.js";
 
 import type {
   CanonicalizeFact,
@@ -43,14 +45,11 @@ const recognizes = (bytes: Buffer): boolean => {
 /** Code units of SHA-256 hex embedded to disambiguate a shortened segment or path. */
 const SHORT_HASH_UNITS = 12;
 
-const sha256Hex = (text: string): string =>
-  createHash("sha256").update(text, "utf8").digest("hex");
-
 /** A duplicate member name, JSON-quoted and bounded so an inflated name stays safe. */
 const boundedKey = (name: string): string =>
   name.length <= MAX_SEGMENT_UNITS
     ? JSON.stringify(name)
-    : `${JSON.stringify(name.slice(0, MAX_SEGMENT_UNITS))}… (${String(name.length)} units; sha256 ${sha256Hex(name)})`;
+    : `${JSON.stringify(ellipsisExcerpt(name, MAX_SEGMENT_UNITS))} (${String(name.length)} units; sha256 ${sha256Hex(name)})`;
 
 /** True when any JSON integer literal exceeds JS safe-integer precision (2^53). */
 const hasUnsafeIntegerLiteral = (text: string): boolean => {
@@ -82,12 +81,14 @@ const childPath = (parentPath: string, rawSegment: string): ChildName => {
   let segment = escaped;
   if (segment.length > MAX_SEGMENT_UNITS) {
     sha256 = sha256Hex(rawSegment);
-    segment = `${segment.slice(0, MAX_SEGMENT_UNITS)}…#${sha256.slice(0, SHORT_HASH_UNITS)}(${String(escaped.length)})`;
+    // sample-cap: short hash prefix only disambiguates the display; the fact carries the full key sha256
+    segment = `${ellipsisExcerpt(segment, MAX_SEGMENT_UNITS)}#${sha256.slice(0, SHORT_HASH_UNITS)}(${String(escaped.length)})`;
   }
   let path = `${parentPath}/${segment}`;
   if (path.length > MAX_PATH_UNITS) {
     const full = path;
-    path = `${path.slice(0, MAX_PATH_UNITS)}…#${sha256Hex(full).slice(0, SHORT_HASH_UNITS)}`;
+    // sample-cap: short hash prefix only disambiguates the display; the fact carries the full key sha256
+    path = `${ellipsisExcerpt(path, MAX_PATH_UNITS)}#${sha256Hex(full).slice(0, SHORT_HASH_UNITS)}`;
     sha256 ??= sha256Hex(full);
   }
   return { path, sha256 };
@@ -329,7 +330,7 @@ const canonicalize = (
   try {
     // Strict UTF-8: a lossy decode would replace invalid bytes and change keys
     // and values before any fact is built, so reject it instead.
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return parseFailure(
       "JSON bytes are not valid UTF-8; structure unverified.",

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { WebNetworkCapture } from "../../domain/webNetworkCapture.js";
 import { setImmediate } from "node:timers/promises";
 import { compareStaticObservedEndpointsRequestSchema } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
@@ -6,8 +7,8 @@ import { readImmutableEvidence } from "../../domain/evidenceValidation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -178,7 +179,7 @@ const createComparison = (
     limitations,
   };
   const evidence: Evidence = createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
     {
       predicateType: "rea.static-observed-endpoint-comparison",
@@ -217,11 +218,7 @@ export const compareStaticAndObservedEndpointsEvidence = async (
     if (index % 256 === 0) {
       await setImmediate();
       if (options.signal?.aborted)
-        return err(
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          }),
-        );
+        return err(cancelledBy(OPERATION, options.signal));
     }
     const added = accumulator.add(record);
     if (!added.ok) return added;
@@ -237,8 +234,6 @@ export const compareStaticAndObservedEndpointsEvidence = async (
   if (!compared.ok) return compared;
   await setImmediate();
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   return createComparison(sources, compared.value, accumulator);
 };

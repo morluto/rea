@@ -1,3 +1,4 @@
+import { evidenceFileTarget } from "../evidence.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { flutterResultSchemas } from "../flutter/flutterBuildAnalysis.js";
@@ -84,7 +85,7 @@ export const projectDartAotView = (
     unknowns: [
       "String-pool entries are byte-pattern observations, not recovered typed classes or functions.",
       "Counts ending in _at_least remain lower bounds; exhausting returned strings does not establish a complete snapshot inventory.",
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject; its normalized target identity cannot be cross-checked against a subject digest.",
           ]
@@ -97,7 +98,7 @@ export const projectDartAotView = (
       view,
       ...shared,
       summary: { ...report, string_pool },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const collection = report.string_pool[view.collection];
   const items = collection.slice(view.offset, view.offset + view.limit);

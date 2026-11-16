@@ -471,7 +471,9 @@ const expectOptionalContextFailure = (
       details: {
         diagnostics: {
           preceding_output: { stdout: "basic stage diagnostic" },
-          stderr: "debugger failed",
+        },
+        captured_output: {
+          stderr: expect.stringContaining("debugger failed"),
         },
       },
     });
