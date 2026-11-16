@@ -1566,6 +1566,45 @@ describe("Indexed initializer name coverage", () => {
     },
   );
 
+  it.each(["ELF", "Mach-O"])(
+    "keeps a long %s name with an unverified terminator unknown",
+    async (format) => {
+      const elf = format === "ELF";
+      const original = elf ? elfRelocatableCtors() : machoArm64Initializers();
+      const prefix = Buffer.from(elf ? "\0init_b\0" : "\0_term\0");
+      const strings = Buffer.concat([
+        prefix,
+        Buffer.alloc(MAX_NATIVE_INITIALIZER_NAME_BYTES + 76, 0x77),
+      ]);
+      const bytes = Buffer.concat([original, strings]);
+      if (elf) {
+        const strtab = 0x500 + 5 * 64;
+        bytes.writeBigUInt64LE(BigInt(original.length), strtab + 24);
+        bytes.writeBigUInt64LE(BigInt(strings.length), strtab + 32);
+        bytes.writeUInt32LE(prefix.length, 0x338);
+        bytes.writeUInt16LE(0, 0x338 + 6);
+        bytes.writeUInt32LE(1, 0x368);
+      } else {
+        bytes.writeUInt32LE(original.length, 528);
+        bytes.writeUInt32LE(strings.length, 532);
+        bytes.writeUInt32LE(prefix.length, 0x3000);
+        bytes.writeBigUInt64LE(0x100001200n, 0x3008);
+        bytes.writeUInt32LE(1, 0x3010);
+      }
+      const report = await read(bytes);
+      expect(report.coverage).toMatchObject({
+        status: "unknown",
+        total_entries: null,
+      });
+      expect(report.entries.map(({ symbol }) => symbol?.name ?? null)).toEqual(
+        elf ? ["init_b", null] : [null, null, "_term"],
+      );
+      expect(report.limitations).toContain(
+        "1 symbol name(s) had no verified string-table terminator.",
+      );
+    },
+  );
+
   it("keeps an unterminated short name at the end of the table unknown", async () => {
     const bytes = machoArm64Initializers();
     // End the table at the last byte of _init, before its terminator.
@@ -1574,7 +1613,7 @@ describe("Indexed initializer name coverage", () => {
     const report = await read(bytes);
     expect(report.coverage.status).toBe("unknown");
     expect(report.limitations).toContain(
-      "1 symbol name(s) were not terminated within the string table.",
+      "1 symbol name(s) had no verified string-table terminator.",
     );
   });
 });

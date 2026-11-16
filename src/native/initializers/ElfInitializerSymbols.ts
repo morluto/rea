@@ -117,11 +117,12 @@ const stringAt = (
     MAX_NATIVE_INITIALIZER_NAME_BYTES + 1,
   );
   if (observed.state === "truncated") {
-    if (offset + observed.examinedBytes < table.length) {
+    // The table's last NUL establishes a terminator beyond the name window.
+    if (table.at(-1) === 0) {
       notes.tally("long-symbol-name");
       return { name: withheldInitializerSymbolName, missing: false };
     }
-    notes.tally("unterminated-symbol-name");
+    notes.tally("unverified-symbol-terminator");
     return { name: null, missing: true };
   }
   if (observed.state === "outside") {
