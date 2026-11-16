@@ -1,6 +1,5 @@
 import { Budget } from "../budget.js";
 import { observeMzWindowsHeader } from "../dosMz.js";
-import { createHash } from "node:crypto";
 import { readPeOptionalHeaderFixedFields } from "../peOptionalHeader.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
 import { readPeSectionHeader } from "../peSectionHeader.js";
@@ -20,6 +19,7 @@ import {
   type NativeAotReason,
   type NativeAotTruncationReason,
 } from "./nativeAotReason.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const RTR_SIGNATURE = 0x00525452;
 const RTR_ROW_SIZE = 24;
@@ -38,9 +38,6 @@ export const NATIVE_AOT_BASE_WORK_UNITS = 64 * 1024 * 1024;
  */
 export const NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE = 8;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
-/** Version of the built-in read-only PE metadata interpretation in profiles. */
-export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v11";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;
@@ -1293,7 +1290,7 @@ const hydrate = (
     throw cause;
   }
   const hydrated = output.subarray(0, outputLength);
-  const sha256 = createHash("sha256").update(hydrated).digest("hex");
+  const sha256 = sha256Hex(hydrated);
   image.addOverlay({ base, sizeBytes: outputLength, sha256, bytes: hydrated });
   return { base, sizeBytes: outputLength, sha256 };
 };
@@ -1487,7 +1484,7 @@ export const parseNativeAotPe = (
       ),
       maximumSummaryBytes,
     );
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sha256 = sha256Hex(bytes);
   if (sha256 !== expectedSha256)
     throw new NativeAotSnapshotIdentityError(expectedSha256, sha256);
   let image: PeImage;
@@ -2064,7 +2061,7 @@ export const parseNativeAotPe = (
       if (raw !== null) {
         metadata.derived_memory = {
           ...descriptor,
-          sha256: createHash("sha256").update(raw).digest("hex"),
+          sha256: sha256Hex(raw),
         };
         remaining -= descriptorBytes;
       }

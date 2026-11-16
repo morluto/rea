@@ -43,6 +43,8 @@ import {
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { unsupportedEvidenceFormatError } from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 
 /** Preserve the owning reader's facts when retaining a different cause. */
 const artifactFailureFacts = (failure: ArtifactReaderFailure) => ({
@@ -211,6 +213,8 @@ export const projectCaptureFileFailure = (
 ): AnalysisError => {
   switch (failure.kind) {
     case "invalid-evidence":
+      if (isUnsupportedEvidenceFormat(failure.cause))
+        return unsupportedEvidenceFormatError(failure.cause, side);
       return analysisInputErrorFromIssues(
         "compare_process_captures",
         failure.cause.issues,

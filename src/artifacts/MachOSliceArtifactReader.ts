@@ -9,6 +9,7 @@ import {
   type ArtifactTraversalOptions,
   streamChunkToBuffer,
   readArtifactFileChunks,
+  ArtifactFileSource,
 } from "../resources/index.js";
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
@@ -17,7 +18,7 @@ import type { ArtifactCommand } from "../domain/artifactGraph.js";
 import {
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "../native/CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import type { MachoSlice } from "../domain/apple/dylibResolution.js";
 import {
   machoArchitectureFamily,
@@ -29,7 +30,6 @@ import {
   type ReadAt,
 } from "../domain/apple/machoLoadCommandReader.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {

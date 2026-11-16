@@ -9,6 +9,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface HopperImageCopyFileSystem {
   readonly open: typeof open;
@@ -242,10 +243,7 @@ const hopperImageCopyFailure = (options: {
       "hopper",
       [attempt.owner.resource],
       {
-        reason:
-          attempt.cause instanceof Error
-            ? attempt.cause.message
-            : String(attempt.cause),
+        reason: errorMessage(attempt.cause),
       },
       { cause: attempt.cause },
     );

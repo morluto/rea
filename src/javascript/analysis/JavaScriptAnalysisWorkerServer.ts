@@ -37,6 +37,7 @@ import {
   javaScriptWorkerMessageSchema,
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Trusted composition callback; this provider owns framing and temporary I/O. */
 export interface JavaScriptSourceWorkerAnalyzer {
@@ -239,9 +240,7 @@ const analyzeJob = async (
       message:
         cause instanceof AnalysisResourceConstraintError
           ? cause.reason
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
+          : errorMessage(cause),
     });
   }
 };

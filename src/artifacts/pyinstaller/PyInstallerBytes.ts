@@ -1,7 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { err, ok, type Result } from "../../domain/result.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../../resources/index.js";
 import {
   pyInstallerFailure,
   type PyInstallerFailure,

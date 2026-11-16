@@ -117,7 +117,10 @@ await withVerifierFixture(rootFixture, async () => {
   );
   const left = await inspect(path);
   const equivalent = await inspect(equivalentPath);
-  assert.notEqual(left.subject.digest.sha256, equivalent.subject.digest.sha256);
+  assert.notEqual(
+    left.subject.identity.sha256,
+    equivalent.subject.identity.sha256,
+  );
   const same = await compare(left, equivalent);
   assert.deepEqual(same.summary, {
     added: 0,
@@ -195,8 +198,8 @@ await withVerifierFixture(rootFixture, async () => {
           JSON.stringify(left.normalized_result.interface),
         ),
         comparison_result_bytes: Buffer.byteLength(JSON.stringify(same)),
-        original_sha256: left.subject.digest.sha256,
-        equivalent_sha256: equivalent.subject.digest.sha256,
+        original_sha256: left.subject.identity.sha256,
+        equivalent_sha256: equivalent.subject.identity.sha256,
         cases: [
           "equivalent padded LEB128",
           "function signature change",

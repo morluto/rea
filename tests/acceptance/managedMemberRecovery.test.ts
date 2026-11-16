@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
@@ -80,8 +81,8 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
+      expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
+      expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
       const report = managedMemberInspectionSchema.parse(
         mcpEvidence.normalized_result,
       );

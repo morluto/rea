@@ -242,7 +242,10 @@ async function run(operation, input) {
   assert.deepEqual(cli.normalized_result, mcp.normalized_result);
   assert.deepEqual(cli.subject, mcp.subject);
   assert.equal(cli.subject.local_path, input.path);
-  assert.equal(cli.subject.digest.sha256, cli.normalized_result.target.sha256);
+  assert.equal(
+    cli.subject.identity.sha256,
+    cli.normalized_result.target.sha256,
+  );
   assert.deepEqual(cli.limitations, mcp.limitations);
   process.stdout.write(
     `[ok] ${operation}${input.abi === undefined ? "" : ` ${input.abi}`}: CLI/MCP Evidence parity\n`,

@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -83,13 +87,12 @@ it("admits an independent inline dossier and composes its summary parent without
 it("keeps input capacity limits while composing dossiers that cannot be resent inline", async () => {
   const { session, client } = await harness("1024");
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("Missing fixture subject");
   const dossier = functionDossierSchema.parse(base.normalized_result);
   const source = createEvidence(
     {
-      path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
+      path: fileSubjectDisplay(base.subject).local_path,
+      sha256: fileIdentity(base.subject).sha256,
+      format: fileIdentity(base.subject).format,
     },
     base.provider,
     {
@@ -214,16 +217,15 @@ it("reports missing sources for a retained dossier with a large link set", async
     }),
   );
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("Missing fixture subject");
   const links = Array.from(
     { length: 150_000 },
     (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,
   );
   const source = createEvidence(
     {
-      path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
+      path: fileSubjectDisplay(base.subject).local_path,
+      sha256: fileIdentity(base.subject).sha256,
+      format: fileIdentity(base.subject).format,
     },
     base.provider,
     {

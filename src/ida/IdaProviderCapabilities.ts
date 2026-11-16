@@ -27,10 +27,8 @@ export const idaOperationUnavailableReason = (
 ): string | undefined => {
   if (!idaProfileAdmits(operation, profile))
     return "This operation is available for the modern headless profile only.";
-  if (operation === "procedure_callers" && profile.protocol !== "legacy")
-    return profile.protocol === "native"
-      ? "The native upstream profile reports code references without proving direct call edges."
-      : "The modern upstream profile reports code references without proving direct call edges.";
+  if (operation === "procedure_callers")
+    return "IDA MCP profiles report code references without proving direct call edges.";
   return undefined;
 };
 
@@ -46,18 +44,6 @@ export const IDA_LIMITATIONS = Object.freeze([
 
 export const IDA_NATIVE_STRING_LIMITATION =
   "Native string observations use upstream C-string rendering; other string representations remain unknown.";
-
-/**
- * The legacy attached profile uses `disassemble_function`, which
- * jumps to the function and whose `decompile_function` opens or reuses a
- * pseudocode view whenever an IDA window is active.
- */
-const ATTACHED_GUI_NAVIGATION_OPERATIONS: ReadonlySet<IdaOperation> = new Set([
-  "procedure_pseudo_code",
-  "procedure_assembly",
-  "read_function_instructions",
-  "analyze_function",
-]);
 
 /** Advertise live observations and configured lifecycle effects truthfully. */
 export const idaCapabilities = (
@@ -79,12 +65,11 @@ export const idaCapabilities = (
       effects: {
         mutatesArtifact: false,
         launchesProcess: stdio || profile.mode === "headless",
+        // Native GUI decompilation changes the active pseudocode view.
         mayShowUi:
           profile.mode === "attached" &&
-          (profile.protocol === "native"
-            ? operation === "procedure_pseudo_code" ||
-              operation === "analyze_function"
-            : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
+          (operation === "procedure_pseudo_code" ||
+            operation === "analyze_function"),
         mayAccessNetwork: true,
         mayWriteFilesystem: stdio || profile.mode === "headless",
         changesPermissions: false,

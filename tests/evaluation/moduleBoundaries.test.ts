@@ -234,7 +234,7 @@ describe("incremental module import boundaries", () => {
     ],
     [
       "src/application/javascript/probe.ts",
-      "../../artifacts/DirectoryArtifactReader.js",
+      "../../resources/DirectoryArtifactReader.js",
       false,
     ],
     [
@@ -595,7 +595,7 @@ describe.each(["apple", "inventory", "extraction"])(
       ["../../domain/apple/plistValue.js", true],
       ["../../domain/artifactInventorySnapshot.js", true],
       ["../../contracts/artifactGraph.js", true],
-      ["../DirectoryArtifactReader.js", true],
+      ["../AsarArtifactReader.js", true],
       ["../ArtifactHash.js", true],
     ])("checks the producer dependency %s", (dependency, allowed) => {
       const violations = inspectModuleBoundaries(

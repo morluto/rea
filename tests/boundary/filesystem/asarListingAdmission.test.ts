@@ -10,7 +10,6 @@ import {
   BLOCK_INTEGRITY_LIMITATION,
   readAsarListing,
 } from "../../../src/artifacts/AsarListing.js";
-import { resolveAsarHeaderAdmission } from "../../../src/artifacts/AsarHeader.js";
 import {
   asarHeaderBytes,
   nestedAsarHeader,
@@ -19,6 +18,7 @@ import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { resolveAsarHeaderAdmission } from "../../../src/resources/index.js";
 
 const archiveWith = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-asar-listing-");

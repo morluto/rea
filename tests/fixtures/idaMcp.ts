@@ -32,17 +32,14 @@ export const createIdaTarget = async (
   return { root, target };
 };
 
-const legacyNames = [
-  "get_metadata",
-  "list_functions",
-  "list_strings",
-  "get_function_by_name",
-  "get_function_by_address",
-  "decompile_function",
-  "disassemble_function",
-  "get_callers",
-  "get_callees",
-  "get_xrefs_to",
+const nativeNames = [
+  "list_funcs",
+  "lookup_funcs",
+  "find_regex",
+  "decompile",
+  "disasm",
+  "callees",
+  "xrefs_to",
 ];
 const modernNames = [
   "idb_open",
@@ -60,7 +57,11 @@ const modernNames = [
   "survey_binary",
 ];
 
-/** Stateful producer fixture at the real connection seam; no module mocking. */
+/**
+ * Stateful producer fixture at the real connection seam; no module mocking.
+ * Attached mode serves the native ida-free-mcp protocol (metadata through
+ * `ida://idb/metadata`); headless mode serves the database supervisor.
+ */
 export class RecordingIdaMcp implements IdaMcpConnection {
   readonly calls: {
     name: string;
@@ -95,10 +96,31 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   }
   /** Tool names the fake server advertises; defaults to the profile's full set. */
   tools?: readonly string[];
-  readResource?: NonNullable<IdaMcpConnection["readResource"]>;
+  readonly resources: string[] = [];
+  /** The recorded input metadata a native attached server reports. */
+  metadata(): JsonValue {
+    return {
+      path: `${this.inputPath}.i64`,
+      module: "target.elf",
+      sha256: this.inputSha256,
+      base: this.imageBase,
+    };
+  }
+  readResource = async (
+    uri: string,
+    options?: { readonly signal?: AbortSignal | undefined },
+  ): Promise<JsonValue> => {
+    this.resources.push(uri);
+    await this.beforeCall?.(uri, {});
+    options?.signal?.throwIfAborted();
+    if (uri !== "ida://idb/metadata")
+      throw new Error(`Unimplemented producer resource ${uri}`);
+    const overridden = this.overrideCall?.(uri, {});
+    return overridden === undefined ? this.metadata() : overridden;
+  };
   async connect() {
     this.connects += 1;
-    return this.tools ?? (this.mode === "attached" ? legacyNames : modernNames);
+    return this.tools ?? (this.mode === "attached" ? nativeNames : modernNames);
   }
   serverInfo() {
     return { name: "upstream-fixture", version: "sdk-version-is-not-ida" };
@@ -140,16 +162,8 @@ export class RecordingIdaMcp implements IdaMcpConnection {
       return_type: "int",
       arguments: [],
     };
+    const native = this.mode === "attached";
     switch (name) {
-      case "get_metadata":
-        return {
-          path: this.inputPath,
-          module: "target.elf",
-          sha256: this.inputSha256,
-          base: this.imageBase,
-        };
-      case "list_functions":
-        return { data: [fn], next_offset: null };
       case "list_funcs":
         return [
           {
@@ -157,10 +171,6 @@ export class RecordingIdaMcp implements IdaMcpConnection {
             next_offset: null,
           },
         ];
-      case "get_function_by_address":
-        return { ...fn, address: "0x1004" };
-      case "get_function_by_name":
-        return fn;
       case "lookup_funcs":
         if (!Array.isArray(args.queries))
           throw new Error("Invalid fixture lookup queries");
@@ -169,30 +179,34 @@ export class RecordingIdaMcp implements IdaMcpConnection {
           fn: { addr: fn.address, name: fn.name, size: fn.size },
           error: null,
         }));
-      case "decompile_function":
-        return this.pseudocode;
       case "decompile":
-        return { code: this.pseudocode, cursor: { done: true } };
-      case "disassemble_function":
-        return asm;
+        return native
+          ? {
+              addr: fn.address,
+              ok: true,
+              pseudocode: this.pseudocode,
+              lines: 1,
+            }
+          : { code: this.pseudocode, cursor: { done: true } };
       case "disasm":
-        return { asm, cursor: { done: true } };
-      case "get_callers":
-        return [
-          { address: "0x1004", name: "main", size: "0x20" },
-          { address: "0x1008", name: "main", size: "0x20" },
-        ];
-      case "get_callees":
-        return [{ address: "0x2000", name: "puts", type: "external" }];
+        return native
+          ? {
+              asm: {
+                name: asm.name,
+                start_ea: asm.start_ea,
+                lines: `main (.text @ ${asm.start_ea}):\n1000  ret`,
+              },
+              cursor: { done: true },
+            }
+          : { asm, cursor: { done: true } };
       case "callees":
         return [
           {
             callees: [{ addr: "0x2000", name: "puts", type: "external" }],
             more: false,
+            ...(native ? { error: null } : {}),
           },
         ];
-      case "get_xrefs_to":
-        return [{ address: "0x1004", type: "code", function: fn }];
       case "xrefs_to":
         return [
           {
@@ -204,13 +218,9 @@ export class RecordingIdaMcp implements IdaMcpConnection {
               },
             ],
             more: false,
+            ...(native ? { error: null } : {}),
           },
         ];
-      case "list_strings":
-        return {
-          data: [{ address: "0x3000", length: 5, string: "a.b\nC" }],
-          next_offset: null,
-        };
       case "find_regex":
         return {
           matches: [{ addr: "0x3000", string: "a.b\nC" }],

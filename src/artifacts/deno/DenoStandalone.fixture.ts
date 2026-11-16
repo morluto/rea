@@ -1,5 +1,5 @@
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "../pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 
 // https://github.com/denoland/deno/blob/v2.9.8/cli/lib/standalone/binary.rs
 // declares this section marker.

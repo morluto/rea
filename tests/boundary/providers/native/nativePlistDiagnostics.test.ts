@@ -5,7 +5,7 @@ import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.
 import {
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ok } from "../../../../src/domain/result.js";
 import { thinMach } from "../../../../src/domain/binaryTarget.fixture.js";

@@ -2,7 +2,7 @@ import { expect, expectTypeOf, it, vi } from "vitest";
 import { z } from "zod";
 import { evmInterfaceModule } from "../../src/composition/evm.js";
 import { wasmArtifactModule } from "../../src/composition/wasm.js";
-import { cliCommandFor } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import { INSPECT_EVM_INTERFACE_CONTRACT } from "../../src/contracts/evm/evmToolContracts.js";
 
 it("rejects incompatible static bindings through the complete project typecheck", () => {

@@ -13,23 +13,20 @@ import {
   annotateEnglishUnicodeCaseCollisions,
   ArtifactPathRegistry,
   normalizeArtifactPath,
-} from "../../resources/index.js";
-import {
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
+  abortIfNeeded,
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactTraversalLimit,
 } from "../../resources/index.js";
 import {
   ArtifactTraversalObservation,
   declaredArtifactEntries,
 } from "../ArtifactTraversalObservation.js";
-import {
-  DirectoryArtifactEntryAccessDenied,
-  DirectoryArtifactReader,
-  DirectoryArtifactTraversalLimit,
-} from "../DirectoryArtifactReader.js";
 import type { ArtifactInventoryOptions } from "./types.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
@@ -49,7 +46,7 @@ import {
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
-import { abortIfNeeded, hashReadable } from "../ArtifactHash.js";
+import { hashReadable } from "../ArtifactHash.js";
 
 export interface PendingIntegrityContradiction {
   readonly occurrence: MutableOccurrence;

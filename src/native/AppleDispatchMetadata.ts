@@ -68,6 +68,7 @@ import {
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
 export function* decodeAppleDispatchMetadataSteps(
@@ -340,7 +341,7 @@ const inputBudgetExceeded = (
     observedBytes === null
       ? "The file grew while it was read. Retry once the file is stable."
       : observedBytes <= MAXIMUM_DISPATCH_METADATA_INPUT_BYTES
-        ? `Retry with max_input_bytes (CLI --max-input-bytes) of at least ${String(observedBytes)}, at most ${bytesWithUnits(MAXIMUM_DISPATCH_METADATA_INPUT_BYTES)}; REA holds that many bytes in memory for the read.`
+        ? `Retry with max_input_bytes of at least ${String(observedBytes)}, at most ${bytesWithUnits(MAXIMUM_DISPATCH_METADATA_INPUT_BYTES)}; REA holds that many bytes in memory for the read.`
         : `The file exceeds the largest selectable budget of ${bytesWithUnits(MAXIMUM_DISPATCH_METADATA_INPUT_BYTES)}; use a deep analysis provider for its Objective-C and Swift metadata.`;
   return new AnalysisResourceConstraintError(
     OPERATION,
@@ -354,7 +355,26 @@ const inputBudgetExceeded = (
         ? {}
         : { observed_input_bytes: observedBytes }),
     },
-    { retryable: false, remediationAction },
+    {
+      retryable: false,
+      remediationAction,
+      // Only a larger selectable budget admits the file.
+      ...(observedBytes !== null &&
+      observedBytes <= MAXIMUM_DISPATCH_METADATA_INPUT_BYTES
+        ? {
+            limit: {
+              control_kind: "parameter",
+              parameter: "max_input_bytes",
+              effective_value: admission.maximum_bytes,
+              unit: "bytes",
+              minimum: 1,
+              maximum: MAXIMUM_DISPATCH_METADATA_INPUT_BYTES,
+              default_value: DEFAULT_DISPATCH_METADATA_INPUT_BYTES,
+              applies_at: "next_call",
+            } as const,
+          }
+        : {}),
+    },
   );
 };
 
@@ -559,7 +579,7 @@ const appleDispatchMetadataPrimaryFailure = (
     cause,
     diagnostics: {
       target_path: path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

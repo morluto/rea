@@ -89,6 +89,7 @@ import {
   selectEvmWorkerLimits,
   type EvmWorkerLimits,
 } from "./EvmWorkerLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_evm_interface";
 
@@ -199,7 +200,7 @@ const selectEvmLimiter = async (
       : missing
         ? "Set REA_EVM_PRLIMIT_COMMAND to an existing absolute executable regular file for util-linux prlimit."
         : "Check the selected file and filesystem access, or set REA_EVM_PRLIMIT_COMMAND to an accessible absolute executable regular file for util-linux prlimit.";
-    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${cause instanceof Error ? cause.message : String(cause)}. ${recovery}`;
+    const reason = `Offline EVM interface inspection requires caller-supplied util-linux prlimit: ${path}; ${errorMessage(cause)}. ${recovery}`;
     return err({
       path,
       code: missing ? "executable_missing" : "runtime_unavailable",
@@ -319,7 +320,7 @@ const retainedCleanupFailure = (cause: unknown): ProviderCleanupError => {
     cause instanceof AnalysisError && cause.cleanupResources.length > 0
       ? cause.cleanupResources
       : ["EVM provider cleanup"],
-    { reason: cause instanceof Error ? cause.message : String(cause) },
+    { reason: errorMessage(cause) },
     {
       operation: OPERATION,
       cause,
@@ -583,7 +584,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       try {
         inheritedLimits = await readFile("/proc/self/limits", "utf8");
       } catch (cause: unknown) {
-        const reason = `Could not read inherited Linux resource limits at /proc/self/limits: ${cause instanceof Error ? cause.message : String(cause)}`;
+        const reason = `Could not read inherited Linux resource limits at /proc/self/limits: ${errorMessage(cause)}`;
         throw new AnalysisCapabilityUnavailableError(
           EVMOLE_PROVIDER_IDENTITY.id,
           OPERATION,
@@ -733,7 +734,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               )
             : new AnalysisOutputError(
                 OPERATION,
-                `Owned interface worker reply failed for ${input.path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                `Owned interface worker reply failed for ${input.path}: ${errorMessage(cause)}`,
                 {
                   cause,
                   capturedOutput,
@@ -887,10 +888,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         } catch (markerFailure: unknown) {
           fileFailure = {
             verified: false,
-            failure:
-              markerFailure instanceof Error
-                ? markerFailure.message
-                : String(markerFailure),
+            failure: errorMessage(markerFailure),
           };
         }
       }
@@ -1038,7 +1036,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           input,
           cleanupResult,
           [retainedRoot.path],
-          cause instanceof Error ? cause.message : String(cause),
+          errorMessage(cause),
           retainedOutput,
           cause,
         );
@@ -1087,9 +1085,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             EVMOLE_PROVIDER_IDENTITY.id,
             [...new Set(resources)],
             {
-              failures: failures.map((failure) =>
-                failure instanceof Error ? failure.message : String(failure),
-              ),
+              failures: failures.map((failure) => errorMessage(failure)),
             },
             { operation: OPERATION, cause: new AggregateError(failures) },
           );
@@ -1128,7 +1124,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
               ...(pending.process.cleanupResources ?? []),
             ]),
           ],
-          cause instanceof Error ? cause.message : String(cause),
+          errorMessage(cause),
           pending.output,
           cause,
         );
@@ -1154,7 +1150,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           pending.input,
           pending.result,
           lease.cleanupResources ?? [root.path],
-          cause instanceof Error ? cause.message : String(cause),
+          errorMessage(cause),
           pending.output,
           cause,
         );

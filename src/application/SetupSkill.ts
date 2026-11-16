@@ -26,6 +26,7 @@ import {
   type SkillFileSnapshot,
   type SkillPublicationCleanupOwner,
 } from "./SkillFilePublication.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export const MANAGED_SKILL_FILES = [
   "SKILL.md",
@@ -303,7 +304,7 @@ export const existingSkillDestinations = async (
         client: destination.client,
         path: destination.path,
         kind: "unreadable",
-        detail: causeReason(cause),
+        detail: errorMessage(cause),
       });
     }
   }
@@ -353,7 +354,7 @@ const inspectSkillDirectory = async (
     return err({
       path,
       kind: "unreadable",
-      detail: cause instanceof Error ? cause.message : String(cause),
+      detail: errorMessage(cause),
     });
   }
 };
@@ -512,7 +513,7 @@ const inspectCanonicalSkill = async (
         rootIssues.push({
           path: destination,
           kind: "unreadable",
-          detail: causeReason(cause),
+          detail: errorMessage(cause),
         });
         if (failureCause === undefined) failureCause = cause;
         rootCanonical = false;
@@ -581,9 +582,6 @@ export const canonicalSkillNeedsInstall = async (
   }
 };
 
-const causeReason = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 const causePath = (cause: unknown): string | undefined =>
   cause instanceof Error && "path" in cause && typeof cause.path === "string"
     ? cause.path
@@ -605,7 +603,7 @@ const closeSkillPublications = async (
     } catch (cause: unknown) {
       failures.push({
         path: publication.resource,
-        reason: causeReason(cause),
+        reason: errorMessage(cause),
       });
     }
   }
@@ -700,7 +698,7 @@ export const installCanonicalSkill = async (
         } catch (rollbackCause: unknown) {
           rollbackFailures.push({
             path: publication.path,
-            reason: causeReason(rollbackCause),
+            reason: errorMessage(rollbackCause),
           });
         }
       }
@@ -714,7 +712,7 @@ export const installCanonicalSkill = async (
       new SetupSkillInstallError({
         path: failingPath,
         stage,
-        reason: causeReason(cause),
+        reason: errorMessage(cause),
         rollbackFailures,
         recoveryBackupPaths: [...recoveryPaths.values()],
         completed: verified,

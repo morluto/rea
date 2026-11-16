@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -162,7 +163,7 @@ export const snapshotAndRecordUnknown = async (
     JSON.stringify(
       createEvidenceBundle([
         createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture", name: "Fixture", version: "1" },
           { operation: "external_observation", parameters: {}, result: true },
         ),
