@@ -519,14 +519,20 @@ itWithCaptureCapability(
     expect(messages.some((message) => message.startsWith("running:"))).toBe(
       true,
     );
-    expect(messages.at(-1)).toContain("cleanup:");
-    expect(messages.at(-1)).toContain("owned_process_group=cleaned");
-    expect(messages.at(-1)).toContain("disposition=exited");
-    const nonTerminal = progress.slice(0, -1);
+    // The SDK may deliver its own completion notification after capture
+    // cleanup, so select the cleanup observation by its prefix instead of
+    // assuming the last notification is terminal capture progress.
+    const cleanupIndex = messages.findLastIndex((message) =>
+      message.startsWith("cleanup:"),
+    );
+    expect(cleanupIndex).toBeGreaterThanOrEqual(0);
+    const cleanup = messages[cleanupIndex] ?? "";
+    expect(cleanup).toContain("owned_process_group=cleaned");
+    expect(cleanup).toContain("disposition=exited");
+    const nonTerminal = progress.slice(0, cleanupIndex);
     assertRateBound(
       nonTerminal.length,
-      parseProgressMessage((messages.at(-1) ?? "").slice("cleanup: ".length))
-        .elapsed_ms,
+      parseProgressMessage(cleanup.slice("cleanup: ".length)).elapsed_ms,
     );
     const tokenEvidence = toolContract(
       "capture_process_scenario",
@@ -578,10 +584,11 @@ itWithCaptureCapability(
     expect(timeoutProgress.every(({ total }) => total === undefined)).toBe(
       true,
     );
-    expect(timeoutProgress.at(-1)?.message).toContain("disposition=timeout");
-    expect(timeoutProgress.at(-1)?.message).toContain(
-      "owned_process_group=cleaned",
-    );
+    const timeoutCleanup = timeoutProgress
+      .filter(({ message }) => message?.startsWith("cleanup:"))
+      .at(-1);
+    expect(timeoutCleanup?.message).toContain("disposition=timeout");
+    expect(timeoutCleanup?.message).toContain("owned_process_group=cleaned");
 
     const cancelling = await connectProgressClient(true);
     // Prepare the SDK's full output-schema cache before timing capture control.
