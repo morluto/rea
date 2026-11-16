@@ -1,5 +1,4 @@
 import { Cli } from "incur";
-import { z } from "zod";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
@@ -28,6 +27,11 @@ import {
 } from "./cliResultOutput.js";
 import { completionHelpNote, createCliCompletions } from "./completions.js";
 import { excludeDeclaredSensitiveArguments } from "./explicitSensitiveArguments.js";
+import {
+  CLI_CUSTOM_GLOBAL_OPTIONS,
+  CLI_DESCRIPTION,
+  serveDiscovery,
+} from "./discovery.js";
 import { reportUnknownMcpSubcommand } from "./mcpBuiltinCommands.js";
 import { serveMcpRegistration } from "./mcpRegistration.js";
 import { presentOmittableDefaults } from "./omittableDefaults.js";
@@ -95,13 +99,8 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   );
   const timedCli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: PRODUCT_IDENTITY.packageVersion,
-    description: "Reverse engineer anything from your terminal or agent.",
-    globals: z.object({
-      timings: z
-        .boolean()
-        .default(false)
-        .describe("Write measured command timing to stderr."),
-    }),
+    description: CLI_DESCRIPTION,
+    globals: CLI_CUSTOM_GLOBAL_OPTIONS,
     mcp: {
       instructions:
         "Ask what software, artifact, protocol, or behavior the user wants to understand, then choose the available investigation capabilities that can produce evidence.",
@@ -146,6 +145,13 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   );
 
   presentOmittableDefaults(cli);
+  // Discovery reads the arguments the dispatcher would, after result output
+  // has adapted them, so its documents are counted and buffered alike.
+  const dispatch = cli.serve.bind(cli);
+  cli.serve = (arguments_ = process.argv.slice(2), serveOptions) =>
+    serveDiscovery(cli, arguments_, serveOptions ?? {})
+      ? Promise.resolve()
+      : dispatch(arguments_, serveOptions);
   if (options.resultOutput !== undefined)
     streamCliCommandResults(cli, options.resultOutput);
   const serveStrict = validateCliArguments(cli);

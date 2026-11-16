@@ -17,6 +17,7 @@ import {
   type CompletionCommand,
 } from "./completionProtocol.js";
 import { cliCommands } from "./commandRegistry.js";
+import { COMPLETIONS_DESCRIPTION, MCP_GROUP_DESCRIPTION } from "./discovery.js";
 import { MCP_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
 import type { CliInstance } from "./types.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
@@ -100,12 +101,12 @@ const completionCommands = (
   );
   commands.set("mcp", {
     _group: true,
-    description: "Register as MCP server",
+    description: MCP_GROUP_DESCRIPTION,
     commands: MCP_SUBCOMMANDS,
   });
   commands.set("completions", {
     _group: true,
-    description: "Generate shell completion script",
+    description: COMPLETIONS_DESCRIPTION,
     commands: new Map(CLI_COMPLETION_SHELLS.map((shell) => [shell, {}])),
   });
   // REA uses sync:false, so the framework's skills integration is disabled.
