@@ -25,7 +25,7 @@ import {
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
 import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { retainProcessInspectionOwners } from "../providers/OwnedCommandCleanup.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 
 interface CleanupIssue {
@@ -194,11 +194,8 @@ export const confirmExternalApplicationExit = async (
   } catch (cause: unknown) {
     // Exit stays unverified; descriptors the read left open stay owned.
     if (
-      retainProcessInspectionOwners(
-        cause,
-        resources.inspections,
-        "close_binary",
-      ).length === 0
+      retainArtifactCommandCleanup(cause, resources.inspections, "close_binary")
+        .length === 0
     )
       throw cause;
     return "unverified";
