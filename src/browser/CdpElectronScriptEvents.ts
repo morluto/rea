@@ -1,11 +1,8 @@
 import {
-  readCdpExecutionContextCreated,
-  readCdpExecutionContextDestroyed,
-  readCdpScriptParsed,
   selectCdpScriptFrame,
   type CdpContextFrameClaim,
 } from "./CdpScriptContextFacts.js";
-import type { CdpEvent } from "./CdpConnection.js";
+import type { CdpReceivedEvent } from "./CdpConnection.js";
 import type { ElectronScriptFrameClaims } from "../domain/javascript/electronObservation.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { CDP_CAPTURE_SCRIPT_METADATA_LIMITS } from "./CdpCaptureEventTypes.js";
@@ -36,27 +33,30 @@ export interface ElectronScriptMetadataRetention {
 
 /** Retain script/frame metadata from passive Electron events. */
 export const ingestElectronScriptEvent = (input: {
-  readonly event: CdpEvent;
+  readonly event: CdpReceivedEvent;
   readonly scripts: ElectronScriptDraft[];
   readonly executionContextFrames: Map<string, CdpContextFrameClaim>;
   readonly completeness: CdpCaptureCompleteness;
   readonly retention: ElectronScriptMetadataRetention;
 }): void => {
-  if (input.event.method === "Runtime.executionContextsCleared") {
+  const registered = input.event.registered;
+  if (registered?.method === "Runtime.executionContextsCleared") {
     input.executionContextFrames.clear();
     return;
   }
-  if (input.event.method === "Runtime.executionContextDestroyed") {
-    const key = readCdpExecutionContextDestroyed(input.event.params).contextKey;
+  if (registered?.method === "Runtime.executionContextDestroyed") {
+    const key = registered.payload.contextKey;
     if (key !== null) input.executionContextFrames.delete(key);
     return;
   }
-  if (input.event.method === "Runtime.executionContextCreated") {
-    retainExecutionContext(input.event, input.executionContextFrames);
+  if (registered?.method === "Runtime.executionContextCreated") {
+    const { facts } = registered.payload;
+    if (facts.contextKey !== null)
+      input.executionContextFrames.set(facts.contextKey, facts.frameClaim);
     return;
   }
-  if (input.event.method !== "Debugger.scriptParsed") return;
-  const facts = readCdpScriptParsed(input.event.params);
+  if (registered?.method !== "Debugger.scriptParsed") return;
+  const { facts } = registered.payload;
   const scriptId = facts.scriptId;
   const rawUrl = facts.url;
   if (scriptId === undefined || scriptId === "") {
@@ -105,13 +105,4 @@ export const ingestElectronScriptEvent = (input: {
   }
   input.retention.bytes += bytes;
   input.scripts.push(script);
-};
-
-const retainExecutionContext = (
-  event: CdpEvent,
-  frames: Map<string, CdpContextFrameClaim>,
-): void => {
-  const facts = readCdpExecutionContextCreated(event.params);
-  if (facts.contextKey === null) return;
-  frames.set(facts.contextKey, facts.frameClaim);
 };

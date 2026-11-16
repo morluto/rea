@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -161,7 +162,7 @@ async function inspect(name) {
     assert.equal(evidence.normalized_result.runtime_attribution, "unknown");
     assert.deepEqual(evidence.provider, evidence.normalized_result.decoder);
     assert.equal(
-      evidence.subject.digest.sha256,
+      evidence.subject.identity.sha256,
       digest(await readFile(input.capture_path)),
     );
   }
@@ -212,11 +213,11 @@ try {
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === contract.name,
   );
-  assert.ok(advertised?.outputSchema, "Missing named advertised schema");
+  assert.ok(advertised, "Missing named advertised schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(advertised.inputSchema));
-  assert.ok(ajv.validateSchema(advertised.outputSchema));
-  validateOutput = ajv.compile(advertised.outputSchema);
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(advertised.name)));
+  validateOutput = ajv.compile(canonicalOutputSchema(advertised.name));
   const inputValidator = ajv.compile(advertised.inputSchema);
   assert.ok(
     inputValidator({

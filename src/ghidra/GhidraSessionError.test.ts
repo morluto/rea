@@ -8,6 +8,7 @@ import {
 } from "./GhidraSessionError.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
 import { createGhidraDiagnostics } from "./GhidraDiagnostics.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 it.each(["decompile_failed", "future_remote_failure"])(
   "retains complete session diagnostics for non-input remote code %s",
@@ -232,7 +233,7 @@ it.each([null, undefined, new Error("original cause")])(
       },
     });
     expect(refreshed.cleanupFailure).toBe(cleanup);
-    cleanup.resolveCleanup();
+    releaseOwnedCleanup(cleanup);
     expect(refreshed.cleanupFailure?.cleanupIncomplete).toBe(false);
     expect(
       Object.hasOwn(
@@ -260,7 +261,7 @@ it("preserves the compiler root cleanup dependency through launch and session pr
     launch,
   );
   expect(session.cleanupFailure).toBe(cleanup);
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(session.cleanupFailure?.cleanupIncomplete).toBe(false);
 });
 

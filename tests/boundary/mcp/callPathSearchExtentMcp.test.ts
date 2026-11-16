@@ -1,3 +1,7 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
@@ -21,14 +25,12 @@ const observe = (
   analysisProfile?: AnalysisProfileCommitment,
 ) => {
   const template = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (template.subject === null)
-    throw new Error("Expected artifact-bound fixture");
   const dossier = functionDossierSchema.parse(template.normalized_result);
   return createEvidence(
     {
-      path: template.subject.local_path,
-      sha256: template.subject.digest.sha256,
-      format: template.subject.format,
+      path: fileSubjectDisplay(template.subject).local_path,
+      sha256: fileIdentity(template.subject).sha256,
+      format: fileIdentity(template.subject).format,
     },
     template.provider,
     {

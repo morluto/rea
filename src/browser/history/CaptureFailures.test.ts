@@ -1,13 +1,21 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   captureDecoderHeapContinuingRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
 } from "../../config/captureDecoderHeap.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
-import { historicalCaptureFailure } from "./CaptureFailures.js";
+import {
+  historicalCaptureFailure,
+  protobufCaptureFailure,
+} from "./CaptureFailures.js";
+import {
+  CaptureFormatError,
+  captureLimitForReply,
+} from "./CaptureFormatError.js";
 import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
@@ -65,6 +73,15 @@ it.each([
       },
       exitCode,
       signal,
+      runtimeExhaustion: {
+        runtime: "v8",
+        area: "heap",
+        stream: "stderr",
+        line: stderr.trim(),
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      },
     });
     const projected = analysisErrorProjectionSchema.parse(
       projectAnalysisError(historicalCaptureFailure(input, cause, "decoder")),
@@ -84,6 +101,15 @@ it.each([
           observed_signal: signal,
         },
         captured_output: { stdout: "", stderr },
+        diagnostics: {
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            area: "heap",
+            stream: "stderr",
+            line: stderr.trim(),
+            line_complete: true,
+          },
+        },
       },
     });
     // Bun ignores the decoder's V8 heap flags, so no fixed heap is reported.
@@ -229,6 +255,7 @@ it.each(["before open", "during read"])(
     const cause = new ArtifactReaderFailure(
       "integrity",
       `Artifact changed ${stage}: ${path}`,
+      { integrityCheck: "container-identity" },
     );
     const error = historicalCaptureFailure(input, cause, "capture-read");
     const projected = projectAnalysisError(error);
@@ -298,6 +325,38 @@ it("retains actual command status and both diagnostic streams when cleanup also 
   expect(JSON.stringify(redacted)).not.toContain("private-marker");
   expect(redacted.code).toBe("cleanup_incomplete");
 });
+it("resolves the reported cleanup when the decoder's process lease confirms release", async () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = new OwnedCommandFailure(
+    "process",
+    "Observed command failure",
+    null,
+    "Observed cleanup failure",
+    undefined,
+    ["pid:42"],
+  );
+  let stopped = false;
+  const processLease = new AnalysisCleanupLease(async () => {
+    if (!stopped) throw new Error("decoder still running");
+  }, ["pid:42"]);
+  const error = historicalCaptureFailure(
+    input,
+    cause,
+    "decoder",
+    undefined,
+    DEFAULT_CAPTURE_DECODER_HEAP,
+    processLease,
+  );
+  expect(error.cleanupIncomplete).toBe(true);
+  await expect(processLease.release()).rejects.toThrow("decoder still running");
+  expect(error.cleanupIncomplete).toBe(true);
+  stopped = true;
+  await processLease.release();
+  expect(error.cleanupIncomplete).toBe(false);
+});
 it.each(["io", "unavailable"] as const)(
   "keeps %s read failures separate from malformed capture input",
   (reason) => {
@@ -351,7 +410,9 @@ it("preserves the exact cancellation reason and an earlier reader failure", () =
 
   const changed = historicalCaptureFailure(
     input,
-    new ArtifactReaderFailure("integrity", "Observed changed capture"),
+    new ArtifactReaderFailure("integrity", "Observed changed capture", {
+      integrityCheck: "container-identity",
+    }),
     "capture-read",
     { signal: controller.signal },
   );
@@ -404,4 +465,61 @@ it("keeps physical capture read errors as provider failures", () => {
     code: "execution_failure",
     details: { diagnostics: { phase: "capture-read" } },
   });
+});
+
+it.each([
+  {
+    limit: { name: "protobuf-body", maximum: 1024 },
+    parameter: "max_input_bytes",
+    expected: "maximum_protobuf_body_bytes",
+  },
+  {
+    limit: { name: "protobuf-decoding", maximum: 2048 },
+    parameter: "max_reply_bytes",
+    expected: "maximum_encoded_capture_bytes",
+  },
+] as const)(
+  "names the $parameter budget for a $limit.name refusal",
+  ({ limit, parameter, expected }) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/capture.har",
+      format: "har",
+    });
+    const projected = projectAnalysisError(
+      protobufCaptureFailure(
+        input,
+        new CaptureFormatError(limit, "Protobuf limit reached"),
+      ),
+    );
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: { reported_limits: { [expected]: limit.maximum } },
+      remediation: {
+        action: expect.stringContaining(`Increase ${parameter}`),
+      },
+    });
+  },
+);
+
+it("derives each decoder-child wire reason from the limit table", () => {
+  expect(
+    new CaptureFormatError(
+      { name: "nesting-depth", maximum: 64 },
+      "deep",
+      "/log",
+    ),
+  ).toMatchObject({ replyReason: "input-limit", pointer: "/log" });
+  expect(
+    new CaptureFormatError({ name: "expanded-input", maximum: 1 }, "big")
+      .replyReason,
+  ).toBe("expanded-limit");
+  expect(new CaptureFormatError("malformed", "bad").replyReason).toBe("format");
+  expect(new CaptureFormatError("unsupported", "no").replyReason).toBe(
+    "unsupported",
+  );
+  expect(captureLimitForReply("input-limit")).toBe("nesting-depth");
+  expect(captureLimitForReply("expanded-limit")).toBe("expanded-input");
+  // A reply-size refusal is not a decoder input limit.
+  expect(captureLimitForReply("limit")).toBeUndefined();
 });

@@ -11,6 +11,7 @@ import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliCommandFor } from "../../../src/contracts/cliCommandNames.js";
 
 const reference = (evidence: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -97,5 +98,37 @@ cliTest(
       details: { evidence_id: members.evidence_id, reason: "missing" },
     });
     expect(await readFile(join(directory, bundleName), "utf8")).toBe(bytes);
+  },
+);
+
+cliTest(
+  "refuses a malformed document before reading the selected Evidence bundle",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-evidence-input-cli-");
+    for (const command of [
+      cliCommandFor("project_managed_application_graph"),
+      cliCommandFor("trace_application_feature"),
+      cliCommandFor("compare_source_to_bundle"),
+      cliCommandFor("reconcile_javascript_runtime"),
+      cliCommandFor("compare_wasm_interfaces"),
+      cliCommandFor("compare_static_and_observed_endpoints"),
+    ]) {
+      // The bundle does not exist, so reading it first would fail on it.
+      const refused = await cli.run({
+        arguments: [
+          command,
+          "[]",
+          "--evidence-bundle",
+          "absent.json",
+          "--json",
+        ],
+        cwd: directory,
+      });
+      expect(refused.exitCode, command).toBe(1);
+      expect(refused.json, command).toMatchObject({ code: "invalid_request" });
+      expect(JSON.stringify(refused.json), command).not.toContain(
+        "absent.json",
+      );
+    }
   },
 );

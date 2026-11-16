@@ -1,23 +1,19 @@
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   projectSelectedArtifactFileFailure,
   projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeCertificatesPort } from "../../application/binaryDiagnostics/PeCertificatesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeCertificatesPort } from "../../ports/binaryDiagnostics/PeCertificatesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,
@@ -106,23 +102,28 @@ const decoderAllowanceFailure = (
   const selected = {
     "asn1-nodes": {
       limits: { max_asn1_values: limit },
-      description: `The PE certificate ASN.1 allowance of ${String(limit)} values per PKCS#7 payload (this release has no runtime override)`,
+      name: "The PE certificate ASN.1 value allowance",
+      unit: "values per PKCS#7 payload",
     },
     "asn1-depth": {
       limits: { max_asn1_depth: limit },
-      description: `The PE certificate ASN.1 allowance of ${String(limit)} nesting levels per PKCS#7 payload (this release has no runtime override)`,
+      name: "The PE certificate ASN.1 nesting allowance",
+      unit: "nesting levels per PKCS#7 payload",
     },
     "decoded-text": {
       limits: { max_decoded_text_bytes: limit },
-      description: `The PE certificate decoded-text allowance of ${String(limit)} bytes per PKCS#7 payload (this release has no runtime override)`,
+      name: "The PE certificate decoded-text allowance",
+      unit: "bytes per PKCS#7 payload",
     },
     "oid-bytes": {
       limits: { max_oid_bytes: limit },
-      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per OID (this release has no runtime override)`,
+      name: "The PE certificate OBJECT IDENTIFIER allowance",
+      unit: "bytes per OID",
     },
     "oid-arc-bytes": {
       limits: { max_oid_arc_bytes: limit },
-      description: `The PE certificate OBJECT IDENTIFIER allowance of ${String(limit)} bytes per base-128 arc (this release has no runtime override)`,
+      name: "The PE certificate OBJECT IDENTIFIER arc allowance",
+      unit: "bytes per base-128 arc",
     },
   }[allowance];
   return new AnalysisResourceConstraintError(
@@ -132,7 +133,10 @@ const decoderAllowanceFailure = (
     selected.limits,
     {
       cause,
-      ...fixedAllowanceOptions(selected.description, "parser"),
+      ...fixedAllowanceOptions(selected.name, "parser", {
+        limit,
+        unit: selected.unit,
+      }),
     },
   );
 };

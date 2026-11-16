@@ -1,7 +1,8 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import type {
   ProgressReporter,
   ProgressUpdate,
-} from "../application/ProgressReporter.js";
+} from "../ports/ProgressReporter.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperBridgeEvent } from "./protocol.js";
 import {
@@ -12,19 +13,26 @@ import {
   HopperRemoteError,
   HopperTimeoutError,
 } from "../domain/hopperErrors.js";
+import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
+import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 
 type HopperRequestResult = Result<JsonValue, HopperError>;
-
-/** Node timer ceiling; larger deadlines would be clamped instead of honored. */
-const MAX_TIMEOUT_MS = 2_147_483_647;
 
 interface HopperRequestQueueOptions {
   readonly signal?: AbortSignal;
   /** Caller deadline from admission, including time waiting in the FIFO. */
   readonly timeoutMs?: number;
   readonly progress?: ProgressReporter;
+  /**
+   * Ceilings admitted with this request in the caller's context. They are
+   * handed to the sender only when the request reaches the wire, so queued
+   * work cannot change the ceiling of the request Hopper is answering, and a
+   * write outside the caller's context never reads the settings again.
+   */
+  readonly requestLimit?: BridgeMaxRequestBytes;
+  readonly replyLimit?: BridgeMaxReplyBytes;
 }
 
 export interface HopperRequestActivity {
@@ -40,6 +48,8 @@ type RequestSender = (
     readonly id: number;
     readonly method: string;
     readonly params: JsonValue;
+    readonly requestLimit: BridgeMaxRequestBytes | undefined;
+    readonly replyLimit: BridgeMaxReplyBytes | undefined;
   },
   failed: () => void,
 ) => void;
@@ -48,6 +58,8 @@ interface QueuedRequest {
   readonly id: number;
   readonly method: string;
   readonly params: JsonValue;
+  readonly requestLimit: BridgeMaxRequestBytes | undefined;
+  readonly replyLimit: BridgeMaxReplyBytes | undefined;
   readonly signal: AbortSignal | undefined;
   readonly progress: ProgressReporter | undefined;
   readonly resolve: (result: HopperRequestResult) => void;
@@ -83,12 +95,12 @@ export class HopperRequestQueue {
       timeoutMs !== undefined &&
       (!Number.isInteger(timeoutMs) ||
         timeoutMs < 0 ||
-        timeoutMs > MAX_TIMEOUT_MS)
+        timeoutMs > MAX_NODE_TIMER_DELAY_MS)
     )
       return Promise.resolve(
         err(
           new HopperProtocolError(
-            `Hopper timeoutMs must be an integer between 0 and ${String(MAX_TIMEOUT_MS)}`,
+            `Hopper timeoutMs must be an integer between 0 and ${String(MAX_NODE_TIMER_DELAY_MS)}`,
           ),
         ),
       );
@@ -112,6 +124,8 @@ export class HopperRequestQueue {
         id,
         method,
         params,
+        requestLimit: options.requestLimit,
+        replyLimit: options.replyLimit,
         signal: options.signal,
         progress: options.progress,
         resolve,
@@ -180,6 +194,16 @@ export class HopperRequestQueue {
       });
     }
     return true;
+  }
+
+  /**
+   * Fail the request on the wire with a rejection the bridge could not
+   * attribute by id. False when no request is on the wire.
+   */
+  failActive(error: HopperError): boolean {
+    const active = this.#active;
+    if (active === undefined || !active.transmitted) return false;
+    return this.accept(active.id, err(error));
   }
 
   /** Fail the active wire request and every request still waiting in the FIFO. */
@@ -271,6 +295,8 @@ export class HopperRequestQueue {
           id: entry.id,
           method: entry.method,
           params: entry.params,
+          requestLimit: entry.requestLimit,
+          replyLimit: entry.replyLimit,
         },
         () =>
           this.accept(

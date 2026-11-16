@@ -120,7 +120,7 @@ vi.mock(
         typeof import("../../../src/javascript/recovery/WakaruExecution.js")
       >();
     const { createAnalysisExecution } =
-      await import("../../../src/application/AnalysisProvider.js");
+      await import("../../../src/ports/AnalysisProvider.js");
     return {
       ...actual,
       prepareWakaruExecution: async (

@@ -11,10 +11,12 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -28,7 +30,7 @@ import {
   OwnedRegularFileOperationFailure,
   withOwnedFileHandle,
 } from "../filesystem/OwnedRegularFile.js";
-import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
 import type { KunaProject } from "./KunaProjectCache.js";
 import {
   scanKunaAssembly,
@@ -39,6 +41,7 @@ import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The exact producing range for one facet, including a failed C block. */
 export interface KunaProjectFileSpan {
@@ -112,10 +115,7 @@ const readSpan = async (
   const callerAborted = (): AbortSignal | undefined =>
     signal?.aborted === true ? signal : undefined;
   const cancelled = callerAborted();
-  if (cancelled !== undefined)
-    return err(
-      new AnalysisCancelledError(operation, { cause: cancelled.reason }),
-    );
+  if (cancelled !== undefined) return err(cancelledBy(operation, cancelled));
   const opened = await ownership.admitSpan(operation, signal, () =>
     open(path, "r"),
   );
@@ -134,9 +134,7 @@ const readSpan = async (
         // Preserve a fully acquired span for owned finalization, which records
         // cancellation alongside its text if descriptor cleanup fails.
         if (bytesRead < length && signal?.aborted)
-          throw (spanCancellation = new AnalysisCancelledError(operation, {
-            cause: signal.reason,
-          }));
+          throw (spanCancellation = cancelledBy(operation, signal));
       },
     );
     if (buffer.length !== length)
@@ -204,9 +202,7 @@ const readSpan = async (
       (cause instanceof RegularFileOperationCancelled ||
         cause instanceof RegularFileCancelled)
     )
-      return err(
-        new AnalysisCancelledError(operation, { cause: aborted.reason }),
-      );
+      return err(cancelledBy(operation, aborted));
     throw cause;
   }
 };
@@ -246,10 +242,7 @@ const spanCloseFailure = (
   failure: RegularFileCleanupFailure<string>,
   ownership: KunaSpanOwnership,
 ): AnalysisError => {
-  const reason =
-    failure.cleanupCause instanceof Error
-      ? failure.cleanupCause.message
-      : String(failure.cleanupCause);
+  const reason = errorMessage(failure.cleanupCause);
   const completed = failure.outcome.kind === "completed";
   const marker = new ProviderCleanupError(
     KUNA_PROVIDER_ID,
@@ -266,13 +259,14 @@ const spanCloseFailure = (
   );
   ownership.bindSpanCleanup(failure.owner, marker);
   if (failure.completionCancellation !== undefined)
-    return analysisErrorWithCleanupFailure(
-      new AnalysisCancelledError(operation, {
-        cause: failure.completionCancellation.reason,
-      }),
+    return analysisErrorWithCleanupDependencies(
+      cancelledBy(
+        operation,
+        carriedReason(failure.completionCancellation.reason),
+      ),
       marker,
       operation,
-    ).bindCleanupDependencies([marker]);
+    );
   if (failure.outcome.kind !== "failed") return marker;
   const primaryCause = failure.outcome.cause;
   const primary =
@@ -281,16 +275,9 @@ const spanCloseFailure = (
       ? primaryCause
       : new ProviderAdapterError(KUNA_PROVIDER_ID, operation, {
           cause: primaryCause,
-          userMessage:
-            primaryCause instanceof Error
-              ? primaryCause.message
-              : String(primaryCause),
+          userMessage: errorMessage(primaryCause),
         });
-  return analysisErrorWithCleanupFailure(
-    primary,
-    marker,
-    operation,
-  ).bindCleanupDependencies([marker]);
+  return analysisErrorWithCleanupDependencies(primary, marker, operation);
 };
 
 /** One immutable export owns both its text ranges and its parsed label indexes. */
@@ -452,10 +439,7 @@ export class KunaProjectReader {
       }),
     );
     const index = await waitForAbortable(this.#assembly, signal);
-    if (index === ABORTED)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+    if (index instanceof AbortedWait) return err(cancelledBy(operation, index));
     return index.ok
       ? index
       : err(

@@ -11,7 +11,7 @@ import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands
 import { registerCutterCommands } from "../../src/cli/cutterCommands.js";
 import { registerWasmCommands } from "../../src/cli/wasmCommands.js";
 import { wasmArtifactModule } from "../../src/composition/wasm.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { CutterBridgeService } from "../../src/cutter/CutterBridgeService.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
@@ -73,6 +73,7 @@ const cutterDiscoveryFixture = () =>
         current_file: "C:\\Caller files\\token=literal%2F.bin",
         cutter_version: "2.3.4",
         identity_status: "partial",
+        bridge_source: "unknown",
       },
       {
         session_id: "00000000-0000-4000-8000-000000000002",
@@ -81,6 +82,7 @@ const cutterDiscoveryFixture = () =>
         current_file: null,
         cutter_version: null,
         identity_status: "partial",
+        bridge_source: "unknown",
       },
     ],
     bridge_directory: "/caller/Cutter bridge/token=literal%2F/证据",

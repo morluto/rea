@@ -1,7 +1,9 @@
 import { toolContract } from "../contracts/toolContracts.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -51,11 +53,11 @@ export const registerResetInvestigationTool = ({
           ]);
           if (!process.ok && !artifacts.ok)
             return err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 process.error,
                 artifacts.error,
                 contract.name,
-              ).bindCleanupDependencies([process.error, artifacts.error]),
+              ),
             );
           return process.ok ? artifacts : process;
         },

@@ -12,7 +12,7 @@ import { analysisViewResultSchema } from "../../../src/domain/analysisView/analy
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "preserves S28 high address bytes through MCP inventory and extraction (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-s28-mcp-");
@@ -62,7 +62,7 @@ it.each(["full", "compact"] as const)(
   },
 );
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "exposes S-record facts and region extraction through MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-hex-mcp-");

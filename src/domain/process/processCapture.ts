@@ -22,7 +22,7 @@ export interface TerminalFrame {
   readonly sequence: number;
   readonly at_ms: number;
   readonly data: string;
-  /** Pre-normalization PTY projection; sensitive captures redact it, older captures may omit it. */
+  /** Pre-normalization PTY projection, omitted when it equals `data`; sensitive captures redact it. */
   readonly raw_data?: string | undefined;
 }
 
@@ -212,6 +212,28 @@ export type VerifiedProcessSettlement =
       readonly cleanup_outcome: "cleaned" | "failed";
     };
 
+/** The launched root process as the capture observed it. */
+export const processCaptureRootProcessSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("observed"),
+    pid: z.int().positive(),
+    start_time: z.string().min(1),
+  }),
+  z.strictObject({ state: z.literal("withheld-by-caller") }),
+  z.strictObject({ state: z.literal("unknown"), reason: z.string().min(1) }),
+]);
+
+/** The launched root process as the capture observed it. */
+export type ProcessCaptureRootProcess =
+  | {
+      readonly state: "observed";
+      readonly pid: number;
+      /** Platform start identity from `src/process`; opaque. */
+      readonly start_time: string;
+    }
+  | { readonly state: "withheld-by-caller" }
+  | { readonly state: "unknown"; readonly reason: string };
+
 /**
  * Process capture observation set.
  *
@@ -239,6 +261,12 @@ export interface UnverifiedProcessCapture {
       readonly state: "path_metadata_unchanged" | "unknown";
       readonly reason: string | null;
     };
+    /**
+     * The launched root process: its PID and the start identity read for it
+     * by the `src/process` identity primitives, withheld when the caller
+     * selected PID normalization, or unknown with the reason.
+     */
+    readonly root_process: ProcessCaptureRootProcess;
     readonly normalization_sha256: string;
   };
   readonly normalization: z.infer<typeof normalizationSchema>;
@@ -353,7 +381,7 @@ export interface IncompleteProcessCaptureObservations {
   readonly manifest: PartialProcessObservationField<
     UnverifiedProcessCapture["manifest"]
   >;
-  /** Facts retained after completion failed; historical records may omit them. */
+  /** Facts retained after completion failed; omitted when the failure retained none. */
   readonly residual_unknowns?:
     | UnverifiedProcessCapture["residual_unknowns"]
     | undefined;
@@ -509,6 +537,7 @@ const processCaptureShapeSchema = z.strictObject({
       state: z.enum(["path_metadata_unchanged", "unknown"]),
       reason: z.string().nullable(),
     }),
+    root_process: processCaptureRootProcessSchema,
     normalization_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   }),
   normalization: normalizationSchema,

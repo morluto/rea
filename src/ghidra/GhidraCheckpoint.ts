@@ -15,15 +15,16 @@ import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   withArtifactFileHandle,
   withArtifactRegularFile,
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
   mapArtifactFileFailure,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,
@@ -33,6 +34,8 @@ import {
   ghidraFileFailure,
   readGhidraProfileArtifact,
 } from "./GhidraFileArtifacts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const sourceSchema = z
@@ -183,9 +186,7 @@ export async function resolveGhidraCheckpoint(
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<GhidraCheckpointSelection> {
-  const key = createHash("sha256")
-    .update(JSON.stringify([targetSha256, profile.digest]))
-    .digest("hex");
+  const key = sha256Hex(JSON.stringify([targetSha256, profile.digest]));
   const selection = {
     directory: appendCallerPath(root, key),
     key,
@@ -204,7 +205,8 @@ export class GhidraCheckpoint {
   #source: CheckpointSource | null | undefined;
   #state: GhidraCheckpointSelection["state"];
   readonly #pendingRemoval = new Set<string>();
-  readonly #cleanupFailures = new Set<ProviderCleanupError>();
+  /** Reported by every removal failure until a retry removes every file. */
+  #cleanupRelease = new AnalysisCleanupRelease();
   #publishedInput: string | undefined;
   constructor(
     readonly selection: GhidraCheckpointSelection,
@@ -401,17 +403,16 @@ export class GhidraCheckpoint {
           "ghidra",
           [...this.#pendingRemoval],
           {
-            reason: `Checkpoint file cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            reason: `Checkpoint file cleanup failed: ${errorMessage(cause)}`,
             checkpoint: this.observation,
           },
           { cause },
         );
-        this.#cleanupFailures.add(error);
-        throw error;
+        throw this.#cleanupRelease.bind(error);
       }
     }
-    for (const failure of this.#cleanupFailures) failure.resolveCleanup();
-    this.#cleanupFailures.clear();
+    this.#cleanupRelease.confirm();
+    this.#cleanupRelease = new AnalysisCleanupRelease();
   }
   async close(): Promise<void> {
     await this.retryCleanup();

@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 const execute = promisify(execFile);
 
@@ -96,9 +97,9 @@ export async function buildRiscvFixture(directory, bits, floatAbi = "double") {
   const build = BUILDS[floatAbi];
   assert.ok(build !== undefined, `No ${floatAbi}-float RISC-V fixture`);
   assert.ok(floatAbi === "double" || bits === 32);
-  const compiler = process.env.REA_RISCV_CLANG ?? "clang";
-  const linker = process.env.REA_RISCV_LLD ?? "ld.lld";
-  const reader = process.env.REA_RISCV_READELF ?? "llvm-readelf";
+  const compiler = fixtureCommand(FIXTURE_TOOLS.riscvClang);
+  const linker = fixtureCommand(FIXTURE_TOOLS.riscvLinker);
+  const reader = fixtureCommand(FIXTURE_TOOLS.riscvReadelf);
   const sources = build.sources.map((path) =>
     fileURLToPath(new URL(path, import.meta.url)),
   );

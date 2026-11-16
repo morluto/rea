@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { posix } from "node:path";
 
 import { z } from "zod";
@@ -70,8 +71,6 @@ const runtimeCommand = {
 } as const;
 
 // AbortSignal changes while an awaited process runs, despite its readonly type.
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 /** Fresh, bounded inspection; package or interpreter changes must be observable. */
 export const inspectLinuxHopperPythonRuntime = async (

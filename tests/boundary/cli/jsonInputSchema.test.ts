@@ -1,15 +1,19 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { beforeAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import { artifactComparisonInputSchema } from "../../../src/contracts/artifactComparisonContracts.js";
 import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
-  compareSourceToBundleCliInputSchema,
+  compareSourceToBundleRequestSchema,
   compareStaticObservedEndpointsFactsSchema,
   reconcileJavaScriptRuntimeRequestSchema,
   traceApplicationFeatureRequestSchema,
@@ -19,8 +23,8 @@ import {
   getEvidenceBundleInputSchema,
   importEvidenceBundleInputSchema,
 } from "../../../src/contracts/sessionToolSchemas.js";
-import { reconstructionCoverageRequestSchema } from "../../../src/domain/reconstructionCoverageInput.js";
-import { reconstructionObligationLedgerRequestSchema } from "../../../src/application/ReconstructionObligationLedgerRequest.js";
+import { reconstructionCoverageEvaluationInputSchema } from "../../../src/domain/reconstructionCoverageInput.js";
+import { reconstructionObligationLedgerInputSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
 import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { browserScenarioSchema } from "../../../src/domain/browserScenario.js";
 import { getEvidenceInputContract } from "../../../src/domain/evidenceInputContract.js";
@@ -30,10 +34,13 @@ import { managedApplicationGraphReferenceInputSchema } from "../../../src/domain
 import { managedNativeVerificationRequestSchema } from "../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedReconstructionImportRequestSchema } from "../../../src/domain/managed/managedReconstruction.js";
 import { nativeCallObservationInputSchema } from "../../../src/domain/native/nativeCallObservation.js";
+import { matchNativeFunctionsInputSchema } from "../../../src/contracts/native/functionMatchingContracts.js";
+import { COMPARE_WASM_INTERFACES_CONTRACT } from "../../../src/contracts/wasm/wasmComparisonContracts.js";
 import {
   jsonInputArgument,
   jsonInputContentSchema,
 } from "../../../src/cli/jsonInputArgument.js";
+import { cliJsonCallerPathSchema } from "../../../src/cli/cliJsonInput.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
@@ -49,49 +56,55 @@ const inventoryDocumentSchema = frame(
 );
 
 /** Every positional JSON document and the schema its handler parses. */
-const documents = [
+const documents: readonly {
+  readonly command: string;
+  readonly schema: z.ZodType;
+  /** Fields the CLI resolves against the working directory before parsing. */
+  readonly callerPaths?: readonly (readonly string[])[];
+}[] = [
   {
-    command: CLI_COMMANDS.traceApplicationFeature,
+    command: cliCommandFor("trace_application_feature"),
     schema: frame(traceApplicationFeatureRequestSchema),
   },
   {
-    command: CLI_COMMANDS.traceJavaScriptSemantics,
+    command: cliCommandFor("trace_javascript_semantics"),
     schema: frame(traceJavaScriptSemanticsRequestSchema),
   },
   {
-    command: CLI_COMMANDS.compareApplicationVersions,
+    command: cliCommandFor("compare_application_versions"),
     schema: frame(compareApplicationVersionsRequestSchema),
   },
   {
-    command: CLI_COMMANDS.compareStaticAndObservedEndpoints,
+    command: cliCommandFor("compare_static_and_observed_endpoints"),
     schema: frame(compareStaticObservedEndpointsFactsSchema),
   },
   {
-    command: CLI_COMMANDS.compareSourceToBundle,
-    schema: frame(compareSourceToBundleCliInputSchema),
+    command: cliCommandFor("compare_source_to_bundle"),
+    schema: frame(compareSourceToBundleRequestSchema.omit({ view: true })),
+    callerPaths: [["reference", "path"]],
   },
   {
-    command: CLI_COMMANDS.compareJavaScriptExportShapes,
+    command: cliCommandFor("compare_javascript_export_shapes"),
     schema: frame(compareJavaScriptExportShapesRequestSchema),
   },
   {
-    command: CLI_COMMANDS.buildReconstructionObligationLedger,
-    schema: reconstructionObligationLedgerRequestSchema,
+    command: cliCommandFor("build_reconstruction_obligation_ledger"),
+    schema: reconstructionObligationLedgerInputSchema,
   },
   {
-    command: CLI_COMMANDS.evaluateReconstructionCoverage,
-    schema: reconstructionCoverageRequestSchema,
+    command: cliCommandFor("evaluate_reconstruction_coverage"),
+    schema: reconstructionCoverageEvaluationInputSchema,
   },
   {
-    command: CLI_COMMANDS.projectAndroidApplicationGraph,
+    command: cliCommandFor("project_android_application_graph"),
     schema: inventoryDocumentSchema,
   },
   {
-    command: CLI_COMMANDS.projectAppleApplicationGraph,
+    command: cliCommandFor("project_apple_application_graph"),
     schema: inventoryDocumentSchema,
   },
   {
-    command: CLI_COMMANDS.projectHarmonyApplicationGraph,
+    command: cliCommandFor("project_harmony_application_graph"),
     schema: inventoryDocumentSchema,
   },
   {
@@ -99,44 +112,64 @@ const documents = [
     schema: inspectEvidenceBundleCliInputSchema,
   },
   {
-    command: CLI_COMMANDS.inspectAnalysisView,
+    command: cliCommandFor("inspect_analysis_view"),
     schema: inspectAnalysisViewInputSchema,
+    callerPaths: [["source", "path"]],
   },
   {
-    command: CLI_COMMANDS.captureElectronScenario,
+    command: cliCommandFor("capture_electron_scenario"),
     schema: electronActiveObservationInputSchema,
+    callerPaths: [
+      ["executable_path"],
+      ["application_path"],
+      ["application_root"],
+    ],
   },
   {
-    command: CLI_COMMANDS.reconcileJavaScriptRuntime,
+    command: cliCommandFor("reconcile_javascript_runtime"),
     schema: frame(reconcileJavaScriptRuntimeRequestSchema),
   },
   {
-    command: CLI_COMMANDS.observeNativeCalls,
+    command: cliCommandFor("observe_native_calls"),
     schema: nativeCallObservationInputSchema,
   },
   {
-    command: CLI_COMMANDS.importManagedReconstruction,
+    command: cliCommandFor("import_managed_reconstruction"),
     schema: frame(managedReconstructionImportRequestSchema),
   },
   {
-    command: CLI_COMMANDS.verifyManagedNativeBoundaries,
+    command: cliCommandFor("verify_managed_native_boundaries"),
     schema: frame(managedNativeVerificationRequestSchema),
   },
   {
-    command: CLI_COMMANDS.projectManagedApplicationGraph,
+    command: cliCommandFor("project_managed_application_graph"),
     schema: frame(managedApplicationGraphReferenceInputSchema),
   },
   {
-    command: CLI_COMMANDS.compareArtifacts,
+    command: cliCommandFor("compare_artifacts"),
     schema: artifactComparisonInputSchema,
+    callerPaths: [
+      ["left", "path"],
+      ["right", "path"],
+    ],
   },
   {
-    command: CLI_COMMANDS.captureBrowserScenario,
+    command: cliCommandFor("compare_wasm_interfaces"),
+    schema: frame(COMPARE_WASM_INTERFACES_CONTRACT.inputSchema),
+  },
+  {
+    command: cliCommandFor("match_native_functions"),
+    schema: frame(matchNativeFunctionsInputSchema),
+  },
+  {
+    command: cliCommandFor("capture_browser_scenario"),
     schema: browserScenarioSchema,
+    callerPaths: [["browser", "executable_path"]],
   },
   {
     command: CLI_COMMANDS.validateBrowserScenario,
     schema: browserScenarioSchema,
+    callerPaths: [["browser", "executable_path"]],
   },
 ] as const;
 
@@ -200,18 +233,66 @@ const advertisedInput = (stdout: string): InputJsonSchema => {
   return inputJson as InputJsonSchema;
 };
 
+type JsonSchemaNode = Record<string, unknown>;
+
+const cliCallerPath = jsonInputContentSchema(
+  cliJsonCallerPathSchema,
+) as JsonSchemaNode;
+
+/** Expect a caller path as the CLI admits it: any nonempty local spelling. */
+const admitRelativePath = (
+  schema: JsonSchemaNode,
+  path: readonly string[],
+): JsonSchemaNode => {
+  const [head, ...tail] = path;
+  if (head === undefined) {
+    const { allOf: _patterns, pattern: _pattern, ...rest } = schema;
+    return { ...rest, ...cliCallerPath };
+  }
+  const branches = (["anyOf", "oneOf"] as const).flatMap((keyword) =>
+    Array.isArray(schema[keyword])
+      ? [
+          [
+            keyword,
+            (schema[keyword] as JsonSchemaNode[]).map((branch) =>
+              admitRelativePath(branch, path),
+            ),
+          ] as const,
+        ]
+      : [],
+  );
+  const properties = schema.properties as
+    | Record<string, JsonSchemaNode>
+    | undefined;
+  return {
+    ...schema,
+    ...Object.fromEntries(branches),
+    ...(properties?.[head] === undefined
+      ? {}
+      : {
+          properties: {
+            ...properties,
+            [head]: admitRelativePath(properties[head], tail),
+          },
+        }),
+  };
+};
+
 it("advertises the parsed document for every JSON-input command", async () => {
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(jsonInputCommands(cli).sort()).toEqual(
     documents.map(({ command }) => command).sort(),
   );
-  for (const { command, schema } of documents) {
+  for (const { command, schema, callerPaths = [] } of documents) {
     const served = await serve([command, "--schema", "--json"]);
     expect(served.exitCode, served.stdout).toBe(0);
     const inputJson = advertisedInput(served.stdout);
     expect(inputJson.contentSchema, command).toBeDefined();
     expect(inputJson.contentSchema, command).toEqual(
-      jsonInputContentSchema(schema),
+      callerPaths.reduce(
+        admitRelativePath,
+        jsonInputContentSchema(schema) as JsonSchemaNode,
+      ),
     );
     expect(inputJson.contentSchema, command).not.toEqual({});
     expect(
@@ -221,11 +302,11 @@ it("advertises the parsed document for every JSON-input command", async () => {
   }
 });
 
-it("validates representative parsed documents with the advertised schema", async () => {
+it("advertises caller paths as local spellings the CLI resolves, not URLs", async () => {
   const input = advertisedInput(
     (
       await serve([
-        CLI_COMMANDS.evaluateReconstructionCoverage,
+        cliCommandFor("compare_source_to_bundle"),
         "--schema",
         "--json",
       ])
@@ -235,28 +316,82 @@ it("validates representative parsed documents with the advertised schema", async
     strict: false,
     validateFormats: false,
   }).compile(input.contentSchema as AnySchema);
-  const accepted = { coverage: { arbitrary: true }, boundary_id: "main" };
-  const rejected = [
-    { coverage: {}, boundary_id: "" },
-    { coverage: {} },
-    { coverage: {}, boundary_id: "main", extra: true },
-  ];
-  expect(reconstructionCoverageRequestSchema.safeParse(accepted).success).toBe(
-    true,
+  const document = (path: string) => ({
+    reference: { kind: "file", path },
+    application: {},
+  });
+  for (const path of ["ref.json", "./file:ref.json", "C:\\ref.json"])
+    expect(validate(document(path)), path).toBe(true);
+  for (const path of ["file:ref.json", "FILE:ref.json", "https://x/ref.json"])
+    expect(validate(document(path)), path).toBe(false);
+});
+
+it("validates representative parsed documents with the advertised schema", async () => {
+  const input = advertisedInput(
+    (
+      await serve([
+        cliCommandFor("evaluate_reconstruction_coverage"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(input.contentSchema as AnySchema);
+  const evidence_bundle = {
+    evidence_format: EVIDENCE_FORMAT_REVISION,
+    artifacts: [],
+    providers: [],
+    environments: [],
+    scenarios: [],
+    captures: [],
+    unknowns: [],
+    records: [],
+  };
+  const coverage = {
+    evidence_bundle,
+    artifacts: [],
+    surfaces: [],
+    owners: [],
+    claims: [],
+    verifier_contracts: [],
+    verifier_results: [],
+    residual_unknown_ids: [],
+    contradictions: [],
+    package_proofs: [],
+    boundaries: [],
+  };
+  const accepted = { coverage, boundary_id: "main" };
+  const rejected = [
+    { coverage, boundary_id: "" },
+    { coverage },
+    { coverage, boundary_id: "main", extra: true },
+    { coverage: { arbitrary: true }, boundary_id: "main" },
+    {
+      coverage: { ...coverage, evidence_bundle: { records: [] } },
+      boundary_id: "main",
+    },
+  ];
+  const contract = reconstructionCoverageEvaluationInputSchema;
+  expect(contract.safeParse(accepted).success).toBe(true);
   expect(validate(accepted)).toBe(true);
   for (const document of rejected) {
-    expect(
-      reconstructionCoverageRequestSchema.safeParse(document).success,
-    ).toBe(false);
+    expect(contract.safeParse(document).success).toBe(false);
     expect(validate(document)).toBe(false);
   }
 });
 
 it("names the feature-trace, semantic-query, and browser-scenario fields", async () => {
   const trace = advertisedInput(
-    (await serve([CLI_COMMANDS.traceApplicationFeature, "--schema", "--json"]))
-      .stdout,
+    (
+      await serve([
+        cliCommandFor("trace_application_feature"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
   expect(trace.description).toBe("Inline workflow JSON or JSON file path");
   expect(Object.keys(trace.contentSchema?.properties ?? {})).toEqual([
@@ -269,8 +404,13 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   expect(trace.contentSchema?.required).toEqual(["seed", "application"]);
 
   const semantic = advertisedInput(
-    (await serve([CLI_COMMANDS.traceJavaScriptSemantics, "--schema", "--json"]))
-      .stdout,
+    (
+      await serve([
+        cliCommandFor("trace_javascript_semantics"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
   expect(Object.keys(semantic.contentSchema?.properties ?? {})).toEqual([
     "application",
@@ -279,8 +419,13 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   expect(semantic.contentSchema?.required).toEqual(["application", "query"]);
 
   const browser = advertisedInput(
-    (await serve([CLI_COMMANDS.captureBrowserScenario, "--schema", "--json"]))
-      .stdout,
+    (
+      await serve([
+        cliCommandFor("capture_browser_scenario"),
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
   );
   expect(browser.description).toBe(
     "Inline browser scenario JSON, JSON file path, or '-' for stdin",
@@ -297,17 +442,22 @@ it("names the feature-trace, semantic-query, and browser-scenario fields", async
   );
 });
 
-it("keeps unknown envelope fields permissive and named fields constrained", async () => {
+it("advertises the reconstruction documents their readers admit", async () => {
   const coverage = advertisedInput(
     (
       await serve([
-        CLI_COMMANDS.evaluateReconstructionCoverage,
+        cliCommandFor("evaluate_reconstruction_coverage"),
         "--schema",
         "--json",
       ])
     ).stdout,
   );
-  expect(coverage.contentSchema?.properties?.coverage).toEqual({});
+  // The reader authenticates the embedded bundle, but --schema still shows
+  // the document it admits, as the MCP contract does.
+  expect(coverage.contentSchema?.properties?.coverage).toMatchObject({
+    type: "object",
+    required: expect.arrayContaining(["evidence_bundle", "boundaries"]),
+  });
   // boundary_id is a stable identifier (#9919), so its pattern is advertised.
   expect(coverage.contentSchema?.properties?.boundary_id).toMatchObject({
     type: "string",
@@ -318,13 +468,16 @@ it("keeps unknown envelope fields permissive and named fields constrained", asyn
   const ledger = advertisedInput(
     (
       await serve([
-        CLI_COMMANDS.buildReconstructionObligationLedger,
+        cliCommandFor("build_reconstruction_obligation_ledger"),
         "--schema",
         "--json",
       ])
     ).stdout,
   );
-  expect(ledger.contentSchema?.properties?.evidence_bundle).toEqual({});
+  expect(ledger.contentSchema?.properties?.evidence_bundle).toMatchObject({
+    type: "object",
+    required: expect.arrayContaining(["artifacts", "records"]),
+  });
   expect(ledger.contentSchema?.required).toEqual(
     expect.arrayContaining([
       "evidence_bundle",
@@ -336,7 +489,7 @@ it("keeps unknown envelope fields permissive and named fields constrained", asyn
 
 it("prints the nested document in the default schema format", async () => {
   const served = await serve([
-    CLI_COMMANDS.traceApplicationFeature,
+    cliCommandFor("trace_application_feature"),
     "--schema",
   ]);
   expect(served.exitCode, served.stdout).toBe(0);

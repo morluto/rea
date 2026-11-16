@@ -1,6 +1,6 @@
 import type { Socket } from "node:net";
 
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { HopperError } from "../domain/hopperErrors.js";
 import { HopperProcessError } from "../domain/hopperErrors.js";
@@ -23,10 +23,10 @@ import {
   providerCleanupFailure,
 } from "./HopperDiagnostics.js";
 import type { HopperRequestActivity } from "./HopperRequestQueue.js";
-import {
-  isHopperCleanupRequired,
-  isHopperShutdownAcknowledgement,
-} from "./HopperSessionValues.js";
+import { parseHopperShutdownReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 interface CleanupIssue {
   readonly resource: string;
@@ -61,6 +61,8 @@ export interface HopperOwnedResources {
         readonly identity: ProcessIdentityObservation;
       }
     | undefined;
+  /** Descriptors a failed bridge identity read left open, released by cleanup. */
+  readonly inspections: ArtifactResourceScope;
 }
 
 export interface HopperCleanupInput {
@@ -144,11 +146,30 @@ export const cleanupHopperSession = async (
       state.resources.add("hopper-lease");
       state.issues.push({
         resource: "hopper-lease",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
   }
+  await releaseInspections(input, state);
   return cleanupOutcome(input, state);
+};
+
+/** Retry descriptors whose identity read could not close them. */
+const releaseInspections = async (
+  input: HopperCleanupInput,
+  state: CleanupState,
+): Promise<void> => {
+  try {
+    await input.resources.inspections.retryCleanup();
+  } catch (cause: unknown) {
+    const resources = input.resources.inspections.cleanupResources;
+    for (const resource of resources.length === 0
+      ? ["hopper-process-inspection"]
+      : resources) {
+      state.resources.add(resource);
+      state.issues.push({ resource, reason: errorMessage(cause) });
+    }
+  }
 };
 
 export const confirmExternalApplicationExit = async (
@@ -164,10 +185,21 @@ export const confirmExternalApplicationExit = async (
     application?.identity.state !== "readable"
   )
     return undefined;
-  const observed = await observeExit(
-    application.pid,
-    application.identity.identity,
-  );
+  let observed: Awaited<ReturnType<typeof observeExit>>;
+  try {
+    observed = await observeExit(
+      application.pid,
+      application.identity.identity,
+    );
+  } catch (cause: unknown) {
+    // Exit stays unverified; descriptors the read left open stay owned.
+    if (
+      retainArtifactCommandCleanup(cause, resources.inspections, "close_binary")
+        .length === 0
+    )
+      throw cause;
+    return "unverified";
+  }
   if (observed === "exited") {
     resources.shutdownConfirmed = true;
     releaseTransport(socket);
@@ -214,10 +246,13 @@ const requestShutdown = async (
   const shutdown = await input
     .request(method)
     .catch((cause: unknown) => err(shutdownRequestFailure(method, cause)));
+  const outcome = shutdown.ok
+    ? parseHopperShutdownReply(method, shutdown.value)
+    : undefined;
   let fallback: Result<JsonValue, HopperError> | undefined;
   if (
-    shutdown.ok &&
-    isHopperCleanupRequired(shutdown.value) &&
+    outcome?.ok === true &&
+    outcome.value === "cleanup_required" &&
     input.resources.launch?.shutdownMode === "process-cleanup"
   ) {
     state.cleanupResult = await input.resources.launch
@@ -226,12 +261,13 @@ const requestShutdown = async (
     if (!state.cleanupResult.cleaned) {
       fallback = await fallbackDocumentShutdown(input);
       input.resources.shutdownConfirmed =
-        fallback.ok && isHopperShutdownAcknowledgement(fallback.value);
+        fallback.ok &&
+        isConfirmed(
+          parseHopperShutdownReply("shutdown_document", fallback.value),
+        );
     }
-  } else if (shutdown.ok) {
-    input.resources.shutdownConfirmed = isHopperShutdownAcknowledgement(
-      shutdown.value,
-    );
+  } else if (outcome !== undefined) {
+    input.resources.shutdownConfirmed = isConfirmed(outcome);
   }
   state.shutdownRequest = {
     method,
@@ -263,6 +299,7 @@ const requestShutdown = async (
       {
         status: shutdown.ok ? "invalid-acknowledgement" : "failed",
         ...(shutdown.ok ? {} : shutdownFailureDetails(shutdown.error)),
+        ...replyContractDetails(outcome),
       },
       "Hopper document shutdown was not confirmed",
     );
@@ -276,18 +313,32 @@ const fallbackDocumentShutdown = async (
     .catch((cause: unknown) =>
       err(shutdownRequestFailure("shutdown_document", cause)),
     );
-  const confirmed =
-    fallback.ok && isHopperShutdownAcknowledgement(fallback.value);
-  if (!confirmed)
+  const outcome = fallback.ok
+    ? parseHopperShutdownReply("shutdown_document", fallback.value)
+    : undefined;
+  if (outcome === undefined || !isConfirmed(outcome))
     input.logger.warn(
       {
         status: fallback.ok ? "invalid-acknowledgement" : "failed",
         ...(fallback.ok ? {} : shutdownFailureDetails(fallback.error)),
+        ...replyContractDetails(outcome),
       },
       "Hopper document shutdown fallback was not confirmed",
     );
   return fallback;
 };
+
+const isConfirmed = (
+  outcome: ReturnType<typeof parseHopperShutdownReply>,
+): boolean => outcome.ok && outcome.value === "confirmed";
+
+/** Name the fields of a reply outside the shutdown contract. */
+const replyContractDetails = (
+  outcome: ReturnType<typeof parseHopperShutdownReply> | undefined,
+): Record<string, JsonValue> =>
+  outcome === undefined || outcome.ok
+    ? {}
+    : { reply_contract: outcome.error.diagnostics ?? null };
 
 const shutdownRequestFailure = (
   operation: "shutdown" | "shutdown_document",

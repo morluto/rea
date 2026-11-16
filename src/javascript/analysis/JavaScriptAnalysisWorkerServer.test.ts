@@ -83,6 +83,7 @@ const startServer = async () => {
         },
         package_type: "unknown",
         purpose: "analysis",
+        member_mutation_allowance: { alias_states: 524_288, source: "default" },
       });
     },
     close: async () => {

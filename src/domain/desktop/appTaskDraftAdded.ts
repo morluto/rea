@@ -22,6 +22,7 @@ import {
 import { pairMembers } from "./memberPairing.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -67,11 +68,6 @@ type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly name: string;
   readonly children: JsonValue[];
 };
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const attributesOf = (element: Element) =>
   isRecord(element.attributes) ? element.attributes : {};
@@ -209,27 +205,30 @@ export const attributeChecks = (
       ) &&
       !isViewStateName(key),
   );
-  return rankAttributes(
-    eligible.filter(({ key, value }) =>
-      checkFits(
-        context,
-        `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
-        value,
+  return (
+    rankAttributes(
+      eligible.filter(({ key, value }) =>
+        checkFits(
+          context,
+          `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
+          value,
+        ),
       ),
-    ),
-  )
-    .toSorted(
-      (left, right) =>
-        usual(left.key, left.value) - usual(right.key, right.value),
     )
-    .slice(0, MAX_ATTRIBUTE_CHECKS)
-    .map(({ key, value }) =>
-      valueEqualsCheck(
-        file,
-        `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
-        value,
-      ),
-    );
+      .toSorted(
+        (left, right) =>
+          usual(left.key, left.value) - usual(right.key, right.value),
+      )
+      // generation-cap: suggested attribute checks
+      .slice(0, MAX_ATTRIBUTE_CHECKS)
+      .map(({ key, value }) =>
+        valueEqualsCheck(
+          file,
+          `${pointer}/attributes/${escapeJsonPointerToken(key)}`,
+          value,
+        ),
+      )
+  );
 };
 
 /**
@@ -358,6 +357,7 @@ export const fieldChecks = (
     }
   });
   if (texts.length > 0)
+    // generation-cap: suggested field checks
     return [...new Set(texts)].slice(0, MAX_FIELD_CHECKS).map((value) => ({
       kind: "text_contains" as const,
       file,
@@ -454,10 +454,14 @@ export const recordChecks = (
   const fields = fieldsOf(context, pointer, element, { nested: true });
   // A record whose one field is the one its selector names it by, as a VYM branch its heading, is checked by that field.
   return (
-    fields.length > 0
-      ? fields
-      : fieldsOf(context, pointer, element, { nested: true, selector: true })
-  ).slice(0, MAX_FIELD_CHECKS);
+    (
+      fields.length > 0
+        ? fields
+        : fieldsOf(context, pointer, element, { nested: true, selector: true })
+    )
+      // generation-cap: suggested field checks
+      .slice(0, MAX_FIELD_CHECKS)
+  );
 };
 
 /** Whether an element holds an identifier of its own among its descendants, as GnuCash's `<trn:splits>` holds each split's `<split:id>`, so its whole text holds ids a later save makes anew. */

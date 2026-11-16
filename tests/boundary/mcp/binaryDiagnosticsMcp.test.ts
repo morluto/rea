@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { byteEntropySchema } from "../../../src/domain/native/byteEntropy.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { TOOL_EFFECTS } from "../../../src/contracts/toolEffects.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -17,8 +16,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerByteEntropyTool } from "../../../src/server/registerByteEntropyTool.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -33,9 +31,8 @@ import {
   peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
-import { parseNativeExports } from "../../../src/native/exports/NativeExportParser.js";
+import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
-import { registerNativeExportsTool } from "../../../src/server/registerNativeExportsTool.js";
 
 it("reports the exhausted native export allowance through MCP", async () => {
   const root = await createTestTempDirectory("rea-native-export-mcp-limits-");
@@ -103,16 +100,13 @@ it.each(["inspect_native_exports", "inspect_byte_entropy"] as const)(
       undefined,
       createToolResultDelivery(undefined),
     );
-    if (service instanceof ByteEntropyService)
-      registerByteEntropyTool(
-        server,
-        service,
-        silentLogger,
-        undefined,
-        undefined,
-        undefined,
-      );
-    else registerNativeExportsTool(server, service, silentLogger);
+    registerServiceTools(
+      server,
+      service instanceof ByteEntropyService
+        ? { byteEntropy: service }
+        : { nativeExports: service },
+      { logger: silentLogger },
+    );
     const client = new Client({
       name: "exports-preflight-client",
       version: "1",
@@ -184,20 +178,25 @@ it.each([false, true])(
       recordEvidence,
       createToolResultDelivery(undefined),
     );
-    registerByteEntropyTool(
+    registerServiceTools(
       server,
-      service,
-      silentLogger,
-      recordEvidence,
-      evidenceById,
-      admission,
+      { byteEntropy: service },
+      {
+        logger: silentLogger,
+        recordEvidence,
+        evidenceById,
+        withAdmittedAnalysis: admission,
+      },
     );
-    registerAnalysisViewTool(
+    registerServiceTools(
       server,
-      silentLogger,
-      evidenceById,
-      recordEvidence,
-      admission,
+      { analysisView: {} },
+      {
+        logger: silentLogger,
+        evidenceById,
+        recordEvidence,
+        withAdmittedAnalysis: admission,
+      },
     );
     const client = new Client({ name: "entropy-cleanup-client", version: "1" });
     onTestFinished(async () => {
@@ -407,7 +406,7 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     { offset: 12288, length: 1504 },
   ]);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
-  expect(TOOL_EFFECTS.inspect_byte_entropy).toMatchObject({
+  expect(toolContract("inspect_byte_entropy").effects).toMatchObject({
     launchesProcess: false,
     writesFilesystem: false,
     accessesNetwork: false,

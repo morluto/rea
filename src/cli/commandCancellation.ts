@@ -1,3 +1,5 @@
+import { CallerAbort } from "../domain/analysisErrorCore.js";
+
 /** Process signal boundary injectable without emitting signals into a test runner. */
 export interface CommandCancellationHost {
   on(signal: "SIGINT" | "SIGTERM", listener: () => void): unknown;
@@ -14,11 +16,11 @@ export const withCommandCancellation = async <Value>(
   let exitCode: number | undefined;
   const interrupt = () => {
     exitCode ??= 130;
-    controller.abort();
+    controller.abort(CallerAbort.forProcessSignal("SIGINT"));
   };
   const terminate = () => {
     exitCode ??= 143;
-    controller.abort();
+    controller.abort(CallerAbort.forProcessSignal("SIGTERM"));
   };
   host.on("SIGINT", interrupt);
   host.on("SIGTERM", terminate);

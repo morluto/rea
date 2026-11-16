@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { reconstructionProofApplicabilityCases } from "../../fixtures/reconstructionProofApplicability.js";
 import { reconstructionObligationLedgerSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
 import type { ReconstructionObligationManifest } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
@@ -9,8 +10,13 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import {
+  EVIDENCE_FORMAT_REVISION,
+  RECREATE_EVIDENCE_GUIDANCE,
+} from "../../../src/domain/evidenceFormat.js";
+import {
   createEvidence,
   evidenceSchema,
+  evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import {
@@ -90,7 +96,7 @@ describe("reconstruction obligation ledger residual graph input", () => {
       relationships: [],
     });
     const mutation = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         predicateType: "rea.residual-unknown-mutation",
@@ -136,7 +142,7 @@ describe("reconstruction obligation ledger residual graph input", () => {
             : [],
       });
       const mutation = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           predicateType: "rea.residual-unknown-mutation",
@@ -202,14 +208,18 @@ describe("reconstruction obligation ledger process provider admission", () => {
     "preserves process provider admission for %s",
     async (_, provider, admitted) => {
       const source = processEvidence();
-      const record = createEvidence(undefined, provider, {
-        predicateType: source.predicate_type,
-        operation: source.operation,
-        parameters: source.parameters,
-        result: source.normalized_result,
-        confidence: source.confidence,
-        authority: source.authority,
-      });
+      const record = createEvidence(
+        evidenceSubjectInput(source.subject),
+        provider,
+        {
+          predicateType: source.predicate_type,
+          operation: source.operation,
+          parameters: source.parameters,
+          result: source.normalized_result,
+          confidence: source.confidence,
+          authority: source.authority,
+        },
+      );
       await withLedgerClient(async (request) => {
         const response = await request(createEvidenceBundle([record]));
         expect(response.isError).not.toBe(true);
@@ -243,11 +253,36 @@ describe("reconstruction obligation ledger process provider admission", () => {
   );
 });
 
+describe("reconstruction obligation ledger Evidence format", () => {
+  it.each([
+    ["an unmarked", undefined],
+    ["a later", EVIDENCE_FORMAT_REVISION + 1],
+  ])(
+    "refuses %s Evidence format through the format owner, not the SDK",
+    async (_label, revision) => {
+      const { evidence_format: _current, ...unmarked } = createEvidenceBundle(
+        [],
+      );
+      const bundle =
+        revision === undefined
+          ? unmarked
+          : { ...unmarked, evidence_format: revision };
+      await withLedgerClient(async (request) => {
+        const result = await request(bundle);
+        expect(result.isError).toBe(true);
+        expect(parseMcpToolError(result)).toMatchObject(
+          integrityError(RECREATE_EVIDENCE_GUIDANCE),
+        );
+      });
+    },
+  );
+});
+
 describe("reconstruction obligation ledger MCP parity", () => {
   it("rejects noncanonical source bundles before ledger generation", async () => {
     const records = ["first", "second"].map((label) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           operation: "observe",
@@ -299,7 +334,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
 
   it("distinguishes corrupt source bundles from missing caller-selected review references", async () => {
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "observe", parameters: {}, result: {} },
     );

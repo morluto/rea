@@ -53,10 +53,13 @@ const stubPackage = (chunkEveryMs: number, chunks: number) => {
   return fetch;
 };
 
-it("completes a slow download that keeps delivering bytes past the former 120 s deadline", async () => {
-  stubPackage(20_000, 9);
+// Each chunk arrives just inside the stall bound; the download completes
+// well before the total bound (the trickle case below exceeds it).
+it("completes a slow download whose bytes keep arriving within the stall bound", async () => {
+  const chunkEveryMs = HOPPER_DOWNLOAD_STALL_MS - 1;
+  stubPackage(chunkEveryMs, 9);
   const pending = downloadHopperPackage(url);
-  await vi.advanceTimersByTimeAsync(9 * 20_000);
+  await vi.advanceTimersByTimeAsync(9 * chunkEveryMs);
   expect(await pending).toEqual(ok(Buffer.alloc(9 * 1024)));
 });
 

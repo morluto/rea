@@ -10,22 +10,23 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { evidenceSchema, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
 import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  OBJDUMP_ARTIFACT_OPERATIONS,
-  reverseCommandTimeoutSchema,
-  reverseCommandOutputBytesSchema,
-  rizinInputSchema,
-} from "../domain/reverseEngineering.js";
+import { OBJDUMP_ARTIFACT_OPERATIONS } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
-import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
+import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../contracts/reverseEngineeringToolContracts.js";
+import { contractNamed } from "./contractCliDescription.js";
+import {
+  registerContractCommand,
+  type ContractCommandContext,
+} from "./contractCommand.js";
 import type { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
 import { gdbOneShotCommandMayInvalidateDetachProof } from "../gdb/GdbSessionManager.js";
 import {
@@ -46,6 +47,8 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
@@ -74,14 +77,12 @@ const cleanupOnlyCompleteEvidence = (
     error.partialObservation === undefined
   )
     return undefined;
-  const parsed = evidenceSchema.safeParse(error.partialObservation);
-  if (!parsed.success) return undefined;
-  const normalized = parsed.data.normalized_result;
-  return typeof normalized === "object" &&
-    normalized !== null &&
-    !Array.isArray(normalized) &&
-    normalized.completion_status !== "unknown"
-    ? parsed.data
+  // Only authenticated Evidence is recovered; otherwise the error stands.
+  const parsed = recognizeEvidence(error.partialObservation);
+  if (!parsed.ok || parsed.value === undefined) return undefined;
+  const normalized = parsed.value.normalized_result;
+  return isRecord(normalized) && normalized.completion_status !== "unknown"
+    ? parsed.value
     : undefined;
 };
 
@@ -117,13 +118,9 @@ const closeDebuggerCommandSession = async (
         reason:
           cause instanceof AggregateError
             ? cause.errors
-                .map((error: unknown) =>
-                  error instanceof Error ? error.message : String(error),
-                )
+                .map((error: unknown) => errorMessage(error))
                 .join("; ")
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
+            : errorMessage(cause),
         ...retainedDebuggerDiagnostics(cause),
       },
       {
@@ -148,182 +145,93 @@ export const registerReverseEngineeringCommands = (
   createService: typeof createReverseEngineeringService = createReverseEngineeringService,
 ): void => {
   const service = createService(environment);
-  cli.command(CLI_COMMANDS.inspectWithObjdump, {
-    description:
-      "Inspect a local artifact using GNU-style objdump arguments and retain the selected command output as Evidence",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Path to the local artifact to inspect.",
-      ),
-      operation: z
-        .enum(OBJDUMP_ARTIFACT_OPERATIONS)
-        .describe("GNU-style objdump operation to run."),
-    }),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      symbol: z
-        .string()
-        .optional()
-        .describe(
-          "Native symbol to select with the disassemble operation; the selected executable controls matching and boundaries.",
-        ),
-      followDebugLinks: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
-        ),
-      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
-      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.inspectWithObjdump, async () => {
-          const delivery = {
-            providerId: OBJDUMP_PROVIDER_IDENTITY.id,
-            operation: "inspect_with_objdump",
-            signal,
-            detail: options.detail,
-            evidenceOutput: options.evidence_output,
-          };
-          const inputError = cliEvidenceDeliveryInputError(delivery);
-          if (inputError !== undefined) return projectAnalysisError(inputError);
-          const result = await executeWithCleanup(
-            service,
-            signal,
-            () =>
-              service.inspectWithObjdump(
-                {
-                  ...args,
-                  follow_debug_links: options.followDebugLinks,
-                  ...(options.symbol === undefined
-                    ? {}
-                    : { symbol: options.symbol }),
-                  ...(options.maxOutputBytes === undefined
-                    ? {}
-                    : { max_output_bytes: options.maxOutputBytes }),
-                  ...(options.commandTimeoutMs === undefined
-                    ? {}
-                    : { command_timeout_ms: options.commandTimeoutMs }),
-                },
-                { signal },
-              ),
-            "inspect_with_objdump",
-          );
-          return result.ok
-            ? publishCliAnalysisEvidence(
-                { ok: true, value: result.value },
-                delivery,
-              )
-            : result.error;
-        }),
-      ),
-  });
-  cli.command(CLI_COMMANDS.listObjdumpArchitectures, {
-    description: "Capture the selected objdump command response to -i",
-    args: z.object({}),
-    options: z.object({
-      ...analysisEvidenceDeliveryOptions,
-      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
-      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
-    }),
-    run: ({ options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.listObjdumpArchitectures,
-          async () => {
-            const delivery = {
-              providerId: OBJDUMP_PROVIDER_IDENTITY.id,
-              operation: "inspect_with_objdump",
-              signal,
-              detail: options.detail,
-              evidenceOutput: options.evidence_output,
-            };
-            const inputError = cliEvidenceDeliveryInputError(delivery);
-            if (inputError !== undefined)
-              return projectAnalysisError(inputError);
-            const result = await executeWithCleanup(
-              service,
-              signal,
-              () =>
-                service.inspectWithObjdump(
-                  {
-                    operation: "architectures",
-                    ...(options.maxOutputBytes === undefined
-                      ? {}
-                      : { max_output_bytes: options.maxOutputBytes }),
-                    ...(options.commandTimeoutMs === undefined
-                      ? {}
-                      : { command_timeout_ms: options.commandTimeoutMs }),
-                  },
-                  { signal },
-                ),
-              "inspect_with_objdump",
-            );
-            return result.ok
-              ? publishCliAnalysisEvidence(
-                  { ok: true, value: result.value },
-                  delivery,
-                )
-              : result.error;
-          },
+  const objdump = contractNamed(
+    REVERSE_ENGINEERING_TOOL_CONTRACTS,
+    "inspect_with_objdump",
+  );
+  const inspectWithObjdump = async (
+    input: unknown,
+    { signal, delivery }: ContractCommandContext,
+  ) => {
+    if (delivery === undefined)
+      throw new Error("inspect_with_objdump delivers Evidence");
+    const result = await executeWithCleanup(
+      service,
+      signal,
+      () => service.inspectWithObjdump(input, { signal }),
+      "inspect_with_objdump",
+    );
+    return result.ok
+      ? publishCliAnalysisEvidence(result, {
+          operation: "inspect_with_objdump",
+          signal,
+          detail: delivery.detail,
+          evidenceOutput: delivery.evidenceOutput,
+        })
+      : result.error;
+  };
+  registerContractCommand(
+    cli,
+    logger,
+    objdump,
+    {
+      description:
+        "Inspect a local artifact using GNU-style objdump arguments and retain the selected command output as Evidence",
+      inputBranches: {
+        field: "operation",
+        values: OBJDUMP_ARTIFACT_OPERATIONS,
+      },
+      positionals: ["path", "operation"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Path to the local artifact to inspect." },
+        operation: { description: "GNU-style objdump operation to run." },
+        symbol: {
+          description:
+            "Native symbol to select with the disassemble operation; the selected executable controls matching and boundaries.",
+        },
+        follow_debug_links: {
+          description:
+            "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
+        },
+      },
+    },
+    inspectWithObjdump,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    objdump,
+    {
+      command: CLI_COMMANDS.listObjdumpArchitectures,
+      description: "Capture the selected objdump command response to -i",
+      inputBranches: { field: "operation", values: ["architectures"] },
+      evidenceDelivery: true,
+    },
+    inspectWithObjdump,
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(REVERSE_ENGINEERING_TOOL_CONTRACTS, "execute_rizin_command"),
+    {
+      description: "Execute one Rizin command against a local artifact",
+      positionals: ["path", "command"],
+      fields: {
+        path: { description: "Path to the local artifact to analyze." },
+        command: { description: "One caller-selected Rizin command." },
+      },
+    },
+    async (input, { signal }) =>
+      projectCliAnalysisResult(
+        await executeWithCleanup(
+          service,
+          signal,
+          () => service.executeRizinCommand(input, { signal }),
+          "execute_rizin_command",
         ),
       ),
-  });
-  cli.command(CLI_COMMANDS.executeRizinCommand, {
-    description: "Execute one Rizin command against a local artifact",
-    args: z.object({
-      path: localPathStringSchema.describe(
-        "Path to the local artifact to analyze.",
-      ),
-      command: z.string().min(1).describe("One caller-selected Rizin command."),
-    }),
-    options: z.object({
-      asmArch: rizinInputSchema.shape.asm_arch,
-      asmBits: cliDecimalField(rizinInputSchema.shape.asm_bits),
-      asmCpu: rizinInputSchema.shape.asm_cpu,
-      baseAddress: rizinInputSchema.shape.base_address,
-      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
-      maxOutputBytes: cliDecimalField(reverseCommandOutputBytesSchema),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.executeRizinCommand, async () => {
-          const result = await executeWithCleanup(
-            service,
-            signal,
-            () =>
-              service.executeRizinCommand(
-                {
-                  ...args,
-                  ...(options.asmArch === undefined
-                    ? {}
-                    : { asm_arch: options.asmArch }),
-                  ...(options.asmBits === undefined
-                    ? {}
-                    : { asm_bits: options.asmBits }),
-                  ...(options.asmCpu === undefined
-                    ? {}
-                    : { asm_cpu: options.asmCpu }),
-                  ...(options.baseAddress === undefined
-                    ? {}
-                    : { base_address: options.baseAddress }),
-                  ...(options.maxOutputBytes === undefined
-                    ? {}
-                    : { max_output_bytes: options.maxOutputBytes }),
-                  ...(options.commandTimeoutMs === undefined
-                    ? {}
-                    : { command_timeout_ms: options.commandTimeoutMs }),
-                },
-                { signal },
-              ),
-            "execute_rizin_command",
-          );
-          return projectCliAnalysisResult(result);
-        }),
-      ),
-  });
+  );
   cli.command(CLI_COMMANDS.debugWithGdb, {
     description:
       "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
