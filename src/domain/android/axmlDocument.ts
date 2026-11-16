@@ -1,4 +1,6 @@
 import { err, ok, type Result } from "../result.js";
+import { BinaryReader } from "../binaryContainer.js";
+import { Budget } from "../budget.js";
 import {
   AXML_CHUNK_HEADER_BYTES,
   AXML_CHUNK_TYPE,
@@ -122,7 +124,7 @@ class StringPool {
   }
 
   static parse(
-    view: DataView,
+    reader: BinaryReader,
     base: number,
     header: ChunkHeader,
     bufferEnd: number,
@@ -136,11 +138,11 @@ class StringPool {
       return formatFailure(
         `string pool header ${header.headerSize} is below the fixed 28 bytes`,
       );
-    const stringCount = view.getUint32(base + 8, true);
-    const styleCount = view.getUint32(base + 12, true);
-    const flags = view.getUint32(base + 16, true);
-    const stringsStart = view.getUint32(base + 20, true);
-    const stylesStart = view.getUint32(base + 24, true);
+    const stringCount = reader.u32(base + 8);
+    const styleCount = reader.u32(base + 12);
+    const flags = reader.u32(base + 16);
+    const stringsStart = reader.u32(base + 20);
+    const stylesStart = reader.u32(base + 24);
     if (stringCount > AXML_MAX_STRINGS)
       return limitFailure(
         `string pool declares ${stringCount} strings above the ${AXML_MAX_STRINGS} bound`,
@@ -169,22 +171,21 @@ class StringPool {
       return formatFailure("string pool data lies outside the declared chunk");
     const utf8 = (flags & STRING_POOL_UTF8) !== 0;
     const strings: string[] = new Array(stringCount);
-    let retained = 0;
+    // Retained strings live as UTF-16; the ceiling counts heap bytes.
+    const retained = new Budget(AXML_MAX_STRING_BYTES);
     for (let i = 0; i < stringCount; i++) {
-      const rel = view.getUint32(base + header.headerSize + i * 4, true);
+      const rel = reader.u32(base + header.headerSize + i * 4);
       const at = dataStart + rel;
       if (at >= dataEnd)
         return formatFailure(
           `string ${i} offset points outside the string data`,
         );
       const decoded = utf8
-        ? readUtf8String(view, at, dataEnd)
-        : readUtf16String(view, at, dataEnd);
+        ? readUtf8String(reader.bytes, at, dataEnd)
+        : readUtf16String(reader.bytes, at, dataEnd);
       if (decoded === undefined)
         return formatFailure(`string ${i} is truncated`);
-      // Retained strings live as UTF-16; the ceiling counts heap bytes.
-      retained += decoded.length * 2;
-      if (retained > AXML_MAX_STRING_BYTES)
+      if (!retained.tryCharge(decoded.length * 2))
         return limitFailure(
           `string data exceeds the ${AXML_MAX_STRING_BYTES}-byte bound`,
         );
@@ -196,58 +197,60 @@ class StringPool {
   }
 }
 
+const u16At = (bytes: Uint8Array, at: number): number =>
+  bytes[at]! | (bytes[at + 1]! << 8);
+
 const readUtf16String = (
-  view: DataView,
+  bytes: Uint8Array,
   at: number,
   end: number,
 ): string | undefined => {
   if (at + 2 > end) return undefined;
-  let len = view.getUint16(at, true);
+  let len = u16At(bytes, at);
   let cursor = at + 2;
   if ((len & 0x8000) !== 0) {
     if (cursor + 2 > end) return undefined;
-    len = ((len & 0x7fff) << 16) | view.getUint16(cursor, true);
+    len = ((len & 0x7fff) << 16) | u16At(bytes, cursor);
     cursor += 2;
   }
   if (cursor + len * 2 > end) return undefined;
   const bytesEnd = cursor + len * 2;
   // The required UTF-16 NUL must follow the declared characters.
-  if (bytesEnd + 2 > end || view.getUint16(bytesEnd, true) !== 0)
-    return undefined;
+  if (bytesEnd + 2 > end || u16At(bytes, bytesEnd) !== 0) return undefined;
   return new TextDecoder("utf-16le", { ignoreBOM: true }).decode(
-    new Uint8Array(view.buffer, view.byteOffset + cursor, len * 2),
+    bytes.subarray(cursor, bytesEnd),
   );
 };
 
 const readUtf8String = (
-  view: DataView,
+  bytes: Uint8Array,
   at: number,
   end: number,
 ): string | undefined => {
   let cursor = at;
   if (cursor >= end) return undefined;
   // The first length spec (UTF-16 units) is skipped; the second counts bytes.
-  let len16 = view.getUint8(cursor);
+  let len16 = bytes[cursor]!;
   cursor += 1;
   if ((len16 & 0x80) !== 0) {
     if (cursor >= end) return undefined;
-    len16 = ((len16 & 0x7f) << 8) | view.getUint8(cursor);
+    len16 = ((len16 & 0x7f) << 8) | bytes[cursor]!;
     cursor += 1;
   }
   if (cursor >= end) return undefined;
-  let len8 = view.getUint8(cursor);
+  let len8 = bytes[cursor]!;
   cursor += 1;
   if ((len8 & 0x80) !== 0) {
     if (cursor >= end) return undefined;
-    len8 = ((len8 & 0x7f) << 8) | view.getUint8(cursor);
+    len8 = ((len8 & 0x7f) << 8) | bytes[cursor]!;
     cursor += 1;
   }
   if (cursor + len8 > end) return undefined;
   const bytesEnd = cursor + len8;
   // The required terminator must follow the declared bytes.
-  if (bytesEnd >= end || view.getUint8(bytesEnd) !== 0) return undefined;
+  if (bytesEnd >= end || bytes[bytesEnd] !== 0) return undefined;
   const decoded = new TextDecoder("utf-8", { ignoreBOM: true }).decode(
-    new Uint8Array(view.buffer, view.byteOffset + cursor, len8),
+    bytes.subarray(cursor, bytesEnd),
   );
   // The declared UTF-16 length must agree with the decoded text.
   if (decoded.length !== len16) return undefined;
@@ -310,10 +313,11 @@ const renderTypedValue = (
     case TYPE_ATTRIBUTE:
     case TYPE_DYNAMIC_ATTRIBUTE:
       return `?${hexRef(data)}`;
-    case TYPE_FLOAT:
-      return new DataView(new Uint32Array([data]).buffer)
-        .getFloat32(0, true)
-        .toString();
+    case TYPE_FLOAT: {
+      const f32 = new Float32Array(1);
+      new Uint32Array(f32.buffer)[0] = data;
+      return f32[0]!.toString();
+    }
     case TYPE_DIMENSION: {
       const unit = DIMENSION_UNITS[data & 0xf] ?? "";
       return `${complexToFloat(data)}${unit}`;
@@ -348,24 +352,23 @@ const formatError = (message: string): RegionDecodeFailure => ({
 
 class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
   #chunks: Uint8Array[] = [];
-  #length = 0;
+  #inputBudget = new Budget(AXML_MAX_FILE_BYTES);
 
   constructor(private readonly fileBytes: number) {}
 
   write(chunk: Uint8Array): Result<void, RegionDecodeFailure> {
-    if (this.#length + chunk.length > AXML_MAX_FILE_BYTES)
+    if (!this.#inputBudget.tryCharge(chunk.length))
       return err({
         kind: "limit",
         message: `AXML input exceeds the ${AXML_MAX_FILE_BYTES}-byte bound`,
         boundary: "capacity",
       });
     this.#chunks.push(chunk.slice());
-    this.#length += chunk.length;
     return ok(undefined);
   }
 
   finish(): Result<AxmlDocumentImage, RegionDecodeFailure> {
-    const bytes = new Uint8Array(this.#length);
+    const bytes = new Uint8Array(this.#inputBudget.used);
     let at = 0;
     for (const part of this.#chunks) {
       bytes.set(part, at);
@@ -374,13 +377,17 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     this.#chunks = [];
     if (bytes.length < AXML_HEADER_BYTES)
       return formatFailure("AXML document is shorter than the 8-byte header");
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+    const reader = new BinaryReader(
+      Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length),
+      true,
+      "axml",
+    );
     if (
-      view.getUint16(0, true) !== AXML_CHUNK_TYPE ||
-      view.getUint16(2, true) !== AXML_HEADER_BYTES
+      reader.u16(0) !== AXML_CHUNK_TYPE ||
+      reader.u16(2) !== AXML_HEADER_BYTES
     )
       return formatFailure("missing RES_XML_TYPE header");
-    const declaredSize = view.getUint32(4, true);
+    const declaredSize = reader.u32(4);
     if (declaredSize < AXML_HEADER_BYTES)
       return formatFailure(
         `declared size ${declaredSize} is below the fixed header`,
@@ -399,9 +406,9 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     ): Result<ChunkHeader, RegionDecodeFailure> => {
       if (at + AXML_CHUNK_HEADER_BYTES > documentEnd)
         return formatFailure(`chunk header at ${at} is truncated`);
-      const type = view.getUint16(at, true);
-      const headerSize = view.getUint16(at + 2, true);
-      const size = view.getUint32(at + 4, true);
+      const type = reader.u16(at);
+      const headerSize = reader.u16(at + 2);
+      const size = reader.u32(at + 4);
       if (headerSize < AXML_CHUNK_HEADER_BYTES || size < headerSize)
         return formatFailure(
           `chunk 0x${type.toString(16)} at ${at} has impossible header ${headerSize}/size ${size}`,
@@ -420,7 +427,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         `first chunk is 0x${first.value.type.toString(16)}, not the string pool`,
       );
     const poolResult = StringPool.parse(
-      view,
+      reader,
       AXML_HEADER_BYTES,
       first.value,
       documentEnd,
@@ -450,12 +457,11 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
     const synthAttrNs = new Map<string, string>();
     const stack: { index: number; name: string; text: boolean }[] = [];
     const out: Uint8Array[] = [];
-    let outBytes = 0;
+    const outputBudget = new Budget(AXML_MAX_OUTPUT_BYTES);
     const encoder = new TextEncoder();
     const emit = (text: string): Result<void, RegionDecodeFailure> => {
       const encoded = encoder.encode(text);
-      outBytes += encoded.length;
-      if (outBytes > AXML_MAX_OUTPUT_BYTES)
+      if (!outputBudget.tryCharge(encoded.length))
         return err({
           kind: "limit",
           message: `decoded XML exceeds the ${AXML_MAX_OUTPUT_BYTES}-byte bound`,
@@ -488,7 +494,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       base: number,
       depth: number,
     ): Result<void, RegionDecodeFailure> => {
-      const index = view.getUint32(base + 12, true);
+      const index = reader.u32(base + 12);
       if (index === NO_INDEX) return ok(undefined);
       const text = pool.get(index);
       if (text === null || text === undefined)
@@ -616,14 +622,14 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           );
         const map = new Array<number>(reachable);
         for (let i = 0; i < reachable; i++)
-          map[i] = view.getUint32(base + headerSize + i * 4, true);
+          map[i] = reader.u32(base + headerSize + i * 4);
         resourceMap = map;
         resourceMapCount = count;
       } else if (type === CHUNK_START_NAMESPACE) {
         if (headerSize < NODE_HEADER_BYTES || size < NODE_HEADER_BYTES + 8)
           return formatFailure("namespace chunk is too small");
-        const prefixIndex = view.getUint32(base + NODE_HEADER_BYTES, true);
-        const uriIndex = view.getUint32(base + NODE_HEADER_BYTES + 4, true);
+        const prefixIndex = reader.u32(base + NODE_HEADER_BYTES);
+        const uriIndex = reader.u32(base + NODE_HEADER_BYTES + 4);
         const prefix = pool.get(prefixIndex);
         const uri = pool.get(uriIndex);
         if (prefix === null || uri === null || uri === undefined)
@@ -656,8 +662,8 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       } else if (type === CHUNK_END_NAMESPACE) {
         if (size < NODE_HEADER_BYTES + 8)
           return formatFailure("end-namespace chunk is too small");
-        const prefixIndex = view.getUint32(base + NODE_HEADER_BYTES, true);
-        const uriIndex = view.getUint32(base + NODE_HEADER_BYTES + 4, true);
+        const prefixIndex = reader.u32(base + NODE_HEADER_BYTES);
+        const uriIndex = reader.u32(base + NODE_HEADER_BYTES + 4);
         const prefix = pool.get(prefixIndex);
         const uri = pool.get(uriIndex);
         if (uri === null || uri === undefined)
@@ -691,11 +697,11 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           size < NODE_HEADER_BYTES + ATTR_EXT_HEADER_BYTES
         )
           return formatFailure("start-element chunk is too small");
-        const nsIndex = view.getUint32(base + NODE_HEADER_BYTES, true);
-        const nameIndex = view.getUint32(base + NODE_HEADER_BYTES + 4, true);
-        const attrStart = view.getUint16(base + NODE_HEADER_BYTES + 8, true);
-        const attrSize = view.getUint16(base + NODE_HEADER_BYTES + 10, true);
-        const attrCount = view.getUint16(base + NODE_HEADER_BYTES + 12, true);
+        const nsIndex = reader.u32(base + NODE_HEADER_BYTES);
+        const nameIndex = reader.u32(base + NODE_HEADER_BYTES + 4);
+        const attrStart = reader.u16(base + NODE_HEADER_BYTES + 8);
+        const attrSize = reader.u16(base + NODE_HEADER_BYTES + 10);
+        const attrCount = reader.u16(base + NODE_HEADER_BYTES + 12);
         const nameResult = requireName(nameIndex);
         if (!nameResult.ok) return nameResult;
         if (attrStart < ATTR_EXT_HEADER_BYTES)
@@ -731,16 +737,15 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         synthAttrNs.clear();
         const elemPrefix = prefixFor(nsIndex, NO_INDEX);
         if (!elemPrefix.ok) return elemPrefix;
-        const attrTexts: string[] = [];
+        const attrTexts: Uint8Array[] = [];
         const seenAttrs = new Set<string>();
-        let attrBytes = 0;
         for (let i = 0; i < attrCount; i++) {
           const at = base + NODE_HEADER_BYTES + attrStart + i * attrSize;
-          const aNs = view.getUint32(at, true);
-          const aNameIndex = view.getUint32(at + 4, true);
-          const rawIndex = view.getUint32(at + 8, true);
-          const aType = view.getUint8(at + 15);
-          const aData = view.getUint32(at + 16, true);
+          const aNs = reader.u32(at);
+          const aNameIndex = reader.u32(at + 4);
+          const rawIndex = reader.u32(at + 8);
+          const aType = reader.bytes[at + 15]!;
+          const aData = reader.u32(at + 16);
           const aName = requireName(aNameIndex);
           if (!aName.ok) return aName;
           const aUri = aNs === NO_INDEX ? "" : (pool.get(aNs) ?? undefined);
@@ -779,12 +784,11 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           const leader = ` ${aPrefix.value}${aName.value}="`;
           const nextBytes =
             encoder.encode(leader).length + escapedAttrByteLength(value) + 1;
-          if (outBytes + attrBytes + nextBytes > AXML_MAX_OUTPUT_BYTES)
+          if (!outputBudget.tryCharge(nextBytes))
             return limitFailure(
               `decoded XML exceeds the ${AXML_MAX_OUTPUT_BYTES}-byte bound`,
             );
-          attrBytes += nextBytes;
-          attrTexts.push(`${leader}${escapeAttr(value)}"`);
+          attrTexts.push(encoder.encode(`${leader}${escapeAttr(value)}"`));
         }
         const parent = stack.at(-1);
         const indent =
@@ -807,10 +811,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           if (!wrote.ok) return wrote;
           pendingAndroidDecl = false;
         }
-        for (const attr of attrTexts) {
-          const wrote = emit(attr);
-          if (!wrote.ok) return wrote;
-        }
+        for (const encoded of attrTexts) out.push(encoded);
         stack.push({
           index: nameIndex,
           name: `${elemPrefix.value}${nameResult.value}`,
@@ -820,7 +821,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
       } else if (type === CHUNK_END_ELEMENT) {
         if (headerSize < NODE_HEADER_BYTES || size < NODE_HEADER_BYTES + 8)
           return formatFailure("end-element chunk is too small");
-        const nameIndex = view.getUint32(base + NODE_HEADER_BYTES + 4, true);
+        const nameIndex = reader.u32(base + NODE_HEADER_BYTES + 4);
         const open = stack.pop();
         if (open === undefined)
           return formatFailure("end element without an open element");
@@ -828,7 +829,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
           return formatFailure(
             `end element name index ${nameIndex} does not match ${open.index}`,
           );
-        const commentIndex = view.getUint32(base + 12, true);
+        const commentIndex = reader.u32(base + 12);
         if (commentIndex !== NO_INDEX) {
           const text = pool.get(commentIndex);
           if (text === null || text === undefined)
@@ -862,18 +863,15 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
         if (headerSize < NODE_HEADER_BYTES || size < NODE_HEADER_BYTES + 12)
           return formatFailure("cdata chunk is too small");
         const valueAt = base + NODE_HEADER_BYTES + 4;
-        if (
-          view.getUint16(valueAt, true) !== 8 ||
-          view.getUint8(valueAt + 2) !== 0
-        )
+        if (reader.u16(valueAt) !== 8 || reader.bytes[valueAt + 2] !== 0)
           return formatFailure("cdata value header is malformed");
-        const dataIndex = view.getUint32(base + NODE_HEADER_BYTES, true);
+        const dataIndex = reader.u32(base + NODE_HEADER_BYTES);
         const text = pool.get(dataIndex);
         if (text === null || text === undefined)
           return formatFailure("cdata payload is not a string");
         const flushed = flushOpen();
         if (!flushed.ok) return flushed;
-        const commentIndex = view.getUint32(base + 12, true);
+        const commentIndex = reader.u32(base + 12);
         if (commentIndex !== NO_INDEX) {
           const comment = pool.get(commentIndex);
           if (comment === null || comment === undefined)
@@ -918,7 +916,7 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
 
     const trailing = emit("\n");
     if (!trailing.ok) return trailing;
-    const xml = new Uint8Array(outBytes);
+    const xml = new Uint8Array(outputBudget.used);
     let offset = 0;
     for (const part of out) {
       xml.set(part, offset);

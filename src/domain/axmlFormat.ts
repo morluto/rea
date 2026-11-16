@@ -5,6 +5,8 @@
  * the declared document size. A string pool, optional resource map and the
  * element tree chunks follow. All multi-byte fields are little-endian.
  */
+import { BinaryReader } from "./binaryContainer.js";
+
 export const AXML_HEADER_BYTES = 8;
 export const AXML_CHUNK_TYPE = 0x0003;
 export const AXML_CHUNK_HEADER_BYTES = 8;
@@ -35,8 +37,12 @@ export const readAxmlHeaderFacts = (
   bytes: Uint8Array,
 ): AxmlHeaderFacts | undefined => {
   if (!hasAxmlHeader(bytes)) return undefined;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const declaredSize = view.getUint32(4, true);
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "axml",
+  );
+  const declaredSize = reader.u32(4);
   if (declaredSize < AXML_HEADER_BYTES) return undefined;
   return { declaredSize };
 };
