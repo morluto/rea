@@ -431,6 +431,7 @@
 * **artifacts:** move the PE resource layout and parser into src/artifacts/pe ([264dcd5](https://github.com/morluto/rea/commit/264dcd5feece5971d73c21d4a641ea81cf90f654))
 * **artifacts:** take the host from HOST_PLATFORM or the caller instead of process.platform ([#11090](https://github.com/morluto/rea/issues/11090)) ([b06c340](https://github.com/morluto/rea/commit/b06c34031da2d52350d9f88101a01589bb4c1799))
 * **boundaries:** declare active Electron capture's fuse reader dependency ([#11446](https://github.com/morluto/rea/issues/11446)) ([3f0d7dc](https://github.com/morluto/rea/commit/3f0d7dcc5d3fd8785b97c9637613bdc0a827ee5a))
+* **bounds:** move remaining constant-maximum slices onto boundedList ([#11774](https://github.com/morluto/rea/issues/11774)) ([a9097b2](https://github.com/morluto/rea/commit/a9097b2108af6e87cc38c4d6836271cd69917672))
 * **browser:** bind a capture decoder's reported cleanup to its process lease ([#10998](https://github.com/morluto/rea/issues/10998)) ([acbbbaa](https://github.com/morluto/rea/commit/acbbbaa346ccc4bf4c92699df9bade15f8fc4481))
 * **browser:** build browser cancellations with a required reason ([#10581](https://github.com/morluto/rea/issues/10581)) ([b3cdbb9](https://github.com/morluto/rea/commit/b3cdbb92ee81d00787dd87aefa43c1cdacbe779c))
 * **browser:** decide target_changed from one document identity owner ([#10703](https://github.com/morluto/rea/issues/10703)) ([cc4f00d](https://github.com/morluto/rea/commit/cc4f00d6cae663f7fd8862ae0c9e6496a96f03b6))
