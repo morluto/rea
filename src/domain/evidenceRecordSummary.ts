@@ -192,6 +192,7 @@ export const summarizeEvidenceBundle = (
   } = {},
 ): EvidenceBundleSummary => {
   const paged = options.offset !== undefined || options.limit !== undefined;
+  // optional-fact-default: a request default for paging, not an observed fact.
   const offset = options.offset ?? 0;
   const limit = options.limit ?? EVIDENCE_SUMMARY_SELECTION_LIMIT;
   const records: EvidenceBundleSummary["records"] = [];
