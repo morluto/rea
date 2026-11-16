@@ -315,8 +315,10 @@ const readSymbols = (
     for (let index = 0; index < count; index += 1) {
       const at = table.symoff + index * width;
       const type = scan.bytes[at + 4] ?? 0;
-      // Skip debugger stabs and undefined (N_UNDF) entries.
-      if ((type & 0xe0) !== 0 || (type & 0x0e) === 0) continue;
+      // Only N_ABS and N_SECT carry addresses. N_INDR's n_value is a string
+      // table index, and N_PBUD is still undefined in this image.
+      const kind = type & 0x0e;
+      if ((type & 0xe0) !== 0 || (kind !== 0x02 && kind !== 0x0e)) continue;
       const strx = little
         ? scan.bytes.readUInt32LE(at)
         : scan.bytes.readUInt32BE(at);
