@@ -295,3 +295,34 @@ it("rejects incomplete resolved controls instead of inventing output defaults", 
     await service.close();
   }
 });
+
+it("close joins the whole inspection through final Evidence publication", async () => {
+  const root = await createTestTempDirectory("rea-raster-close-publication-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(512));
+  const events: string[] = [];
+  let closing: Promise<void> | undefined;
+  const service = new RawRasterDiscoveryService({
+    stat,
+    open: async (...args: Parameters<typeof open>) => {
+      const file = await open(...args),
+        close = file.close.bind(file);
+      Object.defineProperty(file, "close", {
+        value: async () => {
+          await close();
+          queueMicrotask(() => {
+            closing = service.close().then(() => {
+              events.push("close");
+            });
+          });
+        },
+      });
+      return file;
+    },
+  });
+  const result = await service.inspect({ path });
+  events.push("inspect");
+  await closing;
+  expect(result.ok).toBe(true);
+  expect(events).toEqual(["inspect", "close"]);
+});

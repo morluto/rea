@@ -1,3 +1,4 @@
+import type { StructuredRasterExportService } from "../application/binaryDiagnostics/StructuredRasterExportService.js";
 import type { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
 import type { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
 import { appendStructuredRasterThumbnails } from "./indexThumbnailDelivery.js";
@@ -434,6 +435,12 @@ type Bind<Service> = (
  * so a test exercises the same handler kind, admission and dependencies.
  */
 const SERVICE_TOOL_BINDINGS = {
+  structuredRasterExport: ((service) => ({
+    export_structured_raster_resources: {
+      admission: "sdk",
+      run: (input, options) => service.export(input, options),
+    },
+  })) satisfies Bind<StructuredRasterExportService>,
   rawRaster: ((service) => ({
     inspect_raw_raster_candidates: {
       admission: "sdk",

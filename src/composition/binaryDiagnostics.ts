@@ -1,3 +1,8 @@
+import { StructuredRasterExportService } from "../application/binaryDiagnostics/StructuredRasterExportService.js";
+export const createStructuredRasterExportService = (
+  resources?: ArtifactResourceScope,
+): StructuredRasterExportService =>
+  new StructuredRasterExportService(undefined, resources);
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";

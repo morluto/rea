@@ -105,3 +105,63 @@ it("preserves custom logical coordinates and does not preview uncovered payload"
     await service.close();
   }
 });
+
+it("exposes explicit family alternatives and colored previews in logical coordinates", async () => {
+  const { registryFixture } =
+    await import("../../../tests/fixtures/rasterRegistry.js");
+  const fixture = registryFixture();
+  const root = await createTestTempDirectory("rea-structured-family-");
+  const path = join(root, "source");
+  await writeFile(path, fixture.bytes);
+  const logicalBase = 8192;
+  const service = new StructuredRasterDiscoveryService();
+  try {
+    const result = await service.inspect({
+      path,
+      segments: [
+        {
+          fileOffset: 0,
+          logicalOffset: logicalBase,
+          length: fixture.bytes.length,
+        },
+      ],
+      resource_family: "record12-lut-registry",
+      max_resources: 2,
+      max_previews: 1,
+      color_policy: {
+        kind: "record12-lut-registry",
+        theme_slot: 0,
+        precision: "byte8",
+        alpha: "opaque",
+        sentinel: "disabled",
+        rgb565_color_key: null,
+      },
+    });
+    if (!result.ok) throw result.error;
+    const report = structuredRasterCandidatesSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(result.value.parameters).not.toHaveProperty("family_max_work");
+    expect(report.resourceFamily?.status).toBe("unique");
+    const registry = report.resourceFamily?.registries[0];
+    expect(registry?.range.offset).toBe(fixture.start + logicalBase);
+    expect(registry?.pointerBias).toBe(fixture.bias - logicalBase);
+    expect(registry?.bindings).toHaveLength(2);
+    expect(registry?.availableBindings).toBe(fixture.count);
+    expect(registry?.bindingsTruncated).toBe(true);
+    expect(registry?.bindings[0]?.descriptorOffset).toBe(
+      fixture.table + logicalBase,
+    );
+    expect(report.tables[0]?.resources[0]?.preview?.kind).toBe(
+      "profile-declared",
+    );
+    expect(
+      report.tables.flatMap((t) => t.resources).filter((r) => r.preview),
+    ).toHaveLength(1);
+    expect((await readFile(path)).equals(Buffer.from(fixture.bytes))).toBe(
+      true,
+    );
+  } finally {
+    await service.close();
+  }
+});

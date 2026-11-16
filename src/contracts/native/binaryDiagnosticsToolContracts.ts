@@ -1,3 +1,4 @@
+import { STRUCTURED_RASTER_EXPORT_TOOL_CONTRACT } from "./structuredRasterExportToolContract.js";
 import {
   inspectStructuredRasterCandidatesRequestSchema,
   structuredRasterCandidatesSchema,
@@ -102,6 +103,7 @@ export const inspectByteEntropyRequestSchema =
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
+  STRUCTURED_RASTER_EXPORT_TOOL_CONTRACT,
   {
     name: "inspect_devicetree",
     availability: "standalone",
@@ -287,7 +289,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ),
     kind: "native-provider",
     description:
-      "Find candidate raster descriptor tables under an explicit configurable grammar, not universal image detection. Choose flat bytes, caller logical/file segments, or the separately named fgs-records container grammar with footer size/CRC validation. No firmware ID, known resource address or palette is used. Reports inferred tables, format/bpp/offset-unit alternatives, coverage, logical offsets and bounded source mappings. Unknown palette/color/transparency/orientation remain unknown. Optional index-only thumbnails are artificial grayscale, not original colors. Numeric tables can pass. At most 128 MiB whole-file hashing, 16 MiB selected/materialized bytes, 4096 inferred resources; output defaults128 resources,4 thumbnails, shared256 mapping spans. Explicit truncation is not absence. Use raw heuristic discovery for unstructured smooth data; this operation requires compatible descriptor structure.",
+      "Find candidate raster descriptor tables under an explicit configurable grammar, not universal image detection. Choose flat bytes, caller logical/file segments, or the separately named fgs-records container grammar with footer size/CRC validation. No firmware ID or known resource address is used. Optional resource_family=record12-lut-registry locates a profile-declared pointer/count/LUT family, including palette slots and declared layouts, not arbitrary ABI inference. Its independent family_max_work budget is separate from generic scanning. Color previews require explicit theme/precision/alpha/sentinel/key policy; ambiguous registry identities require a selection. Reports inferred tables, format/bpp/offset-unit alternatives, coverage, logical offsets and bounded source mappings. Without an explicit family/color policy, palette/color/transparency/orientation remain unknown. Optional index-only thumbnails are artificial grayscale, not original colors. Numeric tables can pass. At most 128 MiB whole-file hashing, 16 MiB selected/materialized bytes, 4096 inferred resources; output defaults128 resources,4 thumbnails, shared256 mapping spans. Explicit truncation is not absence. Use raw heuristic discovery for unstructured smooth data; this operation requires compatible descriptor structure.",
     inputSchema: inspectStructuredRasterCandidatesRequestSchema,
     outputSchema: evidenceResultOf(structuredRasterCandidatesSchema),
     examples: [

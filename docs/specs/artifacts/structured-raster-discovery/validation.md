@@ -15,7 +15,7 @@ resource pagination and numeric list options. MCP tests exercise advertised
 schemas, logical segments and real image content blocks. These do not establish
 correctness on arbitrary firmware.
 
-## Private developmental sample
+## Earlier generic baseline (before alias/family follow-up)
 
 A local, non-distributed 5.43 MB FGS sample was inspected with the **production
 implementation and defaults**, selecting only `profile: fgs-records`. No fixed
@@ -48,8 +48,9 @@ a universal false-positive guarantee.
 
 A standalone palette-looking-byte heuristic produced many plausible regions in
 both the developmental sample and ordinary executables. No correct palette
-binding follows from that appearance. This implementation therefore stops at
-indices and explicit unresolved alternatives rather than invent colors.
+binding follows from that appearance. The generic path therefore stops at
+indices and explicit unresolved alternatives rather than invent colors. The
+follow-up below uses explicit structural registry relationships, not this heuristic.
 
 ## Upstream integration refresh
 
@@ -67,3 +68,54 @@ its test lanes, downloads/verifies it on Windows, and runs contract-parity,
 command-registry and artifact-verifier tests alongside the public raster CLI/MCP
 checks. This fixes a missing Windows test prerequisite, not an image-discovery
 algorithm. A local Linux pass does not establish a Windows CI pass.
+
+## Alias-aware family and export follow-up
+
+The alias-aware generic scanner retains five tables / 1,140 descriptors on the
+same developmental sample at the unchanged 0.9 threshold: 1,058 unique and 82
+ambiguous generic hypotheses. The opt-in record12/LUT family finds one registry
+with six rows (including repeated table references), 1,140 unique bindings and
+four palette slots. No known source address, image dimension or source hash is
+supplied to discovery. The ten RGB565 resources formerly missed are retained;
+generic ambiguity remains visible rather than being relabeled as certainty.
+
+Independent production mapping → discovery → family → renderer checks matched
+all 1,140 descriptor/payload hashes, 1,121 applicable LUT hashes and 1,140 decoded
+RGBA outputs against withheld historical annotations. The comparison chooses one
+explicit historical software interpretation (slot zero, high-six-bit expansion,
+palette alpha, profile sentinels and RGB565 key). This establishes compatibility
+with that software oracle, not hardware rendering truth or unseen-family recall.
+The private firmware and its outputs are not distributed in this repository.
+
+Synthetic controls cover aliases without inflated evidence, conflicting aliases,
+relocation and negative bias, duplicate table-length alternatives, static/dynamic
+anchor chains, unsupported formats, malformed LUTs/counts/pointers, gaps, retention
+and work limits, color-policy admission, lossless RAW, PNG pixels, late cancellation,
+source ownership and no-clobber/rollback publication. Deliberately structurally
+equivalent numerical data can pass the family interpreter. No universal false-
+positive guarantee follows from rejecting local executable/noise controls.
+
+The shared numeric reader keeps bounds checks without allocating a Buffer view
+per scalar. Local 16 MiB synthetic scan time improved from about 1.66 s to 0.44 s
+for that checked-reader version; the original raw DataView baseline was about
+0.27 s. At 500,000 spans, peak RSS was about 288 MiB and a queued abort waited for
+a bounded synchronous segment (~264 ms in one measurement). Already-aborted
+requests now stop before preprocessing. These figures are not an SLA.
+
+All public operations use the shared service binding/recording/delivery owner.
+Architecture guards and advertised-schema summaries are part of the dedicated
+workflow, not inferred from a raster-only test pass. A Linux local pass does not
+claim Windows execution or upstream CI approval. External schema-engine checks
+must report unavailable/broken Go, RE2 or Rust engines explicitly rather than
+labeling skipped engines as verified.
+
+The reconstructed export service was also exercised end-to-end on that private
+sample using only the container/family and explicit color policy. It wrote 1,140
+RAW files and 1,140 full PNGs plus manifest and segment sidecar (2,282 files,
+29,389,227 bytes), with all 1,140 RAW hashes and independently Pillow-decoded RGBA
+hashes matching the oracle. The sidecar retained all 96,804 source segments;
+the largest payload referenced 2,001 segments, beyond inspection's 256-span
+projection. All 1,121 applicable LUT references reconstructed matching bytes.
+The source hash was unchanged. One local run took about 6.2 seconds with about
+241 MiB peak process RSS. These private-data results are not public CI fixtures
+and do not establish universal discovery, hardware colors or Windows behavior.

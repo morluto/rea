@@ -1,10 +1,6 @@
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { discoverStructuredRasters } from "../../domain/structuredRasterDiscovery.js";
-import {
-  materializeRasterSegments,
-  RasterLogicalInputError,
-  parseFgsRasterSegments,
-} from "../../domain/rasterLogicalSegments.js";
+import { createRasterPreviews } from "./StructuredRasterPreviews.js";
+import { projectRasterFamily } from "./RasterFamilyProjection.js";
+import { prepareStructuredRasterAnalysis } from "./StructuredRasterAnalysis.js";
 import {
   inspectStructuredRasterCandidatesInputSchema,
   inspectStructuredRasterCandidatesRequestSchema,
@@ -28,59 +24,14 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
         inputSchema: inspectStructuredRasterCandidatesInputSchema,
         callerInputSchema: inspectStructuredRasterCandidatesRequestSchema,
         reportSchema: structuredRasterCandidatesSchema,
-        analyze(bytes, input, fileSize, signal) {
-          const invalid = (field: string, message: string) =>
-            new AnalysisInputError(
-              "inspect_structured_raster_candidates",
-              undefined,
-              [{ path: [field], reason: "invalid_value", message }],
-            );
-          if (input.profile === "fgs-records" && bytes.length !== fileSize)
-            throw invalid(
-              "length",
-              "fgs-records requires the complete selected file",
-            );
-          const mappedInput = <T>(field: string, action: () => T): T => {
-            try {
-              return action();
-            } catch (cause) {
-              if (cause instanceof RasterLogicalInputError)
-                throw invalid(field, cause.message);
-              throw cause;
-            }
-          };
-          const segments =
-            input.segments ??
-            (input.profile === "fgs-records"
-              ? mappedInput("path", () => parseFgsRasterSegments(bytes))
-              : [
-                  {
-                    logicalOffset: input.offset,
-                    fileOffset: input.offset,
-                    length: bytes.length,
-                  },
-                ]);
-          const logical = mappedInput(
-            input.segments ? "segments" : "path",
-            () => materializeRasterSegments(bytes, segments, input.offset),
-          );
-          const report = discoverStructuredRasters(
-            logical.bytes,
-            {
-              ...(input.grammar === undefined
-                ? {}
-                : { grammar: input.grammar }),
-              coverage: logical.coverage,
-              minRecords: input.min_records,
-              minConsistency: input.min_consistency,
-              maxWork: input.max_work,
-              maxTables: input.max_tables,
-              maxRecords: input.max_records,
-              bitsPerPixel: input.bits_per_pixel,
-              offsetUnits: input.offset_units,
-            },
+        async analyze(bytes, input, fileSize, signal) {
+          const prepared = prepareStructuredRasterAnalysis(
+            bytes,
+            input,
+            fileSize,
             signal,
           );
+          const { logical, report, family } = prepared;
           let returned = 0,
             previews = 0,
             mappingBudget = 256,
@@ -133,6 +84,12 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
                 input.resource_offset + input.max_resources,
               ),
           );
+          const colored = await createRasterPreviews(
+            prepared,
+            input,
+            [...selected],
+            signal,
+          );
           const tables = report.tables.map((t) => ({
             ...t,
             offset: t.offset + logical.logicalBase,
@@ -147,20 +104,23 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
                 const unique =
                   r.status === "unique" ? r.hypotheses[0] : undefined;
                 const preview =
-                  previews < input.max_previews &&
-                  unique?.covered &&
-                  [1, 2, 4, 8].includes(unique.bitsPerPixel)
-                    ? renderIndexThumbnail(
-                        logical.bytes,
-                        {
-                          width: r.width,
-                          height: r.height,
-                          payloadOffset: unique.payloadRange.offset,
-                          bitsPerPixel: unique.bitsPerPixel,
-                        },
-                        input.thumbnail_side,
-                      )
-                    : undefined;
+                  input.color_policy &&
+                  input.color_policy.kind !== "diagnostic-indices"
+                    ? colored.get(r.descriptorOffset)?.preview
+                    : previews < input.max_previews &&
+                        unique?.covered &&
+                        [1, 2, 4, 8].includes(unique.bitsPerPixel)
+                      ? renderIndexThumbnail(
+                          logical.bytes,
+                          {
+                            width: r.width,
+                            height: r.height,
+                            payloadOffset: unique.payloadRange.offset,
+                            bitsPerPixel: unique.bitsPerPixel,
+                          },
+                          input.thumbnail_side,
+                        )
+                      : undefined;
                 if (preview) previews++;
                 return {
                   ...r,
@@ -178,9 +138,23 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
                     },
                   })),
                   ...(preview ? { preview } : {}),
+                  ...(colored.get(r.descriptorOffset)?.previewUnavailable
+                    ? {
+                        previewUnavailable: colored.get(r.descriptorOffset)!
+                          .previewUnavailable,
+                      }
+                    : {}),
                 };
               }),
           }));
+          const resourceFamily = family
+            ? projectRasterFamily(
+                family,
+                logical.logicalBase,
+                new Set([...selected].map((r) => r.descriptorOffset)),
+                sourceMapping,
+              )
+            : undefined;
           const coveredBytes = logical.coverage.reduce(
             (n, r) => n + r.length,
             0,
@@ -188,6 +162,7 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
           return {
             ...report,
             tables,
+            ...(resourceFamily ? { resourceFamily } : {}),
             coverage: {
               ...report.coverage,
               nextOffset:
@@ -217,6 +192,7 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
             },
             limitations: [
               ...report.limitations,
+              ...(family?.limitations ?? []),
               ...logical.assumptions,
               "Descriptor/table/payloadRange offsets are logical coordinates; sourceMapping ranges are whole-file byte coordinates. Encoded payloadOffset remains the original relative field.",
               "Pagination repeats analysis deterministically; keep artifact SHA-256, grammar and search options unchanged between pages.",

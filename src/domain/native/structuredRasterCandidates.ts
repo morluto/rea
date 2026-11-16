@@ -1,3 +1,8 @@
+import { rasterRegistryFamilyReportSchema } from "./rasterRegistryReport.js";
+import {
+  rasterColorPolicyInputSchema,
+  rasterRegistrySelectionInputSchema,
+} from "./rasterRendering.js";
 import { z } from "zod";
 import {
   StructuredRasterControlError,
@@ -49,11 +54,19 @@ export const rasterLogicalSegmentSchema = z.strictObject({
   fileOffset: offset,
   length: positive,
 });
-const structuredRasterInputShape = z.strictObject({
+export const structuredRasterInputShape = z.strictObject({
   path: absoluteLocalPathStringSchema,
   offset: offset.default(0),
   length: positive.max(16 * 1024 * 1024).optional(),
   profile: z.enum(["flat", "fgs-records"]).default("flat"),
+  resource_family: z
+    .enum(["generic", "record12-lut-registry"])
+    .default("generic"),
+  family_max_work: positive.max(50000000).default(10000000),
+  color_policy: rasterColorPolicyInputSchema.default({
+    kind: "diagnostic-indices",
+  }),
+  registry_selection: rasterRegistrySelectionInputSchema.optional(),
   segments: z.array(rasterLogicalSegmentSchema).min(1).max(4096).optional(),
   grammar: structuredRasterGrammarSchema.optional(),
   min_records: positive.min(2).max(4096).default(8),
@@ -86,13 +99,16 @@ const structuredRasterInputShape = z.strictObject({
   max_previews: offset.max(8).default(4),
   thumbnail_side: positive.max(128).default(96),
 });
-function refineStructuredControls(
+export function refineStructuredControls(
   input: {
     min_records?: number | undefined;
     max_records?: number | undefined;
     profile?: "flat" | "fgs-records" | undefined;
     offset?: number | undefined;
     segments?: unknown;
+    resource_family?: "generic" | "record12-lut-registry" | undefined;
+    color_policy?: { kind: string } | undefined;
+    registry_selection?: unknown;
   },
   ctx: z.RefinementCtx,
 ): void {
@@ -104,6 +120,22 @@ function refineStructuredControls(
       ),
     ctx,
   );
+  if (input.resource_family !== "record12-lut-registry") {
+    if (input.color_policy?.kind === "record12-lut-registry")
+      ctx.addIssue({
+        code: "custom",
+        path: ["color_policy"],
+        message:
+          "Family color policy requires resource_family=record12-lut-registry.",
+      });
+    if (input.registry_selection !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["registry_selection"],
+        message:
+          "Registry selection requires resource_family=record12-lut-registry.",
+      });
+  }
   if (input.profile === "fgs-records") {
     if (input.segments !== undefined)
       ctx.addIssue({
@@ -122,52 +154,61 @@ function refineStructuredControls(
 export const inspectStructuredRasterCandidatesInputSchema =
   structuredRasterInputShape.superRefine(refineStructuredControls);
 /** Caller-supplied controls preserve omission; resolved defaults are reported separately. */
+export const structuredRasterRequestShape = structuredRasterInputShape.extend({
+  color_policy: structuredRasterInputShape.shape.color_policy
+    .removeDefault()
+    .optional(),
+  resource_family: structuredRasterInputShape.shape.resource_family
+    .removeDefault()
+    .optional(),
+  family_max_work: structuredRasterInputShape.shape.family_max_work
+    .removeDefault()
+    .optional(),
+  offset: structuredRasterInputShape.shape.offset.removeDefault().optional(),
+  profile: structuredRasterInputShape.shape.profile.removeDefault().optional(),
+  min_records: structuredRasterInputShape.shape.min_records
+    .removeDefault()
+    .optional(),
+  min_consistency: structuredRasterInputShape.shape.min_consistency
+    .removeDefault()
+    .optional(),
+  max_work: structuredRasterInputShape.shape.max_work
+    .removeDefault()
+    .optional(),
+  max_tables: structuredRasterInputShape.shape.max_tables
+    .removeDefault()
+    .optional(),
+  max_records: structuredRasterInputShape.shape.max_records
+    .removeDefault()
+    .optional(),
+  bits_per_pixel: structuredRasterInputShape.shape.bits_per_pixel
+    .removeDefault()
+    .optional(),
+  offset_units: structuredRasterInputShape.shape.offset_units
+    .removeDefault()
+    .optional(),
+  resource_offset: structuredRasterInputShape.shape.resource_offset
+    .removeDefault()
+    .optional(),
+  max_resources: structuredRasterInputShape.shape.max_resources
+    .removeDefault()
+    .optional(),
+  max_previews: structuredRasterInputShape.shape.max_previews
+    .removeDefault()
+    .optional(),
+  thumbnail_side: structuredRasterInputShape.shape.thumbnail_side
+    .removeDefault()
+    .optional(),
+});
 export const inspectStructuredRasterCandidatesRequestSchema =
-  structuredRasterInputShape
-    .extend({
-      offset: structuredRasterInputShape.shape.offset
-        .removeDefault()
-        .optional(),
-      profile: structuredRasterInputShape.shape.profile
-        .removeDefault()
-        .optional(),
-      min_records: structuredRasterInputShape.shape.min_records
-        .removeDefault()
-        .optional(),
-      min_consistency: structuredRasterInputShape.shape.min_consistency
-        .removeDefault()
-        .optional(),
-      max_work: structuredRasterInputShape.shape.max_work
-        .removeDefault()
-        .optional(),
-      max_tables: structuredRasterInputShape.shape.max_tables
-        .removeDefault()
-        .optional(),
-      max_records: structuredRasterInputShape.shape.max_records
-        .removeDefault()
-        .optional(),
-      bits_per_pixel: structuredRasterInputShape.shape.bits_per_pixel
-        .removeDefault()
-        .optional(),
-      offset_units: structuredRasterInputShape.shape.offset_units
-        .removeDefault()
-        .optional(),
-      resource_offset: structuredRasterInputShape.shape.resource_offset
-        .removeDefault()
-        .optional(),
-      max_resources: structuredRasterInputShape.shape.max_resources
-        .removeDefault()
-        .optional(),
-      max_previews: structuredRasterInputShape.shape.max_previews
-        .removeDefault()
-        .optional(),
-      thumbnail_side: structuredRasterInputShape.shape.thumbnail_side
-        .removeDefault()
-        .optional(),
-    })
-    .superRefine(refineStructuredControls);
+  structuredRasterRequestShape.superRefine(refineStructuredControls);
 const resolvedStructuredRasterControlsSchema = structuredRasterInputShape
   .extend({
+    color_policy: structuredRasterRequestShape.shape.color_policy.unwrap(),
+    resource_family:
+      structuredRasterRequestShape.shape.resource_family.unwrap(),
+    family_max_work:
+      structuredRasterRequestShape.shape.family_max_work.unwrap(),
     offset:
       inspectStructuredRasterCandidatesRequestSchema.shape.offset.unwrap(),
     profile:
@@ -226,9 +267,10 @@ const resource = z.strictObject({
     }),
   ),
   descriptorSourceMapping: mapping,
+  previewUnavailable: z.string().optional(),
   preview: z
     .strictObject({
-      kind: z.literal("index-only"),
+      kind: z.enum(["index-only", "caller-rgba", "profile-declared"]),
       width: positive,
       height: positive,
       pngBase64: z.string(),
@@ -245,6 +287,7 @@ export const structuredRasterCandidatesSchema = z.strictObject({
   }),
   window: range,
   grammar: structuredRasterGrammarSchema,
+  resourceFamily: rasterRegistryFamilyReportSchema.optional(),
   mapping: z.strictObject({
     profile: z.enum(["flat", "fgs-records", "explicit-segments"]),
     logicalBase: offset,

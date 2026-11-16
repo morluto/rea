@@ -223,6 +223,7 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(REA_WORKFLOW_PROVIDER, [
         "inspect_raw_raster_candidates",
         "inspect_structured_raster_candidates",
+        "export_structured_raster_resources",
       ]),
     ],
   },

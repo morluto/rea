@@ -25,6 +25,7 @@ import {
   createByteEntropyService,
   createRawRasterDiscoveryService,
   createStructuredRasterDiscoveryService,
+  createStructuredRasterExportService,
 } from "../composition/binaryDiagnostics.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -396,6 +397,8 @@ export const createServer = (
           rawRaster: createRawRasterDiscoveryService(artifactResources),
           structuredRaster:
             createStructuredRasterDiscoveryService(artifactResources),
+          structuredRasterExport:
+            createStructuredRasterExportService(artifactResources),
           peResources,
           nativeExports,
           devicetree,

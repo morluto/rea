@@ -53,7 +53,10 @@ export function appendStructuredRasterThumbnails(
     previews.slice(0, 8).flatMap(({ descriptorOffset, preview }) => [
       {
         type: "text" as const,
-        text: `Index-only thumbnail at logical descriptor ${descriptorOffset}; artificial grayscale, MSB-first, top-down. Original colors, palette and transparency are unknown.`,
+        text:
+          preview.kind === "index-only"
+            ? `Index-only thumbnail at logical descriptor ${descriptorOffset}; artificial grayscale, MSB-first, top-down. Original colors, palette and transparency are unknown.`
+            : `${preview.kind} thumbnail at logical descriptor ${descriptorOffset}; colors follow explicit caller policy, not an inferred active screen or theme.`,
       },
       {
         type: "image" as const,

@@ -90,3 +90,34 @@ it("preserves explicit zero and nested false controls without injecting omitted 
     schemas.inspectStructuredRasterCandidatesRequestSchema.parse(input),
   ).toEqual(input);
 });
+
+it("admits explicit family/color controls without inventing omitted choices", () => {
+  const request = schemas.inspectStructuredRasterCandidatesRequestSchema.parse({
+    path: "/tmp/source",
+    resource_family: "record12-lut-registry",
+    family_max_work: 100,
+    color_policy: {
+      kind: "record12-lut-registry",
+      theme_slot: 0,
+      precision: "byte8",
+      alpha: "opaque",
+      sentinel: "disabled",
+      rgb565_color_key: null,
+    },
+  });
+  expect(request).not.toHaveProperty("max_previews");
+  expect(request).toHaveProperty("family_max_work", 100);
+});
+
+it("reports the effective diagnostic rendering default without adding it to caller parameters", () => {
+  expect(
+    schemas.inspectStructuredRasterCandidatesRequestSchema.parse({
+      path: "/source",
+    }),
+  ).not.toHaveProperty("color_policy");
+  expect(
+    schemas.inspectStructuredRasterCandidatesInputSchema.parse({
+      path: "/source",
+    }),
+  ).toHaveProperty("color_policy", { kind: "diagnostic-indices" });
+});
