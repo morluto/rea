@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
 import pino from "pino";
 import { expect, it } from "vitest";
@@ -27,10 +28,7 @@ const lookupFailure = {
  * returning the provider's failure through the shared Evidence delivery.
  */
 const harness = () => {
-  const cli = Cli.create("rea-input-fields-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   registerContractCommand(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
@@ -59,7 +57,7 @@ const harness = () => {
         },
       ),
   );
-  const registered = Cli.toCommands.get(cli)?.get("probe");
+  const registered = cliCommand(cli, "probe")?.definition;
   if (registered === undefined) throw new Error("probe was not registered");
   const execute = Reflect.get(registered, "run") as (
     value: unknown,
@@ -96,10 +94,7 @@ it("names a delivered provider failure's input field by its CLI key", async () =
 });
 
 it("keeps a branch-only default out of the branch the caller selects", async () => {
-  const cli = Cli.create("rea-branch-default-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const received: unknown[] = [];
   registerContractCommand(
     cli as unknown as CliInstance,
@@ -124,7 +119,7 @@ it("keeps a branch-only default out of the branch the caller selects", async () 
       return {};
     },
   );
-  const registered = Cli.toCommands.get(cli)?.get("branch-probe");
+  const registered = cliCommand(cli, "branch-probe")?.definition;
   if (registered === undefined) throw new Error("branch-probe is missing");
   const parse = (value: unknown) =>
     (
@@ -140,10 +135,7 @@ it("keeps a branch-only default out of the branch the caller selects", async () 
 });
 
 it("hands a whole-input handler the contract's parse, or its refusal, without parsing again", async () => {
-  const cli = Cli.create("rea-admitted-input-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const received: unknown[] = [];
   // Counts evaluations of the whole contract schema; argv option parsing
   // checks field schemas only.
@@ -182,7 +174,7 @@ it("hands a whole-input handler the contract's parse, or its refusal, without pa
     async () => ({}),
   );
   const command = (name: string) => {
-    const registered = Cli.toCommands.get(cli)?.get(name);
+    const registered = cliCommand(cli, name)?.definition;
     if (registered === undefined) throw new Error(`${name} is missing`);
     const options = (value: unknown) =>
       (
@@ -216,10 +208,7 @@ it("hands a whole-input handler the contract's parse, or its refusal, without pa
 });
 
 it("hands a JSON-document handler the contract's parse of its document, once, only when read", async () => {
-  const cli = Cli.create("rea-admitted-document-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const received: unknown[] = [];
   let wholeParses = 0;
   const inputSchema = z
@@ -264,7 +253,7 @@ it("hands a JSON-document handler the contract's parse of its document, once, on
     async () => ({}),
   );
   const command = (name: string) => {
-    const registered = Cli.toCommands.get(cli)?.get(name);
+    const registered = cliCommand(cli, name)?.definition;
     if (registered === undefined) throw new Error(`${name} is missing`);
     const args = (value: unknown) =>
       (Reflect.get(registered, "args") as { parse(v: unknown): unknown }).parse(

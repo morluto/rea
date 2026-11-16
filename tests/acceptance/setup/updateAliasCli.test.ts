@@ -103,6 +103,25 @@ cliTest(
       data: "current",
       meta: { command: expect.stringContaining("update") },
     });
+    let canonicalJsonl: string | undefined;
+    for (const arguments_ of [
+      ["update", "--format", "jsonl"],
+      ["--format", "jsonl", "--update"],
+    ]) {
+      const result = await run(arguments_);
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        $rea: "jsonl/v1",
+        type: "error",
+        ok: false,
+        result: {
+          code: "invalid_request",
+          remediation: { action: expect.stringContaining("--format json") },
+        },
+      });
+      if (canonicalJsonl === undefined) canonicalJsonl = result.stdout;
+      else expect(result.stdout).toBe(canonicalJsonl);
+    }
     const failed = await run(["--update", "--json"], true);
     expect(failed.exitCode).toBe(1);
     expect(failed.json).toMatchObject({

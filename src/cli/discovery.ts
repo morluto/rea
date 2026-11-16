@@ -11,9 +11,14 @@ import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   CLI_OUTPUT_FORMATS,
   readCliOutputArguments,
+  renderCliDocument,
+  type CliOutputFormat,
 } from "../cliOutput.js";
-import { PRODUCT_IDENTITY } from "../identity.js";
 import { formatCliOutput } from "./cliOutputFormatter.js";
+import { estimateTokenCount } from "tokenx";
+import { jsonLinesErrorRecord } from "./jsonLines.js";
+import { sliceTextByTokenWindow } from "./tokenWindow.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   commandSchemaDocument,
   formatLlmsFull,
@@ -129,15 +134,84 @@ const integrationIndex = (
       : -1;
 
 /** A document REA writes instead of running a command, and the status it ends with. */
-interface DiscoveryAnswer {
-  readonly text: string;
-  readonly exitCode: number;
-}
+type DiscoveryAnswer =
+  | {
+      readonly kind: "text";
+      readonly text: string;
+      readonly exitCode: number;
+    }
+  | {
+      readonly kind: "rendered";
+      readonly text: string;
+      readonly exitCode: number;
+    }
+  | { readonly kind: "markup"; readonly text: string; readonly exitCode: 0 }
+  | {
+      readonly kind: "document";
+      readonly value: unknown;
+      readonly format: CliOutputFormat;
+      readonly tokens: boolean;
+      readonly exitCode: number;
+    };
 
 const answer = (text: string, exitCode = 0): DiscoveryAnswer => ({
+  kind: "text",
   text: text.endsWith("\n") ? text : `${text}\n`,
   exitCode,
 });
+const renderedAnswer = (text: string, exitCode = 0): DiscoveryAnswer => ({
+  kind: "rendered",
+  text,
+  exitCode,
+});
+const markupAnswer = (text: string): DiscoveryAnswer => ({
+  kind: "markup",
+  text,
+  exitCode: 0,
+});
+const documentAnswer = (
+  value: unknown,
+  format: CliOutputFormat,
+  tokens = true,
+  exitCode = 0,
+): DiscoveryAnswer => ({ kind: "document", value, format, tokens, exitCode });
+
+const presentDiscoveryAnswer = (
+  result: DiscoveryAnswer,
+  global: CliGlobalArguments,
+): string => {
+  if (result.kind === "rendered") return result.text;
+  const controls = readCliOutputArguments(global);
+  if (result.kind === "text")
+    return result.exitCode !== 0 && controls.format === "jsonl"
+      ? renderCliDocument(jsonLinesErrorRecord(result.text), "jsonl", false)
+      : result.text;
+  let encoded: string;
+  if (result.kind === "markup") encoded = result.text;
+  else {
+    const value =
+      result.format === "jsonl" && result.exitCode !== 0
+        ? jsonLinesErrorRecord(result.value)
+        : result.value;
+    encoded =
+      result.format === "json" || result.format === "jsonl"
+        ? renderCliDocument(value, result.format, process.stdout.isTTY === true)
+        : formatCliOutput(value, result.format);
+  }
+  const text = encoded.endsWith("\n") ? encoded : `${encoded}\n`;
+  if ((result.kind === "document" && !result.tokens) || result.exitCode !== 0)
+    return text;
+  if (controls.tokenCount) return `${estimateTokenCount(text)}\n`;
+  if (!controls.tokenWindow) return text;
+  const window = sliceTextByTokenWindow(
+    text,
+    controls.tokenOffset ?? 0,
+    controls.tokenLimit,
+  );
+  return window.truncated
+    ? `${window.text}\n[truncated: showing tokens ${window.start}–${window.end} of ${window.total}]\n`
+    : text;
+};
 
 const sortedCommands = (cli: CliInstance): readonly CliCommandEntry[] =>
   [...cliCommands(cli)].sort((left, right) =>
@@ -159,18 +233,16 @@ const llmsAnswer = (
   );
   const commands = scoped === undefined ? sortedCommands(cli) : [scoped];
   if (!formatExplicit || format === "md")
-    return answer(
+    return markupAnswer(
       full
         ? formatLlmsFull(cli.name, commands)
         : formatLlmsIndex(cli.name, commands, CLI_DESCRIPTION),
     );
-  return answer(
-    formatCliOutput(
-      full
-        ? llmsFullManifest(commands, CLI_CUSTOM_GLOBAL_OPTIONS)
-        : llmsIndexManifest(commands, CLI_CUSTOM_GLOBAL_OPTIONS),
-      format,
-    ),
+  return documentAnswer(
+    full
+      ? llmsFullManifest(commands, CLI_CUSTOM_GLOBAL_OPTIONS)
+      : llmsIndexManifest(commands, CLI_CUSTOM_GLOBAL_OPTIONS),
+    format,
   );
 };
 
@@ -198,11 +270,9 @@ const schemaAnswer = (
     return answer(`Error: ${failure.message}`, 1);
   }
   const { format, formatExplicit } = readCliOutputArguments(global);
-  return answer(
-    formatCliOutput(
-      commandSchemaDocument(entry, CLI_CUSTOM_GLOBAL_OPTIONS),
-      formatExplicit ? format : "toon",
-    ),
+  return documentAnswer(
+    commandSchemaDocument(entry, CLI_CUSTOM_GLOBAL_OPTIONS),
+    formatExplicit ? format : "toon",
   );
 };
 
@@ -227,12 +297,9 @@ const updateRefusalAnswer = (
       declaredSensitiveValues(global.command),
     ),
   };
-  return answer(
-    invocation.stdoutIsTerminal && !controls.formatExplicit
-      ? `Error (${failure.code}): ${failure.message}`
-      : formatCliOutput(failure, controls.format),
-    1,
-  );
+  return invocation.stdoutIsTerminal && !controls.formatExplicit
+    ? answer(`Error (${failure.code}): ${failure.message}`, 1)
+    : documentAnswer(failure, controls.format, false, 1);
 };
 
 /** The production MCP entry owns server startup; a command cannot start another. */
@@ -244,7 +311,7 @@ const retiredMcpAnswer = (
   const controls = readCliOutputArguments(global);
   const sensitive = declaredSensitiveValues(global.command);
   const text = (value: string): string => redactExplicitText(value, sensitive);
-  return answer(
+  return renderedAnswer(
     renderFailure(
       {
         code: "MCP_MODE_REMOVED",
@@ -287,8 +354,12 @@ const unknownCommandAnswer = (
   { environment, stdoutIsTerminal, started }: Invocation,
 ): DiscoveryAnswer | undefined => {
   const controls = readCliOutputArguments(global);
-  const format = controls.formatExplicit ? controls.format : "toon";
-  if (format === "csv" || format === "tsv") return undefined;
+  const selectedFormat = controls.formatExplicit ? controls.format : "toon";
+  // Delimited exports require rows; a command diagnostic remains a document.
+  const format =
+    selectedFormat === "csv" || selectedFormat === "tsv"
+      ? "json"
+      : selectedFormat;
   const human = stdoutIsTerminal && !controls.formatExplicit;
   const unknown = global.command[0]!;
   const suggestion = suggestCommand(unknown, [
@@ -308,7 +379,7 @@ const unknownCommandAnswer = (
     suggestion,
     additionalCommands: notice,
   });
-  return answer(
+  return renderedAnswer(
     renderFailure(
       failure,
       {
@@ -388,7 +459,7 @@ const discoveryAnswer = (
   const mcp = integrationIndex(command, cli.name, "mcp");
   if (mcp >= 0) {
     const subcommand = command[mcp + 1];
-    if (subcommand === undefined)
+    if (!subcommand)
       return answer(
         formatCommandListHelp(`${cli.name} mcp`, {
           description: MCP_GROUP_DESCRIPTION,
@@ -443,8 +514,9 @@ export const serveDiscovery = (
   arguments_: readonly string[],
   options: ServeOptions,
   environment: UpdateEnvironment,
+  parsed?: CliGlobalArguments,
 ): Promise<void> | undefined => {
-  const global = parseCliGlobalArguments(arguments_);
+  const global = parsed ?? parseCliGlobalArguments(arguments_);
   // The refresh writes nothing and answers before every other flag.
   if (global.flags.has(UPDATE_CHECK_FLAG))
     return refreshUpdateCache(
@@ -459,7 +531,7 @@ export const serveDiscovery = (
   });
   if (result === undefined) return undefined;
   (options.stdout ?? ((text: string) => process.stdout.write(text)))(
-    result.text,
+    presentDiscoveryAnswer(result, global),
   );
   if (result.exitCode !== 0)
     (options.exit ?? ((code: number) => process.exit(code)))(result.exitCode);

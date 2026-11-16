@@ -68,8 +68,8 @@ export interface CliCommandEntry {
   readonly name: string;
   /**
    * The definition the dispatcher runs. Shell owners may still replace its
-   * inputs and handler in place before serving (omittable defaults, result
-   * output, argument policy), so readers see what is served.
+   * input schemas in place before serving (omittable defaults), so readers
+   * see what is served.
    */
   readonly definition: CliCommandDefinition<
     z.ZodObject | undefined,
@@ -84,7 +84,7 @@ const registries = new WeakMap<CliInstance, CliCommandEntry[]>();
 
 /**
  * Register one command: record it in REA's command table, in registration
- * order, and hand it to the dispatcher. Every command is registered here.
+ * order. The dispatcher reads this table; every command is registered here.
  */
 export const registerCliCommand = <
   const Args extends z.ZodObject | undefined = undefined,
@@ -101,11 +101,6 @@ export const registerCliCommand = <
   const entries = registries.get(cli) ?? [];
   if (entries.some((entry) => entry.name === name))
     throw new Error(`CLI command ${name} is registered twice`);
-  // The dispatcher keeps this object, so in-place changes reach both.
-  (cli.command as (name: string, definition: object) => unknown)(
-    name,
-    definition,
-  );
   entries.push({
     name,
     definition: definition as CliCommandEntry["definition"],
@@ -118,6 +113,13 @@ export const registerCliCommand = <
 /** Commands registered on this CLI, in registration order. */
 export const cliCommands = (cli: CliInstance): readonly CliCommandEntry[] =>
   registries.get(cli) ?? [];
+
+/** Resolve a command identity from the same records the dispatcher serves. */
+export const cliCommand = (
+  cli: CliInstance,
+  name: string,
+): CliCommandEntry | undefined =>
+  cliCommands(cli).find((entry) => entry.name === name);
 
 /**
  * The operations one contract description runs: its own contract, the
