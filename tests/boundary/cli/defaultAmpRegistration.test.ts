@@ -1,8 +1,6 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { Parser } from "incur";
-import { z } from "zod";
 import { decode } from "@toon-format/toon";
 
 import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";
@@ -99,7 +97,7 @@ cliTest(
       "null\n",
       '{"amp.mcpServers":[]}\n',
       original,
-    ]) {
+    ] as const) {
       const f = await fixture(initial);
       if (initial === original) await mkdir(`${f.settings}.rea.backup`);
       for (const json of [false, true]) {
@@ -187,7 +185,7 @@ cliTest(
   },
 );
 
-it("timing splitting matches Incur after output values and before the terminator", () => {
+it("preserves recorded timing consumption before the terminator and retains following data", () => {
   for (const flag of [
     "--timings",
     "--no-timings",
@@ -195,18 +193,24 @@ it("timing splitting matches Incur after output values and before the terminator
     "--timings=true",
     "--timings=other",
   ]) {
-    for (const command of [
-      [flag, "mcp", "add"],
-      ["mcp", "add", "--agent", flag, "amp"],
-      ["mcp", "add", "--command", flag],
-      ["mcp", "add", "--", flag],
-    ]) {
-      const expected = Parser.parseGlobals(
-        command,
-        z.object({ timings: z.boolean().default(false) }),
-        undefined,
-        { validate: false },
-      ).rest;
+    for (const [command, expected] of [
+      [
+        [flag, "mcp", "add"],
+        ["mcp", "add"],
+      ],
+      [
+        ["mcp", "add", "--agent", flag, "amp"],
+        ["mcp", "add", "--agent", "amp"],
+      ],
+      [
+        ["mcp", "add", "--command", flag],
+        ["mcp", "add", "--command"],
+      ],
+      [
+        ["mcp", "add", "--", flag],
+        ["mcp", "add", "--", flag],
+      ],
+    ] as const) {
       expect(parseCliGlobalArguments(command).command).toEqual(expected);
       expect(
         parseCliGlobalArguments(["--filter-output", flag, ...command]).command,

@@ -1,6 +1,7 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { Cli } from "incur";
 import { z } from "zod";
 import pino from "pino";
 import { readFile, readdir, writeFile } from "node:fs/promises";
@@ -71,10 +72,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     .mockResolvedValue(ok({ target_state: "none_observed" }));
   const closeAll = vi.spyOn(manager, "closeAll").mockResolvedValue(undefined);
   const createManager = vi.fn(() => manager);
-  const cli = Cli.create("rea-cli-delivery-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
@@ -91,7 +89,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
       : kind === "objdump"
         ? cliCommandFor("inspect_with_objdump")
         : CLI_COMMANDS.listObjdumpArchitectures;
-  const command = Cli.toCommands.get(cli)?.get(commandName);
+  const command = cliCommand(cli, commandName)?.definition;
   if (command === undefined) throw new Error("CLI command was not registered");
   // A command without positionals registers no argument schema.
   const argsSchema: unknown = Reflect.get(command, "args") ?? z.object({});
@@ -112,6 +110,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
   const invoke = async (options: Record<string, unknown>): Promise<unknown> =>
     execute({
       args: argsSchema.parse(args),
+      formatExplicit: false,
       options: optionsSchema.parse({
         ...(kind === "gdb" ? { inferiorTty: "/dev/pts/caller-fixture" } : {}),
         ...options,

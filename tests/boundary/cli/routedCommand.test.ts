@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
 import pino from "pino";
 import { expect, it } from "vitest";
@@ -13,7 +14,7 @@ import { absoluteLocalPathStringSchema } from "../../../src/domain/localPath.js"
 /** Two synthetic contracts routed by whether the target names an archive. */
 const harness = () => {
   const calls: { route: string; cliOptions: unknown; input: unknown }[] = [];
-  const cli = Cli.create("rea-routed-test", { version: "1", sync: false });
+  const cli = createCommandCli();
   const command = { command: "probe", description: "Probe" };
   registerRoutedCommand(
     cli as unknown as CliInstance,
@@ -61,7 +62,7 @@ const harness = () => {
       ),
     ],
   );
-  const registered = Cli.toCommands.get(cli)?.get("probe");
+  const registered = cliCommand(cli, "probe")?.definition;
   if (registered === undefined) throw new Error("probe was not registered");
   const execute = Reflect.get(registered, "run") as (
     value: unknown,
@@ -145,10 +146,7 @@ it("advertises each option's default without supplying it to routing", async () 
 });
 
 it("refuses routes that check a shared JSON input differently", () => {
-  const cli = Cli.create("rea-routed-check-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const command = { command: "probe", description: "Probe" };
   const route = (name: string, check: () => { ok: true; value: string }) =>
     commandRoute(
