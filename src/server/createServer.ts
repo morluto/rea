@@ -22,7 +22,6 @@ import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupErro
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
-import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
@@ -54,7 +53,6 @@ import {
   withAdmittedAnalysis,
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
-import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -372,26 +370,10 @@ export const createServer = (
         },
         contractTools,
       );
-      registerReverseEngineeringTools(
+      registerServiceTools(
         server,
-        reverseEngineering,
-        toolLogger,
-        delivery,
-        recordEvidence,
-        analysisAdmission,
-        session === undefined
-          ? undefined
-          : () => session.invalidateSnapshotForExternalMutation(),
-        session === undefined
-          ? undefined
-          : (path, signal, operation, rebindFailure) =>
-              session.withAdmittedExternalMutation(
-                path,
-                signal,
-                operation,
-                rebindFailure,
-              ),
-        evidenceById,
+        { reverseEngineering: { service: reverseEngineering, session } },
+        contractTools,
       );
       registerServiceTools(
         server,
@@ -604,7 +586,12 @@ export const createServer = (
         },
         contractTools,
       );
-      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
+      // Build tool responses are redacted as a whole; they record nothing.
+      registerServiceTools(
+        server,
+        { desktopBuild: desktopBuildComputers },
+        { logger: toolLogger },
+      );
     },
     session: () => {
       if (session === undefined) return;
