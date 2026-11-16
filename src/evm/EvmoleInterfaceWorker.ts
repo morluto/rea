@@ -12,6 +12,7 @@ import {
   evmProducerLimitsSchema,
   selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { readStableArtifact } from "../resources/index.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -29,8 +30,13 @@ const main = async (): Promise<void> => {
   const requestPath = process.argv[2];
   if (requestPath === undefined)
     throw new EvmAdmissionError("request_path_missing");
+  const requestJson = parseJsonWithDuplicatePolicy(
+    await readFile(requestPath, "utf8"),
+    "reject",
+  );
+  if (!requestJson.ok) throw requestJson.cause;
   const request = requestSchema.parse(
-    JSON.parse(await readFile(requestPath, "utf8")),
+    requestJson.duplicate === undefined ? requestJson.value : null,
   );
   const limits = selectedEvmProducerLimits(request.producer_limits);
   let reply: unknown;
@@ -45,13 +51,14 @@ const main = async (): Promise<void> => {
         "Container marker EF00 is outside the verified flat-bytecode interface profile.",
       );
     const modulePath = import.meta.resolve("evmole/no_tla");
+    const packageJson = parseJsonWithDuplicatePolicy(
+      await readFile(new URL("../package.json", modulePath), "utf8"),
+      "last-wins",
+    );
+    if (!packageJson.ok) throw packageJson.cause;
     const metadata = z
       .object({ version: z.literal("0.9.3") })
-      .parse(
-        JSON.parse(
-          await readFile(new URL("../package.json", modulePath), "utf8"),
-        ),
-      );
+      .parse(packageJson.value);
     const engine = await import("evmole/no_tla");
     engine.initSync({
       module: await readFile(
