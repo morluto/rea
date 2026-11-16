@@ -449,6 +449,7 @@
 * **cli:** project view-delivery inspectors from their contracts ([#10600](https://github.com/morluto/rea/issues/10600)) ([fa53f70](https://github.com/morluto/rea/commit/fa53f7070ae2fb89cfdebfd7c4332e6dab39231c))
 * **cli:** project WASM inspection and firmware commands from their contracts ([#10648](https://github.com/morluto/rea/issues/10648)) ([a761efd](https://github.com/morluto/rea/commit/a761efda70272fe9d70d0fe6d67531a773ebcdcf))
 * **cli:** register every command in an REA-owned command table ([#11680](https://github.com/morluto/rea/issues/11680)) ([f14e9a1](https://github.com/morluto/rea/commit/f14e9a1d282a7155c32f260730f5881d2c3e6c83))
+* **cli:** render command help with REA's own help owner ([#11683](https://github.com/morluto/rea/issues/11683)) ([ec1cf3a](https://github.com/morluto/rea/commit/ec1cf3a9bd193371a599ae69b1bc6325b4624b14))
 * **cli:** run one-shot commands through one shared owner ([#10405](https://github.com/morluto/rea/issues/10405)) ([bddbd80](https://github.com/morluto/rea/commit/bddbd80afb8e5e2c5b5d7a0f3906497b5be7e9b5))
 * **compression:** move the raw LZ4 block decoder into src/compression ([#11492](https://github.com/morluto/rea/issues/11492)) ([79abe4e](https://github.com/morluto/rea/commit/79abe4e5fa1b7bf39390411ed0940872675d9f9c))
 * **config:** move the MCP startup policy beside its startup budgets in src/config ([#11429](https://github.com/morluto/rea/issues/11429)) ([47c252f](https://github.com/morluto/rea/commit/47c252f5274607a02d750f817caaac7366a33ccb))
