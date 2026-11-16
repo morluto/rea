@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
@@ -309,7 +310,7 @@ describe("evidence ledger metadata imports", () => {
     expect(ledger.export().records).toHaveLength(10_001);
   });
 
-  it("retains inline evidence larger than the former session byte quota", () => {
+  it("retains an inline Evidence record above 64 MiB", () => {
     const ledger = new EvidenceLedger();
     const record = createEvidence(TARGET, PROVIDER, {
       operation: "health",
@@ -375,12 +376,12 @@ describe("evidence bundle imports", () => {
 
   it("atomically rejects Evidence plus an invalid unknown", () => {
     const ledger = new EvidenceLedger();
-    const output = createEvidence(undefined, PROVIDER, {
+    const output = createEvidence(unknownTarget("not-observed"), PROVIDER, {
       operation: "derived",
       parameters: {},
       result: { status: "unknown" },
     });
-    const mutation = createEvidence(undefined, PROVIDER, {
+    const mutation = createEvidence(unknownTarget("not-observed"), PROVIDER, {
       predicateType: "rea.residual-unknown-mutation",
       operation: "record_unknown",
       parameters: {},

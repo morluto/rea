@@ -1,4 +1,4 @@
-import { launcherRefusalOf, type LauncherRefusal } from "./launchFailure.js";
+import { launcherFailureOf, type LauncherFailure } from "./launchFailure.js";
 import { OwnedCommandFailure } from "./OwnedCommand.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 import type { RuntimeExhaustion } from "./RuntimeExhaustion.js";
@@ -27,10 +27,10 @@ interface ProviderOutcomeFacts {
  * `classifyProviderOutcome`.
  */
 export type ProviderOutcome =
-  /** The operating system refused to start the selected executable. */
+  /** A launcher failed to start the executable; `failure` says why, by errno. */
   | (ProviderOutcomeFacts & {
-      readonly kind: "launch-refused";
-      readonly refusal: LauncherRefusal;
+      readonly kind: "launch-failed";
+      readonly failure: LauncherFailure;
     })
   /** The caller cancelled; `reason` is the caller's opaque abort reason. */
   | (ProviderOutcomeFacts & {
@@ -133,19 +133,19 @@ const ownedCommandOutcome = (failure: OwnedCommandFailure): ProviderOutcome => {
 
 /**
  * Read the outcome of an owned command from what `runOwnedCommand` threw.
- * Undefined when the value is neither a supervised command failure nor a
- * launch refusal.
+ * Undefined when the value is neither a supervised command failure nor an
+ * error a launcher raised.
  */
 export function providerOutcomeOf(cause: OwnedCommandFailure): ProviderOutcome;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined;
 export function providerOutcomeOf(cause: unknown): ProviderOutcome | undefined {
   if (cause instanceof OwnedCommandFailure) return ownedCommandOutcome(cause);
-  // Only a launcher's errno is a launch refusal; one from reading a file is not.
-  const refusal = launcherRefusalOf(cause);
-  if (refusal === undefined || !(cause instanceof Error)) return undefined;
+  // Only a launcher's errno is a launch failure; one from reading a file is not.
+  const failure = launcherFailureOf(cause);
+  if (failure === undefined || !(cause instanceof Error)) return undefined;
   return {
-    kind: "launch-refused",
-    refusal,
+    kind: "launch-failed",
+    failure,
     cause,
     message: cause.message,
     output: undefined,

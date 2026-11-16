@@ -21,9 +21,12 @@ import {
   AnalysisCancelledError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
+import { readJsonObjectMembersFile } from "../JsonFiles.js";
+import {
+  writeTextFile,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 const READ_OPERATION = "open_binary";

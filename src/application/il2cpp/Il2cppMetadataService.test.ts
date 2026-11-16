@@ -12,7 +12,7 @@ import type { Il2cppMetadata } from "../../domain/il2cpp/il2cppMetadata.js";
 import { err, ok } from "../../domain/result.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import type { Il2cppSeedWriterPort } from "./Il2cppSeedWriterPort.js";
+import type { Il2cppSeedWriterPort } from "../../ports/il2cpp/Il2cppSeedWriterPort.js";
 import { toolContract } from "../../contracts/toolContracts.js";
 import { z } from "zod";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -100,9 +100,8 @@ it("returns explicit complete artifact-bound Evidence without retention", async 
   expect(result.value.parameters).toEqual({ path: report.artifact.path });
   expect(result.value.normalized_result).toEqual(report);
   expect(result.value.subject).toMatchObject({
-    format: "file",
     local_path: report.artifact.path,
-    digest: { sha256: report.artifact.sha256 },
+    identity: { format: "file", sha256: report.artifact.sha256 },
   });
 });
 

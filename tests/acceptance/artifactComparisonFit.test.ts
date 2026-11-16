@@ -5,7 +5,7 @@ import { fitFixture } from "../../src/artifacts/fit/FitImage.fixture.js";
 import {
   cells,
   dtString,
-} from "../../src/firmware/devicetree/Devicetree.fixture.js";
+} from "../../src/domain/firmware/devicetree.fixture.js";
 import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";

@@ -1,0 +1,43 @@
+$ rea -h
+exit: 0
+--- stdout
+rea@<version> — Reverse engineer anything from your terminal or agent.
+
+Usage: rea <command>
+
+Commands:
+  address-to-file-offset  Map one analysis address to a file offset; memory bytes may differ and ranges may not be contiguous
+  <registered command rows elided>
+  build-reconstruction-obligation-ledger  Generate a deterministic Evidence-backed reconstruction obligation ledger page
+  <registered command rows elided>
+  decompile  Read one part of an app as code. Supply at least one of the positional address or --procedure. Alternatively, use --file-offset alone. Equal positional and --procedure values are accepted; conflicts fail. With Ghidra, a space-qualified address such as ram:0x... avoids file-offset fallback; inspect-native-load-image reports the observed default space.
+  <registered command rows elided>
+  inspect-byte-entropy  Inspect file-wide and block byte entropy without executing the file
+  <registered command rows elided>
+  setup  Configure agent integrations and optional analysis providers
+  <registered command rows elided>
+  xrefs  List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. Supply at least one of the positional address or --address. Equal values are accepted; conflicts fail.
+
+Integrations:
+  completions  Generate shell completion script
+  mcp          Register as MCP server (add, doctor)
+
+Custom Global Options:
+  --timings  Write measured command timing to stderr.
+
+Global Options:
+  --filter-output <keys>                      Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
+  --full-output                               Show full output envelope
+  --help                                      Show help
+  --llms, --llms-full                         Print LLM-readable manifest
+  --mcp                                       Start as MCP stdio server
+  --schema                                    Show JSON Schema for command
+  --token-count                               Print token count of output (instead of output)
+  --token-limit <n>                           Limit output to n tokens
+  --token-offset <n>                          Skip first n tokens of output
+  --update                                    Update to latest version
+  --version                                   Show version
+<end>
+--- stderr
+<end>

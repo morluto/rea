@@ -1,19 +1,19 @@
 import { createHash } from "node:crypto";
 import { apkSignatureAdmission } from "./ApkSignatureAdmission.js";
 
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ApkSignatureExecution,
   ApkSignaturePort,
-} from "../application/apkSignature/ApkSignaturePort.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../ports/apkSignature/ApkSignaturePort.js";
 import {
+  readStableArtifact,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

@@ -1467,7 +1467,7 @@ describe("contextual JavaScript artifact path resolution", () => {
     ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
   });
 
-  it("resolves inventoried paths longer than the former character ceiling", () => {
+  it("resolves an inventoried path of more than 5,000 characters", () => {
     const declaredPath = `./${"a".repeat(5_000)}.js`;
     const expectedPath = `app/${declaredPath.slice(2)}`;
     const files = fileMap([
@@ -1588,7 +1588,7 @@ describe("JavaScript file URL resolution", () => {
 });
 
 describe("contextual JavaScript package path resolution", () => {
-  it("follows package entrypoints beyond the former recursion ceiling", () => {
+  it("follows a long chain of package entrypoints", () => {
     const files = fileMap([
       file("app/consumer.js", "root"),
       file(

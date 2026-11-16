@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -49,7 +50,7 @@ cliTest.for([
     const before = await call(operation, parameters);
     expect(before.isError).not.toBe(true);
     const initial = parseEvidence(before.structuredContent);
-    expect(initial.subject?.digest.sha256).toBe(
+    expect(fileIdentity(initial.subject).sha256).toBe(
       createHash("sha256").update(original).digest("hex"),
     );
 
@@ -77,7 +78,7 @@ cliTest.for([
     const after = await call(operation, parameters);
     expect(after.isError).not.toBe(true);
     const refreshed = parseEvidence(after.structuredContent);
-    expect(refreshed.subject?.digest.sha256).toBe(
+    expect(fileIdentity(refreshed.subject).sha256).toBe(
       createHash("sha256").update(changed).digest("hex"),
     );
     const nibHash = createHash("sha256").update(changedNib).digest("hex");

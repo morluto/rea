@@ -14,6 +14,7 @@ import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // These writer tests model setup running from REA's actual entrypoint, not Vitest's worker.
 vi.mock(
@@ -211,10 +212,13 @@ it.skipIf(process.platform !== "win32")(
       env: getDefaultEnvironment(),
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "windows-direct-registration",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "windows-direct-registration",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       expect(client.getServerVersion()?.version).toBe(

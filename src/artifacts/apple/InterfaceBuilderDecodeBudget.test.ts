@@ -6,7 +6,7 @@ import { buildBinary } from "plist";
 import { describe, expect, it } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
-import { preflightPropertyListDecode } from "./PropertyListDecodeBudget.js";
+import { preflightPropertyListDecode } from "../../domain/apple/propertyListDecodeBudget.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {

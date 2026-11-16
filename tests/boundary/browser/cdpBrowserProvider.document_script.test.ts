@@ -757,7 +757,9 @@ describe("CdpBrowserProvider: WebMCP replay inventory", () => {
     );
   });
 
-  it("retains registrations from authorized frames beyond the former frame cap", async () => {
+  // Frame count has no ceiling: the last of many authorized frames still
+  // contributes its registration.
+  it("retains registrations from every authorized frame of a page with many frames", async () => {
     const browser = await startFakeCdpBrowser({
       webMcpTools: true,
       webMcpFrameCount: 1_001,
@@ -776,7 +778,7 @@ describe("CdpBrowserProvider: WebMCP replay inventory", () => {
     expect(result.value.tools.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          name: "beyond_frame_limit_tool",
+          name: "last_frame_tool",
           frame_id: "webmcp-frame-1000",
         }),
       ]),
