@@ -6,7 +6,6 @@
   "src/server/registerCutterTools.ts": 1,
   "src/server/registerDesktopBuildTools.ts": 2,
   "src/server/registerElectronTools.ts": 6,
-  "src/server/registerEnhancedTools.ts": 15,
   "src/server/registerEvidenceTools.ts": 1,
   "src/server/registerFridaTools.ts": 9,
   "src/server/registerGdbTools.ts": 4,

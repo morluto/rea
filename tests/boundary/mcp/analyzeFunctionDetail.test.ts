@@ -4,7 +4,6 @@ import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerEnhancedTools } from "../../../src/server/registerEnhancedTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
@@ -20,8 +19,9 @@ import { ok } from "../../../src/domain/result.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { parseGhidraFunctionInput } from "../../../src/ghidra/GhidraFunctionValues.js";
-import { EvidenceLedger } from "../../../src/application/investigation/EvidenceLedger.js";
+import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import { recordsWorkflowSession } from "../../fixtures/workflowSession.js";
 
 const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
 const partialCallees = {
@@ -38,9 +38,9 @@ const connect = async (
   path = () => "/fixtures/native.exe",
   sources: readonly Evidence[] = [],
 ) => {
-  const ledger = new EvidenceLedger();
-  const record = (evidence: Evidence) => ledger.record(evidence);
-  const lookup = (id: string) => ledger.forAnalysis(id);
+  const records = new InvestigationRecords();
+  const record = (evidence: Evidence) => records.recordEvidence(evidence);
+  const lookup = (id: string) => records.evidenceForAnalysis(id);
   const execute = vi.fn(
     async (operation: string, parameters: Record<string, JsonValue>) => {
       let observed: JsonValue = result;
@@ -78,24 +78,19 @@ const connect = async (
     retain ? record : undefined,
     delivery,
   );
-  registerEnhancedTools(server, {
-    withAdmittedAnalysis: withAdmittedAnalysis({ kind: "fixed", analysis }),
-    logger: pino({ enabled: false }),
-    activeTarget: () => undefined,
-    analysisProfile: undefined,
-    recordEvidence: retain ? record : undefined,
-    evidenceById: retain ? lookup : undefined,
-    recordUnknown: undefined,
-    allowsSnapshotReplay: undefined,
-    recordWorkflowSnapshot: undefined,
-  });
   registerServiceTools(
     server,
-    { analysisView: {} },
+    {
+      analysisView: {},
+      enhancedWorkflows: {
+        session: retain ? recordsWorkflowSession(records) : undefined,
+      },
+    },
     {
       logger: pino({ enabled: false }),
       evidenceById: retain ? lookup : undefined,
       recordEvidence: retain ? record : undefined,
+      withAdmittedAnalysis: withAdmittedAnalysis({ kind: "fixed", analysis }),
     },
   );
   const client = new Client({ name: "fn-detail-client", version: "1" });
@@ -107,7 +102,7 @@ const connect = async (
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  return { client, ledger, execute };
+  return { client, records, execute };
 };
 
 it.each(["analyze_function", "decompile_all"] as const)(
@@ -123,7 +118,7 @@ it.each(["analyze_function", "decompile_all"] as const)(
       },
       { immutable: true },
     );
-    const { client, ledger } = await connect(true, dossier, undefined, [
+    const { client, records } = await connect(true, dossier, undefined, [
       source,
     ]);
     const parent = await createTestTempDirectory("rea-plain-source-");
@@ -138,10 +133,10 @@ it.each(["analyze_function", "decompile_all"] as const)(
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence.evidence_links).toContain(source.evidence_id);
     expect(JSON.stringify(reply)).not.toContain("caller-project");
-    expect(ledger.forAnalysis(source.evidence_id)).toEqual(source);
+    expect(records.evidenceForAnalysis(source.evidence_id)).toEqual(source);
     expect(
-      ledger
-        .immutableBundle()
+      records
+        .immutableEvidenceBundle()
         .records.filter((record) => record.evidence_id === source.evidence_id),
     ).toHaveLength(1);
   },
@@ -168,7 +163,7 @@ it("refuses source links when a plain-port adapter has no retention owner", asyn
 
 it("keeps complete and summary delivery on the current observed path despite retained same-ID history", async () => {
   let selected = "/old/native.exe";
-  const { client, ledger } = await connect(true, dossier, () => selected);
+  const { client, records } = await connect(true, dossier, () => selected);
   const call = async (detail: "complete" | "summary") => {
     const reply = await client.callTool({
       name: "analyze_function",
@@ -192,7 +187,7 @@ it("keeps complete and summary delivery on the current observed path despite ret
     kind: "artifact-path",
     path: selected,
   });
-  expect(ledger.get(complete.evidence_id)?.subject?.local_path).toBe(
+  expect(records.evidenceById(complete.evidence_id)?.subject?.local_path).toBe(
     "/old/native.exe",
   );
   const historicalReply = await client.callTool({
@@ -209,7 +204,7 @@ it("keeps complete and summary delivery on the current observed path despite ret
 });
 
 it("defaults to a retained summary and strips delivery detail before the provider", async () => {
-  const { client, ledger, execute } = await connect();
+  const { client, records, execute } = await connect();
   const progress: number[] = [];
   const reply = await client.callTool(
     { name: "analyze_function", arguments: { procedure: "main" } },
@@ -228,14 +223,16 @@ it("defaults to a retained summary and strips delivery detail before the provide
     evidence.normalized_result as { parent_evidence_id: string }
   ).parent_evidence_id;
   // The complete dossier is retained in-session so the summary's parent can be paged.
-  expect(ledger.has(parentId)).toBe(true);
+  expect(records.hasEvidence(parentId)).toBe(true);
   // Delivery detail never crosses into the provider request.
   const providerParameters = execute.mock.calls[0]?.[1] ?? {};
   expect(providerParameters).not.toHaveProperty("detail");
   expect(providerParameters).toMatchObject({ procedure: "main" });
   // Partial caller/callee discovery stays with the summary that reports their counts.
   expect(evidence.relationship_coverage).toEqual(partialCallees);
-  expect(ledger.get(parentId)?.relationship_coverage).toEqual(partialCallees);
+  expect(records.evidenceById(parentId)?.relationship_coverage).toEqual(
+    partialCallees,
+  );
   // The summary envelope locates the function it describes.
   expect(evidence.locations).toEqual([
     { kind: "artifact-path", path: "/fixtures/native.exe" },
@@ -317,7 +314,7 @@ it("rejects a summary request before analysis when the server retains no Evidenc
 it.each([true, false])(
   "delivers an unreadable dossier's partial Evidence through the session writer (retained=%s)",
   async (retain) => {
-    const { client, ledger } = await connect(retain, {
+    const { client, records } = await connect(retain, {
       not: "a dossier",
     } as never);
 
@@ -335,7 +332,7 @@ it.each([true, false])(
       return;
     }
     expect(partial).toMatchObject({ kind: "retained-evidence" });
-    expect(ledger.forAnalysis(partial.evidence_id)).toMatchObject({
+    expect(records.evidenceForAnalysis(partial.evidence_id)).toMatchObject({
       evidence_id: partial.evidence_id,
       operation: "analyze_function",
       normalized_result: { not: "a dossier" },
