@@ -248,6 +248,8 @@ const inspectCall = (
     endpoint !== undefined && !mapLookup
       ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
       : undefined;
+  if (endpoint === undefined && knownRequest && !mapLookup)
+    addUnresolvedEndpoint(script, node, name, accumulator);
   if (networkEndpoint?.kind === "candidate")
     addEndpointCandidate(
       script,
@@ -348,6 +350,33 @@ const addEndpointCandidate = (
       confidence: "low",
       basis: [{ ...basis(script, detector), ...locationFields(node) }],
     }),
+  );
+};
+
+/**
+ * Keep a browser request whose URL argument is present but not a string
+ * literal as an unknown endpoint at its call site, rather than dropping it.
+ */
+const addUnresolvedEndpoint = (
+  script: IncludedScript,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  name: string,
+  accumulator: AnalysisAccumulator,
+): void => {
+  const url = name.endsWith(".open") ? node.arguments[1] : node.arguments[0];
+  if (url === undefined || stringValue(url) !== undefined) return;
+  const site = location(script.script_key, node);
+  const mechanism = `call:${name}`;
+  addUnique(
+    accumulator,
+    compositeKey([
+      "unresolved-endpoint",
+      mechanism,
+      site.script_key,
+      String(site.line),
+      String(site.column),
+    ]),
+    () => accumulator.unresolvedEndpoints.push({ mechanism, location: site }),
   );
 };
 
