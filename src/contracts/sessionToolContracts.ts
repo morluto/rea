@@ -254,7 +254,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "get_evidence_bundle",
     toolEffects(),
-    "Read retained Evidence and tracked questions without rerunning providers. Default complete returns an importable canonical bundle. detail summary lists record metadata; records pages complete records with unchanged IDs and missing direct evidence_links, but is not an importable bundle. detail links inspects retained/missing links without payloads; traversal retained-closure follows retained links and defaults to missing rows. Summary/records/links filters accept Evidence ID, operation, target SHA-256, analysis-profile digest or canonical procedure address. Metadata keeps retention distinct from truncated/unavailable source coverage. Use a discovered evidence_id with a compatible inspect_analysis_view to read selected facts.",
+    "Read retained Evidence and tracked questions without rerunning providers; detail links with linked_evidence_id finds direct referrers, even if the cited ID is missing here. Default complete returns an importable canonical bundle. detail summary lists record metadata; records pages complete records with unchanged IDs and missing direct evidence_links, but is not an importable bundle. links returns no payloads. Source filters and outgoing retained-closure traversal remain unchanged. link_status defaults to all with a linked ID, otherwise missing. Summary/records/links source filters accept Evidence ID, operation, target SHA-256, analysis-profile digest or canonical procedure address. Retention is distinct from source coverage. Use a discovered evidence_id with a compatible inspect_analysis_view to read selected facts.",
     getEvidenceBundleInputSchema,
   ),
   {

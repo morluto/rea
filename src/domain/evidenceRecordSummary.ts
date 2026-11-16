@@ -274,7 +274,7 @@ export const evidenceLinkTraversalSchema = z.enum([
   "direct",
   "retained-closure",
 ]);
-/** Which inspected links a page returns; counts always cover all of them. */
+/** Which target-matching links a page returns; counts precede this filter. */
 export const evidenceLinkStatusFilterSchema = z.enum([
   "missing",
   "retained",
@@ -294,6 +294,7 @@ export const evidenceLinkInspectionSchema = z.strictObject({
   kind: z.literal("evidence-link-inspection"),
   filters: z.record(z.string(), z.string()),
   traversal: evidenceLinkTraversalSchema,
+  linked_evidence_id: prefixedDigestSchema("ev").exactOptional(),
   link_status: evidenceLinkStatusFilterSchema,
   total_retained_records: countSchema,
   matching_records: countSchema,
@@ -306,12 +307,14 @@ export const evidenceLinkInspectionSchema = z.strictObject({
       retained: countSchema,
       missing: countSchema,
     })
-    .describe("Every link read from the examined records, before link_status."),
+    .describe(
+      "Direct links from examined records that match linked_evidence_id when supplied, before link_status and paging.",
+    ),
   retained_closure: z
     .enum(["complete", "incomplete"])
     .nullable()
     .describe(
-      "With retained-closure traversal, incomplete means a link could not be followed, so what lies beyond it remains unknown. Null for direct traversal or an empty selection, which make no closure claim.",
+      "With retained-closure traversal, incomplete means an outgoing link could not be followed, so what lies beyond it remains unknown. This covers every examined link, independently of linked_evidence_id and link_status. Null for direct traversal or an empty selection, which make no closure claim.",
     ),
   offset: countSchema,
   limit: z.int().positive(),
@@ -341,12 +344,15 @@ export const inspectEvidenceLinks = (
     readonly linkStatus?:
       | z.infer<typeof evidenceLinkStatusFilterSchema>
       | undefined;
+    readonly linkedEvidenceId?: string | undefined;
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
   } = {},
 ): EvidenceLinkInspection => {
   const traversal = options.traversal ?? "direct";
-  const linkStatus = options.linkStatus ?? "missing";
+  const linkedEvidenceId = options.linkedEvidenceId;
+  const linkStatus =
+    options.linkStatus ?? (linkedEvidenceId === undefined ? "missing" : "all");
   // optional-fact-default: a request default for paging, not an observed fact.
   const offset = options.offset ?? 0;
   const limit = options.limit ?? EVIDENCE_LINK_INSPECTION_LIMIT;
@@ -370,6 +376,7 @@ export const inspectEvidenceLinks = (
   }
   const rows: EvidenceLinkInspection["rows"] = [];
   const counts = { total: 0, retained: 0, missing: 0 };
+  let hasMissingLink = false;
   let matchingLinks = 0;
   // Bundle order is canonical, so a page stays stable across requests.
   for (const evidence of bundle.records) {
@@ -377,6 +384,8 @@ export const inspectEvidenceLinks = (
     if (!examined.has(id)) continue;
     for (const link of directLinksOf(evidence)) {
       const status = retained.has(link) ? "retained" : "missing";
+      if (status === "missing") hasMissingLink = true;
+      if (linkedEvidenceId !== undefined && link !== linkedEvidenceId) continue;
       counts.total += 1;
       counts[status] += 1;
       if (linkStatus !== "all" && linkStatus !== status) continue;
@@ -390,6 +399,9 @@ export const inspectEvidenceLinks = (
     kind: "evidence-link-inspection",
     filters: selectedFilters(filters),
     traversal,
+    ...(linkedEvidenceId === undefined
+      ? {}
+      : { linked_evidence_id: linkedEvidenceId }),
     link_status: linkStatus,
     total_retained_records: bundle.records.length,
     matching_records: matching,
@@ -399,14 +411,21 @@ export const inspectEvidenceLinks = (
     retained_closure:
       traversal === "direct" || examined.size === 0
         ? null
-        : counts.missing === 0
-          ? "complete"
-          : "incomplete",
+        : hasMissingLink
+          ? "incomplete"
+          : "complete",
     offset,
     limit,
     matching_links: matchingLinks,
     next_offset: end < matchingLinks ? end : null,
     rows,
-    limitations: [...EVIDENCE_LINK_INSPECTION_LIMITATIONS],
+    limitations: [
+      ...EVIDENCE_LINK_INSPECTION_LIMITATIONS,
+      ...(linkedEvidenceId === undefined
+        ? []
+        : [
+            "Referrers are direct citations from the examined retained records only; zero matches does not establish absence elsewhere or validate a conclusion.",
+          ]),
+    ],
   };
 };
