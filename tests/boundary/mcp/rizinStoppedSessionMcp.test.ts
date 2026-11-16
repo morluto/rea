@@ -81,7 +81,7 @@ test.each([
       ).outputSchema.parse(
         (
           await call("start_rizin_debug_session", {
-            path: "fixture.bin",
+            path: "/tmp/fixture.bin",
             inferior_tty: await rizinTestInferiorTty(),
           })
         ).structuredContent,

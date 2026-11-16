@@ -247,8 +247,9 @@ const apktoolCommandFailure = (
     outputLimit: {
       limits: { max_output_bytes: limits.maxOutputBytes },
       recovery: fixedAllowanceOptions(
-        `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+        "The apktool output capture allowance (decode_timeout_ms does not raise it)",
         "capture",
+        { limit: limits.maxOutputBytes, unit: "bytes" },
       ),
     },
     runtimeExhaustion: ({ area }) => ({

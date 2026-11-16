@@ -188,7 +188,10 @@ const decodeTsharkPackets = async (
         "memory",
         "tshark JSON exceeds the bounded decoding budget",
         { max_json_bytes: failure.maxBytes },
-        fixedAllowanceOptions("The tshark JSON decoding allowance", "capture"),
+        fixedAllowanceOptions("The tshark JSON decoding allowance", "capture", {
+          limit: failure.maxBytes,
+          unit: "bytes",
+        }),
       );
     case "json-expansion":
       throw new AnalysisResourceConstraintError(
@@ -196,7 +199,14 @@ const decodeTsharkPackets = async (
         "memory",
         "tshark JSON expansion exceeds the decoding budget",
         { max_decoded_bytes: failure.maxDecodedBytes },
-        fixedAllowanceOptions("The tshark JSON expansion allowance", "capture"),
+        fixedAllowanceOptions(
+          "The tshark JSON expansion allowance",
+          "capture",
+          {
+            limit: failure.maxDecodedBytes,
+            unit: "bytes",
+          },
+        ),
       );
     case "malformed-json":
       throw new AnalysisProtocolError("tshark emitted malformed JSON", {
@@ -297,6 +307,7 @@ export const parseTsharkJsonOutput = async (
         fixedAllowanceOptions(
           "The packet-inventory retained-fact allowance",
           "capture",
+          { limit: MAX_RETAINED_BYTES, unit: "bytes" },
         ),
       );
   };

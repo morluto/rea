@@ -62,7 +62,8 @@ process.stdin.on("data", (chunk) => {
     });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-    const callerPath = "./relative/../rizin-fixture.bin";
+    // An absolute spelling that resolution changes: interior "." is removed.
+    const callerPath = "/tmp/./relative/../rizin-fixture.bin";
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
