@@ -1,4 +1,5 @@
 import { readLeb128, ULEB32, type Leb128Encoding } from "../domain/leb128.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
 /** The ParseFailure format of a wasm32 module image. */
@@ -247,8 +248,8 @@ export function* readWasmModuleImageSteps(
     );
   if (bytes.length < 8 || !bytes.subarray(0, 4).equals(WASM_MAGIC))
     throw malformed("not a WebAssembly module");
-  if (bytes.readUInt32LE(4) !== 1)
-    throw malformed(`WebAssembly version ${bytes.readUInt32LE(4)} is not 1`);
+  const version = new BinaryReader(bytes, true, WASM_MODULE_FORMAT).u32(4);
+  if (version !== 1) throw malformed(`WebAssembly version ${version} is not 1`);
 
   let importedFunctionCount = 0;
   let definedFunctionCount = 0;

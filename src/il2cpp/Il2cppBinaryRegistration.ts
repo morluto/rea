@@ -1,5 +1,6 @@
 import {
   BinaryFormatFailure,
+  BinaryReader,
   mappedFileOffset,
 } from "../domain/binaryContainer.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
@@ -217,6 +218,8 @@ export function* findModules(
   // methodPointers array, each in one pointer-sized slot.
   const width = image.pointerSize;
   const step = BigInt(width);
+  const reader = new BinaryReader(image.bytes, true, image.container.format);
+  const wordBits = width === 8 ? 64 : 32;
   const unresolvedName = unresolvedPointerMatcher(image, names.keys(), (name) =>
     (names.get(name) ?? []).map((index) => counts[index]!),
   );
@@ -226,10 +229,7 @@ export function* findModules(
       if ((at & 0xffff) < width) yield;
       const offset = mapping.offset + at;
       const address = mapping.address + BigInt(at);
-      const raw =
-        width === 8
-          ? image.bytes.readBigUInt64LE(offset)
-          : BigInt(image.bytes.readUInt32LE(offset));
+      const raw = reader.word(offset, wordBits);
       const elfSlot =
         image.elfPointerOverlay === undefined
           ? undefined

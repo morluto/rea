@@ -7,6 +7,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
   mappedFileOffset,
@@ -355,9 +356,10 @@ export function* openImageSteps(image: Buffer): Generator<void, NativeImage> {
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
     const offset = image.fileMappings.offset(address, image.pointerSize);
-    return image.pointerSize === 8
-      ? image.bytes.readBigUInt64LE(offset)
-      : BigInt(image.bytes.readUInt32LE(offset));
+    return new BinaryReader(image.bytes, true, image.container.format).word(
+      offset,
+      image.pointerSize === 8 ? 64 : 32,
+    );
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
