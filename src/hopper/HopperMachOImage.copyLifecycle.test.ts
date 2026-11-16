@@ -10,10 +10,7 @@ import { hopperImageCopyFileSystem } from "../../tests/fixtures/hopperImageCopyF
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
-import {
-  HopperCancelledError,
-  HopperStartError,
-} from "../domain/hopperErrors.js";
+import { HopperCancelledError, HopperStartError } from "./HopperErrors.js";
 import {
   prepareHopperMachOImage,
   resolveHopperMachOImage as resolveHopperMachOImageWithOwner,

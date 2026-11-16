@@ -1,5 +1,6 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { constants } from "node:buffer";
+import { isAbortWithReason } from "../process/SignalAbort.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
@@ -138,14 +139,7 @@ const isOwnedJsonPipelineCancellation = (
   try {
     while (pending.length > 0) {
       const current = pending.pop();
-      if (
-        current === cancellation ||
-        (current instanceof Error &&
-          current.name === "AbortError" &&
-          "code" in current &&
-          current.code === "ABORT_ERR" &&
-          current.cause === cancellation)
-      ) {
+      if (isAbortWithReason(current, cancellation)) {
         owned = true;
         continue;
       }

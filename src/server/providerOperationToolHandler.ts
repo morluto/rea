@@ -4,7 +4,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { Logger } from "pino";
 
-import { sessionEvidenceForExecution } from "../application/binary/SessionEvidenceReuse.js";
+import { completedOperationEvidence } from "../application/binary/SessionEvidenceReuse.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -17,10 +17,8 @@ import type {
 } from "../ports/AnalysisProvider.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import { ok } from "../domain/result.js";
-import { admitCompletedAnalysis } from "../application/investigation/admitCompletedAnalysis.js";
 import type { RecoveryAdmission } from "../application/investigation/InvestigationRetention.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -131,42 +129,21 @@ export const createProviderOperationToolHandler =
             contract.retainedSummary?.evidenceParameters === "omit-detail"
               ? providerParameters
               : parameters;
-          const observation = {
-            ...execution.value,
-            subject:
-              execution.value.subject === undefined
-                ? (options.activeTarget?.() ?? null)
-                : execution.value.subject,
-          };
-          const reusable =
-            dependencies.evidenceById === undefined
-              ? undefined
-              : sessionEvidenceForExecution(
-                  execution.value,
-                  operation,
-                  evidenceParameters,
-                  dependencies.evidenceById,
-                );
-          if (reusable === undefined) {
-            const admitted = admitCompletedAnalysis(
-              operation,
-              evidenceParameters,
-              observation,
-              options.admitRecovery,
-            );
-            if (!admitted.ok)
-              return server.delivery.toCallToolResult(admitted, contract);
-          }
-          const evidence =
-            reusable ??
-            createAnalysisExecutionEvidence(
-              operation,
-              evidenceParameters,
-              observation,
-              "observed",
-            );
+          const evidence = completedOperationEvidence(
+            operation,
+            evidenceParameters,
+            execution.value,
+            {
+              target: options.activeTarget?.() ?? null,
+              admitRecovery: options.admitRecovery,
+              evidenceById: dependencies.evidenceById,
+            },
+          );
+          if (!evidence.ok)
+            return server.delivery.toCallToolResult(evidence, contract);
           const projected =
-            delivery?.projectEvidence(parameters, evidence) ?? ok(evidence);
+            delivery?.projectEvidence(parameters, evidence.value) ??
+            ok(evidence.value);
           if (!projected.ok)
             return server.delivery.toCallToolResult(projected, contract);
           const recorded = dependencies.recordEvidence?.(projected.value);

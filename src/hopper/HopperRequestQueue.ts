@@ -12,13 +12,18 @@ import {
   HopperProtocolError,
   HopperRemoteError,
   HopperTimeoutError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import type { BridgeMaxReplyBytes } from "../config/bridgeMaxReplyBytes.js";
 import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { err, type Result } from "../domain/result.js";
 
-type HopperRequestResult = Result<JsonValue, HopperError>;
+/** A request oversize refusal is reported before the request reaches Hopper. */
+export type HopperRequestFailure =
+  | HopperError
+  | AnalysisResourceConstraintError;
+type HopperRequestResult = Result<JsonValue, HopperRequestFailure>;
 
 interface HopperRequestQueueOptions {
   readonly signal?: AbortSignal;
@@ -200,14 +205,14 @@ export class HopperRequestQueue {
    * Fail the request on the wire with a rejection the bridge could not
    * attribute by id. False when no request is on the wire.
    */
-  failActive(error: HopperError): boolean {
+  failActive(error: HopperRequestFailure): boolean {
     const active = this.#active;
     if (active === undefined || !active.transmitted) return false;
     return this.accept(active.id, err(error));
   }
 
   /** Fail the active wire request and every request still waiting in the FIFO. */
-  failAll(error: HopperError): void {
+  failAll(error: HopperRequestFailure): void {
     const active = this.#active;
     this.#active = undefined;
     if (active !== undefined) {
@@ -409,9 +414,9 @@ export class HopperRequestQueue {
 }
 
 const withRequestContext = (
-  error: HopperError,
+  error: HopperRequestFailure,
   entry: QueuedRequest,
-): HopperError => {
+): HopperRequestFailure => {
   if (error instanceof HopperProcessError)
     return new HopperProcessError(error.exitCode, {
       ...error,

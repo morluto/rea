@@ -9,7 +9,7 @@ import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
 import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { HopperStartError } from "../domain/hopperErrors.js";
+import { HopperStartError } from "../hopper/HopperErrors.js";
 // Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join("/tmp", prefix));
@@ -75,7 +75,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const { acquireLinuxHopperApplicationLease } = await import("./HopperLease.js");
+const { acquireLinuxHopperApplicationLease } =
+  await import("../hopper/HopperLease.js");
 const { acquireOwnedLease } = await import("./OwnedLease.js");
 const { HopperApplicationLauncher } =
   await import("../hopper/BridgeLauncher.js");

@@ -1,4 +1,4 @@
-import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 
 export type HopperPrivateDisplayStrategy =
   | "direct"

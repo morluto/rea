@@ -7,6 +7,7 @@ import { idaRegistrationTimeoutGuidance } from "./IdaConfiguration.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { busyHealthSchema } from "./IdaProtocolValues.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 /** Pause between health reads while a freshly opened worker reports itself busy. */
@@ -105,12 +106,8 @@ export const readSettledHealth = async (
     try {
       await clock.delay(Math.min(BUSY_HEALTH_RETRY_MS, remaining()), signal);
     } catch (cause: unknown) {
-      if (
-        signal?.aborted &&
-        cause instanceof Error &&
-        cause.name === "AbortError"
-      )
-        throw cancelledBy("server_health", signal);
+      // Only this caller's own abort of the pause is a cancellation.
+      if (isAbortOf(cause, signal)) throw cancelledBy("server_health", signal);
       throw cause;
     }
     if (signal?.aborted) throw cancelledBy("server_health", signal);

@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect } from "vitest";
 
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -33,6 +33,10 @@ interface ParityCase {
   readonly arguments: (workspace: TestWorkspace) => readonly string[];
   /** Shell completion protocol requests. */
   readonly complete?: "bash" | "zsh" | "fish" | "nushell";
+  /** Run with stdout on a pseudo-terminal, as a user's terminal would. */
+  readonly terminal?: boolean;
+  /** Environment beyond the workspace's for this case. */
+  readonly environment?: (workspace: TestWorkspace) => NodeJS.ProcessEnv;
 }
 
 const sample = (workspace: TestWorkspace) => workspace.path("sample.bin");
@@ -59,6 +63,48 @@ const completion = (
   complete: shell,
   arguments: fixed("--", "rea", ...words),
 });
+
+/**
+ * Terminal ("human") cases. incur treats a terminal stdout as a person
+ * reading: help instead of an error for a bare command, errors followed by
+ * usage, agent-only results (setup) hidden, and an update notice. Notices are
+ * off except in the notice case, whose fresh cache names a newer version so
+ * no registry check is scheduled.
+ */
+const terminal = (
+  name: string,
+  arguments_: ParityCase["arguments"],
+  environment: ParityCase["environment"] = () => ({ NO_UPDATE_NOTIFIER: "1" }),
+): ParityCase => ({
+  name: `terminal-${name}`,
+  terminal: true,
+  arguments: arguments_,
+  environment,
+});
+const UPDATE_CACHE = "update-cache";
+const NEWER_VERSION = "999.0.0";
+
+const TERMINAL_CASES: readonly ParityCase[] = [
+  terminal("help-root-bare", fixed()),
+  terminal("help-command", fixed("inspect-byte-entropy", "--help")),
+  terminal("output", (w) => entropy(w, ...WINDOW)),
+  terminal("output-explicit-format", (w) =>
+    entropy(w, ...WINDOW, "--format", "json"),
+  ),
+  terminal("output-full-output", (w) => entropy(w, ...WINDOW, "--full-output")),
+  terminal("error-unknown-command", fixed("no-such-command")),
+  terminal("error-unknown-flag", (w) => entropy(w, "--no-such-flag")),
+  terminal("error-refined-number", (w) => entropy(w, "--block-size", "100")),
+  terminal("error-refined-number-json", (w) =>
+    entropy(w, "--block-size", "100", "--json"),
+  ),
+  terminal("setup-dry-run", fixed("setup", "--dry-run")),
+  terminal("update-notice", fixed("no-such-command"), (w) => ({
+    XDG_CACHE_HOME: w.path(UPDATE_CACHE),
+    // A refresh, if one were scheduled, stays on this host.
+    npm_config_registry: "http://127.0.0.1:9/",
+  })),
+];
 
 const CASES: readonly ParityCase[] = [
   // Help and manifests
@@ -364,6 +410,8 @@ const normalize = (text: string, workspace: TestWorkspace): string =>
       .replace(/^\d+\.\d+\.\d+(?:-[\w.]+)?\n$/u, (line) =>
         line === `${PRODUCT_IDENTITY.packageVersion}\n` ? "<version>\n" : line,
       )
+      .split(`from ${PRODUCT_IDENTITY.packageVersion} to`)
+      .join("from <version> to")
       .replace(/(duration"?:\s*"?)\d+ms/gu, "$1<ms>ms")
       .replace(/("command_ms":)\d+/gu, "$1<ms>"),
   );
@@ -380,11 +428,12 @@ const render = (
         ? JSON.stringify(argument)
         : argument,
     );
-  const stdout = testCase.name.startsWith("help-root")
+  const stdout = /^(?:terminal-)?help-root/u.test(testCase.name)
     ? elideRootCommandRows(result.stdout)
     : result.stdout;
   return [
-    `$ ${testCase.complete === undefined ? "" : `COMPLETE=${testCase.complete} `}rea ${command.join(" ")}`.trimEnd(),
+    `$ ${testCase.complete === undefined ? "" : `COMPLETE=${testCase.complete} `}rea ${command.join(" ")}`.trimEnd() +
+      (testCase.terminal === true ? "  # stdout is a terminal" : ""),
     `exit: ${result.exitCode}`,
     "--- stdout",
     `${normalize(stdout, workspace)}<end>`,
@@ -404,6 +453,10 @@ describe("CLI parity goldens", () => {
   beforeAll(async () => {
     workspace = await createTestWorkspace("rea-cli-parity-");
     await workspace.write("sample.bin", SAMPLE);
+    await workspace.write(
+      `${UPDATE_CACHE}/incur/updates/${PRODUCT_IDENTITY.packageName}.json`,
+      `${JSON.stringify({ checkedAt: Date.now(), latest: NEWER_VERSION })}\n`,
+    );
   });
   afterAll(async () => {
     await removeTestWorkspace(workspace.root);
@@ -414,23 +467,27 @@ describe("CLI parity goldens", () => {
     const files = (await readdir(GOLDEN_DIRECTORY)).filter((file) =>
       file.endsWith(".txt"),
     );
-    const expected = CASES.map(({ name }) => `${name}.txt`).sort();
+    const expected = [...CASES, ...TERMINAL_CASES]
+      .map(({ name }) => `${name}.txt`)
+      .sort();
     if (RECORD)
       expect(files.filter((file) => !expected.includes(file))).toEqual([]);
     else expect(files.sort()).toEqual(expected);
   });
 
-  cliTest.for(CASES)("$name", async (testCase, { cli }) => {
+  const check = async (testCase: ParityCase, cli: TestCli): Promise<void> => {
     const result = await cli.run({
       arguments: testCase.arguments(workspace),
       cwd: workspace.root,
       environment: {
         ...workspace.environment,
+        ...testCase.environment?.(workspace),
         ...(testCase.complete === undefined
           ? {}
           : { COMPLETE: testCase.complete }),
       },
       ...(testCase.complete === undefined ? {} : { freshProcess: true }),
+      ...(testCase.terminal === true ? { terminal: true } : {}),
     });
     const actual = render(testCase, workspace, result);
     const golden = new URL(`${testCase.name}.txt`, GOLDEN_DIRECTORY);
@@ -440,5 +497,12 @@ describe("CLI parity goldens", () => {
       return;
     }
     expect(actual).toBe(await readFile(golden, "utf8"));
-  });
+  };
+
+  cliTest.for(CASES)("$name", (testCase, { cli }) => check(testCase, cli));
+  // Windows has no POSIX pseudo-terminal for the terminal driver.
+  cliTest.skipIf(process.platform === "win32").for(TERMINAL_CASES)(
+    "$name",
+    (testCase, { cli }) => check(testCase, cli),
+  );
 });

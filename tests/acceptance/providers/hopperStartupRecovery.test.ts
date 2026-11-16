@@ -14,7 +14,7 @@ import { z } from "zod";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
 import { waitFor } from "../../support/testWait.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
