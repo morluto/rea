@@ -10,26 +10,24 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
+import { adbDouble } from "../../../support/adb/adbProcessDouble.js";
 
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import {
-  execFileBytes,
-  execFileOutput,
-} from "../../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 // Exercise real filesystem publication; the Android process reply is simulated.
-vi.mock(
-  "../../../../src/process/ExecFileOutput.js",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("../../../../src/process/ExecFileOutput.js")
-    >()),
-    execFileBytes: vi.fn(),
-    execFileOutput: vi.fn(),
-  }),
-);
+vi.mock("../../../../src/adb/AdbProcess.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../../src/adb/AdbProcess.js")
+  >()),
+  runAdbProcess: (await import("../../../support/adb/adbProcessDouble.js"))
+    .runAdbProcessDouble,
+}));
+// A running adb server makes `adb start-server` a successful no-op.
+vi.mock("../../../../src/adb/AdbServer.js", () => ({
+  startAdbServer: async () => ({ ok: true, value: undefined }),
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -47,17 +45,15 @@ const fixture = async (duringCollection?: (root: string) => Promise<void>) => {
   const root = await createTestTempDirectory("rea-adb-bugreport-");
   const binary = join(root, "adb");
   let reportedPath = "";
-  vi.mocked(execFileOutput).mockImplementation(async (_binary, args) => {
+  adbDouble.version.mockImplementation(async (args) => {
     expect(args).toEqual(["version"]);
     const stdout = `Android Debug Bridge version 1.0.41\nVersion 34.0.5-stub\nInstalled as ${binary}\n`;
     return {
       stdout,
       stderr: "",
-      stdoutBytes: Buffer.byteLength(stdout),
-      stderrBytes: 0,
     };
   });
-  vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
+  adbDouble.device.mockImplementation(async (args) => {
     expect(args.slice(0, 3)).toEqual(["-s", "device", "bugreport"]);
     const staging = args[3]!;
     reportedPath = join(staging, "bugreport test.zip");
@@ -202,7 +198,7 @@ test("returns staging allocation failures without invoking device collection", a
   const result = await f.provider.execute(f.request);
   if (result.ok) throw new Error("expected output failure");
   expect(result.error._tag).toBe("AnalysisOutputError");
-  expect(execFileBytes).not.toHaveBeenCalled();
+  expect(adbDouble.device).not.toHaveBeenCalled();
   await f.provider.close();
 });
 
@@ -340,7 +336,7 @@ test("refuses an archive reported outside the owned staging directory", async ()
   const f = await fixture();
   const existing = join(f.root, "bugreport test.zip");
   await writeFile(existing, "existing evidence");
-  vi.mocked(execFileBytes).mockResolvedValueOnce({
+  adbDouble.device.mockResolvedValueOnce({
     stdout: Buffer.from(`Bug report copied to ${existing}\n`),
     stderr: Buffer.alloc(0),
   });
@@ -354,7 +350,7 @@ test("refuses an archive reported outside the owned staging directory", async ()
 
 test("preserves the primary protocol failure when staging cleanup also fails", async () => {
   const f = await fixture();
-  vi.mocked(execFileBytes).mockResolvedValueOnce({
+  adbDouble.device.mockResolvedValueOnce({
     stdout: Buffer.from("unsupported completion format\n"),
     stderr: Buffer.alloc(0),
   });

@@ -2,12 +2,9 @@ import { createHash } from "node:crypto";
 import { lstat, open, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
+import { adbDouble } from "../../../support/adb/adbProcessDouble.js";
 
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
-import {
-  execFileBytes,
-  execFileOutput,
-} from "../../../../src/process/ExecFileOutput.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -16,16 +13,17 @@ import { AdbInputSnapshotFailure } from "../../../../src/adb/AdbInputSnapshot.js
 import { AnalysisOutputError } from "../../../../src/domain/analysisErrorCore.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 
-vi.mock(
-  "../../../../src/process/ExecFileOutput.js",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("../../../../src/process/ExecFileOutput.js")
-    >()),
-    execFileBytes: vi.fn(),
-    execFileOutput: vi.fn(),
-  }),
-);
+vi.mock("../../../../src/adb/AdbProcess.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../../../src/adb/AdbProcess.js")
+  >()),
+  runAdbProcess: (await import("../../../support/adb/adbProcessDouble.js"))
+    .runAdbProcessDouble,
+}));
+// A running adb server makes `adb start-server` a successful no-op.
+vi.mock("../../../../src/adb/AdbServer.js", () => ({
+  startAdbServer: async () => ({ ok: true, value: undefined }),
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -50,26 +48,18 @@ const fixture = async () => {
   const output = (stdout: string) => ({
     stdout,
     stderr: "",
-    stdoutBytes: Buffer.byteLength(stdout),
-    stderrBytes: 0,
   });
-  vi.mocked(execFileOutput).mockImplementation(async (_binary, args) => {
+  adbDouble.version.mockImplementation(async (args) => {
     if (args[0] === "version")
       return output(
         `Android Debug Bridge version 1.0.41\nVersion 34.0.5-stub\nInstalled as ${binary}\n`,
       );
     throw new Error(`Unexpected ADB fixture command: ${JSON.stringify(args)}`);
   });
-  vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
+  adbDouble.device.mockImplementation(async (args) => {
     if (args[2] === "shell" && args[3] === "test" && args[5] === devicePath) {
-      if (args[4] === "-d")
-        throw Object.assign(new Error("Selected destination is a file"), {
-          code: 1,
-          stdout: "",
-          stderr: "",
-          signal: null,
-          killed: false,
-        });
+      // The selected destination is a file.
+      if (args[4] === "-d") return { exitCode: 1 };
       if (args[4] === "-e")
         return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
     }
@@ -397,7 +387,7 @@ test.each([
     const localPath = join(outputDirectory, "remote.bin");
     const pulledBytes = Buffer.from("device bytes");
     let closeAttempts = 0;
-    vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
+    adbDouble.device.mockImplementation(async (args) => {
       if (args[2] === "pull") {
         await actualFs.writeFile(args[4]!, pulledBytes);
       }
@@ -488,17 +478,15 @@ test.each([false, true])(
     const reason = new Error("caller cancelled after split digest close");
     let closeAttempts = 0;
     const version = `Android Debug Bridge version 1.0.41\nVersion 34.0.5-stub\nInstalled as ${f.root}/adb\n`;
-    vi.mocked(execFileOutput).mockImplementation(async (_binary, args) => {
+    adbDouble.version.mockImplementation(async (args) => {
       if (args[0] === "version")
         return {
           stdout: version,
           stderr: "",
-          stdoutBytes: Buffer.byteLength(version),
-          stderrBytes: 0,
         };
       return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
     });
-    vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
+    adbDouble.device.mockImplementation(async (args) => {
       if (args.includes("path"))
         return {
           stdout: Buffer.from(
@@ -590,7 +578,7 @@ test("resolves package-directory cleanup on the originating pull error", async (
   const outputDirectory = join(f.root, "package-cleanup-output");
   const packageDirectory = join(outputDirectory, "com.example.app");
   let removeAttempts = 0;
-  vi.mocked(execFileBytes).mockImplementation(async (_binary, args) => {
+  adbDouble.device.mockImplementation(async (args) => {
     if (args.includes("path"))
       return {
         stdout: Buffer.from("package:/data/app/com.example.app/base.apk\n"),
@@ -721,8 +709,8 @@ test("cancels after the input snapshot copy and before contacting the device", a
   expect(primaryAnalysisError(result.error)._tag).toBe(
     "AnalysisCancelledError",
   );
-  expect(execFileOutput).toHaveBeenCalledTimes(1);
-  expect(execFileBytes).not.toHaveBeenCalled();
+  expect(adbDouble.version).toHaveBeenCalledTimes(1);
+  expect(adbDouble.device).not.toHaveBeenCalled();
   expect(await readFile(f.source, "utf8")).toBe("immutable payload");
   await f.provider.close();
 });
@@ -749,7 +737,7 @@ test("reports input snapshot capacity failures before contacting the device", as
   if (result.ok) throw new Error("expected snapshot capacity failure");
   expect(result.error._tag).toBe("AnalysisOutputError");
   expect(result.error.cause).toBe(capacityFailure);
-  expect(execFileOutput).toHaveBeenCalledTimes(1);
-  expect(execFileBytes).not.toHaveBeenCalled();
+  expect(adbDouble.version).toHaveBeenCalledTimes(1);
+  expect(adbDouble.device).not.toHaveBeenCalled();
   await f.provider.close();
 });
