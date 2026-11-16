@@ -80,7 +80,8 @@ const requiredAliases = async (
   machine: number,
 ): Promise<LibraryLookupAlias[]> => {
   const aliases = new Map<string, LibraryLookupAlias>();
-  const visited = new Set<string>();
+  const visitedTargets = new Set<string>();
+  const activeLinks = new Set<string>();
   const visit = async (
     lookup: string,
     directoryLeaf: boolean,
@@ -113,17 +114,25 @@ const requiredAliases = async (
           path: alias,
           ownershipPath: await ownershipSpelling(prefix),
         });
-      if (visited.has(alias)) continue;
-      visited.add(alias);
-      // The selected leaf is already queried with its DSO. Intermediate file
-      // links and directory links each retain their own package identity.
-      await visit(
-        posix.isAbsolute(target)
-          ? target
-          : `${posix.dirname(prefix)}/${target}`,
-        directory,
-        true,
-      );
+      const targetLookup = posix.isAbsolute(target)
+        ? target
+        : `${posix.dirname(prefix)}/${target}`;
+      // Target spelling owns the next ownership context. A physical link may
+      // be reached again through another alias without forming a cycle.
+      const targetKey = compositeKey([
+        targetLookup,
+        directory ? "directory" : "file",
+      ]);
+      if (activeLinks.has(alias) || visitedTargets.has(targetKey)) continue;
+      visitedTargets.add(targetKey);
+      activeLinks.add(alias);
+      try {
+        // Selected leaves retain the existing DSO-owner fallback. Recursively
+        // reached links need independent ownership, including their leaf.
+        await visit(targetLookup, directory, true);
+      } finally {
+        activeLinks.delete(alias);
+      }
     }
   };
   await visit(path, false);

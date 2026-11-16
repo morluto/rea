@@ -685,3 +685,90 @@ describe("libraryPackageNames", () => {
     ).toEqual(["libc6", "libnspr4", "libnss3"]);
   });
 });
+
+describe("absolute dependency lookup reuse", () => {
+  it("resolves each exact successful spelling once across repeated declarations", async () => {
+    const paths = Array.from(
+      { length: 8 },
+      (_, i) => `/native/lib${String(i)}.so`,
+    );
+    const images = Object.fromEntries(paths.map((path) => [path, elf(paths)]));
+    const reads = host(images);
+    const calls: string[] = [];
+    const result = await libraryClosure(
+      app(elf(paths)),
+      [],
+      {
+        ...reads,
+        resolvePath: async (path) => {
+          calls.push(path);
+          return reads.resolvePath(path);
+        },
+      },
+      16,
+    );
+    expect(result.libraries.map((row) => row.path)).toEqual(paths);
+    expect(result.missing).toEqual([]);
+    expect(result.unreadable).toEqual([]);
+    expect(result.truncated).toBe(false);
+    expect(calls).toEqual(["/opt/app/bin/app", ...paths]);
+  });
+
+  it("retries an unresolved spelling instead of caching a transient failure", async () => {
+    const reads = host({
+      "/native/parent.so": elf(["/alias/shared.so"]),
+      "/native/shared.so": elf([]),
+    });
+    let attempts = 0;
+    const result = await libraryClosure(
+      app(elf(["/native/parent.so", "/alias/shared.so"])),
+      [],
+      {
+        ...reads,
+        resolvePath: async (path) => {
+          if (path !== "/alias/shared.so") return reads.resolvePath(path);
+          if (++attempts === 1) return undefined;
+          return {
+            ...(await reads.resolvePath("/native/shared.so")),
+            ownershipPath: path,
+          };
+        },
+      },
+      8,
+    );
+    expect(attempts).toBe(2);
+    expect(result.libraries.map((row) => row.path)).toEqual([
+      "/native/parent.so",
+      "/native/shared.so",
+    ]);
+    expect(result.unreadable).toHaveLength(1);
+    expect(result.unreadable[0]?.path).toBe("/alias/shared.so");
+  });
+  it("observes filesystem changes in the next inventory walk", async () => {
+    const reads = host({
+      "/native/first.so": elf([]),
+      "/native/second.so": elf([]),
+    });
+    let selected = "/native/first.so";
+    const walk = () =>
+      libraryClosure(
+        app(elf(["/alias/current.so"])),
+        [],
+        {
+          ...reads,
+          resolvePath: async (path) =>
+            path === "/alias/current.so"
+              ? { ...(await reads.resolvePath(selected)), ownershipPath: path }
+              : reads.resolvePath(path),
+        },
+        8,
+      );
+    expect((await walk()).libraries.map((row) => row.path)).toEqual([
+      "/native/first.so",
+    ]);
+    selected = "/native/second.so";
+    expect((await walk()).libraries.map((row) => row.path)).toEqual([
+      "/native/second.so",
+    ]);
+  });
+});

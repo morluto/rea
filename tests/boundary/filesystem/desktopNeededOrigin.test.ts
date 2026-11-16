@@ -849,3 +849,72 @@ it.skipIf(process.platform === "win32").each([
     expect(queried).toContain(physical);
   },
 );
+
+it.skipIf(process.platform === "win32").each([
+  { first: "a", ownedFirst: false },
+  { first: "b", ownedFirst: false },
+  { first: "a", ownedFirst: true },
+  { first: "b", ownedFirst: true },
+])(
+  "retains target ownership in each repeated link context: %j",
+  async ({ first, ownedFirst }) => {
+    const root = await createTestTempDirectory("rea-needed-link-context-");
+    const bin = join(root, "bin");
+    const real = join(root, "real");
+    await mkdir(bin);
+    await mkdir(join(real, "sub"), { recursive: true });
+    await Promise.all([
+      symlink("real", join(root, "a")),
+      symlink("real", join(root, "b")),
+      symlink("y", join(real, "x")),
+      symlink("sub", join(real, "y")),
+    ]);
+    const second = first === "a" ? "b" : "a";
+    const lookup = `${root}/${first}/x/../../${second}/x/lib.so`;
+    const payload = join(real, "sub", "lib.so");
+    const executable = join(bin, "app");
+    await writeFile(payload, elfImage({}));
+    await writeFile(executable, elfImage({ needed: [lookup] }));
+    expect(await realpath(lookup)).toBe(payload);
+    const yOwnerPath = join(root, ownedFirst ? first : second, "y");
+    const owners = new Map([
+      [join(root, "a"), "a-route"],
+      [join(root, "b"), "b-route"],
+      [join(root, first, "x"), "x-owner"],
+      [yOwnerPath, "y-owner"],
+      [payload, "payload-owner"],
+    ]);
+    const queried: string[] = [];
+    const report = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        queried.push(...args.slice(1));
+        return {
+          stdout: args
+            .slice(1)
+            .flatMap((path) => {
+              const owner = owners.get(path);
+              return owner === undefined ? [] : [`${owner}: ${path}`];
+            })
+            .join("\n"),
+          exitCode: 0,
+        };
+      },
+      undefined,
+    );
+    expect(report).toEqual({
+      library_packages: [
+        "a-route",
+        "b-route",
+        "payload-owner",
+        "x-owner",
+        "y-owner",
+      ],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+    expect(queried).toContain(yOwnerPath);
+  },
+);

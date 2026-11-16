@@ -201,6 +201,20 @@ export const libraryClosure = async (
   host: LibraryWalkHost,
   limit: number,
 ): Promise<LibraryClosure> => {
+  // Reuse admitted path facts only within this walk and by exact spelling.
+  // Failures stay retryable; distinct spellings beyond the policy capacity
+  // still resolve normally rather than growing a second unbounded inventory.
+  const resolvedLookups = new Map<string, LibraryPath>();
+  const resolveLookup = async (
+    path: string,
+  ): Promise<LibraryPath | undefined> => {
+    const cached = resolvedLookups.get(path);
+    if (cached !== undefined) return cached;
+    const resolved = await host.resolvePath(path);
+    if (resolved !== undefined && resolvedLookups.size < limit)
+      resolvedLookups.set(path, resolved);
+    return resolved;
+  };
   const seen = new Set<string>();
   const closure = {
     requiredAliases: [] as LibraryLookupAlias[],
@@ -240,7 +254,7 @@ export const libraryClosure = async (
         soname.replace(ORIGIN_TOKEN, "").includes("$");
       const directPath =
         !unsupported && expandedRequest.startsWith("/")
-          ? await host.resolvePath(expandedRequest)
+          ? await resolveLookup(expandedRequest)
           : undefined;
       const request = directPath?.path ?? expandedRequest;
       // An unresolved declaration cannot claim a known literal lookup's identity.
