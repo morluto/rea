@@ -16,6 +16,7 @@ import { createServer } from "../../src/server/createServer.js";
 import { wasmArtifactFixture } from "../fixtures/wasm/artifact.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest(
   "compares portable Evidence identically through CLI and retained MCP with schema/provenance",
@@ -94,7 +95,10 @@ cliTest(
     });
     const session = composeBinarySession(new AnalysisProviderRegistry([]));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "wasm-interface-parity", version: "1" });
+    const client = new Client(
+      { name: "wasm-interface-parity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);

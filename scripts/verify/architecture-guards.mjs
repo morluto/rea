@@ -12,6 +12,7 @@ import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { incurZodImportCount } from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
   optionalFactDefaultCount,
@@ -988,6 +989,29 @@ checkCounted(
   }),
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
+);
+
+// The MCP SDK client compiles every listed tool's output schema on its first
+// tool call. With the default Ajv options, REA's catalog costs gigabytes of
+// allocation per client, so test clients take the lazy, reference-preserving
+// validation from tests/fixtures/mcpSchemaValidation (directly, or through
+// tests/support/mcp/mcpFixture). Tests of the SDK default itself stay listed.
+// The counter parses each source, so comments need no stripping here. A
+// client built inside a generated child script is string data, not a call, so
+// it is not read (such scripts run over compiled dist/ modules, which cannot
+// load the TypeScript fixture).
+const mcpClientTestFiles = testFiles.filter((file) =>
+  file.path.startsWith("tests/"),
+);
+checkCounted(
+  "MCP SDK client without shared schema validation in tests (pass createMcpSchemaValidation from tests/fixtures/mcpSchemaValidation or use mcpTest)",
+  "test-mcp-client-default-validation",
+  mcpClientTestFiles,
+  countDefaultValidationClients,
+  [
+    // Checks the SDK default validator itself across catalog refreshes.
+    "tests/boundary/mcp/outputValidatorReuse.test.ts",
+  ],
 );
 
 for (const key of baselineTexts.keys())

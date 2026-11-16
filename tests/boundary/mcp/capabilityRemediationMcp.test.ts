@@ -156,7 +156,10 @@ it("returns an unready IDA registration's repair from an explicit open_binary se
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "selection-remediation", version: "1" });
+  const client = new Client(
+    { name: "selection-remediation", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {

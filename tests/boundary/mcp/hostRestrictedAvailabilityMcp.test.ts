@@ -9,6 +9,7 @@ import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGro
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** Each tool with the host its execution check admits. */
 const HOST_RESTRICTED_TOOLS = [
@@ -63,10 +64,13 @@ const connect = async (
       ...options,
     },
   );
-  const client = new Client({
-    name: "host-restricted-availability",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "host-restricted-availability",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

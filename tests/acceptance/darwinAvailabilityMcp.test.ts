@@ -7,6 +7,7 @@ import { z } from "zod";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest.skipIf(process.platform !== "darwin")(
   "target-free MCP discovery survives an unavailable macOS compiler",
@@ -31,7 +32,10 @@ cliTest.skipIf(process.platform !== "darwin")(
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({ name: "darwin-availability", version: "1" });
+    const client = new Client(
+      { name: "darwin-availability", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const result = await client.callTool({
