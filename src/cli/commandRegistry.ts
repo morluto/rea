@@ -165,3 +165,32 @@ export const distinctOperations = (
   const seen = new Set<string>();
   return operations.filter(({ name }) => !seen.has(name) && seen.add(name));
 };
+
+/**
+ * Contract operations the command itself answers, excluding the session-target
+ * opener and any Evidence-target source operation it runs first.
+ */
+export const commandOwnOperations = (
+  entry: CliCommandEntry,
+): readonly CliCommandOperation[] => {
+  const { source, operations } = entry;
+  if (source.kind === "contract") {
+    const opening = source.description.sessionTarget?.opening;
+    const targetSource = source.description.evidenceTargets?.source;
+    return operations.filter(
+      ({ name }) => name !== opening && name !== targetSource,
+    );
+  }
+  if (source.kind === "routed")
+    return distinctOperations(
+      source.descriptions.map((description) => ({
+        name: description.contract.name,
+        flags: description.inputBinding.flags,
+      })),
+    );
+  if (source.kind === "document") {
+    const opening = source.description.sessionTarget?.opening;
+    return operations.filter(({ name }) => name !== opening);
+  }
+  return operations;
+};
