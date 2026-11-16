@@ -522,3 +522,19 @@ export const buildExpandingPayloadsProductArchive = (
     ],
   });
 };
+
+export const buildSpecialMemberPayloadPackage = (): Buffer =>
+  buildXar({
+    files: [
+      { path: "PackageInfo", bytes: Buffer.from(PACKAGE_INFO) },
+      {
+        path: "Payload",
+        bytes: gzipCpio([
+          { name: ".", mode: 0o040755 },
+          { name: "pipe", mode: 0o010644 },
+          { name: "null", mode: 0o020666 },
+          { name: "plain", mode: 0o100644, data: Buffer.from("plain\n") },
+        ]),
+      },
+    ],
+  });

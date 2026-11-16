@@ -130,6 +130,21 @@ const cpioMetadataMembers = (members: readonly CpioMember[]) =>
     symlink_target: member.symlinkTarget,
   }));
 
+const specialMemberType = (mode: number): string => {
+  switch (mode & 0o170000) {
+    case 0o010000:
+      return "FIFO";
+    case 0o020000:
+      return "character device";
+    case 0o060000:
+      return "block device";
+    case 0o140000:
+      return "socket";
+    default:
+      return "special file";
+  }
+};
+
 const basename = (path: string): string => {
   const slash = path.lastIndexOf("/");
   return slash === -1 ? path : path.slice(slash + 1);
@@ -271,6 +286,11 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "unavailable",
           `Installer package directory has no file contents: ${stored.path}`,
+        );
+      if (stored.kind === "metadata")
+        throw new ArtifactReaderFailure(
+          "unavailable",
+          `Installer package special file has no file contents: ${stored.path}`,
         );
       const refused = this.#refusedContent.get(stored.adapterKey);
       if (refused !== undefined)
@@ -784,16 +804,28 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       if (member.name === "." || member.name === "./") continue;
       const logical = `${entry.path}/${member.name.replace(/^\.\//u, "")}`;
       const adapterKey = `pkg:${role}:${String(index)}:${logical}`;
+      // FIFOs, devices and sockets have no file contents; they stay as
+      // non-materializable declarations instead of becoming empty files.
+      const special = member.kind === "other";
       const kind =
         member.kind === "directory"
           ? "directory"
           : member.kind === "symlink"
             ? "symlink"
-            : "file";
+            : special
+              ? "metadata"
+              : "file";
       const bytesForOpen =
         member.kind === "symlink"
           ? Buffer.from(member.symlinkTarget ?? "")
           : (member.contents ?? Buffer.alloc(0));
+      const limitations: string[] = [];
+      if (role === "scripts" && isInstallScriptName(member.name))
+        limitations.push("Installer script bytes are not executed.");
+      if (special)
+        limitations.push(
+          `cpio ${specialMemberType(member.mode)} member has no file contents and is not materialized.`,
+        );
       this.#entries.set(adapterKey, {
         path: logical,
         sourcePath: member.name,
@@ -801,15 +833,12 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         declaredSize:
           member.kind === "symlink" ? bytesForOpen.length : member.size,
         compressedSize: null,
-        executable: (member.mode & 0o111) !== 0,
+        executable: !special && (member.mode & 0o111) !== 0,
         encrypted: false,
         byteOffset: null,
         declaredIntegrity: null,
         unpacked: true,
-        limitations:
-          role === "scripts" && isInstallScriptName(member.name)
-            ? ["Installer script bytes are not executed."]
-            : [],
+        limitations,
         adapterKey,
         formatMetadata: {
           kind: "macos-pkg-entry",

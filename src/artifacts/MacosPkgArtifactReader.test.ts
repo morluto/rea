@@ -35,6 +35,7 @@ import {
   buildPbzxPayloadPackage,
   buildProductArchive,
   buildSignedProductArchive,
+  buildSpecialMemberPayloadPackage,
   buildTocPastEofPackage,
   truncatedPkgHeader,
 } from "./macosPkg/MacosPkg.fixture.js";
@@ -544,4 +545,37 @@ it("classifies a product archive as pkg and inventories it through the shared sc
         row.logical_path === "Component.pkg/Payload/usr/local/rea/hello.txt",
     ),
   ).toBe(true);
+});
+
+it("keeps FIFO and device payload members as non-materializable declarations", async () => {
+  const { reader, entries } = await entriesOf(
+    buildSpecialMemberPayloadPackage(),
+  );
+  try {
+    const pipe = entries.find((entry) => entry.path === "Payload/pipe");
+    const device = entries.find((entry) => entry.path === "Payload/null");
+    expect(pipe).toMatchObject({
+      kind: "metadata",
+      executable: false,
+      limitations: [expect.stringContaining("FIFO")],
+      formatMetadata: expect.objectContaining({ mode: 0o010644 }),
+    });
+    expect(device).toMatchObject({
+      kind: "metadata",
+      limitations: [expect.stringContaining("character device")],
+    });
+    expect(
+      entries.find((entry) => entry.path === "Payload/plain"),
+    ).toMatchObject({ kind: "file" });
+    expect(reader.formatMetadata()?.payload.members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "pipe", kind: "other" }),
+      ]),
+    );
+    await expect(reader.open(pipe!)).rejects.toMatchObject({
+      reason: "unavailable",
+    });
+  } finally {
+    await reader.close();
+  }
 });
