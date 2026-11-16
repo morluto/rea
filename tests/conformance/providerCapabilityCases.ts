@@ -120,6 +120,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   peImports: { cases: ["tests/acceptance/peImportsCli.test.ts"] },
   peLoadConfig: { cases: ["tests/acceptance/peLoadConfigCli.test.ts"] },
   peResources: { cases: ["tests/acceptance/applications/peResources.test.ts"] },
+  peRichHeader: { cases: ["tests/acceptance/peRichHeaderCli.test.ts"] },
   pythonPyc: { cases: ["tests/acceptance/pythonPycCli.test.ts"] },
   recordedCrash: { cases: ["tests/boundary/mcp/recordedCrashMcp.test.ts"] },
   releaseExposure: { cases: ["tests/acceptance/releaseExposureCli.test.ts"] },
