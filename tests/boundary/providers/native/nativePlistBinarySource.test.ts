@@ -62,18 +62,29 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
     resource: "file-size",
     reportedLimits: { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
     retryable: false,
-    fixedAllowance: { kind: "input" },
+    fixedAllowance: {
+      name: "The native plist input allowance",
+      kind: "input",
+      limit: MAX_NATIVE_PLIST_BYTES,
+      unit: "bytes",
+    },
   });
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({
     code: "resource_constraint",
     retryable: false,
-    remediation: {
-      action: expect.stringContaining(
-        "native plist input allowance (no runtime override)",
-      ),
+    details: {
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "input",
+        limit: MAX_NATIVE_PLIST_BYTES,
+        unit: "bytes",
+      },
     },
   });
+  expect(projected.remediation.action).toContain(
+    `The allowance is ${String(MAX_NATIVE_PLIST_BYTES)} bytes`,
+  );
   expect(runner.tools).toEqual(["file"]);
 });
 
@@ -87,18 +98,25 @@ it.each([
     // the source stays below the separate 64 MiB input ceiling.
     value: { data: Buffer.alloc(22 * 1024 * 1024, 0x78) },
     limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
-    allowance:
-      /64 MiB.*67108864-byte.*binary plist decode.*no runtime override/iu,
+    refusal: {
+      allowance: "The native binary plist decode allowance",
+      limit: 64 * 1024 * 1024,
+      unit: "bytes",
+    },
   },
   {
     budget: "nesting",
     value: nested(MAX_JSON_DEPTH - 1),
     limits: { maximum_nesting_depth: MAX_JSON_DEPTH - 3 },
-    allowance: /997-level.*plist nesting.*no runtime override/iu,
+    refusal: {
+      allowance: "The native plist nesting allowance",
+      limit: MAX_JSON_DEPTH - 3,
+      unit: "levels",
+    },
   },
 ])(
   "names the fixed binary plist $budget allowance instead of host memory",
-  async ({ value, limits, allowance }) => {
+  async ({ value, limits, refusal }) => {
     const { root, path } = await binaryPath();
     await writeFile(path, buildBinary(value));
     const runner = new BinaryNativeRunner({
@@ -119,9 +137,19 @@ it.each([
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      details: { resource: "memory", reported_limits: limits },
+      details: {
+        resource: "memory",
+        reported_limits: limits,
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "parser",
+          ...refusal,
+        },
+      },
     });
-    expect(projected.remediation.action).toMatch(allowance);
+    expect(projected.remediation.action).toContain(
+      `The allowance is ${String(refusal.limit)} ${refusal.unit}; this release has no runtime override.`,
+    );
     expect(runner.tools).toEqual(["file"]);
   },
 );

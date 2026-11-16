@@ -412,14 +412,21 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringMatching(
-              /64 MiB.*67108864.byte.*decode allowance.*no runtime override.*do not raise.*complete input.*unchanged request fails/iu,
+            action: expect.stringContaining(
+              "The allowance is 67108864 bytes; this release has no runtime override.",
             ),
           },
           details: {
             operation: "inspect_plist",
             resource: "memory",
             reported_limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native binary plist decode allowance",
+              allowance_kind: "parser",
+              limit: 64 * 1024 * 1024,
+              unit: "bytes",
+            },
           },
         });
         expect(Buffer.compare(await readFile(path), source)).toBe(0);
@@ -442,13 +449,20 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringMatching(
-              /complete artifact.*64 MiB.*67108864.byte.*input allowance.*no runtime override/iu,
+            action: expect.stringContaining(
+              "The allowance is 67108864 bytes; this release has no runtime override.",
             ),
           },
           details: {
             resource: "file-size",
             reported_limits: { maximum_input_bytes: 64 * 1024 * 1024 },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native plist input allowance",
+              allowance_kind: "input",
+              limit: 64 * 1024 * 1024,
+              unit: "bytes",
+            },
           },
         });
         expect(JSON.stringify(result.json)).not.toMatch(hostMemoryAdvice);
