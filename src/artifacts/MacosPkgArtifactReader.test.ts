@@ -25,6 +25,7 @@ import {
   buildBadCpioPackage,
   buildBadInflatePackage,
   buildComponentPackage,
+  buildDuplicatePathPackage,
   buildExpandingPayloadsProductArchive,
   buildExtractedSizeMismatchGzipPackage,
   buildGzipPackageInfo,
@@ -619,4 +620,26 @@ it("keeps FIFO and device payload members as non-materializable declarations", a
   } finally {
     await reader.close();
   }
+});
+
+it("keeps every TOC record that shares a path as its own occurrence", async () => {
+  const { reader, entries, path } = await entriesOf(
+    buildDuplicatePathPackage(),
+  );
+  try {
+    const duplicates = entries.filter((entry) => entry.path === "dup.txt");
+    expect(duplicates).toHaveLength(2);
+    const contents = await Promise.all(
+      duplicates.map(async (entry) =>
+        (await buffer(await reader.open(entry))).toString("utf8"),
+      ),
+    );
+    expect(contents.sort()).toEqual(["first\n", "second\n"]);
+  } finally {
+    await reader.close();
+  }
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(
+    inventory.occurrences.filter((row) => row.logical_path === "dup.txt"),
+  ).toHaveLength(2);
 });

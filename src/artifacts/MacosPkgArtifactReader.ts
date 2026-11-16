@@ -526,10 +526,8 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       limitations.push(
         "XAR table of contents signature is reported and not verified.",
       );
-    let index = 0;
-    for (const file of toc.value.files) {
+    for (const [index, file] of toc.value.files.entries()) {
       if (index % 256 === 0) await setImmediate();
-      index += 1;
       this.#assertOpen(signal);
       const rangeError = heapRangeRefusal(file, heapLength);
       if (rangeError !== undefined) {
@@ -543,7 +541,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       }
       if (file.type === "directory") continue;
       if (file.data === null) continue;
-      this.#addXarFile(file, header.heapOffset);
+      this.#addXarFile(file, index, header.heapOffset);
     }
     const skipped = await this.#decodeInstallerDocuments(
       handle,
@@ -561,11 +559,13 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     };
   }
 
-  #addXarFile(file: XarTocFile, heapStart: number): void {
+  #addXarFile(file: XarTocFile, tocIndex: number, heapStart: number): void {
     const data = file.data;
     if (data === null) return;
     const role = "xar-file" as const;
-    const adapterKey = `pkg:xar:${file.path}`;
+    // Key by TOC occurrence: a later record at the same path is a distinct
+    // occurrence, not a replacement of the earlier one.
+    const adapterKey = `pkg:xar:${String(tocIndex)}:${file.path}`;
     const executable = file.mode !== null && /[1357]$/u.test(file.mode);
     this.#entries.set(adapterKey, {
       path: file.path,
@@ -804,7 +804,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     for (const [index, member] of members.entries()) {
       if (member.name === "." || member.name === "./") continue;
       const logical = `${entry.path}/${member.name.replace(/^\.\//u, "")}`;
-      const adapterKey = `pkg:${role}:${String(index)}:${logical}`;
+      const adapterKey = `${entry.adapterKey}:${role}:${String(index)}:${logical}`;
       // FIFOs, devices and sockets have no file contents; they stay as
       // non-materializable declarations instead of becoming empty files.
       const special = member.kind === "other";

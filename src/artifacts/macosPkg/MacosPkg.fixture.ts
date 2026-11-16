@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { deflateSync, gzipSync } from "node:zlib";
+import { deflateSync, gzipSync, inflateSync } from "node:zlib";
 
 import {
   MACOS_PKG_MAX_METADATA_XML_BYTES,
@@ -573,3 +573,35 @@ export const buildSpecialMemberPayloadPackage = (): Buffer =>
       },
     ],
   });
+
+/**
+ * Two TOC records share the path `dup.txt`. The XAR builder collapses equal
+ * paths, so the second record's name is rewritten in the TOC afterwards.
+ */
+export const buildDuplicatePathPackage = (): Buffer => {
+  const full = buildXar({
+    files: [
+      { path: "PackageInfo", bytes: Buffer.from(PACKAGE_INFO) },
+      { path: "dup.txt", bytes: Buffer.from("first\n") },
+      { path: "dup.txu", bytes: Buffer.from("second\n") },
+    ],
+  });
+  const parsed = parseXarHeader(full);
+  if (!parsed.ok) throw parsed.error;
+  const { headerSize, tocCompressedLength } = parsed.value;
+  const toc = inflateSync(
+    full.subarray(headerSize, headerSize + tocCompressedLength),
+  )
+    .toString("utf8")
+    .replace("<name>dup.txu</name>", "<name>dup.txt</name>");
+  const uncompressedToc = Buffer.from(toc, "utf8");
+  const compressedToc = deflateSync(uncompressedToc);
+  const checksum = createHash("sha1").update(compressedToc).digest();
+  const header = Buffer.from(full.subarray(0, headerSize));
+  header.writeBigUInt64BE(BigInt(compressedToc.length), 8);
+  header.writeBigUInt64BE(BigInt(uncompressedToc.length), 16);
+  const heapRest = full.subarray(
+    headerSize + tocCompressedLength + checksum.length,
+  );
+  return Buffer.concat([header, compressedToc, checksum, heapRest]);
+};
