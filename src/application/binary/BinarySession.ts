@@ -223,6 +223,11 @@ export class BinarySession
     this.#bundleResourceFactory = bundleResourceFactory;
   }
 
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession(): BinarySession {
+    return new BinarySession(this.#providerRouter.auxiliaryOnly());
+  }
+
   /** Open an app resource root without requiring CFBundleExecutable. */
   openBundleResources(
     path: string,
