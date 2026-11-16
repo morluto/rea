@@ -169,9 +169,24 @@ describe("decompile_all MCP caveats", () => {
     expect(evidence.normalized_result).toMatchObject({
       counts: { written: 20, failed: 0 },
     });
-    // 40 address-specific caveats plus one oversized caveat: 8 kept and 33 counted, beside the workflow
-    // line and this target-less fixture's identity caveat.
-    expect(evidence.limitations).toHaveLength(11);
+    // The target-less workflow records identity structurally. The caveat budget
+    // retains eight address-specific observations and counts the other 33.
+    expect(evidence.subject.identity).toEqual({
+      kind: "unknown",
+      reason: "derived-from-linked-evidence",
+    });
+    const perItem = evidence.limitations.filter((limitation) =>
+      addresses.some((address) => limitation.includes(address)),
+    );
+    expect(perItem).toHaveLength(8);
+    for (const address of addresses.slice(0, 4)) {
+      expect(perItem).toContainEqual(
+        expect.stringContaining(`procedure_info caveat at ${address}`),
+      );
+      expect(perItem).toContainEqual(
+        expect.stringContaining(`terminal call at ${address}`),
+      );
+    }
     expect(evidence.limitations.at(-1)).toMatch(
       /^33 per-item provider limitation observations were omitted/u,
     );

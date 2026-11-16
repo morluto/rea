@@ -519,14 +519,18 @@ itWithCaptureCapability(
     expect(messages.some((message) => message.startsWith("running:"))).toBe(
       true,
     );
-    expect(messages.at(-1)).toContain("cleanup:");
-    expect(messages.at(-1)).toContain("owned_process_group=cleaned");
-    expect(messages.at(-1)).toContain("disposition=exited");
-    const nonTerminal = progress.slice(0, -1);
+    const cleanupIndex = messages.findIndex((message) =>
+      message.startsWith("cleanup:"),
+    );
+    expect(cleanupIndex).toBeGreaterThanOrEqual(0);
+    const cleanup = messages[cleanupIndex]!;
+    expect(cleanup).toContain("owned_process_group=cleaned");
+    expect(cleanup).toContain("disposition=exited");
+    // The shared MCP operation adds its own completion notification after the
+    // provider cleanup. Rate-bound only provider observations preceding cleanup.
     assertRateBound(
-      nonTerminal.length,
-      parseProgressMessage((messages.at(-1) ?? "").slice("cleanup: ".length))
-        .elapsed_ms,
+      progress.slice(0, cleanupIndex).length,
+      parseProgressMessage(cleanup.slice("cleanup: ".length)).elapsed_ms,
     );
     const tokenEvidence = toolContract(
       "capture_process_scenario",
@@ -578,10 +582,11 @@ itWithCaptureCapability(
     expect(timeoutProgress.every(({ total }) => total === undefined)).toBe(
       true,
     );
-    expect(timeoutProgress.at(-1)?.message).toContain("disposition=timeout");
-    expect(timeoutProgress.at(-1)?.message).toContain(
-      "owned_process_group=cleaned",
-    );
+    const timeoutCleanup = timeoutProgress.find(({ message }) =>
+      message?.startsWith("cleanup:"),
+    )?.message;
+    expect(timeoutCleanup).toContain("disposition=timeout");
+    expect(timeoutCleanup).toContain("owned_process_group=cleaned");
 
     const cancelling = await connectProgressClient(true);
     // Prepare the SDK's full output-schema cache before timing capture control.
