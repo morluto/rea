@@ -41,6 +41,7 @@ import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryReader,
+  createFileMappingIndex,
   mappedFileOffset,
 } from "../../domain/binaryContainer.js";
 import type { FileMapping } from "../../domain/virtualFileMapping.js";
@@ -519,21 +520,30 @@ const sysvSymbolCountAt = (
 /**
  * Reads hash-table words at virtual addresses, each mapped through PT_LOAD on
  * its own, so a table that spans adjacent consistently mapped segments stays
- * readable to its last word.
+ * readable to its last word. One mapping index serves every word, so a
+ * file-controlled bucket count cannot multiply a scan of every PT_LOAD.
  */
-const mappedHashWords =
-  (
-    reader: BinaryReader,
-    mappings: readonly FileMapping[],
-    address: bigint,
-  ): ElfHashWordReader =>
-  (offset) => {
+const mappedHashWords = (
+  reader: BinaryReader,
+  mappings: readonly FileMapping[],
+  address: bigint,
+): ElfHashWordReader => {
+  const index = createFileMappingIndex(mappings);
+  return (offset) => {
     if (offset < 0) return err("precedes its table");
-    const at = mapAddress(mappings, address + BigInt(offset), 4);
-    return at !== null && at + 4 <= reader.bytes.length
+    let at: number;
+    try {
+      at = index.offset(address + BigInt(offset), 4);
+    } catch (cause) {
+      if (cause instanceof BinaryMappingFailure)
+        return err("is not mapped by PT_LOAD");
+      throw cause;
+    }
+    return at + 4 <= reader.bytes.length
       ? ok(reader.u32(at))
       : err("is not mapped by PT_LOAD");
   };
+};
 
 const sysvSymbolCount = (
   reader: BinaryReader,
