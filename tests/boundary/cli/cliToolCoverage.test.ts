@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
@@ -14,7 +15,7 @@ import { CLI_COMMAND_TOOL_ALIASES } from "./cliContractAliases.js";
 
 describe("CLI canonical tool coverage", () => {
   it("registers every derived command and every alias of an MCP tool", () => {
-    const registered = createCliInventory(createCli());
+    const registered = createCliInventory(cliCommands(createCli()));
     expect(registered.primary).toEqual([...CLI_COMMAND_NAMES].sort());
     const names = new Set<string>(TOOL_CONTRACTS.map(({ name }) => name));
     for (const [command, tools] of Object.entries(CLI_COMMAND_TOOL_ALIASES)) {

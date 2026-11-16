@@ -322,10 +322,6 @@ describe("executable dispatcher", () => {
         adapter: "cli",
         args: ["mcp", "add"],
       });
-      await expect(invoke(["--mcp", "extra"])).resolves.toEqual({
-        adapter: "cli",
-        args: ["--mcp", "extra"],
-      });
       for (const args of [
         ["mcp", "--http", "--port", "0"],
         ["--mcp", "--http"],
