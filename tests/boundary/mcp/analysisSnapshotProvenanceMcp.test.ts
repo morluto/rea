@@ -7,7 +7,7 @@ import { expect, onTestFinished } from "vitest";
 import { readAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { MANAGED_STATIC_PROVIDER } from "../../../src/domain/investigationProviders.js";
 import { ok } from "../../../src/domain/result.js";
@@ -22,6 +22,17 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+
+/**
+ * Recording stamps the session's provider selection onto retained Evidence, so
+ * a fixture that built its own record carries no selection. Drop the stamp so
+ * every semantic member still has to match the expected record exactly.
+ */
+const withoutSelection = (evidence: Evidence | undefined) => {
+  if (evidence === undefined) throw new Error("Missing retained Evidence");
+  const { provider_selection: _selection, ...semantic } = evidence;
+  return semantic;
+};
 
 const createSnapshotReplayFixture = async (missingSource: boolean) => {
   const directory = await createTestTempDirectory("rea-snapshot-source-mcp-");
@@ -167,15 +178,9 @@ for (const missingSource of [false, true])
         expect(parseMcpToolError(response)).toMatchObject({
           error: { code: "target_unavailable" },
         });
-        expect({
-          ...session.evidenceById(parent.evidence_id),
-          provider_selection: parent.provider_selection,
-        }).toEqual(parent);
+        expect(withoutSelection(session.evidenceById(parent.evidence_id))).toEqual(withoutSelection(parent));
         expect(session.evidenceById(source.evidence_id)).toBeUndefined();
-        expect({
-          ...session.evidenceById(ancestor.evidence_id),
-          provider_selection: ancestor.provider_selection,
-        }).toEqual(ancestor);
+        expect(withoutSelection(session.evidenceById(ancestor.evidence_id))).toEqual(withoutSelection(ancestor));
         expect((await readFile(snapshotPath)).equals(historicalBytes)).toBe(
           true,
         );
@@ -189,22 +194,10 @@ for (const missingSource of [false, true])
         parent.evidence_id,
       ]);
       expect(replayed.evidence_links).not.toContain(ancestor.evidence_id);
-      expect({
-        ...session.evidenceById(replayed.evidence_id),
-        provider_selection: replayed.provider_selection,
-      }).toEqual(replayed);
-      expect({
-        ...session.evidenceById(parent.evidence_id),
-        provider_selection: parent.provider_selection,
-      }).toEqual(parent);
-      expect({
-        ...session.evidenceById(source.evidence_id),
-        provider_selection: source.provider_selection,
-      }).toEqual(source);
-      expect({
-        ...session.evidenceById(ancestor.evidence_id),
-        provider_selection: ancestor.provider_selection,
-      }).toEqual(ancestor);
+      expect(withoutSelection(session.evidenceById(replayed.evidence_id))).toEqual(withoutSelection(replayed));
+      expect(withoutSelection(session.evidenceById(parent.evidence_id))).toEqual(withoutSelection(parent));
+      expect(withoutSelection(session.evidenceById(source.evidence_id))).toEqual(withoutSelection(source));
+      expect(withoutSelection(session.evidenceById(ancestor.evidence_id))).toEqual(withoutSelection(ancestor));
       expect(session.evidenceById(source.evidence_id)?.evidence_links).toEqual([
         ancestor.evidence_id,
       ]);
@@ -243,10 +236,9 @@ for (const missingSource of [false, true])
       expect(refreshed.value.sourceEvidence?.[0]).toBe(
         session.evidenceForAnalysis(source.evidence_id),
       );
-      expect({
-        ...refreshed.value.sourceEvidence?.[0],
-        provider_selection: relocated.provider_selection,
-      }).toEqual(relocated);
+      expect(withoutSelection(refreshed.value.sourceEvidence?.[0])).toEqual(
+        withoutSelection(relocated),
+      );
       expect(refreshed.value.sourceEvidence?.[0]?.evidence_links).toEqual([
         ancestor.evidence_id,
       ]);
@@ -271,10 +263,9 @@ for (const missingSource of [false, true])
       expect(refreshedParent.value.sourceEvidence?.[1]).toBe(
         session.evidenceForAnalysis(parent.evidence_id),
       );
-      expect({
-        ...refreshedParent.value.sourceEvidence?.[1],
-        provider_selection: relocatedParent.provider_selection,
-      }).toEqual(relocatedParent);
+      expect(withoutSelection(refreshedParent.value.sourceEvidence?.[1])).toEqual(
+        withoutSelection(relocatedParent),
+      );
       const refreshedResponse = await client.callTool({
         name: "inspect_managed_artifact",
         arguments: {},
@@ -286,10 +277,7 @@ for (const missingSource of [false, true])
       expect(
         parseEvidence(refreshedResponse.structuredContent).evidence_links,
       ).toEqual([source.evidence_id, parent.evidence_id]);
-      expect({
-        ...session.evidenceById(source.evidence_id),
-        provider_selection: relocated.provider_selection,
-      }).toEqual(relocated);
+      expect(withoutSelection(session.evidenceById(source.evidence_id))).toEqual(withoutSelection(relocated));
       expect((await readFile(snapshotPath)).equals(historicalBytes)).toBe(true);
     },
   );
