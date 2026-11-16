@@ -10,7 +10,11 @@ afterEach(async () => {
 });
 
 const connect = async (
-  options: { replyBytes?: number; bulk?: boolean } = {},
+  options: {
+    replyBytes?: number;
+    bulk?: boolean;
+    described?: Readonly<Record<string, string>>;
+  } = {},
 ) => {
   const bulkNames = options.bulk
     ? Array.from(
@@ -45,11 +49,13 @@ const connect = async (
     "beta_sqlite",
     "excluded_sqlite",
     ...bulkNames,
+    ...Object.keys(options.described ?? {}),
   ]) {
     const registration = server.registerTool(
       name,
       {
-        description: `${name} SQLite database inspection`,
+        description:
+          options.described?.[name] ?? `${name} SQLite database inspection`,
         inputSchema: name.startsWith("bulk_")
           ? z.strictObject({
               payload: z.string().describe("schema guidance ".repeat(64)),
@@ -242,4 +248,48 @@ it("distinguishes exhausted pages from unmatched queries without loading tools",
     next_offset: null,
     next_step: expect.stringContaining("Call the returned tool"),
   });
+});
+
+const appleBundleTools = {
+  inspect_plist: "Read Info.plist keys from an app bundle",
+  inspect_signature: "Read code signature entitlements from an app bundle",
+  inspect_macho:
+    "Parse Mach-O load commands and architectures from an app bundle",
+  plist_entitlement_report: "Report plist values and entitlements together",
+  list_strings: "List printable strings from a binary",
+};
+const discoveredNames = (reply: { structuredContent?: unknown }) =>
+  z
+    .object({ tools: z.array(z.object({ name: z.string() })) })
+    .parse(reply.structuredContent)
+    .tools.map(({ name }) => name);
+
+it("finds each attribute's tool when no tool matches every query word", async () => {
+  const f = await connect({ described: appleBundleTools });
+  const reply = await f.discover({
+    query: "plist entitlements architectures",
+    limit: 20,
+  });
+  expect(reply.structuredContent).toMatchObject({ total_matches: 4 });
+  // The two-word match leads; the rarest single word outranks common ones;
+  // a word found in the name breaks the remaining tie.
+  expect(discoveredNames(reply)).toEqual([
+    "plist_entitlement_report",
+    "inspect_macho",
+    "inspect_plist",
+    "inspect_signature",
+  ]);
+});
+
+it("keeps tools matching every word first and discounts words most tools contain", async () => {
+  const f = await connect({ described: appleBundleTools });
+  const reply = await f.discover({ query: "PLIST from plist", limit: 20 });
+  expect(reply.structuredContent).toMatchObject({ total_matches: 5 });
+  expect(discoveredNames(reply)).toEqual([
+    "inspect_plist",
+    "plist_entitlement_report",
+    "inspect_macho",
+    "inspect_signature",
+    "list_strings",
+  ]);
 });
