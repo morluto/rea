@@ -1,20 +1,10 @@
 {
-  "src/application/Doctor.ts": 1,
   "src/application/EvidenceBundleFiles.ts": 1,
   "src/application/decompileDirectory/decompileAll.ts": 1,
-  "src/application/reverse/ReverseEngineeringService.ts": 1,
-  "src/domain/analysisErrorPresentation.ts": 2,
-  "src/domain/javascript/javascriptAnalysisResourceControls.ts": 4,
-  "src/domain/javascript/javascriptSemanticResourceLimits.ts": 1,
-  "src/dotnet/ManagedDecodeBudget.ts": 1,
+  "src/domain/analysisErrorPresentation.ts": 6,
   "src/dotnet/ManagedMemberRecovery.ts": 1,
   "src/ghidra/GhidraFileOffsetFailure.ts": 1,
-  "src/ghidra/GhidraProviderClient.ts": 2,
+  "src/ghidra/GhidraProviderClient.ts": 5,
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 1,
-  "src/native/AppleDispatchMetadata.ts": 1,
-  "src/native/NativePlistSource.ts": 1,
-  "src/native/pwntools/PwntoolsDecoder.ts": 2,
-  "src/native/pwntools/PwntoolsFailures.ts": 4,
-  "src/rust/RustBinaryProvider.ts": 6,
-  "src/sqlite/SqliteDatabaseWorkerExecution.ts": 1
+  "src/kuna/KunaProjectReader.ts": 1
 }

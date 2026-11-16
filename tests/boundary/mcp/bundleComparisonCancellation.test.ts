@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,18 +16,19 @@ import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("leaves the session unchanged after bundle comparison cancellation and permits a retry", async () => {
   const root = await createTestTempDirectory("rea-mcp-compare-cancel-");
   const leftPath = join(root, "left.json");
   const rightPath = join(root, "right.json");
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const left = createEvidence(undefined, provider, {
+  const left = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "observation",
     parameters: { side: "left" },
     result: { side: "left" },
   });
-  const right = createEvidence(undefined, provider, {
+  const right = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "observation",
     parameters: { side: "right" },
     result: { side: "right" },
@@ -46,7 +48,7 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   const session = createTestBinarySession(() => {
     throw new Error("Bundle comparison must not start a binary provider");
   });
-  const existing = createEvidence(undefined, provider, {
+  const existing = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "existing_observation",
     parameters: {},
     result: { retained: true },
@@ -55,10 +57,13 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   if (!recorded.ok) throw recorded.error;
   const before = session.exportEvidenceBundle();
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "bundle-comparison-cancellation",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "bundle-comparison-cancellation",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const controller = new AbortController();
   let releaseRead: (() => void) | undefined;
   onTestFinished(async () => {

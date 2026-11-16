@@ -98,6 +98,7 @@ export const lineGuards = (
     ({ index }) => Math.abs(index - at) <= NEIGHBOURHOOD,
   );
   const lines = (siblings.length > 0 ? siblings : near)
+    // generation-cap: suggested line guards
     .slice(0, MAX_GUARD_LINES)
     .toSorted((left, right) => left.index - right.index)
     .map(({ line }) => line);

@@ -1,5 +1,4 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
@@ -10,8 +9,8 @@ import {
   type ArtifactResourceScope,
   bindArtifactFileCleanup,
 } from "../resources/index.js";
-import { publishWebScripts } from "../browser/assets/PublishWebScripts.js";
-import { selectScriptCapture } from "../browser/assets/ScriptCaptureAdapters.js";
+import { publishWebScripts } from "./PublishWebScripts.js";
+import { selectScriptCapture } from "../domain/webScriptCaptureAdapters.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -49,6 +48,8 @@ import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -99,7 +100,7 @@ export const exportWebScriptsValidated = async (
     const { bytes, loaded } = prepared.value;
     if (options.signal?.aborted)
       return err(cancelledBy(OPERATION, options.signal));
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const result = await publishWebScripts(input, loaded, sha256, {
       resources,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -364,7 +365,7 @@ const captureReadFailure = (
     diagnostics: {
       capture_path: path,
       error_name: cause instanceof Error ? cause.name : "UnknownError",
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 };
@@ -388,9 +389,6 @@ const incompleteCaptureCleanup = (
     new AnalysisCleanupLeaseGroup(error, [cleanup.lease]);
   return error;
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const parseCapture = (
   bytes: Buffer,

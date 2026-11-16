@@ -121,6 +121,7 @@ import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferen
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "audit_release_exposure";
 type PackageFormat = Extract<
@@ -3609,10 +3610,10 @@ const pushLimitation = (state: ScanState, message: string): void => {
 
 const fileSizeRecovery = (maxFileBytes: number) =>
   maxFileBytes >= MAX_RELEASE_EXPOSURE_FILE_BYTES
-    ? fixedAllowanceOptions(
-        `The release exposure input allowance of ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes (this release has no runtime override)`,
-        "input",
-      )
+    ? fixedAllowanceOptions("The release exposure input allowance", "input", {
+        limit: MAX_RELEASE_EXPOSURE_FILE_BYTES,
+        unit: "bytes",
+      })
     : {
         retryable: false as const,
         remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
@@ -3722,7 +3723,7 @@ const releaseExposureFailurePrimary = (
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

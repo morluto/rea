@@ -16,7 +16,10 @@ import type {
   AnalyzeWebBundleInput,
   WebBundleAnalysis,
 } from "../domain/webBundleAnalysis.js";
-import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import {
+  analyzeWebBundleInputSchema,
+  webBundleScriptTimeoutRecovery,
+} from "../domain/webBundleAnalysis.js";
 import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
 import { unavailableWebScriptRecovery } from "../domain/webBundleScriptAnalysis.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -56,7 +59,12 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
       calls.push(script.script_key);
       if (calls.length === 2)
         return err({
-          error: new AnalysisTimeoutError("analyze_web_bundle", 5),
+          // The worker's per-script deadline, inside a total that has time left.
+          error: new AnalysisTimeoutError(
+            "analyze_web_bundle",
+            5,
+            webBundleScriptTimeoutRecovery(5),
+          ),
           completed: null,
         });
       return ok(analyzeCapturedWebScript(script));
@@ -83,11 +91,28 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
     parsed_scripts: 2,
     parse_failures: 0,
   });
-  expect(result.value.unknowns).toContainEqual({
+  // The partial result records the per-call control by contract field; it
+  // names no adapter spelling.
+  const timedOut = result.value.unknowns.find(
+    ({ dimension }) => dimension === "javascript_analysis",
+  );
+  expect(timedOut).toEqual({
     dimension: "javascript_analysis",
     reason: expect.stringContaining("deadline"),
     affected_script_keys: [captured.scripts.items[1]?.script_key],
+    limit: {
+      control_kind: "parameter",
+      parameter: "analysis_timeout_ms",
+      effective_value: 5,
+      unit: "ms",
+      minimum: expect.any(Number),
+      maximum: expect.any(Number),
+      default_value: expect.any(Number),
+      applies_at: "next_call",
+    },
+    remediation: expect.stringContaining("analysis_timeout_ms"),
   });
+  expect(JSON.stringify(timedOut)).not.toContain("--");
 });
 
 it("keeps the selected allowance and its recovery for a refused script", async () => {

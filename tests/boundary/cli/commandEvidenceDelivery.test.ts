@@ -1,5 +1,7 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import pino from "pino";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -49,7 +51,7 @@ const fixture = async (kind: (typeof kinds)[number]) => {
     output_truncated: false,
   };
   const parent = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gdb", name: "GDB", version: null },
     {
       operation: "gdb_console",
@@ -172,8 +174,8 @@ it.each(kinds)(
       expect(f.closeService).toHaveBeenCalledOnce();
     }
     if (kind !== "objdump") {
-      expect(parent.subject).toBeNull();
-      expect(selected.subject).toBeNull();
+      expect(parent.subject.identity.kind).toBe("unknown");
+      expect(selected.subject.identity.kind).toBe("unknown");
       expect(selected.normalized_result).toMatchObject({ artifact: null });
     }
   },

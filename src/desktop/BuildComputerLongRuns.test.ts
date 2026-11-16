@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { BuildComputerLongRuns } from "./BuildComputerLongRuns.js";
-import type { ControlledComputer } from "./BuildComputerController.js";
+import type { ControlledComputer } from "../ports/BuildComputerControl.js";
 
 const response = (value: unknown) => ({
   exit_code: 0,

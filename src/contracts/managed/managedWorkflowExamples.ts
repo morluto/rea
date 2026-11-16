@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createEvidence } from "../../domain/evidence.js";
 import type {
   ManagedMemberInspection,
@@ -64,13 +65,17 @@ const emptyManagedMembers = (
 });
 
 const evidence = (result: ManagedMemberInspection) =>
-  createEvidence(undefined, MANAGED_STATIC_EXAMPLE_PROVIDER, {
-    operation: "inspect_managed_members",
-    parameters: {},
-    result,
-    rawResult: null,
-    limitations: result.limitations,
-  });
+  createEvidence(
+    unknownTarget("not-observed"),
+    MANAGED_STATIC_EXAMPLE_PROVIDER,
+    {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result,
+      rawResult: null,
+      limitations: result.limitations,
+    },
+  );
 
 const runtimeMembers = (): ManagedMemberInspection => {
   const result = emptyManagedMembers(
@@ -222,13 +227,17 @@ const boundaryEvidence = () => {
     coverage: { state: "complete", issues: [] },
     limitations: [],
   };
-  return createEvidence(undefined, MANAGED_STATIC_EXAMPLE_PROVIDER, {
-    operation: "inspect_managed_native_boundaries",
-    parameters: {},
-    result,
-    rawResult: null,
-    limitations: result.limitations,
-  });
+  return createEvidence(
+    unknownTarget("not-observed"),
+    MANAGED_STATIC_EXAMPLE_PROVIDER,
+    {
+      operation: "inspect_managed_native_boundaries",
+      parameters: {},
+      result,
+      rawResult: null,
+      limitations: result.limitations,
+    },
+  );
 };
 
 const nativeExportEvidence = () => {

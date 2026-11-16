@@ -1,4 +1,8 @@
 import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../../process/RuntimeExhaustion.js";
+import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   javaScriptMemberMutationAllowanceField,
   javaScriptMemberMutationRefusal,
@@ -24,7 +28,7 @@ import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
@@ -99,6 +103,8 @@ import {
   javaScriptWorkerAdmissionSchema,
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
@@ -129,6 +135,8 @@ type WorkerPrimaryFailure =
       readonly code: number | null;
       readonly signal: NodeJS.Signals | null;
       readonly heapExhaustion: boolean;
+      /** The runtime's own report, kept once the supervisor observed it. */
+      readonly exhaustion?: RuntimeExhaustion;
     };
 
 /** One sequential owned worker, retained between source files and closed after analysis. */
@@ -199,7 +207,7 @@ export class JavaScriptAnalysisWorker {
           "JavaScript worker control frame is unterminated or oversized",
         );
     } catch (cause: unknown) {
-      this.#latchOutputFailure(message(cause));
+      this.#latchOutputFailure(errorMessage(cause));
     }
   };
 
@@ -226,6 +234,9 @@ export class JavaScriptAnalysisWorker {
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
+        // V8's heap report is observed as output streams, so a retention
+        // budget or a stack trace that overflowed it cannot hide it.
+        runtime: "v8",
         onDiagnostic: (event) => this.#observeProcessDiagnostic(event),
       },
       onInputFailure: (cause) => this.#latchInputFailure(cause),
@@ -391,7 +402,7 @@ export class JavaScriptAnalysisWorker {
           this.limits.memberMutationAllowance ??
             DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
         ),
-        text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
+        text_sha256: sha256Hex(file.text.value),
         file: metadata,
         package_type: packageType,
         purpose,
@@ -636,7 +647,7 @@ export class JavaScriptAnalysisWorker {
               }),
             )
           : previous;
-        const error = this.#cleanupError(message(cause), primary);
+        const error = this.#cleanupError(errorMessage(cause), primary);
         this.#runtime.bindCleanupFailure(error);
         result = err({
           javascript,
@@ -865,10 +876,7 @@ export class JavaScriptAnalysisWorker {
         },
       );
     const checkpoint = await readFile(path);
-    if (
-      expected !== undefined &&
-      createHash("sha256").update(checkpoint).digest("hex") !== expected.sha256
-    )
+    if (expected !== undefined && sha256Hex(checkpoint) !== expected.sha256)
       throw new AnalysisOutputError(
         OPERATION,
         "JavaScript static checkpoint digest does not match",
@@ -1081,15 +1089,16 @@ export class JavaScriptAnalysisWorker {
         );
       return;
     }
-    if (
-      event.type === "output" &&
-      event.stream === "stderr" &&
-      this.#primaryFailure?.kind === "exit" &&
-      /heap out of memory|heap limit|allocation failed/iu.test(
-        this.#runtime.supervisor?.snapshot().stderr.text ?? "",
-      )
-    ) {
-      this.#primaryFailure = { ...this.#primaryFailure, heapExhaustion: true };
+    const reported =
+      event.type === "output"
+        ? this.#runtime.supervisor?.snapshot().runtimeExhaustion
+        : undefined;
+    if (reported !== undefined && this.#primaryFailure?.kind === "exit") {
+      this.#primaryFailure = {
+        ...this.#primaryFailure,
+        heapExhaustion: true,
+        exhaustion: reported,
+      };
       this.#frameSignal.wake("failure");
     }
     if (event.type === "exit" && (event.code !== 0 || event.signal !== null)) {
@@ -1098,20 +1107,19 @@ export class JavaScriptAnalysisWorker {
           kind: "exit",
           code: event.code,
           signal: event.signal,
-          heapExhaustion:
-            /heap out of memory|heap limit|allocation failed/iu.test(
-              event.snapshot.stderr.text,
-            ),
+          heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
+          ...(event.snapshot.runtimeExhaustion === undefined
+            ? {}
+            : { exhaustion: event.snapshot.runtimeExhaustion }),
         };
       else if (
         this.#primaryFailure.kind === "exit" &&
-        /heap out of memory|heap limit|allocation failed/iu.test(
-          event.snapshot.stderr.text,
-        )
+        event.snapshot.runtimeExhaustion !== undefined
       ) {
         this.#primaryFailure = {
           ...this.#primaryFailure,
           heapExhaustion: true,
+          exhaustion: event.snapshot.runtimeExhaustion,
         };
         this.#frameSignal.wake("failure");
       }
@@ -1261,6 +1269,15 @@ export class JavaScriptAnalysisWorker {
         this.#limits(),
         {
           capturedOutput: this.#captured(),
+          ...(failure.exhaustion === undefined
+            ? {}
+            : {
+                diagnostics: {
+                  runtime_exhaustion_report: runtimeExhaustionReport(
+                    failure.exhaustion,
+                  ),
+                },
+              }),
           ...(WORKER_HEAP_FLAGS_ENFORCED
             ? {
                 limit: analysisSettingLimit(
@@ -1454,7 +1471,7 @@ export class JavaScriptAnalysisWorker {
     )
       return new AnalysisOutputError(
         OPERATION,
-        `${path} during ${this.#phase}: ${message(cause)}`,
+        `${path} during ${this.#phase}: ${errorMessage(cause)}`,
         { cause, capturedOutput: this.#captured() },
       );
     return cause instanceof RuntimeControlUnavailableError
@@ -1465,7 +1482,7 @@ export class JavaScriptAnalysisWorker {
           diagnostics: {
             source_path: path,
             phase: this.#phase,
-            message: message(cause),
+            message: errorMessage(cause),
           },
         });
   }
@@ -1536,6 +1553,3 @@ export class JavaScriptAnalysisWorker {
     this.#terminalResponseId = undefined;
   }
 }
-
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

@@ -9,7 +9,7 @@ import {
   DarwinProcessOwnershipInspectionError,
   type DarwinCompilerOutcome,
 } from "../process/DarwinProcessRunTokenReader.js";
-import { NativeCommandFailure } from "./CommandRunner.js";
+import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 
 const preparationFailure = (

@@ -27,6 +27,7 @@ import {
   jsonResult,
   resources,
 } from "./enhancedToolsHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 afterEach(closeEnhancedToolResources);
 
@@ -319,7 +320,10 @@ const openSession = async (port: AnalysisOperationPort) => {
     },
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "call-graph-cleanup", version: "1" });
+  const client = new Client(
+    { name: "call-graph-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -385,7 +389,7 @@ it.each(tools)(
     const retained = await retainedPartial(client, session, error);
     expect(retained).toMatchObject({
       operation: tool,
-      subject: { format: "dos-com" },
+      subject: { identity: { format: "dos-com" } },
       normalized_result:
         tool === "get_call_graph"
           ? { graph: { "0": [{ address: "0x1", status: "ok" }] } }

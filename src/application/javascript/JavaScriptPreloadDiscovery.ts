@@ -6,7 +6,7 @@ import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
-import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { ArtifactResourceScope } from "../../resources/index.js";

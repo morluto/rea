@@ -71,6 +71,7 @@ import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 import { systemDesktopBuildSetupHost } from "../desktop/DesktopBuildSetupHost.js";
 import { clientEnvironment } from "./SetupPlan.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * The launcher setup registers, and why it must not be registered when it
@@ -465,9 +466,6 @@ const configurationCleanupError = (
   else bindRegularFileCleanup(cause, error);
   return error;
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Detect supported agents from their config files or stable installation markers. */
 export const detectClients = async (

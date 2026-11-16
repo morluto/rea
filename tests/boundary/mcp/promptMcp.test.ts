@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -58,6 +59,7 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { serveStreamableHttp } from "../../../src/server/http/serveStreamableHttp.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 type PromptResource = {
   close(): Promise<void | Awaited<ReturnType<BinarySession["close"]>>>;
@@ -511,7 +513,7 @@ describe("guided prompt completion registry", () => {
     for (let index = 0; index < 150; index += 1)
       expect(
         session.recordEvidence(
-          createEvidence(undefined, fixtureProvider, {
+          createEvidence(unknownTarget("not-observed"), fixtureProvider, {
             operation: `fixture-${String(index)}`,
             parameters: { index },
             result: index,
@@ -560,10 +562,13 @@ describe("guided prompt completion registry", () => {
       { execute: async () => observed(["fixture-document"]) },
       session,
     );
-    const client = new Client({
-      name: "prompt-registry-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "prompt-registry-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const changed = new Promise<void>((resolve) => {
       client.setNotificationHandler("notifications/prompts/list_changed", () =>
         resolve(),
@@ -729,7 +734,10 @@ it.each(["replacement", "shutdown"])(
     });
     retainPromptResources(served);
     const connectHttp = async () => {
-      const client = new Client({ name: "completion-http", version: "1" });
+      const client = new Client(
+        { name: "completion-http", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       retainPromptResources(client);
       await client.connect(
         new StreamableHTTPClientTransport(new URL(served.url)),
@@ -803,7 +811,10 @@ describe("guided prompt completion lifecycle", () => {
         return observed(["fresh-document"]);
       },
     });
-    const client = new Client({ name: "prompt-cancel-client", version: "1" });
+    const client = new Client(
+      { name: "prompt-cancel-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await connectPair(server, client);
     const controller = new AbortController();
     const pending = client.complete(
@@ -1138,7 +1149,10 @@ const complete = async (
 const connect = async (
   server: Awaited<ReturnType<typeof createServer>>,
 ): Promise<Client> => {
-  const client = new Client({ name: "prompt-test", version: "1" });
+  const client = new Client(
+    { name: "prompt-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   await connectPair(server, client);
   return client;
 };

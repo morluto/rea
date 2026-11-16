@@ -131,6 +131,8 @@ describe("web deadline controls", () => {
     );
     expect(inspector.userMessage).not.toContain("command_timeout_ms");
     expect(inspector.remediationAction).not.toContain("--command-timeout-ms");
+    // A fixed deadline binds no per-call control.
+    expect(inspector.limit).toBeUndefined();
     expect(inspector.remediationAction).toContain("no runtime override");
     const selectableDiscovery = cdpDiscoveryTimeoutRecovery(
       "inspect_web_page",
@@ -144,9 +146,12 @@ describe("web deadline controls", () => {
     expect(selectableDiscovery.remediationAction).toContain(
       "Increase discovery_timeout_ms above 15000",
     );
-    expect(selectableDiscovery.remediationAction).toContain(
-      "--discovery-timeout-ms",
-    );
+    expect(selectableDiscovery.remediationAction).not.toContain("--");
+    expect(selectableDiscovery.limit).toMatchObject({
+      control_kind: "parameter",
+      parameter: "discovery_timeout_ms",
+      effective_value: 15_000,
+    });
     expect(selectableDiscovery.remediationAction).toContain(
       "command_timeout_ms does not raise it",
     );
@@ -160,6 +165,7 @@ describe("web deadline controls", () => {
     expect(fixedDiscovery.remediationAction).not.toContain(
       "--discovery-timeout-ms",
     );
+    expect(fixedDiscovery.limit).toBeUndefined();
     expect(fixedDiscovery.remediationAction).toContain("no runtime override");
   });
 });

@@ -4,7 +4,8 @@
  * layer. An undeclared unit fails the check, so a new directory must choose
  * its layer when it is added.
  *
- * The order follows docs/architecture/architecture.mermaid: domain and
+ * The order follows docs/architecture/architecture.mermaid: the dependency-free
+ * kernel helpers that every layer may use, domain and
  * contracts at the centre, the process/filesystem foundation, the ports
  * that providers implement and application consumes, the shared provider
  * core (src/providers), provider adapters,
@@ -12,6 +13,7 @@
  * MCP entry points.
  */
 export const LAYER_ORDER = Object.freeze([
+  "kernel",
   "domain",
   "contracts",
   "foundation",
@@ -27,6 +29,7 @@ const units = (layer, names) => names.map((name) => [name, layer]);
 
 export const UNIT_LAYERS = Object.freeze(
   Object.fromEntries([
+    ...units("kernel", ["kernel"]),
     ...units("domain", ["domain"]),
     ...units("contracts", ["contracts"]),
     ...units("foundation", [
@@ -245,6 +248,11 @@ export const ENTRY_FILES = Object.freeze(
         "ArtifactProviderMetadata.ts",
         "DesktopApplicationReader.ts",
         "ReleaseExposureReader.ts",
+        // JavaScript reconstruction owns one resource scope across the
+        // inventory scan, the format reader and the source read.
+        "inventory/scanCanonical.ts",
+        "javascript/JavaScriptArtifactFiles.ts",
+        "javascript/JavaScriptArtifactReader.ts",
       ],
       browser: [
         "CdpBrowserProvider.ts",
@@ -273,9 +281,11 @@ export const ENTRY_FILES = Object.freeze(
       ],
       desktop: [
         "AgentEnvComputer.ts",
+        "AgentEnvProviderIdentity.ts",
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
@@ -357,7 +367,16 @@ export const ENTRY_FILES = Object.freeze(
         "PcapProviderIdentity.ts",
       ],
       python: ["PythonPycProvider.ts", "PythonPycProviderIdentity.ts"],
-      reference: [],
+      reference: [
+        // The reference-source import workflow (src/application/ReferenceSource*)
+        // runs the reader and consumes its result and failure types. It reports
+        // its own root and VCS reads with the reader's two failure builders, so
+        // both kinds of failure share one shape and wording. Traversal state,
+        // symlink reconciliation and the per-entry failure helpers stay private.
+        "ReferenceSourceFailureBuilders.ts",
+        "ReferenceSourceReader.ts",
+        "ReferenceSourceReaderTypes.ts",
+      ],
       rizin: [
         "RizinCommand.ts",
         "RizinDebugSessionManager.ts",
@@ -433,6 +452,27 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // and reports its failures, instead of parsing the fuse wire twice.
     reason:
       "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
+  }),
+  Object.freeze({
+    from: "desktop",
+    to: "electron",
+    files: Object.freeze(["ElectronFuseReader.ts"]),
+    // The Linux application inventory marks an executable as Electron when
+    // it carries a fuse sentinel. It locates the sentinel with the electron
+    // provider's fuse reader instead of searching the fuse wire again.
+    reason:
+      "the Linux application inventory detects Electron executables with the electron provider's fuse reader",
+  }),
+  Object.freeze({
+    from: "captures",
+    to: "pcap",
+    files: Object.freeze(["PcapConfiguration.ts"]),
+    // Live packet capture runs the same Wireshark tshark that the pcap
+    // provider runs. It locates, selects, versions and identity-checks it
+    // through pcap's Wireshark tool configuration, so REA_TSHARK_COMMAND and
+    // the executable identity rules have one owner.
+    reason:
+      "live packet capture selects and verifies tshark with the pcap provider's Wireshark tool configuration",
   }),
 ]);
 

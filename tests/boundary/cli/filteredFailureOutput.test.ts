@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Writable } from "node:stream";
 
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { expect, it } from "vitest";
 

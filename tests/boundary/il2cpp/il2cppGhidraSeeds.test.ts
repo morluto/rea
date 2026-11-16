@@ -235,6 +235,10 @@ it("bounds folded-name retention against the actual Ghidra file admission", () =
   if (!(caught instanceof AnalysisResourceConstraintError))
     throw new Error("Expected seed-file allowance refusal");
   expect(caught.message).toMatch(/byte admission/);
+  expect(caught.fixedAllowance).toMatchObject({
+    limit: 32 * 1024 * 1024,
+    unit: "bytes",
+  });
   expect(analysisErrorRemediationAction(caught)).toContain(
     "The IL2CPP Ghidra seed-file allowance",
   );
@@ -280,6 +284,10 @@ it("refuses names the real Ghidra seed parser cannot admit", () => {
   if (!(caught instanceof AnalysisResourceConstraintError))
     throw new Error("Expected seed-name allowance refusal");
   expect(caught.message).toMatch(/character admission/);
+  expect(caught.fixedAllowance).toMatchObject({
+    limit: 2000,
+    unit: "characters",
+  });
   expect(analysisErrorRemediationAction(caught)).toContain(
     "The IL2CPP Ghidra seed-name allowance",
   );

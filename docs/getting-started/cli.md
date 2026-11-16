@@ -685,7 +685,13 @@ For one-shot commands, `details.limit` reports `scope: "rea-invocation"` and
 deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
 
 `rea debug-with-gdb` and `rea debug-with-rizin` hold their debugger only for the
-command's own process. If cleanup cannot confirm the debugger stopped, they print
+command's own process. GDB's optional `--executable ./program` hashes and loads
+that initial file before running the caller's console command, without starting
+the inferior automatically. The Evidence target retains this initial file
+selection; later console loads do not rebind it. Without the option, the session
+target remains unknown. `--inferior-tty` still selects the durable output terminal.
+
+If cleanup cannot confirm the debugger stopped, they print
 `cleanup_incomplete` and exit nonzero without stopping it. `remediation.action`
 names the process, as does `retained_debugger_pids` in `details.diagnostics`, or
 in `details.diagnostics.cleanup_error.details.diagnostics` when the command also
@@ -1084,6 +1090,12 @@ Choose the guide for the target and intended interaction:
 
 Runtime requests name the target and actions. Launched targets run with your
 user permissions; consult the chosen guide for host requirements and effects.
+
+## Start the MCP server
+
+Start REA's MCP server with `rea mcp` (or `rea --mcp`). The per-command
+`rea <command> --mcp` entry has been removed; it returns `MCP_MODE_REMOVED`
+and points to `rea mcp`. This is a breaking change from the earlier CLI.
 
 ## Serve MCP over streamable HTTP
 

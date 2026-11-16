@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const connectImportSession = async () => {
   const root = await createTestTempDirectory("rea-mcp-import-lifecycle-");
@@ -17,10 +19,13 @@ const connectImportSession = async () => {
     throw new Error("Evidence import must not start a binary provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "evidence-import-lifecycle",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "evidence-import-lifecycle",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const importRead = phaseGate();
   const originalFileClose = OwnedFileHandle.prototype.close;
   vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementationOnce(
@@ -75,7 +80,7 @@ const connectImportSession = async () => {
   await client.connect(clientTransport);
   const importBundle = async (operation: string) => {
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation, parameters: {}, result: { retained: operation } },
     );
@@ -180,7 +185,10 @@ it("reports newly committed Unknown revisions and counts a repeated import once"
     throw new Error("Evidence import must not start a binary provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "import-counts", version: "1" });
+  const client = new Client(
+    { name: "import-counts", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {

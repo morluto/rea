@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 import {
-  normalizeCliArguments,
   adaptCliOutputArgumentsForIncur,
+  parseCliGlobalArguments,
 } from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
@@ -279,7 +279,8 @@ describe("CLI output flag value forms", () => {
     "preserves a flag-shaped spaced value owned by %s",
     (flag) => {
       expect(
-        normalizeCliArguments([flag, "--format=json", "providers", "--json"]),
+        parseCliGlobalArguments([flag, "--format=json", "providers", "--json"])
+          .arguments,
       ).toEqual([flag, "--format=json", "providers", "--json"]);
     },
   );
@@ -303,7 +304,7 @@ describe("CLI output flag value forms", () => {
 
   it("splits only the equals forms of valued output flags", () => {
     expect(
-      normalizeCliArguments([
+      parseCliGlobalArguments([
         "inspect-sqlite-database",
         "--table=a=b",
         "--format=json",
@@ -312,7 +313,7 @@ describe("CLI output flag value forms", () => {
         "--token-offset=",
         "--json",
         "--format-hint=x",
-      ]),
+      ]).arguments,
     ).toEqual([
       "inspect-sqlite-database",
       "--table=a=b",
@@ -804,8 +805,8 @@ describe("CLI update root alias", () => {
   ])(
     "routes only an unambiguous root update while retaining option data: %j",
     (input, expected) => {
-      expect(normalizeCliArguments(input)).toEqual(expected);
-      expect(normalizeCliArguments(expected)).toEqual(expected);
+      expect(parseCliGlobalArguments(input).arguments).toEqual(expected);
+      expect(parseCliGlobalArguments(expected).arguments).toEqual(expected);
     },
   );
 });
@@ -815,7 +816,7 @@ describe("version report requests", () => {
     [["--version", "--json"], "json"],
     [["--json", "--version"], "json"],
     [["--version", "--format", "yaml"], "yaml"],
-    [normalizeCliArguments(["--version", "--format=toon"]), "toon"],
+    [parseCliGlobalArguments(["--version", "--format=toon"]).arguments, "toon"],
     // Without an explicit format, Incur prints the bare version.
     [["--version"], undefined],
     // Help keeps precedence over --version.

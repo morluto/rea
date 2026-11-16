@@ -680,6 +680,7 @@ describe("ReleaseExposureReader limits", () => {
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact changed during inventory: ${target}`,
+        { integrityCheck: "container-identity" },
       );
     };
     const reader = new ReleaseExposureReader();

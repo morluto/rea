@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import * as t from "@babel/types";
 
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
@@ -18,6 +16,7 @@ import {
   resolveSemanticBindingState,
   type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Static CommonJS export names. */
 export interface StaticExports {
@@ -35,7 +34,7 @@ export const fingerprintJavaScriptAst = (node: t.Node): string => {
       return undefined;
     },
   });
-  return createHash("sha256").update(JSON.stringify(tokens)).digest("hex");
+  return sha256Hex(JSON.stringify(tokens));
 };
 
 /** Collect statically declared CommonJS/bundler export names from one factory. */

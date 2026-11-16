@@ -18,6 +18,7 @@ import {
   type ApiContractDiagnostic,
   type ApiContractOperation,
 } from "./apiContract.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const methods = [
   "get",
@@ -43,9 +44,7 @@ const pathMetadata = new Set([
 // HTTP methods are case-sensitive tokens; additionalOperations preserves that spelling.
 const httpToken = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  isRecord(value) ? (value as Record<string, unknown>) : undefined;
 const identity = (prefix: string, facts: unknown) =>
   `${prefix}_${digestCanonicalValue(facts)}`;
 

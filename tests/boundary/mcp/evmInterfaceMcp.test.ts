@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -480,7 +481,7 @@ it.each(["valid", "wrong-subject", "no-subject"])(
     const { metadata: _metadata, ...historicalBytecode } = value.bytecode;
     const source = createEvidence(
       scenario === "no-subject"
-        ? undefined
+        ? unknownTarget("not-observed")
         : {
             path: value.artifact.path,
             sha256:

@@ -1,6 +1,9 @@
-import { MAX_NODE_TIMER_DELAY_MS } from "./analysisResourceLimits.js";
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  deadlineParameterLimit,
+} from "./analysisResourceLimits.js";
 import type { AnalysisControlLimit } from "./analysisSettings.js";
-import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
+import { analysisResultLimitSchema } from "./analysisSettingDefinitions.js";
 import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
@@ -12,6 +15,7 @@ import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInve
 
 import {
   browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
   browserDeadlineRetry,
   noRuntimeOverrideSentence,
   optionalBrowserDeadlineMs,
@@ -101,17 +105,27 @@ export type AnalyzeWebBundleInput = z.infer<typeof analyzeWebBundleInputSchema>;
 /** Per-script deadlineExpired text. It is not the total analysis deadline. */
 export const webBundleScriptTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms per-script deadline (deadlineExpired) for analysis_timeout_ms. This is not total_analysis_timeout_ms and not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS, "--analysis-timeout-ms")} Keep it less than or equal to total_analysis_timeout_ms (omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}); a per-script timeout above the total is rejected. ${browserDeadlineRetry} analysis_timeout_ms does not raise max_heap_mb, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets.`,
+  limit: deadlineParameterLimit(
+    "analysis_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)} Keep it less than or equal to total_analysis_timeout_ms (omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}); a per-script timeout above the total is rejected. ${browserDeadlineRetry} analysis_timeout_ms does not raise max_heap_mb, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets.`,
 });
 
 /** Total captured-script deadlineExpired text. */
 export const webBundleTotalTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms total captured-script analysis deadline (deadlineExpired) for total_analysis_timeout_ms. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch.`,
-  remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS, "--total-analysis-timeout-ms")} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
+  limit: deadlineParameterLimit(
+    "total_analysis_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
 });
 
 /**
@@ -275,6 +289,13 @@ const sourceLocationSchema = z.object({
   line: z.int().min(1).nullable(),
   column: z.int().min(0).nullable(),
 });
+
+/** One source call whose endpoint is unknown, and the API it calls. */
+export const webBundleCallSiteSchema = z.object({
+  mechanism: z.string(),
+  location: sourceLocationSchema,
+});
+export type WebBundleCallSite = z.infer<typeof webBundleCallSiteSchema>;
 
 const basisSchema = z.object({
   script_key: z.string(),
@@ -543,8 +564,10 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
-      /** The setting that bounded these scripts, and how to change it. */
-      limit: analysisSettingLimitSchema.exactOptional(),
+      /** The source calls this unknown is about, when it is about calls. */
+      call_sites: z.array(webBundleCallSiteSchema).exactOptional(),
+      /** The setting or request parameter that bounded these scripts, and how to change it. */
+      limit: analysisResultLimitSchema.exactOptional(),
       remediation: z.string().exactOptional(),
       /**
        * The phase a work allowance refused for these scripts. Their parse

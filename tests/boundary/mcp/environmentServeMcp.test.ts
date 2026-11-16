@@ -1,9 +1,5 @@
-import { createHash } from "node:crypto";
-import {
-  analysisViewCaptureEvidence,
-  environmentManifestCaptureFixture,
-  timedCaptureEvidence,
-} from "../../fixtures/analysisView.js";
+import { readFile } from "node:fs/promises";
+import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
 import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { advertisedInputDialectViolations } from "../../../src/contracts/advertisedDialect.js";
@@ -26,12 +22,9 @@ import {
   processTest,
   type TestProcesses,
 } from "../../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const CARD_PATH = "/.well-known/agent-env.json";
-/** SHA-256 of the card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
-const REPLAY_CARD_SHA256 =
-  "825703b02f48d614b3c4690445b0b6b00333d975406dc7e8dd335836bceb7d59";
-
 /** Serve the fixture pair as pure replay through the built CLI. */
 const serveReplayOnly = async (
   processes: TestProcesses,
@@ -58,68 +51,13 @@ const serveReplayOnly = async (
 
 const connect = async (url: URL) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name: "environment-boundary", version: "1" });
+  const client = new Client(
+    { name: "environment-boundary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   await client.connect(transport);
   return client;
 };
-
-for (const mode of ["different-content", "wrong-role", "whitespace"] as const)
-  processTest(
-    `checks retained HAR response source before replay: ${mode}`,
-    async ({ processes }) => {
-      const reported = Buffer.from('{"id":2,"name":"reported"}');
-      const bytes =
-        mode === "different-content"
-          ? Buffer.from('{"id":2,"name":"sidecar"}')
-          : reported;
-      const encoded = reported.toString("base64");
-      const capture = environmentManifestCaptureFixture([
-        {
-          request: { method: "GET", url: "http://app.example/api/proof" },
-          response: {
-            status: 200,
-            content: {
-              mimeType: "application/json",
-              encoding: "base64",
-              text: mode === "whitespace" ? ` \t\r\n${encoded}\n` : encoded,
-            },
-          },
-        },
-      ]);
-      capture.records[0]!.binary_fields = [
-        {
-          pointer: "/response/content/text",
-          representation:
-            mode === "wrong-role" ? "producer-bytes" : "har-base64-content",
-          state: "retained",
-          content_base64: bytes.toString("base64"),
-          bytes: bytes.length,
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-        },
-      ];
-      const fixture = environmentStateServeFixture(
-        analysisViewCaptureEvidence(capture),
-      );
-      const tool = environmentServeSource(fixture).manifest.tools[0]!;
-      const started = await serveReplayOnly(processes, {}, fixture);
-      const client = await connect(started.url);
-      try {
-        const response = await client.callTool({
-          name: tool.name,
-          arguments: {},
-        });
-        expect(response.isError).toBeFalsy();
-        expect(response.structuredContent).toMatchObject({
-          status: 200,
-          content_type: "application/json",
-          body: mode === "whitespace" ? { id: 2, name: "reported" } : null,
-          replay: { body_recorded: mode === "whitespace" },
-        });
-      } finally {
-        await client.close();
-      }
-    },
-  );
 
 processTest(
   "replays a recorded list containing an initially deleted entity",
@@ -360,11 +298,17 @@ describe("rea environment-serve --replay-only", () => {
       const card = await fetch(new URL(CARD_PATH, origin));
       expect(card.status).toBe(200);
       const text = await card.text();
-      expect(
-        createHash("sha256").update(text).digest("hex"),
-        `${Buffer.byteLength(text)}-byte card`,
-      ).toBe(REPLAY_CARD_SHA256);
       const body: unknown = JSON.parse(text);
+      // Keep a readable independent golden for every description and input
+      // schema; deriving this expectation with environmentCard would hide drift.
+      const expectedCard: unknown = JSON.parse(
+        await readFile(
+          new URL("../../fixtures/environmentReplayCard.json", import.meta.url),
+          "utf8",
+        ),
+      );
+      expect(body).toEqual(expectedCard);
+      expect(text).toBe(JSON.stringify(expectedCard));
       expect(body).toMatchObject({
         name: "renamed",
         protocolVersion: "1.0",

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import {
   advertisedMcpToolSchemas,
@@ -658,7 +659,7 @@ it("checks WASM semantic identity while preserving rebound display paths", async
     { kind: "wasm", facet: "exports", offset: 0, limit: 1 },
   ] as const;
   for (const target of [
-    undefined,
+    unknownTarget("not-observed"),
     {
       path: value.artifact.path,
       sha256: "f".repeat(64),
@@ -732,7 +733,10 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
     { kind: "fixed", analysis: session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-fixed-delivery", version: "1" });
+  const client = new Client(
+    { name: "wasm-fixed-delivery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);
@@ -860,7 +864,10 @@ it("compares caller-owned complete inline WASM sources on a fixed server without
     { kind: "fixed", analysis: session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-fixed-comparison", version: "1" });
+  const client = new Client(
+    { name: "wasm-fixed-comparison", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -909,7 +916,10 @@ it("retries cleanup of the injected WASM module after server shutdown fails", as
     { kind: "session", session },
     { wasmArtifact: service },
   );
-  const client = new Client({ name: "wasm-cleanup-retry", version: "1" });
+  const client = new Client(
+    { name: "wasm-cleanup-retry", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [a, b] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(b);

@@ -16,6 +16,7 @@ import type {
   DispatchRecordBudget,
   ResolvedMetadataLocation,
 } from "./AppleSwiftDispatchFacets.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Byte readers shared by Objective-C class/method/ivar decode facets. */
 export interface ObjcDispatchReaders {
@@ -71,7 +72,7 @@ const resolveSuperclass = (
   } catch (cause: unknown) {
     if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
     failures.push(
-      `Superclass pointer ${hex(superclass)} of ${className} could not be decoded: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Superclass pointer ${hex(superclass)} of ${className} could not be decoded: ${errorMessage(cause)}`,
     );
     return { name: null, address: hex(superclass) };
   }
@@ -252,9 +253,7 @@ export const decodeObjcDispatchFacets = (input: {
       } catch (cause: unknown) {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         const admitted = budget.admit();
-        failures.push(
-          `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`${hex(field)}: ${errorMessage(cause)}`);
         return err(admitted ? "unmapped" : "exhausted");
       }
     };
@@ -286,9 +285,7 @@ export const decodeObjcDispatchFacets = (input: {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
         // record() admits the slot itself before decoding, so admitting
         // again here would count one protocol twice.
-        failures.push(
-          `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`${hex(field)}: ${errorMessage(cause)}`);
       }
     }
   }
@@ -427,9 +424,7 @@ export const decodeObjcDispatchFacets = (input: {
         readClass(read.pointer(address), true);
       } catch (cause) {
         if (expectedAppleMetadataReadFailure(cause) === null) throw cause;
-        failures.push(
-          `Metaclass of ${name}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`Metaclass of ${name}: ${errorMessage(cause)}`);
       }
     }
   };
@@ -464,9 +459,7 @@ export const decodeObjcDispatchFacets = (input: {
         // admitting again here would count one class twice: at the budget
         // boundary it would break before appending the failure reason, and
         // with larger limits malformed classes would starve valid ones.
-        failures.push(
-          `${hex(field)}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        );
+        failures.push(`${hex(field)}: ${errorMessage(cause)}`);
       }
     }
   }

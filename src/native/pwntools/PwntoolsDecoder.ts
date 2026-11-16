@@ -3,6 +3,7 @@ import {
   providerResultDiagnostics,
 } from "../../process/capturedProviderOutput.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import {
   HOST_PLATFORM,
   type HostPlatform,
@@ -24,6 +25,7 @@ import {
   pwntoolsFailureDialect,
   pwntoolsUnavailable,
   pwntoolsBudgetRecovery,
+  pwntoolsReplyOutputLimit,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
 import { access, stat, writeFile } from "node:fs/promises";
@@ -82,6 +84,7 @@ import {
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { PWNTOOLS_PROVIDER_IDENTITY } from "./PwntoolsProviderIdentity.js";
 import { pwntoolsInputBytes } from "../../config/pwntoolsInputLimit.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Names the detected host so a host refusal is not read as a target refusal. */
 const pwntoolsHostRequirement = (
@@ -425,11 +428,9 @@ export class PwntoolsDecoder<
       } catch (cause: unknown) {
         // Normalize Node's abort envelope only at the write that produced it.
         if (
-          options?.signal?.aborted &&
-          cause instanceof Error &&
-          "code" in cause &&
-          cause.code === "ABORT_ERR" &&
-          cause.cause === options.signal.reason
+          options?.signal?.aborted === true &&
+          cause !== options.signal.reason &&
+          isAbortOf(cause, options.signal)
         )
           throw cancelledBy(OPERATION, options.signal);
         throw cause;
@@ -543,15 +544,13 @@ export class PwntoolsDecoder<
         }
         const error = new AnalysisOutputError(
           OPERATION,
-          `Owned pwntools decoder reply failed for ${input.path}: ${cause instanceof z.ZodError ? cause.issues[0]?.message + " at " + (cause.issues[0]?.path.map(String).join(".") ?? "root") : cause instanceof Error ? cause.message : String(cause)}`,
+          `Owned pwntools decoder reply failed for ${input.path}: ${cause instanceof z.ZodError ? cause.issues[0]?.message + " at " + (cause.issues[0]?.path.map(String).join(".") ?? "root") : errorMessage(cause)}`,
           {
             cause,
             capturedOutput,
             ...(cause instanceof ArtifactReaderFailure &&
             cause.reason === "limit"
-              ? {
-                  remediationAction: `Increase producer_limits.output_bytes above ${String(producerLimits.output_bytes)} bytes on the next call (CLI --producer-limits JSON); no restart is required. File, worker memory and transport limits remain independent.`,
-                }
+              ? pwntoolsReplyOutputLimit(producerLimits)
               : {}),
             ...(cause instanceof ArtifactReaderFailure
               ? { cleanup: cause.cleanup }
@@ -606,7 +605,7 @@ export class PwntoolsDecoder<
         if (reply.reason === "output-limit")
           throw new AnalysisOutputError(OPERATION, reply.message, {
             capturedOutput,
-            remediationAction: `Increase producer_limits.output_bytes above ${String(producerLimits.output_bytes)} bytes on the next call (CLI --producer-limits JSON); no restart is required. File output follows the selected output allowance unless file_bytes is explicit. Tighter inherited limits and transport remain independent.`,
+            ...pwntoolsReplyOutputLimit(producerLimits),
           });
         throw new ProviderAdapterError(this.identity.id, OPERATION, {
           diagnostics: {
@@ -808,7 +807,7 @@ export class PwntoolsDecoder<
           failure = new ProviderCleanupError(
             this.identity.id,
             [this.#pendingCleanup?.root?.path ?? "pwntools decoder"],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { operation: this.profile.operation, cause },
           );
         }
@@ -876,7 +875,7 @@ export class PwntoolsDecoder<
             ]
           : ownedCommandResources(ownership, pending.root?.path),
         {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           captured_output: {
             ...(pending.diagnostics ??
               capturedProviderOutput(process.supervisor.snapshot())),
@@ -950,7 +949,7 @@ export class PwntoolsDecoder<
           this.identity.id,
           [root.path],
           {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             ...(pending.diagnostics === undefined
               ? {}
               : { captured_output: { ...pending.diagnostics } }),

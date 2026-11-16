@@ -4,7 +4,6 @@ import {
   desktopViewFileLimitMessage,
   type DesktopViewPolicy,
 } from "../../domain/desktop/desktopViewPolicy.js";
-import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
 import type { SafeOutputTree } from "../../resources/index.js";
@@ -31,6 +30,7 @@ import { err } from "../../domain/result.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
 import { readZipView } from "./DesktopZipView.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** A file the export writes from bytes it made. */
 export interface GeneratedFile {
@@ -215,8 +215,7 @@ export const writeFiles = async (
       Readable.from([bytes]),
       {
         bytes: bytes.length,
-        sha256:
-          shipped.sha256 ?? createHash("sha256").update(bytes).digest("hex"),
+        sha256: shipped.sha256 ?? sha256Hex(bytes),
       },
       signal,
     );

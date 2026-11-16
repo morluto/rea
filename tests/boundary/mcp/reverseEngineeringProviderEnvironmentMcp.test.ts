@@ -8,6 +8,7 @@ import { expect, it } from "vitest";
 import { createServer } from "../../../src/server/createServer.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok } from "../../../src/domain/result.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const analysis = {
   execute: async () =>
@@ -60,7 +61,10 @@ it("uses the server-selected environment unless a provider environment overrides
               }),
         },
       );
-      const client = new Client({ name: "reverse-env-test", version: "1" });
+      const client = new Client(
+        { name: "reverse-env-test", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
       try {

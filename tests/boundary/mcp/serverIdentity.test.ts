@@ -1,8 +1,10 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import canonicalize from "canonicalize";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -17,6 +19,7 @@ import {
   createCatalogDigests,
   createCatalogIdentity,
   CLI_COMMAND_NAMES,
+  digestPresentedCatalogs,
 } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
@@ -35,6 +38,7 @@ import type {
   CapabilityDescriptor,
 } from "../../../src/ports/AnalysisProvider.js";
 import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [
@@ -379,6 +383,7 @@ describe("live server identity over MCP", () => {
     const client = new Client(
       { name: "identity-test", version: "9" },
       {
+        jsonSchemaValidator: createMcpSchemaValidation(),
         capabilities: {
           elicitation: { form: {} },
         },
@@ -421,7 +426,10 @@ describe("live server identity over MCP", () => {
       { kind: "session", session },
       { environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" } },
     );
-    const client = new Client({ name: "compact-identity-test", version: "1" });
+    const client = new Client(
+      { name: "compact-identity-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -472,7 +480,10 @@ describe("active-target availability over MCP", () => {
       { kind: "session", session },
       { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
     );
-    const client = new Client({ name: "availability-test", version: "1" });
+    const client = new Client(
+      { name: "availability-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const directory = await createTestTempDirectory("rea-target-availability-");
@@ -676,3 +687,40 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     },
   });
 };
+
+it("composes the combined digest exactly as whole-document canonicalization", () => {
+  const sha256 = (value: unknown) =>
+    createHash("sha256")
+      .update(canonicalize(value) ?? "")
+      .digest("hex");
+  // Escapes, non-ASCII text, key order and empty catalogs must all agree.
+  const escaped = [
+    {
+      name: 'quote " slash \\ line\u2028 é 😀',
+      z_last: [1.5, null, true, { b: 2, a: "\n" }],
+      a_first: {},
+    },
+  ];
+  const prompts = [{ name: "p", steps: ["tab\t", ""], arguments: [] }];
+  for (const [catalog, promptCatalog, profile] of [
+    [escaped, prompts, "off"],
+    [[], [], "off"],
+    [[], [], "compact"],
+  ] as const) {
+    const digests = digestPresentedCatalogs(
+      catalog as unknown as Parameters<typeof digestPresentedCatalogs>[0],
+      promptCatalog as unknown as Parameters<typeof digestPresentedCatalogs>[1],
+      profile,
+    );
+    const tools = { output_schema_profile: profile, catalog };
+    expect(digests).toEqual({
+      tools_sha256: sha256(tools),
+      prompts_sha256: sha256(promptCatalog),
+      combined_sha256: sha256({
+        cli: CLI_COMMAND_NAMES,
+        tools,
+        prompts: promptCatalog,
+      }),
+    });
+  }
+});
