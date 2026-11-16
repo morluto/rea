@@ -23,6 +23,7 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import { ok, err } from "../result.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 // Bound diagnostic context independently of the retained report size. Previews
 // are display values; stable file IDs select the original paths and all issues.
@@ -184,12 +185,11 @@ export const projectDesktopApplicationView = (
       validatedParents.add(key);
     }
   }
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject === undefined ||
-    subject === null ||
     subject.format !== "directory" ||
-    subject.digest.sha256 !== report.root.snapshot_sha256
+    subject.sha256 !== report.root.snapshot_sha256
   )
     return err(
       analysisViewInputError([
@@ -293,10 +293,7 @@ export const projectDesktopApplicationView = (
         components: report.components.map(summarizeBasis),
         next_probe_groups: [...groups.values()],
       },
-      coverage: completeWithinViewCoverage(
-        report.files.length,
-        report.files.length,
-      ),
+      coverage: completeWithinViewCoverage(report.files.length),
     });
   }
   let rows: readonly DesktopViewRow[] = report[view.collection];

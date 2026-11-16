@@ -1,14 +1,11 @@
-import { MAX_LOAD_COMMAND_BYTES } from "../artifacts/apple/MachoLoadCommandReader.js";
+import { MAX_LOAD_COMMAND_BYTES } from "../domain/apple/machoLoadCommandReader.js";
 import {
   readMachoHeaderDeclarations,
   readMachoLoadCommandTableHeader,
 } from "../domain/apple/machoLoadCommands.js";
-import { decodeMachoFixedName } from "../native/AppleMachoNames.js";
-import {
-  MachoBinaryFormatError,
-  MachoCommandNamesLimitError,
-  readMachoCommandNames,
-} from "../native/MachoCommandNames.js";
+import { decodeMachoFixedName } from "../domain/apple/appleMachoNames.js";
+import { parseFailureFromCause } from "../domain/parseFailure.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { KunaInputPrefix } from "./KunaCommand.js";
 import type { KunaInventoryFunction } from "./KunaProjectFiles.js";
 
@@ -134,11 +131,8 @@ export const readKunaMachoLayout = async (head: {
       MAX_LAYOUT_RECORDS,
     ));
   } catch (cause: unknown) {
-    if (
-      cause instanceof MachoBinaryFormatError ||
-      cause instanceof MachoCommandNamesLimitError
-    )
-      return unavailable(cause.message);
+    const failure = parseFailureFromCause(cause);
+    if (failure !== undefined) return unavailable(failure.message);
     throw cause;
   }
   const name = (field: Uint8Array) =>

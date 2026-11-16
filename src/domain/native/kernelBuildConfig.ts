@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { coverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 
@@ -214,7 +215,14 @@ export const kernelBuildConfigSchema = z.strictObject({
     entries: z.array(entrySchema),
   }),
   coverage: z.strictObject({
-    status: z.enum(["complete", "incomplete", "unsupported"]),
+    /**
+     * `partial` when the config is known to extend past what was examined (a
+     * gzip member cut by the searched bytes, or the candidate budget stopping
+     * the search); `unknown` when whether a config exists or what it holds
+     * cannot be determined (an unreadable payload that was not searched, or a
+     * malformed config); `unsupported` for a payload codec REA does not inflate.
+     */
+    status: z.enum([...coverageStatusSchema.options, "unsupported"]),
     examined_bytes: uint,
     examined_entries: uint,
   }),

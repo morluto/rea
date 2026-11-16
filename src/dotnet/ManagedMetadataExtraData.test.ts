@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import {
   buildManagedPeFixture,
   managedPeFixtureTarget,

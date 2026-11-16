@@ -1,8 +1,8 @@
 import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import {
   createEvidence,
-  evidenceSubjectTarget,
   type Evidence,
+  evidenceSubjectInput,
 } from "../../domain/evidence.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -23,12 +23,18 @@ export const summarizeRetainedAndroidSearch = (
   const recorded = recordEvidence(evidence);
   if (!recorded.ok) return recorded;
   return ok(
-    createEvidence(evidenceSubjectTarget(evidence.subject), evidence.provider, {
+    createEvidence(evidenceSubjectInput(evidence.subject), evidence.provider, {
       operation: evidence.operation,
       parameters: evidence.parameters,
       result: evidence.normalized_result,
       rawResult: { ...summary, complete_evidence_id: evidence.evidence_id },
       confidence: evidence.confidence,
+      ...(evidence.analysis_profile === null
+        ? {}
+        : { analysisProfile: evidence.analysis_profile }),
+      ...(evidence.relationship_coverage === null
+        ? {}
+        : { relationshipCoverage: evidence.relationship_coverage }),
       limitations: evidence.limitations,
       locations: evidence.locations,
       evidenceLinks: [evidence.evidence_id],

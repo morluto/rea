@@ -54,6 +54,8 @@ export interface FakeKunaBehavior {
   /** Extra C comment bytes inside each exported body, for buffered-read capacity. */
   readonly cPadding?: number;
   readonly decompile?: "ok" | "hang";
+  /** Hold successful work until releaseFakeKunaCommand acknowledges the test phase. */
+  readonly gatedCommands?: readonly ("decompile" | "decompile-project")[];
   /** Milliseconds one `decompile --addr` run takes before printing. */
   readonly decompileDelayMs?: number;
   /** Extra comment bytes in each `decompile --addr` text, for retention budgets. */
@@ -111,6 +113,14 @@ fs.appendFileSync(__filename + ".calls", JSON.stringify({ pid: process.pid, at: 
 const args = process.argv.slice(2);
 const functions = behavior.functions ?? [{ name: "main", addr: "0x1000" }, { name: "helper", addr: "0x1040" }];
 const hang = () => setInterval(() => {}, 1000);
+const whenReleased = (command, action) => {
+  if (!behavior.gatedCommands?.includes(command)) { action(); return; }
+  const waiting = setInterval(() => {
+    if (!fs.existsSync(__filename + ".release-" + command)) return;
+    clearInterval(waiting);
+    action();
+  }, 10);
+};
 if (args[0] === "--version") {
   const version = behavior.version ?? { stdout: "kuna 1.833\n" };
   if ("exit" in version) { process.stderr.write("version probe failed\n"); process.exit(version.exit); }
@@ -176,7 +186,7 @@ if (args[0] === "--version") {
   const mode = behavior.project ?? "ok";
   if (mode === "hang") hang();
   else if (mode === "exit-failure") { process.stderr.write("error: not in recognized object file format\n"); process.exit(1); }
-  else setTimeout(() => {
+  else whenReleased("decompile-project", () => setTimeout(() => {
     fs.mkdirSync(output, { recursive: true });
     let c = '#include "' + stem + '.h"\n\n';
     functions.forEach((fn, index) => {
@@ -197,17 +207,17 @@ if (args[0] === "--version") {
     const reported = mode === "miscounted" ? functions.length + 1 : functions.length - failed;
     if (mode === "noisy") process.stdout.write(Buffer.alloc(9 * 1024 * 1024, 0x20));
     if (mode !== "silent") process.stdout.write("wrote " + output + ": " + stem + ".c (" + c.length + " bytes); functions: " + reported + " ok, " + failed + " failed\n");
-  }, behavior.delayMs ?? 0);
+  }, behavior.delayMs ?? 0));
 } else if (args[0] === "decompile") {
   // decompile <input> <0xaddr> --addr: the single-function path.
   const fn = functions.find((candidate) => candidate.addr === args[2]);
   if (behavior.decompile === "hang") hang();
   else if (fn === undefined) { process.stderr.write("error: no function at " + args[2] + "\n"); process.exit(1); }
-  else setTimeout(() => {
+  else whenReleased("decompile", () => setTimeout(() => {
     const padding = behavior.decompilePadding === undefined ? "" : "/*" + "x".repeat(behavior.decompilePadding) + "*/\n";
     process.stdout.write("int " + fn.name + "(void) // single-function\n" + padding + "{\n  return 0;\n}\n");
     fs.appendFileSync(__filename + ".exits", JSON.stringify({ pid: process.pid, at: Date.now() }) + "\n");
-  }, behavior.decompileDelayMs ?? 0);
+  }, behavior.decompileDelayMs ?? 0));
 } else {
   process.stderr.write("unexpected command\n");
   process.exit(2);
@@ -267,3 +277,9 @@ export const fakeKunaExits = async (
       }),
   );
 };
+
+/** Release a command only after the test has observed its required interleaving. */
+export const releaseFakeKunaCommand = (
+  path: string,
+  command: "decompile" | "decompile-project",
+): Promise<void> => writeFile(`${path}.release-${command}`, "released");

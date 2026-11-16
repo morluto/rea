@@ -189,3 +189,37 @@ it("does not start a second cleanup while a timed-out cleanup may still be runni
   expect(calls).toBe(1);
   expect(owner.cleanupResources).toHaveLength(2);
 });
+
+it.each([
+  { ...success, exit_code: 4, stderr: "reader failed" },
+  { ...success, stdout: "invalid reader answer" },
+])(
+  "preserves earlier views and absences when a later runner fails after settling (%#)",
+  async (failed) => {
+    let readers = 0;
+    const owner = new DesktopRemoteTaskReaders(async (argv) => {
+      if (argv[3] === PYTHON_READER_CLEANUP) return success;
+      readers += 1;
+      if (readers === 1) return success;
+      if (readers === 2)
+        return { ...success, stdout: JSON.stringify({ absent: true }) };
+      return failed;
+    });
+    const failure = await owner
+      .read(
+        [reader, { ...reader, id: "absent" }, { ...reader, id: "failed" }],
+        new AbortController().signal,
+      )
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      operation: "check_build_task",
+      diagnostics: {
+        completed_reader_views: {
+          note: { format: "json", view: { value: 7 } },
+        },
+        completed_reader_absent: ["absent"],
+      },
+    });
+    expect(owner.cleanupResources).toEqual([]);
+  },
+);

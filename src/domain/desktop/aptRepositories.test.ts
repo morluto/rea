@@ -14,10 +14,45 @@ import {
   isArmoredKey,
   isUbuntuProRepository,
   parseAptIndexTargets,
+  parseAptConfigShell,
   parseDeb822Sources,
   parseOneLineSources,
   validSignature,
 } from "./aptRepositories.js";
+
+describe("apt-config shell assignments", () => {
+  it.each([
+    "",
+    "/var/lib/apt/lists/",
+    "/tmp/user's lists/",
+    "/tmp/lists\ncustom/",
+    "/tmp/'\nPARTS=literal\n\\tail/",
+  ])("preserves a complete quoted value %j", (value) => {
+    const assignment = `LISTS='${value.replaceAll("'", "'\\''")}'\n`;
+    expect(parseAptConfigShell(assignment)).toEqual(
+      new Map([["LISTS", value]]),
+    );
+  });
+
+  it("keeps multiline values separate from adjacent assignments", () => {
+    const values = new Map([
+      ["LISTS", "/tmp/lists\ncustom/"],
+      ["PARTS", "/tmp/key's\nparts/"],
+      ["TRUSTED", "/tmp/trusted\\keys.gpg"],
+    ]);
+    const output = [...values]
+      .map(([name, value]) => `${name}='${value.replaceAll("'", "'\\''")}'\n`)
+      .join("");
+    expect(parseAptConfigShell(output)).toEqual(values);
+    expect(parseAptConfigShell(output.slice(0, -1))).toEqual(values);
+  });
+
+  it("does not promote an assignment-looking line from an incomplete quoted value", () => {
+    expect(parseAptConfigShell("LISTS='unclosed\nPARTS='decoy'\n")).toEqual(
+      new Map(),
+    );
+  });
+});
 
 /** `/etc/apt/sources.list.d/ubuntu.sources` from Ubuntu 24.04 arm64, its comment block shortened. */
 const UBUNTU_SOURCES = [

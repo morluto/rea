@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import type {
   InspectWindowsShortcutInput,
   WindowsShortcut,
@@ -11,10 +10,10 @@ import type {
   WindowsShortcutStringField,
   WindowsShortcutUuidV1,
 } from "../../domain/native/windowsShortcut.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { malformedInput } from "../../domain/parseFailure.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
@@ -27,10 +26,15 @@ const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
-const isoFromUnixMs = (unixMs: bigint): string | null =>
-  unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
+const isoFromUnsigned100ns = (ticks: bigint, epoch: bigint): string | null => {
+  // Both stored clocks are unsigned and their epochs are millisecond-aligned.
+  // Truncate before epoch subtraction so pre-1970 fractions stay in their
+  // containing millisecond rather than rounding toward the Unix epoch.
+  const unixMs = ticks / 10000n - epoch / 10000n;
+  return unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
     ? null
     : new Date(Number(unixMs)).toISOString();
+};
 
 const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000001, "HasLinkTargetIDList"],
@@ -126,9 +130,6 @@ const LIMITATIONS = [
   "Volume serial, NetBIOS machine id, and Tracker droid values are recorded as stored. Host identity is not verified.",
 ];
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const namedBits = (
   raw: number,
   names: ReadonlyArray<readonly [number, string]>,
@@ -156,7 +157,7 @@ const fileTime = (raw: bigint): WindowsShortcut["header"]["creation_time"] => {
   if (raw === 0n) return { raw: "0", iso8601: null };
   return {
     raw: raw.toString(10),
-    iso8601: isoFromUnixMs((raw - FILETIME_UNIX_EPOCH) / 10000n),
+    iso8601: isoFromUnsigned100ns(raw, FILETIME_UNIX_EPOCH),
   };
 };
 
@@ -227,9 +228,9 @@ const uuidV1 = (
     evidence_kind: "derived",
     version: 1,
     mac: [...bytes.subarray(offset + 10, offset + 16)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .map((byte) => byteToHex(byte))
       .join(":"),
-    timestamp_iso8601: isoFromUnixMs((timestamp - UUID_UNIX_EPOCH) / 10000n),
+    timestamp_iso8601: isoFromUnsigned100ns(timestamp, UUID_UNIX_EPOCH),
     timestamp_100ns: timestamp.toString(10),
   };
 };
@@ -467,7 +468,7 @@ const decodeIdListItem = (
     offset,
     size,
     type_byte: typeByte,
-    sha256: sha256(data),
+    sha256: sha256Hex(data),
   });
   if (typeByte === 0x1f && data.length >= 18) {
     return {
@@ -699,7 +700,15 @@ const parseNetwork = (
   const validNetType = (flags & 0x2) !== 0;
   const netNameOffset = block.readUInt32LE(8);
   const deviceNameOffset = validDevice ? block.readUInt32LE(12) : 0;
-  const unicode = netNameOffset > 0x14 && size >= 0x1c;
+  const declaresUnicode = netNameOffset > 0x14;
+  if (declaresUnicode && size < 0x1c)
+    note(
+      walk,
+      "truncated",
+      base + offset + 20,
+      "CommonNetworkRelativeLink ends before its declared Unicode offsets",
+    );
+  const unicode = declaresUnicode && size >= 0x1c;
   const netNameOffsetUnicode = unicode ? block.readUInt32LE(20) : 0;
   const deviceNameOffsetUnicode =
     unicode && validDevice ? block.readUInt32LE(24) : 0;
@@ -879,7 +888,7 @@ const decodeExtra = (
         offset,
         "Environment ExtraData payload is shorter than 780 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     charge(
       walk,
@@ -899,7 +908,7 @@ const decodeExtra = (
         offset,
         "TrackerDataBlock payload is shorter than 0x58 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const length = payload.readUInt32LE(0);
     const version = payload.readUInt32LE(4);
@@ -910,7 +919,7 @@ const decodeExtra = (
         offset,
         `TrackerDataBlock header is unsupported (Length 0x${length.toString(16)}, Version ${String(version)})`,
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const machine = latin1Z(payload.subarray(8, 24));
     charge(walk, machine.length);
@@ -930,14 +939,14 @@ const decodeExtra = (
   if (signature === 0xa0000004) {
     if (payload.length < 4) {
       note(walk, "truncated", offset, "ConsoleFEDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
   }
   if (signature === 0xa0000005) {
     if (payload.length < 8) {
       note(walk, "truncated", offset, "SpecialFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "special_folder",
@@ -948,7 +957,7 @@ const decodeExtra = (
   if (signature === 0xa000000b) {
     if (payload.length < 20) {
       note(walk, "truncated", offset, "KnownFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "known_folder",
@@ -960,9 +969,9 @@ const decodeExtra = (
     return {
       kind: "property_store",
       bytes: payload.length,
-      sha256: sha256(payload),
+      sha256: sha256Hex(payload),
     };
-  return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+  return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
 };
 
 const parseIdList = async (
@@ -1143,21 +1152,23 @@ export const parseWindowsShortcut = async (
 ): Promise<WindowsShortcut> => {
   assertArtifactReadActive(signal);
   if (bytes.length < HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
   const headerSize = bytes.readUInt32LE(0);
   if (headerSize !== HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `HeaderSize ${String(headerSize)} is not 0x4C`,
+      { offset: 0, field: "HeaderSize" },
     );
   const clsid = formatGuid(bytes, 4);
   if (clsid !== SHELL_LINK_CLSID)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `LinkCLSID ${clsid} is not ${SHELL_LINK_CLSID}`,
+      { offset: 4, field: "LinkCLSID" },
     );
   const flags = bytes.readUInt32LE(20);
   const unicode = (flags & 0x00000080) !== 0;

@@ -1,11 +1,17 @@
 import { z } from "zod";
-import { createHash } from "node:crypto";
 import { digestSchema } from "../digests.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/**
+ * GPU inventories report known coverage: discovery, note and payload
+ * producers derive `partial` from the gaps they recorded, so they never
+ * report `unknown`.
+ */
 export const gpuLocationSchema = z.strictObject({
   container_id: z.string().nullable(),
   offset: count,
@@ -40,11 +46,9 @@ export const gpuObjectSchema = z.strictObject({
       flags: z.string().regex(/^0x[0-9a-f]{8}$/u),
       processor: z.string().nullable(),
       header_location: gpuLocationSchema,
-      note_coverage: z
-        .enum(["complete", "partial"])
-        .describe(
-          "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
-        ),
+      note_coverage: knownCoverageStatusSchema.describe(
+        "Complete only after all declared ELF note sections were examined within supported AMD metadata coverage; partial retains only examined facts.",
+      ),
       notes: z.array(
         z.strictObject({
           target: z.string().nullable(),
@@ -53,8 +57,7 @@ export const gpuObjectSchema = z.strictObject({
         }),
       ),
     })
-    .nullable()
-    .default(null),
+    .nullable(),
   target_consistency: z.enum([
     "unexamined",
     "single-source",
@@ -72,6 +75,7 @@ export const gpuObjectSchema = z.strictObject({
   raw_flags: z.string().nullable(),
   location: gpuLocationSchema,
   metadata_location: gpuLocationSchema,
+  // domain-vocabulary: how deeply one code object was decoded, including format outcomes.
   inspection: z.enum([
     "inventory",
     "complete",
@@ -150,10 +154,7 @@ export const gpuPtxArtifactSchema = z
         path: ["byte_length"],
         message: "PTX text and its UTF-8 source extent disagree",
       });
-    if (
-      createHash("sha256").update(artifact.text, "utf8").digest("hex") !==
-      artifact.sha256
-    )
+    if (sha256Hex(artifact.text) !== artifact.sha256)
       context.addIssue({
         code: "custom",
         path: ["sha256"],
@@ -176,8 +177,8 @@ export const gpuCodeObjectsObjectSchema = z.strictObject({
     discovery_scope: z.literal(
       "supported-section-names-and-standalone-formats",
     ),
-    discovery: z.enum(["complete", "partial"]),
-    payloads: z.enum(["not-requested", "complete", "partial"]),
+    discovery: knownCoverageStatusSchema,
+    payloads: z.enum(["not-requested", ...knownCoverageStatusSchema.options]),
     examined_sections: count,
     unknown_section_names: count,
   }),
@@ -362,7 +363,10 @@ export const gpuTargetSchema = z.strictObject({
     .string()
     .regex(/^(?:0|[1-9][0-9]*)$/u)
     .nullable(),
-  kernel_coverage: z.enum(["not-requested", "complete", "partial"]),
+  kernel_coverage: z.enum([
+    "not-requested",
+    ...knownCoverageStatusSchema.options,
+  ]),
   by_kind: z.strictObject({
     ptx: count,
     cubin: count,

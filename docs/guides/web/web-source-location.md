@@ -115,9 +115,7 @@ are made.
 ## Compact point delivery and retained source text
 
 Summary delivery is useful for large point answers. Complete output can answer
-a small-map task with fewer calls. The
-[delivery qualification](../../verification/source-location-delivery.md)
-records measured task costs and first-use discovery tradeoffs.
+a small-map task with fewer calls.
 
 Complete delivery remains the default and includes raw map text and embedded source
 content. Select `detail: "summary"` in MCP, or `--detail summary` with
@@ -199,16 +197,12 @@ budgets.
 | `codec_heap_mib`   | 192      | Local codec old-generation request; process-memory enforcement remains host dependent |
 | `fetch_bytes`      | 67108864 | Aggregate response bytes and, independently, resolved-identity bytes                  |
 
-The local 8 MiB admission covers the pinned 4,284,329-byte main map and 5,529,840-byte
-DateSelect map from Actual Budget without an admission retry. This is an artifact
-compatibility allowance, not a context or latency optimization: complete Evidence
-retains raw map text, and those two measured replies estimate 1.59 and 2.23 million
-tokens. A smaller admission refuses the map; it does not compact successful
-Evidence. MCP retains complete Evidence before encoding; an oversized response
+The local map admission defaults to 8 MiB. Complete Evidence retains raw map
+text, so a larger admitted map can produce a large response. MCP retains complete
+Evidence before encoding; an oversized response
 returns its retained reference for `export_evidence_bundle`, or callers can use
 complete CLI JSON. Select opt-in compact delivery above to keep complete Evidence accessible while returning only point metadata or an explicitly selected text page.
-Browser collection keeps its separate conservative defaults; see the
-[calibration record](../../verification/source-map-budget-calibration.md).
+Browser collection keeps its separate conservative defaults.
 
 Local tracing accepts all listed fields except `fetch_bytes`. Bundle fetching
 accepts all except `map_bytes` and `codec_heap_mib`: it uses its existing
@@ -254,8 +248,9 @@ profile are preserved.
 
 Browser `original_module_edges` carry a `declaration_index` joining each edge to
 its `original_sources` declaration, including repeated source URLs across indexed
-sections. Imports are deduplicated within each declaration. Older observations
-may omit the index; their edge declaration identity remains unknown.
+sections. Imports are deduplicated within each declaration. Each mapping row
+likewise carries its section-local `source_index` and the `declaration_index`
+of the original source it maps to.
 
 Browser collection defaults to 64 MiB of map responses per inspection and
 preflights indexed sections, sources, names, generated rows and mapping segments
@@ -278,10 +273,11 @@ Malformed UTF-8 map responses are reported as invalid rather than repaired with
 replacement characters.
 For browser fetching, an `invalid` map or structural or decoder capacity
 failure has `artifact: null`, empty decoded arrays, and an explicit limitation.
-When its bounded response body was read in full, optional `response_identity`
-records that body's SHA-256 digest and byte count after HTTP content decoding
-and before UTF-8 decoding. It is not a digest of partial reads or a claim that
-the map was valid; historical items may omit it. Malformed text is omitted so
+An `invalid` map was always read in full, so it always carries
+`response_identity`; a `fetch_failed` item carries it only when its bounded
+response body was read in full. It records that body's SHA-256 digest and byte
+count after HTTP content decoding and before UTF-8 decoding. It is not a digest
+of partial reads or a claim that the map was valid. Malformed text is omitted so
 it does not consume the 32 MiB inline budget needed by later valid maps. A
 response whose text cannot fit that budget is refused before JSON parsing and
 source-map decoding, and retains the same

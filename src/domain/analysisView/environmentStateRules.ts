@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken, jsonPointerTokens } from "../jsonPointer.js";
 import {
   iterateUrlQueryParameters,
   parseUrlQueryParameterNames,
@@ -575,15 +576,7 @@ export const deeperThan = (value: JsonValue, limit: number): boolean => {
 };
 
 export const pointerTo = (name: string): string =>
-  `/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`;
-/** The unescaped reference tokens of a pointer. */
-export const pointerTokens = (pointer: string): string[] =>
-  pointer === ""
-    ? []
-    : pointer
-        .slice(1)
-        .split("/")
-        .map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+  `/${escapeJsonPointerToken(name)}`;
 
 const memberOf = (
   body: JsonValue | undefined,
@@ -597,7 +590,7 @@ const soleElement = (value: JsonValue | undefined): JsonValue | undefined =>
 
 /** The value at a pointer: the root, one member, or element 0 of a one-element array at the root or in one member. */
 export const at = (body: JsonValue, pointer: string): JsonValue | undefined => {
-  const [first, second, ...rest] = pointerTokens(pointer);
+  const [first, second, ...rest] = jsonPointerTokens(pointer);
   if (first === undefined) return body;
   if (second !== undefined)
     return second === "0" && rest.length === 0
@@ -616,7 +609,7 @@ export const replaceAt = (
   pointer: string,
   value: JsonValue,
 ): JsonValue => {
-  const [first, second] = pointerTokens(pointer);
+  const [first, second] = jsonPointerTokens(pointer);
   if (first === undefined) return value;
   if (at(body, pointer) === undefined) return body;
   if (!isObject(body)) return [value];

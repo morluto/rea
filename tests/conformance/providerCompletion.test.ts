@@ -16,8 +16,8 @@ import {
 import { PeResourcesService } from "../../src/application/binaryDiagnostics/PeResourcesService.js";
 import { PE_RESOURCES_PROVIDER } from "../../src/domain/investigationProviders.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { parsePeResources } from "../../src/native/pe/PeResourceParser.js";
-import { peResourceFixture } from "../../src/native/pe/PeResources.fixture.js";
+import { parsePeResources } from "../../src/domain/pe/peResourceInventory.js";
+import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createHash } from "node:crypto";
 import { RecordedCrashService } from "../../src/application/binaryDiagnostics/RecordedCrashService.js";
 import {
@@ -29,7 +29,7 @@ import {
   evmInterfaceExecution,
   evmInterfaceFixture,
 } from "../fixtures/evm/interface.js";
-import type { EvmInterfaceExecution } from "../../src/application/evm/EvmInterfacePort.js";
+import type { EvmInterfaceExecution } from "../../src/ports/evm/EvmInterfacePort.js";
 
 it("retains valid web-network observations and validates malformed ones before cancellation", async () => {
   const report = {

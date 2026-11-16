@@ -1,10 +1,13 @@
-import { BUNDLE_SETTING_VARIABLE } from "./buildComputerSettings.js";
+import {
+  BUILD_COMPUTER_SETTINGS,
+  BUNDLE_SETTING_VARIABLE,
+} from "./buildComputerSettings.js";
 import { buildSecretHandleSchema } from "./buildSecrets.js";
-import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { excludedValues } from "../schemaConstraints.js";
 import {
   appModuleFile,
   aptSources,
@@ -15,8 +18,8 @@ import {
   renderEnvToml,
   renderInstallScript,
   renderSmokeTask,
-  shellQuote,
 } from "./appExport.js";
+import { shellQuote } from "./shellQuote.js";
 import {
   COMPUTER_ARCHITECTURES,
   DOWNLOAD_INSTALL_SCRIPT,
@@ -31,6 +34,7 @@ import {
 import { INSTALL_SCRIPT, type ExportPackageFile } from "./appExportInstall.js";
 import { isArmoredKey } from "./aptRepositories.js";
 import { DEBIAN_PACKAGE_NAME } from "./debianPackageFile.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The Node.js release the build layer runs REA with: the one REA pins. */
 export const BUILD_NODE_VERSION = "24.22.1";
@@ -83,8 +87,8 @@ export const buildInstallSchema = z.discriminatedUnion("kind", [
     kind: z.literal("apt_repository"),
     package: aptPackageSchema,
     uri: downloadUrlSchema,
-    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u),
-    components: z.array(z.string().regex(/^[A-Za-z0-9._-]+$/u)).default([]),
+    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\x2f\x2d]*$/u),
+    components: z.array(z.string().regex(/^[A-Za-z0-9._\x2d]+$/u)).default([]),
     key_file: absoluteLocalPathStringSchema.describe(
       "The repository's signing key on this host, armored or binary.",
     ),
@@ -119,7 +123,7 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     kind: z.literal("request"),
     desktop_entry: z
       .string()
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._\x2d]*$/u)
       .max(255)
       .describe(
         "The desktop entry id the package installs, such as org.xfce.mousepad; the menu opens it with gtk-launch.",
@@ -145,7 +149,11 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     ),
     settings: z
       .record(
-        z.string().regex(BUNDLE_SETTING_VARIABLE),
+        excludedValues(
+          z.string().regex(BUNDLE_SETTING_VARIABLE),
+          BUILD_COMPUTER_SETTINGS,
+          "Build host control names are reserved.",
+        ),
         buildSecretHandleSchema,
       )
       .optional()
@@ -264,7 +272,7 @@ const buildInstall = (
             suite: install.suite,
             components: install.components,
             keyFile: `apt-keys/${name}.${isArmoredKey(aptKey) ? "asc" : "gpg"}`,
-            keySha256: createHash("sha256").update(aptKey).digest("hex"),
+            keySha256: sha256Hex(aptKey),
           },
         }
       : undefined;

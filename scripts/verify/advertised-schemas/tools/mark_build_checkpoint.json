@@ -1,0 +1,15 @@
+{
+  "schemas": {
+    "input compact": "f2e13f2c20cc0620",
+    "output compact": "8a71b3f0e157e74f"
+  },
+  "patterns": {
+    "input": [
+      "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      "^[0-9a-z][\\-.0-9_a-z]{0,62}$"
+    ],
+    "output": [
+      "^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-8][0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    ]
+  }
+}

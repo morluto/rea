@@ -2,7 +2,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
-import { recordValue } from "../../../src/browser/CdpCaptureValues.js";
+import { cdpFrameEvent } from "../../../src/browser/protocol/CdpEvents.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import {
   startFakeCdpBrowser,
@@ -392,11 +392,7 @@ it("keeps cancellation authoritative while an over-budget clock request is pendi
     .mockImplementation(function (this: CdpConnection, listener) {
       return onEvent.call(this, (event) => {
         listener(event);
-        if (
-          event.method === "Page.frameNavigated" &&
-          recordValue(recordValue(event.params)?.frame)?.loaderId ===
-            "oversized-before-clock"
-        )
+        if (cdpFrameEvent(event)?.facts.loaderId === "oversized-before-clock")
           // All subscribers finish synchronously before this microtask, including
           // the timeline owner that admits or rejects the received payload.
           queueMicrotask(() => {

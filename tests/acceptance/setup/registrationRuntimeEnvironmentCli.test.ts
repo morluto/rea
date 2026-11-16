@@ -681,7 +681,7 @@ cliTest(
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001",
       REA_HOPPER_STARTUP_TIMEOUT_MS: "2800002",
       REA_JEB_MCP_TIMEOUT_MS: "2900003",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
       REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
       REA_REGEX_MATCHING_DEADLINE_MS: "10000",
       REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -742,7 +742,7 @@ cliTest(
         REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001",
         REA_HOPPER_STARTUP_TIMEOUT_MS: "2800002",
         REA_JEB_MCP_TIMEOUT_MS: "2900003",
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
         REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "256",
         REA_REGEX_MATCHING_DEADLINE_MS: "10000",
         REA_REGEX_WORKER_HEAP_REQUEST_MIB: "256",
@@ -766,7 +766,6 @@ cliTest(
       },
     });
   },
-  120_000,
 );
 
 for (const [client, provider] of [
@@ -788,6 +787,7 @@ for (const [client, provider] of [
           idaConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
+            protocol: "native",
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),
@@ -902,7 +902,6 @@ for (const [client, provider] of [
         });
       }
     },
-    120_000,
   );
 
 for (const invalidSetting of [
@@ -954,7 +953,6 @@ for (const invalidSetting of [
         code: "ENOENT",
       });
     },
-    120_000,
   );
 
 cliTest(
@@ -1017,5 +1015,4 @@ cliTest(
       code: "ENOENT",
     });
   },
-  120_000,
 );

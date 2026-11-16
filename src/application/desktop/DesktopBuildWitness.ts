@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { planOutputTree } from "./DesktopOutputTree.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   parseDesktopTask,
@@ -34,14 +34,12 @@ import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import { isPortableBundleName } from "../environment/environmentBundle.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
+} from "../../ports/ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
@@ -56,6 +54,8 @@ import {
   type EndedWitness,
   type WitnessRecord,
 } from "./DesktopBuildWitnessRecord.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const FRESH =
@@ -101,16 +101,19 @@ const refused = (userMessage: string, remediationAction: string) =>
     conformsToInputContract: true,
   });
 
-const taskDigest = (task: DesktopTask) =>
-  createHash("sha256").update(JSON.stringify(task)).digest("hex");
+const taskDigest = (task: DesktopTask) => sha256Hex(JSON.stringify(task));
 
-/** Whether a folder can take the record: absent, or empty. */
-const usableFolder = async (directory: string): Promise<boolean> =>
-  readdir(directory).then(
-    (entries) => entries.length === 0,
-    (cause: unknown) =>
-      (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
-  );
+/** A retry cannot redirect an ended witness to another folder. */
+const recordDirectoryRefusal = (
+  expected: string,
+  requested: string | undefined,
+): AnalysisError | undefined =>
+  requested !== undefined && requested !== expected
+    ? refused(
+        `This witness's record belongs to ${expected}, not ${requested}.`,
+        "Ask again without directory or with the original folder; another witness needs a fresh computer.",
+      )
+    : undefined;
 
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
@@ -228,7 +231,7 @@ export class DesktopBuildWitness {
     signal: AbortSignal,
     progress: ProgressReporter = silentProgressReporter,
   ): Promise<Result<CheckedTask, AnalysisError>> {
-    const parsed = parseDesktopTask(input.task, isPortableBundleName);
+    const parsed = parseDesktopTask(input.task);
     if (!parsed.ok)
       return err(
         refused(
@@ -238,8 +241,15 @@ export class DesktopBuildWitness {
       );
     const task = parsed.value;
     const { stage } = input;
-    if (stage !== undefined && this.#witness?.state === "saving")
-      return this.#resave(this.#witness, task, stage, signal);
+    if (stage !== undefined && this.#witness?.state === "saving") {
+      const directoryRefusal = recordDirectoryRefusal(
+        this.#witness.directory,
+        input.directory,
+      );
+      return directoryRefusal === undefined
+        ? this.#resave(this.#witness, task, stage, signal)
+        : err(directoryRefusal);
+    }
     const saved =
       stage === undefined
         ? undefined
@@ -303,7 +313,7 @@ export class DesktopBuildWitness {
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `Reading the app's state failed: ${errorText(cause)}`,
+              userMessage: `Reading the app's state failed: ${errorMessage(cause)}`,
               cause,
             }),
       );
@@ -413,7 +423,9 @@ export class DesktopBuildWitness {
     witness.pendingManifest = undefined;
     witness.record = written.record;
     if (written.kind === "published") {
-      witness.published = { error: written.error, release: written.release };
+      if (written.release === undefined) witness.state = "saved";
+      else
+        witness.published = { error: written.error, release: written.release };
       return err(written.error);
     }
     witness.state = "saved";
@@ -439,13 +451,11 @@ export class DesktopBuildWitness {
     )
       return undefined;
     // A folder the record was not saved to gets nothing written, so it is refused.
-    if (directory !== undefined && directory !== witness.directory)
-      return err(
-        refused(
-          `This witness's record was saved to ${witness.directory}, not ${directory}.`,
-          "Ask again without directory or with the folder it was saved to; another witness needs a fresh computer.",
-        ),
-      );
+    const directoryRefusal = recordDirectoryRefusal(
+      witness.directory,
+      directory,
+    );
+    if (directoryRefusal !== undefined) return err(directoryRefusal);
     return ok({
       ...counted(task, filed),
       witness: summaryOf(filed, null, witness.record),
@@ -525,13 +535,15 @@ export class DesktopBuildWitness {
           "Give directory, a new or empty folder on this host for the record and recording.",
         ),
       );
-    if (!(await usableFolder(directory)))
-      return err(
-        refused(
-          `${directory} exists and is not empty.`,
-          "Give a new or empty folder.",
-        ),
-      );
+    // Admit the folder by the same rule the record is saved under, so the
+    // seed cannot accept a folder (a symlink, a file, a denied path) that the
+    // save would refuse.
+    try {
+      await planOutputTree(directory, { operation: CHECK, field: "directory" });
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisError) return err(cause);
+      throw cause;
+    }
     let differs: string | undefined;
     if (this.#bundle !== undefined) {
       try {
@@ -574,7 +586,7 @@ export class DesktopBuildWitness {
     } catch (cause: unknown) {
       return err(
         new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-          userMessage: `The witness could not start its recording: ${errorText(cause)}`,
+          userMessage: `The witness could not start its recording: ${errorMessage(cause)}`,
           cause,
         }),
       );

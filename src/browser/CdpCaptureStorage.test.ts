@@ -11,19 +11,21 @@ import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCaptur
 import { captureStorage } from "./CdpCaptureStorage.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
 import type { CdpConnection } from "./CdpConnection.js";
+import { fakeCdpSend } from "../../tests/fixtures/fakeCdpSend.js";
 
 const NO_CACHE_COMMAND = Symbol("unsupported");
 
 const captureWithCacheResult = async (
   cacheResult: unknown,
+  storageEntries: unknown = [],
 ): Promise<Awaited<ReturnType<typeof captureStorage>>["value"]> => {
   const connection = {
-    send(method: string): Promise<unknown> {
+    send: fakeCdpSend((method, params): Promise<unknown> => {
       switch (method) {
         case "Storage.getUsageAndQuota":
           return Promise.resolve({ usage: 1, quota: 10 });
         case "DOMStorage.getDOMStorageItems":
-          return Promise.resolve({ entries: [] });
+          return Promise.resolve({ entries: storageEntries });
         case "IndexedDB.requestDatabaseNames":
           return Promise.resolve({ databaseNames: [] });
         case "Network.getCookies":
@@ -40,11 +42,12 @@ const captureWithCacheResult = async (
               )
             : Promise.resolve(cacheResult);
         case "CacheStorage.requestEntries":
+          expect(params.cacheId).toEqual(expect.any(String));
           return Promise.resolve({ cacheDataEntries: [], returnCount: 0 });
         default:
           return Promise.reject(new Error(`Unexpected command: ${method}`));
       }
-    },
+    }),
   } as unknown as CdpConnection;
   const { value } = await captureStorage(
     {
@@ -121,10 +124,10 @@ it("keeps an omitted IndexedDB remote value unknown", async () => {
     },
   };
   const connection = {
-    async send(method: string): Promise<unknown> {
+    send: fakeCdpSend(async (method): Promise<unknown> => {
       if (!(method in replies)) throw new Error(method);
       return replies[method];
-    },
+    }),
   } as unknown as CdpConnection;
   const { value } = await captureStorage(
     {
@@ -190,10 +193,7 @@ it.each(["indexed_db", "cache"] as const)(
       "CacheStorage.requestCachedResponse": { response: { body: "" } },
     };
     const connection = {
-      async send(
-        method: string,
-        params: Record<string, unknown>,
-      ): Promise<unknown> {
+      send: fakeCdpSend(async (method, params): Promise<unknown> => {
         if (
           method === "IndexedDB.requestData" ||
           method === "CacheStorage.requestEntries"
@@ -223,7 +223,7 @@ it.each(["indexed_db", "cache"] as const)(
         }
         if (!(method in replies)) throw new Error(method);
         return replies[method];
-      },
+      }),
     } as unknown as CdpConnection;
     const { value } = await captureStorage(
       {
@@ -275,10 +275,10 @@ const captureCookies = async (
     "Network.getCookies": { cookies },
   };
   const connection = {
-    async send(method: string): Promise<unknown> {
+    send: fakeCdpSend(async (method): Promise<unknown> => {
       if (!(method in replies)) throw new Error(method);
       return replies[method];
-    },
+    }),
   } as unknown as CdpConnection;
   const { value } = await captureStorage(
     {
@@ -361,4 +361,58 @@ it("keeps an opaque cookie partition unknown without dropping its value", async 
     changes: [],
   });
   expect(storageComparison(plain, known).status).toBe("changed");
+});
+
+it("retains known storage keys and cache names when content or locator metadata is malformed", async () => {
+  const storage = await captureWithCacheResult(
+    { caches: [{ cacheName: "known-cache" }] },
+    [
+      ["known-key", 42],
+      ["valid-peer", "recorded"],
+      [42, "unknown identity"],
+    ],
+  );
+  expect(storage.local_storage_keys).toEqual(["known-key", "valid-peer"]);
+  expect(storage.session_storage_keys).toEqual(["known-key", "valid-peer"]);
+  expect(storage.cache_names).toEqual(["known-cache"]);
+  expect(storage.fingerprints_complete).toBe(false);
+  const local = storage.content_fingerprints.filter(
+    ({ scope }) => scope === "local_storage",
+  );
+  expect(local).toHaveLength(2);
+  expect(local).toContainEqual(
+    expect.objectContaining({ complete: false, value_sha256: null }),
+  );
+  expect(local).toContainEqual(
+    expect.objectContaining({
+      complete: true,
+      value_sha256: expect.any(String),
+    }),
+  );
+});
+
+it("retains cookie identity when its content is malformed without inventing a value fingerprint", async () => {
+  const known = await captureCookies([cookieBase]);
+  const unavailable = await captureCookies([
+    { ...cookieBase, value: 42 },
+    { ...cookieBase, name: 42 },
+  ]);
+  const knownCookie = known.content_fingerprints.find(
+    ({ scope }) => scope === "cookie",
+  );
+  if (knownCookie === undefined) throw new Error("Missing known cookie");
+  expect(unavailable.content_fingerprints).toEqual([
+    {
+      scope: "cookie",
+      identity_sha256: knownCookie.identity_sha256,
+      value_sha256: null,
+      complete: false,
+    },
+  ]);
+  expect(unavailable.fingerprints_complete).toBe(false);
+  expect(storageComparison(known, unavailable)).toMatchObject({
+    status: "unknown",
+    total_changes: 0,
+    changes: [],
+  });
 });

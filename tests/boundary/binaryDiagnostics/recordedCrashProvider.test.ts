@@ -471,7 +471,9 @@ const expectOptionalContextFailure = (
       details: {
         diagnostics: {
           preceding_output: { stdout: "basic stage diagnostic" },
-          stderr: "debugger failed",
+        },
+        captured_output: {
+          stderr: expect.stringContaining("debugger failed"),
         },
       },
     });
@@ -550,7 +552,6 @@ it.runIf(host)(
     expect(projected.remediation.action).toContain("above 1500");
     expect(projected.remediation.action).not.toContain("above 30000");
   },
-  10_000,
 );
 
 const fixture = async (

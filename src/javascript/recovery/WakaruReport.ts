@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
   normalizeArtifactPath,
   ArtifactPathRegistry,
-} from "../../artifacts/ArtifactPaths.js";
+} from "../../resources/index.js";
+import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -15,13 +15,10 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JavaScriptRecoveryResult } from "../../domain/javascript/javascriptRecovery.js";
-import {
-  isRecoveryFileSizeError,
-  readRecoveryFile,
-  recoveryFailureMessage,
-} from "./RecoveryFiles.js";
+import { isRecoveryFileSizeError, readRecoveryFile } from "./RecoveryFiles.js";
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
 import type { runWakaruCommand } from "./WakaruCommand.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const warningSchema = z.looseObject({
   filename: z.string(),
@@ -144,7 +141,7 @@ export const parseWakaruReports = async (context: ReportContext) => {
       cause,
       ...wakaruReportGuidance(cause),
       diagnostics: {
-        reason: `Unusable Wakaru recovery report: ${recoveryFailureMessage(cause)}`,
+        reason: `Unusable Wakaru recovery report: ${errorMessage(cause)}`,
         exit_code: execution.exit_code,
         signal: execution.signal,
         stdout: execution.stdout,
@@ -283,7 +280,7 @@ export const validateRecoverySourceMap = (
   } catch (cause: unknown) {
     throw new AnalysisOutputError(
       OPERATION,
-      `Invalid emitted source map for ${filename}: ${recoveryFailureMessage(cause)}`,
+      `Invalid emitted source map for ${filename}: ${errorMessage(cause)}`,
       { cause },
     );
   }

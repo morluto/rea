@@ -54,18 +54,32 @@ const counts = (solves: readonly SolveRecord[]) => {
 };
 
 /** The band the finished solves place the task in: 0 or 3 of 3 decide it, else 1 to 3 of 5 keep it. */
-export const bandOf = (solves: readonly SolveRecord[]): Band => {
+const bandOf = (solves: readonly SolveRecord[]): Band => {
   const { done, passes } = counts(solves);
   if (done >= ALL_SOLVES)
-    return passes <= MOST_BAND_PASSES ? "in_band" : "too_easy";
+    return passes === 0
+      ? "too_hard"
+      : passes <= MOST_BAND_PASSES
+        ? "in_band"
+        : "too_easy";
   if (done >= FIRST_SOLVES && passes === 0) return "too_hard";
   if (done >= FIRST_SOLVES && passes === done) return "too_easy";
   return "undecided";
 };
 
-/** The total cost of the solves, unknown costs as none. */
-const spent = (solves: readonly SolveRecord[]): number =>
-  solves.reduce((total, solve) => total + (solve.usd ?? 0), 0);
+/** The solves' costs, or null when any solve's cost is unknown. */
+const costs = (solves: readonly SolveRecord[]): number[] | null => {
+  const known: number[] = [];
+  for (const { usd } of solves) {
+    if (usd === null) return null;
+    known.push(usd);
+  }
+  return known;
+};
+
+/** The total cost of the solves, or null when any solve's cost is unknown. */
+const spent = (solves: readonly SolveRecord[]): number | null =>
+  costs(solves)?.reduce((total, usd) => total + usd, 0) ?? null;
 
 /**
  * Whether to run another solve: not once the band is decided, after too many
@@ -82,10 +96,10 @@ export const nextSolve = (
     return { next: false, stopped: "decided" };
   if (solves.filter((solve) => !finished(solve)).length > MAX_UNFINISHED)
     return { next: false, stopped: "unfinished" };
-  if (solves.some((solve) => solve.usd === null))
-    return { next: false, stopped: "cost_unknown" };
-  const largest = Math.max(0, ...solves.map((solve) => solve.usd ?? 0));
-  const projected = spent(solves) + largest;
+  const known = costs(solves);
+  if (known === null) return { next: false, stopped: "cost_unknown" };
+  const projected =
+    known.reduce((total, usd) => total + usd, 0) + Math.max(0, ...known);
   const rounding =
     Number.EPSILON * Math.max(projected, budgetUsd) * (solves.length + 2);
   return projected - budgetUsd > rounding
@@ -104,7 +118,8 @@ export type DifficultyRecord = {
   readonly k: number;
   readonly passes: number;
   readonly unfinished: number;
-  readonly usd: number;
+  /** Total cost, or null when a solve reported no cost. */
+  readonly usd: number | null;
   readonly budget_usd: number;
   /** Each finished solve's turns, in order. */
   readonly turns: (number | null)[];
@@ -128,6 +143,7 @@ export const difficultyRecord = (input: {
   readonly measuredAt: string;
 }): DifficultyRecord => {
   const done = input.solves.filter(finished);
+  const total = spent(input.solves);
   // A Map, so a check named like an object's own member, such as constructor, counts as any other.
   const failures = new Map<string, number>();
   for (const solve of done)
@@ -142,7 +158,7 @@ export const difficultyRecord = (input: {
     k: done.length,
     passes: counts(input.solves).passes,
     unfinished: input.solves.length - done.length,
-    usd: cents(spent(input.solves)),
+    usd: total === null ? null : cents(total),
     budget_usd: input.budgetUsd,
     turns: done.map((solve) => solve.turns),
     failures_per_check: Object.fromEntries(failures),
@@ -179,7 +195,7 @@ unless they pass none or all, and a task is in the band when it passes 1 to 3 of
 ${Object.entries(records)
   .map(
     ([name, record]) =>
-      `- \`${name}\`: ${record.model} passed ${String(record.passes)} of ${String(record.k)}, ${BAND_WORDS[record.band]}, $${record.usd.toFixed(2)} in all.`,
+      `- \`${name}\`: ${record.model} passed ${String(record.passes)} of ${String(record.k)}, ${BAND_WORDS[record.band]}, ${record.usd === null ? "cost unknown" : `$${record.usd.toFixed(2)} in all`}.`,
   )
   .join("\n")}
 `;

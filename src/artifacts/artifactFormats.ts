@@ -1,4 +1,5 @@
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
+import type { ArtifactIntegrityPolicyName } from "../domain/artifactIntegrityPolicy.js";
 import {
   ARTIFACT_FORMAT_IDS,
   type ArtifactFormatId,
@@ -12,7 +13,9 @@ import {
 import {
   ArtifactReaderFailure,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+  DirectoryArtifactReader,
+  ZipArtifactReader,
+} from "../resources/index.js";
 import type { ArtifactReaderAdmission } from "./ArtifactReaderAdmission.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { BunStandaloneAdmission } from "./bun/BunStandaloneAdmission.js";
@@ -21,7 +24,6 @@ import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js"
 import { DenoStandaloneArtifactReader } from "./DenoStandaloneArtifactReader.js";
 import { DfuSeArtifactReader } from "./DfuSeArtifactReader.js";
 import { CompoundFileArtifactReader } from "./CompoundFileArtifactReader.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import type { DotnetBundleAdmission } from "./dotnet/DotnetBundleAdmission.js";
 import { DotnetBundleArtifactReader } from "./DotnetBundleArtifactReader.js";
 import {
@@ -45,7 +47,6 @@ import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
-import { ZipArtifactReader } from "./ZipArtifactReader.js";
 
 /** How inventory describes a format when no reader was constructed. */
 export type AbsentInventory = "platform" | "universal" | "unavailable" | "root";
@@ -62,6 +63,11 @@ export interface ArtifactReaderConstruction {
   readonly espFlashSelection?: EspFlashSelection | undefined;
   /** Caller-selected root spelling; only ASAR companion lookup consumes this. */
   readonly selectedPath?: string | undefined;
+  /**
+   * Caller choice for a contradiction between a reader's independent witness
+   * and the container's own bytes; universal Mach-O lipo records consume it.
+   */
+  readonly integrity?: ArtifactIntegrityPolicyName | undefined;
 }
 
 export interface FormatDescriptor {
@@ -135,7 +141,7 @@ function admittedAs(
 }
 
 /** One capability row for every ZIP-backed package family. */
-export const ZIP_FAMILY_CAPABILITIES = {
+const ZIP_FAMILY_CAPABILITIES = {
   zipFamily: true,
   occurrenceContainer: true,
   roleContainer: false,
@@ -294,6 +300,7 @@ const NON_ZIP_FORMATS = {
         throw new ArtifactReaderFailure(
           "integrity",
           "iNES inventory requires its admitted source descriptor",
+          { integrityCheck: "inventory-node" },
         );
       return new InesArtifactReader(path, source);
     },
@@ -357,6 +364,7 @@ const NON_ZIP_FORMATS = {
         options.environment,
         undefined,
         sourceOf(options),
+        options.integrity,
       ),
   }),
   "mach-o": described("mach-o", plain),

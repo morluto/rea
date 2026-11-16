@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { kunaQueryFailureForCaller } from "../../../../src/kuna/KunaQueryErrors.js";
 import {
@@ -11,6 +12,7 @@ import { ProviderCleanupError } from "../../../../src/domain/providerCleanupErro
 import { analysisErrorWithCleanupFailure } from "../../../../src/domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 const capturedOutput = {
   stdout: "selected output",
@@ -18,7 +20,7 @@ const capturedOutput = {
   truncated: false,
 };
 const partialObservation = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   { id: "kuna", name: "Kuna", version: null },
   {
     operation: "kuna:strings",
@@ -94,7 +96,7 @@ it.each([
     resources = ["two"];
     for (const caller of callers)
       expect(caller.cleanupResources).toEqual(["two"]);
-    source.resolveCleanup();
+    releaseOwnedCleanup(source);
     for (const caller of callers) expect(caller.cleanupIncomplete).toBe(false);
   },
 );
@@ -106,7 +108,7 @@ it("does not resurrect an already resolved cleanup failure", () => {
     {},
     { operation: "kuna:strings" },
   );
-  source.resolveCleanup();
+  releaseOwnedCleanup(source);
   const caller = kunaQueryFailureForCaller(source, "search_strings");
   expect(caller.cleanupIncomplete).toBe(false);
 });
@@ -143,7 +145,7 @@ it("restores a caller-attributed typed primary after its exact cleanup owner res
     operation: "search_procedures",
     timeoutMs: 23,
   });
-  cleanup.resolveCleanup();
+  releaseOwnedCleanup(cleanup);
   expect(projectAnalysisError(caller)).toMatchObject({
     code: "provider_timeout",
     details: {

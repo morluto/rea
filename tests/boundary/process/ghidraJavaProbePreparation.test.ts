@@ -16,6 +16,8 @@ import {
 } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitForProcessOwnershipInspection } from "../../../src/process/ProcessInspectionCancellation.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 // Long enough for an ordinary owned launch, short enough to keep the cold case quick.
 const PROBE_TIMEOUT_MS = 2_000;
@@ -89,7 +91,7 @@ it.runIf(process.platform === "linux")(
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       // A stalled `ps` check has no time limit of its own.
       async (signal) => {
-        await delay(60_000, undefined, { signal });
+        await waitForProcessOwnershipInspection(60_000, signal);
       },
     );
 
@@ -120,7 +122,7 @@ it.skipIf(process.platform === "win32")(
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       async (signal) => {
         entered();
-        await delay(60_000, undefined, { signal });
+        await waitForProcessOwnershipInspection(60_000, signal);
       },
     );
 
@@ -185,7 +187,7 @@ it.runIf(process.platform === "darwin")(
     let denied = true;
     const close = vi.fn(async () => {
       if (denied) throw cleanup;
-      cleanup.resolveCleanup();
+      releaseOwnedCleanup(cleanup);
     });
     vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
       async () => {

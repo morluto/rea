@@ -46,7 +46,7 @@ export const nativePcodeEffectSchema = z.strictObject({
   value_input: z.int().nonnegative().nullable(),
 });
 
-/** Accepted projection budgets; historical observations may omit these facts. */
+/** Accepted projection budgets. */
 export const nativeValueFlowLimitsSchema = z.strictObject({
   max_operations: z.int().min(1).max(MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS),
   max_inputs_per_operation: z
@@ -61,10 +61,10 @@ export type NativeValueFlowLimits = z.infer<typeof nativeValueFlowLimitsSchema>;
 export const availableNativeValueFlowSchema = z.strictObject({
   available: z.literal(true),
   provenance: z.literal("ghidra-high-pcode"),
-  limits: nativeValueFlowLimitsSchema.exactOptional(),
-  limits_reached: z
-    .array(z.enum(["max_operations", "max_inputs_per_operation", "max_edges"]))
-    .exactOptional(),
+  limits: nativeValueFlowLimitsSchema,
+  limits_reached: z.array(
+    z.enum(["max_operations", "max_inputs_per_operation", "max_edges"]),
+  ),
   operations: z.array(nativePcodeOperationSchema),
   def_use: z.array(nativePcodeDefUseSchema),
   effects: z
@@ -102,10 +102,7 @@ export const nativeValueFlowSchema = z.discriminatedUnion("available", [
   unavailableNativeValueFlowSchema,
 ]);
 
-/** Lightweight retained metadata; historical records may omit newer omission counts.
- * Strip full flow collections without parsing or copying them. An empty recorded
- * unavailable reason remains source evidence even though new producers forbid it.
- */
+/** Lightweight retained metadata: strip full flow collections without parsing or copying them. */
 export const nativeValueFlowMetadataSchema = z.union([
   availableNativeValueFlowSchema
     .pick({
@@ -115,14 +112,8 @@ export const nativeValueFlowMetadataSchema = z.union([
       known_omitted_inputs: true,
       known_omitted_edges: true,
     })
-    .partial({
-      omitted_operations_lower_bound: true,
-      known_omitted_inputs: true,
-      known_omitted_edges: true,
-    })
     .strip(),
   unavailableNativeValueFlowSchema
     .pick({ available: true, reason: true })
-    .extend({ reason: z.string() })
     .strip(),
 ]);
