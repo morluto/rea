@@ -127,7 +127,9 @@ export const accountZipMemberRegion = async (
  * An entry whose directory reports no CRC (zip.js omits it for AES entries,
  * whose AE-2 CRC is zero) is matched on its sizes alone.
  * Both size widths are tried, the record's own first: MSIX and APPX packages
- * write 8-byte descriptor sizes without a ZIP64 extra field.
+ * write 8-byte descriptor sizes without a ZIP64 extra field. Zero sizes match
+ * a narrow prefix of a wide descriptor too, so a layout that ends exactly at
+ * `end`, the next accounted byte, wins over the first match.
  */
 const dataDescriptorBytes = async (
   record: ZipLocalRecord,
@@ -137,6 +139,7 @@ const dataDescriptorBytes = async (
 ): Promise<number> => {
   const signed =
     end - at >= 16 && (await view(at, 4)).u32(0) === DATA_DESCRIPTOR_SIGNATURE;
+  let first = 0;
   for (const wide of record.zip64 ? [true, false] : [false, true]) {
     const body = wide ? 20 : 12;
     for (const prefix of signed ? [4, 0] : [0]) {
@@ -148,11 +151,13 @@ const dataDescriptorBytes = async (
         (record.crc32 === undefined || data.u32(0) === record.crc32) &&
         compressed === BigInt(record.compressedSize) &&
         uncompressed === BigInt(record.uncompressedSize)
-      )
-        return prefix + body;
+      ) {
+        if (at + prefix + body === end) return prefix + body;
+        if (first === 0) first = prefix + body;
+      }
     }
   }
-  return 0;
+  return first;
 };
 
 /** Where a well-formed APK signing block ending at the directory starts, else the directory. */

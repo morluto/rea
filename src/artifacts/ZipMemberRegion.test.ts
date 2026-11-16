@@ -302,8 +302,11 @@ describe("ZIP listing coverage from the central directory", () => {
 
   it("declares complete coverage for MSIX-style 64-bit data descriptors without ZIP64 fields", async () => {
     // MSIX and APPX packages: sizes deferred to a signed descriptor with
-    // 8-byte sizes, and no ZIP64 extra field in either header.
-    const members = [member("AppxManifest.xml"), member("Assets/logo.png")];
+    // 8-byte sizes, and no ZIP64 extra field in either header. An empty
+    // member's zero sizes also match the first 16 bytes as a 32-bit layout.
+    const empty = { ...member("Assets/empty.txt"), data: Buffer.alloc(0) };
+    const last = { ...empty, name: "last.txt" };
+    const members = [member("AppxManifest.xml"), empty, member("a.png"), last];
     const locals: Buffer[] = [];
     const records: Buffer[] = [];
     let offset = 0;
@@ -330,7 +333,7 @@ describe("ZIP listing coverage from the central directory", () => {
     end.writeUInt32LE(directory.length, 12);
     end.writeUInt32LE(offset, 16);
     expect(await list(Buffer.concat([...locals, directory, end]))).toEqual({
-      paths: ["AppxManifest.xml", "Assets/logo.png"],
+      paths: members.map(({ name }) => name),
       coverage: [complete],
     });
   });
