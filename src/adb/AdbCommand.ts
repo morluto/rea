@@ -1,9 +1,10 @@
 import {
-  AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -15,13 +16,15 @@ import {
   execFileOutputFailure,
   type ExecFileOutputFailure,
 } from "../process/ExecFileOutput.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 import { packageChangeFailureReason } from "./AdbShellOutput.js";
 import {
   isSuccessfulDaemonStartNotice,
   isDaemonStartingNotice,
   hasOnlySuccessfulAdbStartupNotices,
 } from "./AdbDeviceOutput.js";
-import type { AdbBinarySelection } from "./AdbConfiguration.js";
+import { ADB_BINARY_ENV, type AdbBinarySelection } from "./AdbConfiguration.js";
 
 const STDERR_EXCERPT_CHARACTERS = 512;
 
@@ -107,8 +110,7 @@ export const runAdbCapture = async (
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
 ): Promise<Result<{ stdout: Buffer; stderr: Buffer }, AnalysisError>> => {
-  if (signal?.aborted === true)
-    return err(new AnalysisCancelledError(operation, { cause: signal.reason }));
+  if (signal?.aborted === true) return err(cancelledBy(operation, signal));
   try {
     return ok(
       await execFileBytes(selection.binary, arguments_, {
@@ -123,12 +125,13 @@ export const runAdbCapture = async (
     const failure = execFileOutputFailure(cause);
     if (cause instanceof ExecFileOutputCancelledError)
       return err(
-        new AnalysisCancelledError(operation, {
-          cause: cause.cause,
-          ...(failure === undefined
+        cancelledBy(
+          operation,
+          carriedReason(cause.cause),
+          failure === undefined
             ? {}
-            : { capturedOutput: execFileFailureCapturedOutput(failure) }),
-        }),
+            : { capturedOutput: execFileFailureCapturedOutput(failure) },
+        ),
       );
     if (failure === undefined)
       return err(
@@ -143,10 +146,18 @@ export const runAdbCapture = async (
       const allowance =
         limits.volatileOutput === true
           ? {
-              fixedAllowance: { name, kind: "live" as const },
+              fixedAllowance: {
+                name,
+                kind: "live" as const,
+                limit: limits.maxOutputBytes,
+                unit: "bytes",
+              },
               retryable: true as const,
             }
-          : fixedAllowanceOptions(name, "capture");
+          : fixedAllowanceOptions(name, "capture", {
+              limit: limits.maxOutputBytes,
+              unit: "bytes",
+            });
       return err(
         new AnalysisResourceConstraintError(
           operation,
@@ -218,11 +229,26 @@ export const runAdbCapture = async (
           remediationAction: `This ${String(limits.timeoutMs)} ms adb deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
         }),
       );
+    // The host, not adb, refused this launch: it lacked capacity, or the
+    // request's arguments and the environment exceed the launch limit.
+    const launch = launcherFailureOf(cause);
+    if (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+      return err(
+        classifyLaunchFailure(launch, {
+          providerId: "adb",
+          operation,
+          command: selection.binary,
+          selection: ADB_BINARY_ENV,
+          details: detail,
+        }),
+      );
     return err(
       new AdbProtocolError(
-        excerpt === ""
-          ? `adb exited with code ${String(failure.code)} for ${operation}`
-          : excerpt,
+        failure.spawnFailed === true
+          ? `adb could not be started (${String(failure.code)}) for ${operation}`
+          : excerpt === ""
+            ? `adb exited with code ${String(failure.code)} for ${operation}`
+            : excerpt,
         failure,
         cause,
       ),

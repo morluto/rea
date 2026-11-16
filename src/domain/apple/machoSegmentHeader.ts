@@ -49,3 +49,38 @@ export const admitMachoSegmentMapping = (
       })
     : ok({ unmapped });
 };
+
+/** Admit one segment command against its cmdsize and the image that holds it. */
+export const admitMachoSegmentCommand = (
+  segment: Parameters<typeof admitMachoSegmentMapping>[0] & {
+    readonly headerSize: number;
+    readonly sectionCount: number;
+    readonly fileOffset: bigint;
+  },
+  commandBytes: number,
+  bits: 32 | 64,
+  imageBytes: number,
+) => {
+  const mapping = admitMachoSegmentMapping(segment, bits);
+  if (!mapping.ok) return mapping;
+  const sectionBytes = bits === 64 ? 80 : 68;
+  if (
+    segment.sectionCount >
+    Math.floor((commandBytes - segment.headerSize) / sectionBytes)
+  )
+    return err({
+      kind: "malformed" as const,
+      message: "Mach-O section table exceeds its segment command",
+    });
+  const image = BigInt(imageBytes);
+  if (
+    segment.fileSize !== 0n &&
+    (segment.fileOffset > image ||
+      segment.fileSize > image - segment.fileOffset)
+  )
+    return err({
+      kind: "malformed" as const,
+      message: "Mach-O segment range is outside the file",
+    });
+  return mapping;
+};

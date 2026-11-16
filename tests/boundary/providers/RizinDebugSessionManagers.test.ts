@@ -5,7 +5,6 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { evidenceSchema } from "../../../src/domain/evidence.js";
-import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
 import {
   createRizinTestManager,
   rizinTestInferiorTty,
@@ -76,6 +75,8 @@ process.stdin.on("data", (chunk) => {
         "-N",
         "-0",
         "-d",
+        "-R",
+        `stdin=${await rizinTestInferiorTty()}`,
         "-R",
         `stdout=${await rizinTestInferiorTty()}`,
         "-R",
@@ -151,9 +152,11 @@ process.stdin.on("data", (chunk) => {
         await chmod(provider, 0o700);
         let stopRejected = false;
         const manager = createRizinTestManager(
-          { REA_RIZIN_COMMAND: provider },
           {
-            frameTimeoutMs: 50,
+            REA_RIZIN_COMMAND: provider,
+            REA_DEBUGGER_COMMAND_DEADLINE_MS: "50",
+          },
+          {
             stopProcess: (session, name, options) => {
               if (stopOutcome !== "stopped" && !stopRejected) {
                 stopRejected = true;

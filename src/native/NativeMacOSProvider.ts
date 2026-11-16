@@ -1,4 +1,22 @@
-import { withArtifactTargetIdentity } from "../artifacts/withArtifactTargetIdentity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  readerIntegrityFailure,
+  bindArtifactFileCleanup,
+  artifactFileCompletion,
+  artifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  ArtifactFileCleanupFailure,
+  type ArtifactFilePrimaryFacts,
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  withArtifactTargetIdentity,
+} from "../resources/index.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
+import {
+  invariantViolation,
+  InternalInvariantError,
+} from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
   plistSourceFormat,
@@ -11,15 +29,7 @@ import {
   type NativePlistSelection,
   resolveBundleResourcePlistSelection,
 } from "./NativePlistSource.js";
-import {
-  bindArtifactFileCleanup,
-  artifactFileCompletion,
-  artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  ArtifactFileCleanupFailure,
-  type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readMachoEncryption } from "../artifacts/apple/MachoEncryptionReader.js";
+import { readMachoEncryption } from "../domain/apple/machoEncryptionReader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
@@ -40,7 +50,6 @@ import { observeNativeCalls } from "./NativeCallObservation.js";
 import { realpath, symlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 
 import { z } from "zod";
@@ -52,7 +61,7 @@ import {
   type AnalysisProvider,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   NATIVE_TOOL_CONTRACTS,
   type NativeToolName,
@@ -69,17 +78,17 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
-  AnalysisArtifactChangedError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
   DEFAULT_NATIVE_UI_DEADLINE_MS,
-  MAX_NATIVE_TIMER_MS,
   readNativeDeadline,
 } from "../domain/native/nativeDeadlines.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -99,7 +108,8 @@ import {
 import { createPlistNumberProjection } from "../domain/apple/plistNumbers.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
-import { machoKnownCodeSignSelector } from "./MachoArchitectureSelection.js";
+import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
+import { machoKnownCodeSignSelector } from "../domain/apple/machoArchitectureSelection.js";
 import {
   demangleSwiftSchema,
   inspectPlistSchema,
@@ -112,13 +122,12 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import {
   NativeCommandFailure,
-  NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   XcrunCommandRunner,
   failureCapture,
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,
@@ -140,19 +149,21 @@ import {
   architectureLocations,
   inspectNativeMacho,
 } from "./NativeMachoInspection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   withNativeMachoSource,
   NativeMachoSourceVerificationFailure,
 } from "./NativeMachoSource.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
-  MachoBinaryFormatError,
   MachoCommandNamesLimitError,
   readMachoCommandNames,
-} from "./MachoCommandNames.js";
+} from "../domain/apple/machoCommandNames.js";
 import {
   assertSelectedMachoSlice,
   resolveSelectedMachoSlice,
@@ -162,8 +173,10 @@ import {
   type NativeUiHelperRuntime,
 } from "./NativeUiHelperRuntime.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
-import type { ResolvedAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
-import { UnsupportedBinaryPlistUidError } from "../artifacts/apple/PlistScalars.js";
+import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
+import { UnsupportedBinaryPlistUidError } from "../domain/apple/plistScalars.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SignatureRuntimeRootFactory = () => Promise<
   Pick<PrivateRuntimeRoot, "path" | "close">
@@ -188,7 +201,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
     private readonly runner: NativeCommandRunner = new XcrunCommandRunner(
       environment,
     ),
-    platform: NodeJS.Platform = process.platform,
+    platform: NodeJS.Platform = HOST_PLATFORM.platform,
     tracerFactory?: () => NativeCallTracer,
     privateRuntimeRootFactory?: SignatureRuntimeRootFactory,
   ) {
@@ -267,7 +280,7 @@ class NativeMacOSClient implements AnalysisClient {
 
   private get target(): BinaryTarget {
     if (this.activeTarget === undefined)
-      throw new Error("This provider client has no executable target");
+      throw invariantViolation("This provider client has no executable target");
     return this.activeTarget;
   }
 
@@ -285,9 +298,7 @@ class NativeMacOSClient implements AnalysisClient {
         ),
       );
     if (options?.signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     if (operation === "health")
       return ok(createAnalysisExecution(null, IDENTITY));
     if (this.activeTarget === undefined && operation !== "inspect_plist")
@@ -337,7 +348,7 @@ class NativeMacOSClient implements AnalysisClient {
               signal: options?.signal,
               objcClassImportAddresses: input.data.objc_class_import_addresses,
               objcClassImportAddressesComplete:
-                input.data.objc_class_import_addresses_complete ?? true,
+                input.data.objc_class_import_addresses_complete,
               maxInputBytes: input.data.max_input_bytes,
             },
           ),
@@ -454,12 +465,7 @@ class NativeMacOSClient implements AnalysisClient {
     for (const cleanupError of cleanupErrors)
       result = result.ok
         ? err(cleanupError)
-        : err(
-            analysisErrorWithCleanupFailure(
-              result.error,
-              cleanupError,
-            ).bindCleanupDependencies([result.error, cleanupError]),
-          );
+        : err(analysisErrorWithCleanupDependencies(result.error, cleanupError));
     return result;
   }
 
@@ -494,7 +500,7 @@ class NativeMacOSClient implements AnalysisClient {
               reason: deadline.reason,
               message: deadline.message,
               minimum: 1,
-              maximum: MAX_NATIVE_TIMER_MS,
+              maximum: MAX_NODE_TIMER_DELAY_MS,
             },
           ]),
         );
@@ -536,11 +542,11 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             result.ok
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   result.error,
                   cleanup,
                   operation,
-                ).bindCleanupDependencies([result.error, cleanup]),
+                ),
           );
         }
         result = finishNativeUiObservation(result, operation, interruption);
@@ -640,7 +646,7 @@ class NativeMacOSClient implements AnalysisClient {
               reason: timeout.reason,
               message: timeout.message,
               minimum: 1,
-              maximum: MAX_NATIVE_TIMER_MS,
+              maximum: MAX_NODE_TIMER_DELAY_MS,
             },
           ]),
         ),
@@ -654,13 +660,14 @@ class NativeMacOSClient implements AnalysisClient {
       case "inspect_plist":
         return this.#inspectPlist(parameters, signal, timeoutMs);
       case "list_architectures":
-        return this.#listArchitectures(signal, timeoutMs);
+        return this.#listArchitectures(parameters, signal, timeoutMs);
       case "demangle_swift":
         return this.#demangle(parameters, signal, timeoutMs);
     }
   }
 
   async #listArchitectures(
+    parameters: Readonly<Record<string, JsonValue>>,
     signal: AbortSignal | undefined,
     timeoutMs: number,
   ): Promise<Result<NativeObservation, AnalysisError>> {
@@ -674,39 +681,59 @@ class NativeMacOSClient implements AnalysisClient {
           "Active artifact is not Mach-O.",
         ),
       );
-    const capture = await this.#run(
-      "list_architectures",
-      "lipo",
-      ["-detailed_info", this.target.path],
-      { signal, timeoutMs },
-    );
-    if (!capture.ok) return capture;
-    const provenance = [invocation(capture.value, this.target.path)];
-    const parsed = parseLipoCapture(
-      capture.value,
-      "list_architectures",
-      this.target.path,
-    );
-    if (!parsed.ok) return parsed;
-    const { architectures } = parsed.value;
-    const limitations = architectures.flatMap(
-      (architecture) => architecture.limitations,
-    );
-    const result = listArchitecturesSchema.parse({
-      architectures: {
-        items: architectures,
-        total: architectures.length,
-        exhaustive: true,
-        limitations: [],
-      },
-      provenance,
-      limitations,
-    });
-    return ok({
-      result: jsonValueSchema.parse(result),
-      limitations,
-      locations: architectureLocations(result.architectures.items),
-    });
+    try {
+      return await this.#machoResources.run(() =>
+        withNativeMachoSource(
+          this.target,
+          this.#machoResources,
+          signal,
+          async () => {
+            const capture = await this.#run(
+              "list_architectures",
+              "lipo",
+              ["-detailed_info", this.target.path],
+              { signal, timeoutMs },
+            );
+            if (!capture.ok) return capture;
+            const provenance = [invocation(capture.value, this.target.path)];
+            const parsed = parseLipoCapture(
+              capture.value,
+              "list_architectures",
+              this.target.path,
+            );
+            if (!parsed.ok) return parsed;
+            const { architectures } = parsed.value;
+            const limitations = architectures.flatMap(
+              (architecture) => architecture.limitations,
+            );
+            const result = listArchitecturesSchema.parse({
+              architectures: {
+                items: architectures,
+                total: architectures.length,
+                exhaustive: true,
+                limitations: [],
+              },
+              provenance,
+              limitations,
+            });
+            return ok({
+              result: jsonValueSchema.parse(result),
+              limitations,
+              locations: architectureLocations(result.architectures.items),
+            });
+          },
+        ),
+      );
+    } catch (cause: unknown) {
+      return err(
+        nativeMachoSourceFailure(
+          cause,
+          this.target,
+          parameters,
+          "list_architectures",
+        ),
+      );
+    }
   }
 
   async #demangle(
@@ -846,6 +873,7 @@ class NativeMacOSClient implements AnalysisClient {
       executablePaths,
     );
     const displayFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       display.value,
       binding.snapshotPath,
       executablePaths,
@@ -859,6 +887,7 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!requirements.ok) return requirements;
     const requirementsFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       requirements.value,
       binding.snapshotPath,
       executablePaths,
@@ -872,6 +901,7 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!entitlements.ok) return entitlements;
     const entitlementsFailure = codeSignCaptureFailure(
+      this.#signatureResources,
       entitlements.value,
       binding.snapshotPath,
       executablePaths,
@@ -928,11 +958,26 @@ class NativeMacOSClient implements AnalysisClient {
       limitations.push(
         "The entitlements for the requested architecture are unavailable because codesign reported it unsigned.",
       );
+    const states = { checked: [] as string[], unsigned: [] as string[] };
+    // A thin file's admitted architecture is a CPU family (arm64 for arm64e);
+    // codesign's display names the slice it described.
+    const described =
+      this.target.format === "mach-o-universal"
+        ? selectedArchitecture
+        : (/^Mach-O thin \(([^)\r\n]+)\)$/u.exec(parsed.format ?? "")?.[1] ??
+          null);
     const observation = () =>
       inspectSignatureSchema.parse({
         ...parsed,
         designated_requirement: requirementText,
         entitlements: entitlementValue.value,
+        slices: {
+          described,
+          architectures,
+          unmapped: unknownSlices,
+          checked: [...states.checked],
+          unsigned: [...states.unsigned],
+        },
         provenance: captures.map((capture) =>
           invocation(capture, binding.snapshotPath),
         ),
@@ -943,7 +988,7 @@ class NativeMacOSClient implements AnalysisClient {
         binding,
         architectures,
         executablePaths,
-        { captures, limitations },
+        { captures, limitations, states },
         signal,
         timeoutMs,
       );
@@ -964,12 +1009,16 @@ class NativeMacOSClient implements AnalysisClient {
     binding: SignatureTargetBinding,
     architectures: readonly string[],
     executablePaths: readonly string[],
-    observation: { captures: NativeCommandCapture[]; limitations: string[] },
+    observation: {
+      captures: NativeCommandCapture[];
+      limitations: string[];
+      /** Slices checked so far and those reported unsigned, kept when a later slice fails. */
+      states: { checked: string[]; unsigned: string[] };
+    },
     signal: AbortSignal | undefined,
     timeoutMs: number,
   ): Promise<Result<void, AnalysisError>> {
-    const { captures, limitations } = observation;
-    const unsigned: string[] = [];
+    const { captures, limitations, states } = observation;
     let unsignedNote: number | undefined;
     for (const architecture of architectures) {
       const slice = await this.#captureSignature(
@@ -980,20 +1029,25 @@ class NativeMacOSClient implements AnalysisClient {
       );
       if (!slice.ok) return slice;
       captures.push(slice.value);
-      if (slice.value.exitCode === 0) continue;
+      if (slice.value.exitCode === 0) {
+        states.checked.push(architecture);
+        continue;
+      }
       const failure = codeSignCaptureFailure(
+        this.#signatureResources,
         slice.value,
         binding.snapshotPath,
         executablePaths,
       );
       if (failure !== null) return err(failure);
-      unsigned.push(architecture);
+      states.checked.push(architecture);
+      states.unsigned.push(architecture);
       if (unsignedNote === undefined) {
         unsignedNote = limitations.length;
         limitations.push("");
       }
       limitations[unsignedNote] =
-        `Unsigned Mach-O slices: ${unsigned.join(", ")}.`;
+        `Unsigned Mach-O slices: ${states.unsigned.join(", ")}.`;
     }
     return ok(undefined);
   }
@@ -1025,7 +1079,7 @@ class NativeMacOSClient implements AnalysisClient {
           diagnostics: {
             phase: "codesign-capture",
             path: this.target.path,
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
           },
         }),
       );
@@ -1033,6 +1087,19 @@ class NativeMacOSClient implements AnalysisClient {
     // Verify failed captures too: a disappearing target is not a codesign
     // execution failure, and later captures must never use another version.
     const after = await verifySignatureTarget(this.target, binding, signal);
+    if (!capture.ok && !after.ok) {
+      const primary =
+        after.error instanceof AnalysisCancelledError
+          ? analysisErrorWithCancellation(capture.error, after.error)
+          : after.error;
+      return err(
+        nativeFailureWithCommandCleanup(
+          primary,
+          capture.error,
+          "inspect_signature",
+        ),
+      );
+    }
     return after.ok ? capture : after;
   }
 
@@ -1375,6 +1442,13 @@ class NativeMacOSClient implements AnalysisClient {
                 selected,
                 Math.floor(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES / 256),
               ),
+            readSliceRange: (offset, size, at, length) =>
+              source.readSlice(
+                offset,
+                size ?? source.bytes - offset,
+                at,
+                length,
+              ),
             readCommandNames: async (offset, size, selected) => {
               const length = size ?? source.bytes - offset;
               // Binary strings can expand to hex and escaped JSON, and each
@@ -1394,7 +1468,9 @@ class NativeMacOSClient implements AnalysisClient {
               );
               if (size !== null) {
                 if (selected === undefined)
-                  throw new TypeError("Selected Mach-O slice is unavailable");
+                  throw invariantViolation(
+                    "Selected Mach-O slice is unavailable",
+                  );
                 assertSelectedMachoSlice(source, selected, binary);
               }
               return binary;
@@ -1409,14 +1485,26 @@ class NativeMacOSClient implements AnalysisClient {
                 return await inspect(operand);
               } catch (cause: unknown) {
                 return err(
-                  nativeMachoSourceFailure(cause, this.target, parameters),
+                  nativeMachoSourceFailure(
+                    cause,
+                    this.target,
+                    parameters,
+                    "inspect_macho",
+                  ),
                 );
               }
             })
           : inspect(),
       );
     } catch (cause: unknown) {
-      return err(nativeMachoSourceFailure(cause, this.target, parameters));
+      return err(
+        nativeMachoSourceFailure(
+          cause,
+          this.target,
+          parameters,
+          "inspect_macho",
+        ),
+      );
     }
   }
 
@@ -1428,12 +1516,7 @@ class NativeMacOSClient implements AnalysisClient {
   ): Promise<Result<NativeObservation, AnalysisError>> {
     try {
       return await this.#machoOperandResources.run(async () => {
-        if (signal?.aborted)
-          return err(
-            new AnalysisCancelledError("inspect_macho", {
-              cause: signal.reason,
-            }),
-          );
+        if (signal?.aborted) return err(cancelledBy("inspect_macho", signal));
         let root: Pick<PrivateRuntimeRoot, "path" | "close">;
         try {
           root = await (this.privateRuntimeRootFactory?.() ??
@@ -1465,11 +1548,7 @@ class NativeMacOSClient implements AnalysisClient {
           const operand = join(root.path, "artifact.macho");
           await symlink(this.target.path, operand);
           result = signal?.aborted
-            ? err(
-                new AnalysisCancelledError("inspect_macho", {
-                  cause: signal.reason,
-                }),
-              )
+            ? err(cancelledBy("inspect_macho", signal))
             : await inspect(operand);
         } catch (cause: unknown) {
           result = err(
@@ -1499,8 +1578,7 @@ class NativeMacOSClient implements AnalysisClient {
           new AnalysisCleanupLeaseGroup(cleanup, [released.lease]);
           const primary = result.ok
             ? signal?.aborted
-              ? new AnalysisCancelledError("inspect_macho", {
-                  cause: signal.reason,
+              ? cancelledBy("inspect_macho", signal, {
                   partialObservation: inspectMachoSchema.parse(
                     result.value.result,
                   ),
@@ -1510,17 +1588,16 @@ class NativeMacOSClient implements AnalysisClient {
           return err(
             primary === undefined
               ? cleanup
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCleanupDependencies(
                   primary,
                   cleanup,
                   "inspect_macho",
-                ).bindCleanupDependencies([primary, cleanup]),
+                ),
           );
         }
         if (signal?.aborted && result.ok)
           return err(
-            new AnalysisCancelledError("inspect_macho", {
-              cause: signal.reason,
+            cancelledBy("inspect_macho", signal, {
               partialObservation: inspectMachoSchema.parse(result.value.result),
             }),
           );
@@ -1590,6 +1667,7 @@ class NativeMacOSClient implements AnalysisClient {
                 truncated: false,
               },
             ),
+            this.#machoOperandResources,
           ),
         );
       return captured;
@@ -1598,6 +1676,7 @@ class NativeMacOSClient implements AnalysisClient {
       translateNativeCommandFailure(
         operation,
         captured.error,
+        this.#machoOperandResources,
         options.timeoutMs,
       ),
     );
@@ -1655,11 +1734,19 @@ const closeNativeFileScope = async (
   }
 };
 
+/**
+ * Project a producer failure. A broken internal assumption is a REA defect, not
+ * native output, so it is rethrown rather than reported as output parsing.
+ */
 const nativeOutputFailure = (
   operation: AnalysisOperation,
   cause: unknown,
-): AnalysisError =>
-  new AnalysisOutputError(operation, "Native output parsing failed", { cause });
+): AnalysisError => {
+  if (cause instanceof InternalInvariantError) throw cause;
+  return new AnalysisOutputError(operation, "Native output parsing failed", {
+    cause,
+  });
+};
 
 const nativeMachoCompletedFailure = (
   value: unknown,
@@ -1676,18 +1763,20 @@ const nativeMachoCompletedFailure = (
 const nativeMachoSourcePrimary = (
   { cause }: ArtifactFilePrimaryFacts,
   path: string,
+  operation: "inspect_macho" | "list_architectures",
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof MachoBinaryFormatError)
-    return new AnalysisOutputError("inspect_macho", cause.message, { cause });
   if (cause instanceof MachoCommandNamesLimitError)
     return new AnalysisResourceConstraintError(
-      "inspect_macho",
+      operation,
       "memory",
       cause.message,
       { maximum: cause.maximum, unit: cause.unit },
       { cause, retryable: false },
     );
+  // The selected Mach-O's own bytes failed to parse; a limit falls through.
+  const formatFailure = parseFailureAnalysisError(operation, path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   const completed =
     cause instanceof NativeMachoSourceVerificationFailure
       ? cause.completed
@@ -1698,12 +1787,13 @@ const nativeMachoSourcePrimary = (
       ? nativeMachoSourcePrimary(
           artifactFilePrimaryFacts(cause.outcome.cause),
           path,
+          operation,
         )
       : undefined;
-  const previous = failed ?? nativeMachoCompletedFailure(completed);
-  const options = {
-    cause,
-    ...(previous === undefined
+  const completedFailure = nativeMachoCompletedFailure(completed);
+  const previous = failed ?? completedFailure;
+  const optionsWithoutCause =
+    previous === undefined
       ? {}
       : {
           diagnostics: {
@@ -1711,23 +1801,30 @@ const nativeMachoSourcePrimary = (
               projectAnalysisError(previous),
             ),
           },
-        }),
-  };
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
-    return new AnalysisCancelledError("inspect_macho", {
-      ...options,
-      cause: artifactFileCancellationCause(cause),
-    });
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
-    return new AnalysisOutputError("inspect_macho", cause.message, options);
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
-    return new AnalysisArtifactChangedError(
-      "inspect_macho",
-      path,
-      cause.message,
-      options,
+        };
+  const options = { cause, ...optionsWithoutCause };
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") {
+    // A returned failure is already the producer's physical outcome. A later
+    // cancelled identity check must not replace its output or cleanup owner.
+    if (completedFailure !== undefined)
+      return analysisErrorWithCancellation(
+        completedFailure,
+        cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+        ),
+      );
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+      optionsWithoutCause,
     );
-  return new ProviderAdapterError(IDENTITY.id, "inspect_macho", {
+  }
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+    return new AnalysisOutputError(operation, cause.message, options);
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "integrity")
+    return readerIntegrityFailure(operation, path, cause, options);
+  return new ProviderAdapterError(IDENTITY.id, operation, {
     ...options,
     userMessage: "The selected Mach-O source could not be read safely.",
     remediationAction:
@@ -1739,17 +1836,18 @@ const nativeMachoCompletion = (
   cause: unknown,
   target: BinaryTarget,
   parameters: Readonly<Record<string, JsonValue>>,
+  operation: "inspect_macho" | "list_architectures",
 ) => {
   const completion = artifactFileCompletion(cause);
   // The file operation only completes after the producer result has passed
-  // the final identity check. Its callback is owned by #inspectMacho.
+  // the final identity check. Both Mach-O command workflows own their callbacks.
   const outcome = completion?.value as
     | Result<NativeObservation, AnalysisError>
     | undefined;
   const observation =
     outcome?.ok === true
       ? createAnalysisExecutionEvidence(
-          "inspect_macho",
+          operation,
           parameters,
           {
             ...createAnalysisExecution(outcome.value.result, IDENTITY, {
@@ -1766,11 +1864,13 @@ const nativeMachoCompletion = (
   const completionCancellation =
     completion?.cancellation === undefined
       ? undefined
-      : new AnalysisCancelledError("inspect_macho", {
-          cause: completion.cancellation.reason,
-          ...(completedFailure === undefined ||
-          (cause instanceof ArtifactReaderFailure &&
-            cause.cleanup !== undefined)
+      : cancelledBy(
+          operation,
+          carriedReason(completion.cancellation.reason),
+          completedFailure === undefined ||
+            completedFailure.cleanupIncomplete ||
+            (cause instanceof ArtifactReaderFailure &&
+              cause.cleanup !== undefined)
             ? {}
             : {
                 diagnostics: {
@@ -1778,18 +1878,78 @@ const nativeMachoCompletion = (
                     projectAnalysisError(completedFailure),
                   ),
                 },
-              }),
-        });
+              },
+        );
   return { observation, completedFailure, completionCancellation };
+};
+
+/** Every native reclassification retains the command and independent file owners. */
+const nativeFailureWithCommandCleanup = (
+  primary: AnalysisError,
+  producer: AnalysisError,
+  operation: string,
+  descriptorCleanup?: AnalysisError,
+): AnalysisError => {
+  if (!producer.cleanupIncomplete) return primary;
+  const cleanup = descriptorCleanup ?? producer;
+  return cleanup === primary
+    ? primary
+    : analysisErrorWithCleanupFailure(
+        primary,
+        cleanup,
+        operation,
+      ).bindCleanupDependencies([
+        primary,
+        producer,
+        ...(descriptorCleanup === undefined ? [] : [descriptorCleanup]),
+      ]);
+};
+
+/** The exact callback error remains an owner even if verification reclassifies it. */
+const nativeMachoProducerFailure = (
+  cause: unknown,
+): AnalysisError | undefined => {
+  if (cause instanceof AnalysisError) return cause;
+  if (!(cause instanceof NativeMachoSourceVerificationFailure))
+    return undefined;
+  return cause.outcome.kind === "failed"
+    ? nativeMachoProducerFailure(cause.outcome.cause)
+    : nativeMachoCompletedFailure(cause.outcome.value);
 };
 
 const nativeMachoSourceFailure = (
   cause: unknown,
   target: BinaryTarget,
   parameters: Readonly<Record<string, JsonValue>>,
+  operation: "inspect_macho" | "list_architectures",
 ): AnalysisError => {
   const { observation, completedFailure, completionCancellation } =
-    nativeMachoCompletion(cause, target, parameters);
+    nativeMachoCompletion(cause, target, parameters, operation);
+  const source = artifactFilePrimaryFacts(cause);
+  const producerFailure =
+    completedFailure ?? nativeMachoProducerFailure(source.cause);
+  // Classification and ownership are independent: neither a changed source nor
+  // a released descriptor settles the command's retained cleanup capability.
+  const retainOwnedCleanup = (
+    selected: AnalysisError,
+    descriptorCleanup?: AnalysisError,
+  ): AnalysisError => {
+    if (!producerFailure?.cleanupIncomplete) return selected;
+    const primary =
+      selected === descriptorCleanup
+        ? (descriptorCleanup.cleanupPrimary ?? producerFailure)
+        : selected === completionCancellation
+          ? producerFailure
+          : selected;
+    if (completionCancellation !== undefined)
+      analysisErrorWithCancellation(primary, completionCancellation);
+    return nativeFailureWithCommandCleanup(
+      primary,
+      producerFailure,
+      operation,
+      descriptorCleanup,
+    );
+  };
   if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
     const physical =
       cause instanceof ArtifactFileCleanupFailure
@@ -1797,7 +1957,11 @@ const nativeMachoSourceFailure = (
         : undefined;
     const previous =
       physical?.outcome.kind === "failed"
-        ? nativeMachoSourcePrimary(artifactFilePrimaryFacts(cause), target.path)
+        ? nativeMachoSourcePrimary(
+            artifactFilePrimaryFacts(cause),
+            target.path,
+            operation,
+          )
         : physical?.outcome.kind === "completed"
           ? (completedFailure ?? completionCancellation)
           : completionCancellation;
@@ -1820,7 +1984,7 @@ const nativeMachoSourceFailure = (
           : {}),
       },
       {
-        operation: "inspect_macho",
+        operation,
         cause,
         cleanupPrimary: previous,
         partialObservation: observation,
@@ -1834,14 +1998,16 @@ const nativeMachoSourceFailure = (
     if (observation !== undefined)
       completionCancellation?.retainPartialObservation(observation);
     bindArtifactFileCleanup(cause, failure);
-    return failure;
+    return retainOwnedCleanup(failure, failure);
   }
   if (completionCancellation !== undefined) {
     if (observation !== undefined)
       completionCancellation.retainPartialObservation(observation);
-    return completionCancellation;
+    return retainOwnedCleanup(completionCancellation);
   }
-  return nativeMachoSourcePrimary(artifactFilePrimaryFacts(cause), target.path);
+  return retainOwnedCleanup(
+    nativeMachoSourcePrimary(source, target.path, operation),
+  );
 };
 
 interface NativeObservation {
@@ -1857,6 +2023,7 @@ const isNativeOperation = (
 
 const translateCodeSignExitFailure = (
   capture: NativeCommandCapture,
+  resources: ArtifactResourceScope,
 ): AnalysisError =>
   translateNativeCommandFailure(
     "inspect_signature",
@@ -1868,6 +2035,7 @@ const translateCodeSignExitFailure = (
       // Accepted output stays complete until the provider decides it failed.
       failureCapture(capture, false),
     ),
+    resources,
   );
 
 /**
@@ -1912,6 +2080,7 @@ const canonicalPath = async (path: string): Promise<string[]> => {
 };
 
 const codeSignCaptureFailure = (
+  resources: ArtifactResourceScope,
   capture: NativeCommandCapture,
   snapshotPath: string,
   executablePaths: readonly string[],
@@ -1919,7 +2088,7 @@ const codeSignCaptureFailure = (
   capture.exitCode === 0 ||
   isNonzeroUnsignedObservation(capture, snapshotPath, executablePaths)
     ? null
-    : translateCodeSignExitFailure(capture);
+    : translateCodeSignExitFailure(capture, resources);
 
 const codeSignArchitectures = (
   format: string | null,
@@ -2039,6 +2208,7 @@ const parseEntitlements = (
     value,
     limitations: [
       ...numbers.limitations(),
+      ...plistDuplicateKeyLimitations(decoded.duplicateKeys),
       ...(projected.nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(projected.nonFiniteRealCount)]),

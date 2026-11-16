@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,12 +9,12 @@ import { gpuCodeObjectsSchema } from "../../src/domain/gpu/gpuCodeObjects.js";
 import {
   gpuCodeObjectsPageViewResultSchema,
   gpuCodeObjectsSummaryViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 import {
   cudaFixture,
   peGpuFixture,
@@ -38,7 +39,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -70,6 +71,42 @@ cliTest(
 );
 
 cliTest(
+  "reports an exhausted ELF symbol string scan as capacity instead of corruption",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-cubin-string-limit-");
+    const bytes = cubinFixture({ name: "k".repeat(65_536) });
+    const path = join(root, "long-symbol.cubin");
+    await writeFile(path, bytes);
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const evidence = parseEvidence(
+      toolContract("inspect_gpu_code_objects").outputSchema.parse(
+        response.json,
+      ),
+    );
+    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
+    expect(report.objects[0]).toMatchObject({
+      kind: "cubin",
+      inspection: "capacity",
+    });
+    expect(report.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(report.coverage.payloads).toBe("partial");
+  },
+);
+
+cliTest(
   "inventories a complete CCOB stream containing ordinary CCOB payload text",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ccob-embedded-marker-");
@@ -88,7 +125,7 @@ cliTest(
       const bytes = Buffer.concat([header, compressed]),
         path = join(root, `v${version}`);
       await writeFile(path, bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -147,7 +184,7 @@ cliTest(
       const bytes = hipFixture(payload, bundleId),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -197,7 +234,7 @@ cliTest(
     }
     const path = join(root, "raw-bitcode");
     await writeFile(path, bitcode);
-    const raw = await runFileCli(cli, {
+    const raw = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -235,7 +272,7 @@ cliTest(
         ]),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -319,7 +356,7 @@ cliTest(
         ]),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -360,7 +397,7 @@ cliTest(
       ]),
       path = join(root, "large-parameter.cubin");
     await writeFile(path, bytes);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -397,7 +434,7 @@ cliTest(
     const bytes = hipFixture(payload, "hip-amdgcn-amd-amdhsa--gfx906+xnack"),
       path = join(root, "feature.bundle");
     await writeFile(path, bytes);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -442,7 +479,7 @@ cliTest(
       root = await createTestTempDirectory("rea-ptx-callprototype-"),
       path = join(root, "prototype.ptx");
     await writeFile(path, source);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -492,7 +529,7 @@ cliTest(
     const bytes = cubinFixture({ extendedSectionIndex: true });
     const path = join(root, "extended.cubin");
     await writeFile(path, bytes);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -540,7 +577,7 @@ cliTest(
     malformedBytes.writeBigUInt64LE(4n, sectionTable + indexTable! * 64 + 32);
     const malformedPath = join(root, "short-shndx.cubin");
     await writeFile(malformedPath, malformedBytes);
-    const malformed = await runFileCli(cli, {
+    const malformed = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         malformedPath,
@@ -571,7 +608,7 @@ cliTest(
       const text = `.version 7.0\n.target sm_80\n.address_size 64\n.visible .entry kernel() {\n.reg .b32 ${register};\nmov.u32 ${register}, 0;\nret;\n}\n`;
       const path = join(root, `${register.slice(1)}.ptx`);
       await writeFile(path, text);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -608,7 +645,7 @@ cliTest(
     const text = `.version 8.8\n.target sm_80\n.address_size 64\n.entry %kernel(.param .u32 input) {\nret;\n}\n`;
     const path = join(root, "identifiers.ptx");
     await writeFile(path, text);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -671,7 +708,7 @@ cliTest(
       const text = `${preamble}${declaration}\n`,
         path = join(root, `${name}.ptx`);
       await writeFile(path, text);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -721,7 +758,7 @@ cliTest(
     const text = `.version 8.8\n.target compute_80\n.address_size 64\n.entry kernel() {\nret;\n}\n`;
     const path = join(root, "target.ptx");
     await writeFile(path, text);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -751,7 +788,7 @@ cliTest(
     const text = `.version 1.3\n.target sm_80\n.address_size 64\n.entry kernel {\n.param .u32 input;\nret;\n}\n`;
     const path = join(root, "legacy.ptx");
     await writeFile(path, text);
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -790,7 +827,7 @@ cliTest(
       malformedPath,
       `.version 1.3\n.target sm_80\n.entry kernel {\n.param .u32 input\n`,
     );
-    const malformed = await runFileCli(cli, {
+    const malformed = await cli.run({
       arguments: [
         "inspect-gpu-code-objects",
         malformedPath,
@@ -817,7 +854,7 @@ cliTest(
   "attributes malformed selector JSON to its actual CLI option",
   async ({ cli }) => {
     for (const name of ["object_ids", "targets", "view"]) {
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           "/not-opened-for-invalid-selectors",
@@ -841,6 +878,36 @@ cliTest(
         },
       });
     }
+  },
+);
+
+cliTest(
+  "publishes and enforces the lowercase --expected_sha256 digest",
+  async ({ cli }) => {
+    const schema = await cli.run({
+      arguments: ["inspect-gpu-code-objects", "--schema", "--json"],
+    });
+    expect(schema.exitCode, schema.stderr).toBe(0);
+    expect(schema.json).toMatchObject({
+      options: {
+        properties: { expected_sha256: { pattern: "^[a-f0-9]{64}$" } },
+      },
+    });
+    // PowerShell's Get-FileHash prints the digest in upper case.
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        "/not-opened-for-invalid-selectors",
+        "--expected_sha256",
+        "AB".repeat(32),
+        "--json",
+      ],
+    });
+    expect(response.exitCode).toBe(1);
+    expect(response.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "expected_sha256" })],
+    });
   },
 );
 
@@ -1138,11 +1205,15 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
   );
   forgedHeaderReport.objects[1]!.cuda_target_header!.location.container_id =
     forgedHeaderReport.objects[0]!.id;
-  const forgedHeader = createEvidence(undefined, parent.provider, {
-    operation: parent.operation,
-    parameters: parent.parameters,
-    result: forgedHeaderReport,
-  });
+  const forgedHeader = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      result: forgedHeaderReport,
+    },
+  );
   expect(
     parseMcpToolError(
       await call("inspect_analysis_view", {
@@ -1152,11 +1223,15 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
     ).error,
   ).toMatchObject({ code: "invalid_request" });
   report.objects[1]!.id = report.objects[0]!.id;
-  const forged = createEvidence(undefined, parent.provider, {
-    operation: "inspect_gpu_code_objects",
-    parameters: parent.parameters,
-    result: report,
-  });
+  const forged = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: "inspect_gpu_code_objects",
+      parameters: parent.parameters,
+      result: report,
+    },
+  );
   const failure = parseMcpToolError(
     await call("inspect_analysis_view", {
       source: { kind: "inline", evidence: forged },
@@ -1208,11 +1283,19 @@ cliTest(
     const refused = await cli.run({ arguments: args });
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
-      code: "target_unavailable",
+      code: "invalid_request",
+      category: "invalid_input",
       details: {
-        path,
-        constraint: "file_format_rejected",
-        reason: "MZ header does not declare a PE image",
+        operation: "inspect_gpu_code_objects",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining(
+              "MZ header does not declare a PE image",
+            ),
+          }),
+        ],
       },
     });
   },
@@ -1273,7 +1356,7 @@ cliTest(
     ] as const) {
       const path = join(root, name);
       await writeFile(path, bytes);
-      const response = await runFileCli(cli, {
+      const response = await cli.run({
         arguments: [
           "inspect-gpu-code-objects",
           path,

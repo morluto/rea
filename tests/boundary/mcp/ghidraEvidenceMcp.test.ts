@@ -1,8 +1,10 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
+import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
 import {
@@ -19,6 +21,7 @@ import {
   isGhidraFunctionOperation,
   type GhidraFunctionOperation,
 } from "../../../src/ghidra/GhidraFunctionValues.js";
+import { limitationsFor } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 
 it.each([
   { pseudocodeAvailable: true, reportsCoverage: true },
@@ -108,20 +111,21 @@ it.each([
         strings_names: "unchanged",
         cfg: "unchanged",
       });
-      const replay = await harness.session.execute(
+      const reobserved = await harness.session.execute(
         "analyze_function",
         evidence.parameters,
       );
-      if (!replay.ok) throw replay.error;
-      expect(replay.value.relationshipCoverage).toEqual(coverage);
-      expect(harness.calls).toEqual(["analyze_function"]);
+      if (!reobserved.ok) throw reobserved.error;
+      expect(reobserved.value.result).toEqual(dossier);
+      expect(reobserved.value.relationshipCoverage).toEqual(coverage);
+      expect(harness.calls).toEqual(["analyze_function", "analyze_function"]);
     } finally {
       await harness.close();
     }
   },
 );
 
-it("retains terminal-call qualifications across function views and snapshot replay", async () => {
+it("retains terminal-call qualifications across live dossiers and snapshot-backed function views", async () => {
   const limitation =
     "Ghidra Listing reports a terminal call at 0x401000 to EXTERNAL:0x20 __tls_get_addr (external=true, thunk=false, hasNoReturn=true); fallthrough is excluded by Ghidra's flow model. This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.";
   const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
@@ -187,18 +191,25 @@ it("retains terminal-call qualifications across function views and snapshot repl
       expect(evidence.raw_result, name).toBeNull();
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
-        function_boundary_observations:
-          "ghidra-function-boundary-limitations-v4",
+        producer: ghidraProducerIdentity(),
       });
       const replay = await harness.session.execute(name, evidence.parameters);
       if (!replay.ok) throw replay.error;
       expect(replay.value.result, name).toEqual(value);
       expect(replay.value.limitations, name).toContain(limitation);
-      expect(replay.value.limitations, name).toContainEqual(
-        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      const snapshotLimitation = expect.stringMatching(
+        /snapshot.*did not re.run the provider/iu,
       );
+      if (name === "analyze_function")
+        expect(replay.value.limitations, name).not.toContainEqual(
+          snapshotLimitation,
+        );
+      else
+        expect(replay.value.limitations, name).toContainEqual(
+          snapshotLimitation,
+        );
     }
-    expect(harness.calls).toEqual([...values.keys()]);
+    expect(harness.calls).toEqual([...values.keys(), "analyze_function"]);
   } finally {
     await harness.close();
   }
@@ -329,7 +340,7 @@ const connectNamingMcp = async (name: string) => {
     if (toolDefinition === undefined) throw new Error(`Missing ${tool}`);
     return harness.mcp.callTool(
       { name: tool, arguments: arguments_ },
-      { toolDefinition },
+      { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
     );
   };
   return { harness, requests, bridge, call };
@@ -600,7 +611,7 @@ describe("Ghidra MCP evidence parity", () => {
           provider: { id: "ghidra", version: "12.1.4" },
           parameters: {
             import_mode: "ephemeral-source-immutable",
-            annotation_policy: "atomic-function-entry-metadata-v1",
+            annotation_policy: "atomic-function-entry-metadata",
             analyzer_preset: "ghidra-default",
           },
         },
@@ -662,7 +673,7 @@ describe("Ghidra MCP evidence parity", () => {
         provider: { id: "ghidra", version: "12.1.4" },
         normalized_result: expect.stringContaining("return 42"),
         limitations: expect.arrayContaining([
-          expect.stringContaining("not text-equivalent to Hopper"),
+          expect.stringMatching(/not text.equivalent to Hopper/iu),
         ]),
       });
 
@@ -694,20 +705,29 @@ describe("Ghidra MCP evidence parity", () => {
               kind: { available: true, provenance: "ghidra-reference-manager" },
             },
           ],
-          limitations: expect.arrayContaining([
-            expect.stringContaining("indirect flows without target addresses"),
-            expect.stringContaining(
-              "not original source or Hopper-equivalent text",
-            ),
-          ]),
+          limitations: functionDossierSchema.parse(ghidraFunctionDossier())
+            .limitations,
         },
         limitations: expect.arrayContaining([
-          expect.stringContaining("default auto-analysis complete"),
-          expect.stringContaining(
-            "original executable bytes are never written",
-          ),
+          // Wording-tolerant: the loop below already pins the provider's exact
+          // text, so a literal here would only re-couple the test to prose.
+          expect.stringMatching(/auto.analysis.*complete/iu),
+          expect.stringMatching(/original executable bytes.*unchanged/iu),
         ]),
       });
+      // Every source-declared limitation must survive the MCP projection;
+      // pinning a literal here re-copies prose the provider owns.
+      for (const limitation of limitationsFor("analyze_function")) {
+        expect(analyzed.limitations).toContain(limitation);
+      }
+      expect(
+        functionDossierSchema.parse(analyzed.normalized_result).limitations,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/indirect flows without target addresses/iu),
+          expect.stringMatching(/not original source.*Hopper.equivalent/iu),
+        ]),
+      );
       const directAnalyzed = await new EnhancedTools(session).execute(
         "analyze_function",
         { procedure: "fixture_main" },
@@ -717,5 +737,5 @@ describe("Ghidra MCP evidence parity", () => {
     } finally {
       await harness.close();
     }
-  }, 30_000);
+  });
 });

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
@@ -17,6 +18,7 @@ import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { AnalysisTimeoutError } from "../../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../../support/testWait.js";
 
 const hooks = vi.hoisted(() => ({
   afterCommand: undefined as (() => void) | undefined,
@@ -68,7 +70,10 @@ const capture = async (
   runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    await resolveAdbBinary({ ...process.env, REA_ADB_PATH: process.execPath }),
+    await resolveAdbBinary(
+      { ...process.env, REA_ADB_PATH: process.execPath },
+      HOST_PLATFORM.platform,
+    ),
     ["-e", script],
     limits,
     signal,
@@ -76,7 +81,6 @@ const capture = async (
 
 const failureOf = async (result: ReturnType<typeof capture>) => {
   const completed = await result;
-  expect(completed.ok).toBe(false);
   if (completed.ok) throw new Error("Expected command failure");
   return completed.error;
 };
@@ -132,7 +136,7 @@ test("retains the command owner's exact cancellation reason after active process
     { timeoutMs: 5000, maxOutputBytes: 1024 },
   );
   try {
-    await vi.waitFor(async () =>
+    await waitFor(async () =>
       expect(await readFile(ready, "utf8")).toBe("ready"),
     );
     controller.abort(null);
@@ -155,7 +159,10 @@ const clientScript = async (source: string) => {
   await writeFile(binary, `#!${process.execPath}\n${source}\n`, {
     mode: 0o755,
   });
-  return resolveAdbBinary({ ...process.env, REA_ADB_PATH: binary });
+  return resolveAdbBinary(
+    { ...process.env, REA_ADB_PATH: binary },
+    HOST_PLATFORM.platform,
+  );
 };
 const nativeClientTest = test.skipIf(process.platform === "win32");
 
@@ -165,7 +172,10 @@ test.each([null, "caller stopped", new Error("caller stopped")] as const)(
     const controller = new AbortController();
     controller.abort(reason);
     const error: unknown = await inspectAdbClient(
-      await resolveAdbBinary({ REA_ADB_PATH: process.execPath }),
+      await resolveAdbBinary(
+        { REA_ADB_PATH: process.execPath },
+        HOST_PLATFORM.platform,
+      ),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -191,7 +201,6 @@ nativeClientTest(
       operation: "inspect_adb_client",
       input: {},
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected capture overflow");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
@@ -210,7 +219,10 @@ nativeClientTest(
     const controller = new AbortController();
     hooks.afterCommand = () => controller.abort(null);
     const error: unknown = await inspectAdbClient(
-      await resolveAdbBinary({ REA_ADB_PATH: join(root, "missing") }),
+      await resolveAdbBinary(
+        { REA_ADB_PATH: join(root, "missing") },
+        HOST_PLATFORM.platform,
+      ),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -241,7 +253,6 @@ nativeClientTest.each([
       {},
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected completion cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
@@ -287,7 +298,6 @@ nativeClientTest.each([false, true])(
       { operation: "inspect_adb_client", input: {} },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected version timeout");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
@@ -317,7 +327,6 @@ nativeClientTest.each([false, true])(
     expect(prerequisite.capturedOutput).toEqual(capturedOutput);
     expect(result.error.capturedOutput).toEqual(capturedOutput);
   },
-  20000,
 );
 
 nativeClientTest(
@@ -354,5 +363,4 @@ nativeClientTest(
       details: { timeout_ms: 10000 },
     });
   },
-  20000,
 );

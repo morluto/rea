@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { inspectJadxProvider } from "../../../src/android/JadxDoctor.js";
 import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { stat, writeFile } from "node:fs/promises";
@@ -6,6 +7,7 @@ import { createJadxProtocolFixture } from "../../fixtures/android/jadx.js";
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -275,9 +277,11 @@ it("joins independent doctor archive finalization and retries its exact failed c
       }
       await original.call(this);
     });
-  const inspection = inspectJadxProvider(f.environment, resources.owner).catch(
-    (cause: unknown) => cause,
-  );
+  const inspection = inspectJadxProvider(
+    f.environment,
+    resources.owner,
+    HOST_PLATFORM,
+  ).catch((cause: unknown) => cause);
   let settled = false;
   let shutdown: Promise<unknown> | undefined;
   try {
@@ -317,5 +321,57 @@ it("joins independent doctor archive finalization and retries its exact failed c
     await shutdown;
     await resources.close();
     if (owner !== undefined) await original.call(owner);
+  }
+});
+
+it("clears an analysis admission error once its prerequisite archive descriptor closes", async () => {
+  const f = await createJadxProtocolFixture();
+  await writeFile(f.jar, "not a zip");
+  const target = await parseBinaryTarget(f.apk);
+  if (!target.ok) throw target.error;
+  const identity = await stat(f.jar);
+  const original = OwnedFileHandle.prototype.close;
+  const seen = new Set<OwnedFileHandle>();
+  const handles = new Set<OwnedFileHandle>();
+  let allowClose = false;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (!seen.has(this) && this.handle.fd >= 0) {
+        const observed = await this.handle.stat();
+        if (observed.dev === identity.dev && observed.ino === identity.ino) {
+          // The first JAR descriptor is the provider's own source hash; the
+          // next is the archive inspection the prerequisite scope owns.
+          if (seen.size > 0) handles.add(this);
+          seen.add(this);
+        }
+      }
+      if (handles.has(this) && !allowClose)
+        throw new Error("injected archive descriptor close failure");
+      await original.call(this);
+    });
+  try {
+    // The JAR read and its descriptor close both fail. The prerequisite scope
+    // owns that descriptor; the analysis cleanup record owns none of it.
+    const result = await f.provider.execute(target.value, {
+      operation: "inspect_android_package",
+      input: { path: f.apk },
+    });
+    if (result.ok) throw new Error("Expected the archive admission failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupPrimary).toMatchObject({
+      diagnostics: { failure_kind: "jar", failure_code: "version_unresolved" },
+    });
+    expect(handles.size).toBe(1);
+    allowClose = true;
+    await f.provider.close();
+    expect([...handles].every((owner) => owner.handle.fd === -1)).toBe(true);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(f.launches).toEqual([]);
+  } finally {
+    allowClose = true;
+    close.mockRestore();
+    await f.provider.close();
+    for (const owner of handles) await original.call(owner);
   }
 });

@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import canonicalize from "canonicalize";
+import { PRODUCT_IDENTITY } from "../../../../src/identity.js";
 
 import { expect, it as test, vi } from "vitest";
 
@@ -28,17 +29,19 @@ import {
 } from "../../../../src/kuna/KunaProjectCache.js";
 import type { KunaExportStatus } from "../../../../src/kuna/KunaProjectExport.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../../src/filesystem/OwnedRegularFile.js";
 import * as stableFileHash from "../../../../src/filesystem/StableFileHash.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
+import type { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import {
   fakeKunaCalls,
   setFakeKunaBehavior,
   writeFakeKuna,
   type FakeKunaBehavior,
 } from "./fakeKuna.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -110,35 +113,35 @@ const processGone = (pid: number): boolean => {
   }
 };
 
-const deferred = <T>() => {
-  let resolve!: (value: T) => void;
-  let reject!: (cause: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-};
-
-it.each([1, 2])(
-  "regenerates layout %i once and retires it without touching unrelated cache resources",
+it.each([1, 2, 3, "release"] as const)(
+  "regenerates layout %s once and retires it without touching unrelated cache resources",
   async (layout) => {
     const { kuna, installation, cacheRoot, cache, target } = await fixture(
       "rea-kuna-cache-format-transition-",
     );
     const input = await target("program");
-    const initial = await cache.build({ installation, ...input });
+    const initial = await cache.build(
+      withKunaProjectDeadline({ installation, ...input }),
+    );
     if (!initial.ok) throw initial.error;
     expect((await cache.close()).ok).toBe(true);
     // Seed the previously shipped manifest and content-key format using a real
     // authored export; omitted launcher identity must never be invented or reused.
+    // "release": the current entry format written by another REA release.
+    const marker =
+      layout === "release"
+        ? { producer: { rea_version: "0.0.0-another-release" } }
+        : { layout };
     const legacyKey = createHash("sha256")
       .update(
         canonicalize({
-          layout,
+          ...marker,
           target_sha256: input.targetSha256,
+          ...(layout === 3 || layout === "release"
+            ? { target_basename: basename(input.targetPath) }
+            : {}),
           kuna_sha256: installation.sha256,
-          ...(layout === 2
+          ...(layout !== 1
             ? {
                 kuna_command: installation.configuration.command,
                 kuna_executable: installation.executable,
@@ -157,13 +160,18 @@ it.each([1, 2])(
     await writeFile(
       join(legacyEntry, "manifest.json"),
       JSON.stringify({
-        ...initial.value.manifest,
-        layout,
+        ...(({ producer: _producer, ...manifest }) => manifest)(
+          initial.value.manifest,
+        ),
+        ...marker,
         key: legacyKey,
         inputs: {
           target_sha256: input.targetSha256,
+          ...(layout === 3 || layout === "release"
+            ? { target_basename: basename(input.targetPath) }
+            : {}),
           kuna_sha256: installation.sha256,
-          ...(layout === 2
+          ...(layout !== 1
             ? {
                 kuna_command: installation.configuration.command,
                 kuna_executable: installation.executable,
@@ -182,14 +190,16 @@ it.each([1, 2])(
     await writeFile(join(unresolved, "sentinel"), "preserve");
     const migrated = newCache(installation);
     try {
-      const built = await migrated.build({ installation, ...input });
+      const built = await migrated.build(
+        withKunaProjectDeadline({ installation, ...input }),
+      );
       if (!built.ok) throw built.error;
       await expect(access(legacyEntry)).rejects.toMatchObject({
         code: "ENOENT",
       });
       expect(built.value.key).not.toBe(legacyKey);
       expect(built.value.manifest).toMatchObject({
-        layout: 3,
+        producer: { rea_version: PRODUCT_IDENTITY.packageVersion },
         inputs: {
           kuna_command: installation.configuration.command,
           kuna_executable: installation.executable,
@@ -198,7 +208,9 @@ it.each([1, 2])(
       expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
       const fresh = newCache(installation);
       try {
-        const reused = await fresh.build({ installation, ...input });
+        const reused = await fresh.build(
+          withKunaProjectDeadline({ installation, ...input }),
+        );
         if (!reused.ok) throw reused.error;
         expect(reused.value.manifest).toEqual(built.value.manifest);
         expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
@@ -249,14 +261,16 @@ it("publishes a verified export and serves later requests from the cache", async
   );
   const input = await target("program");
 
-  const built = await cache.build({ installation, ...input });
+  const built = await cache.build(
+    withKunaProjectDeadline({ installation, ...input }),
+  );
 
   expect(built).toMatchObject({
     ok: true,
     value: {
       key: keyOf(installation, input),
       manifest: {
-        layout: 3,
+        producer: { rea_version: PRODUCT_IDENTITY.packageVersion },
         inputs: {
           target_sha256: input.targetSha256,
           kuna_sha256: installation.sha256,
@@ -314,7 +328,7 @@ it("publishes a verified export and serves later requests from the cache", async
   expect(await entries(cacheRoot, "staging")).toEqual([]);
 
   // The same process and a fresh one both reuse the published entry.
-  await cache.build({ installation, ...input });
+  await cache.build(withKunaProjectDeadline({ installation, ...input }));
   expect(await newCache(installation).lookup(built.value.key)).toMatchObject({
     functions: built.value.functions,
     inventory: built.value.inventory,
@@ -327,7 +341,9 @@ it("retains a failed warm-cache hash descriptor and retries it at cache close", 
     "rea-kuna-cache-hash-owner-",
   );
   const input = await target("program");
-  const built = await cache.build({ installation, ...input });
+  const built = await cache.build(
+    withKunaProjectDeadline({ installation, ...input }),
+  );
   if (!built.ok) throw built.error;
   const closeCause = new Error("injected warm-cache descriptor close failure");
   const close = vi
@@ -361,16 +377,16 @@ it.each(["success", "failure"] as const)(
       `rea-kuna-cache-hash-race-${retryOutcome}-`,
     );
     const input = await target("program");
-    const built = await cache.build({ installation, ...input });
+    const built = await cache.build(
+      withKunaProjectDeadline({ installation, ...input }),
+    );
     if (!built.ok) throw built.error;
 
     const warmCache = newCache(installation);
     const initialCloseFailure = new Error("initial descriptor close failure");
     const retryCloseFailure = new Error("concurrent retry close failure");
-    const initialClose = deferred<void>();
-    const retryGate = deferred<void>();
-    const initialCloseEntered = deferred<void>();
-    const retryEntered = deferred<void>();
+    const initialClose = phaseGate();
+    const retryClose = phaseGate();
     const closeCounts = new Map<OwnedFileHandle, number>();
     let retainedOwner: OwnedFileHandle | undefined;
     let concurrentLookup: Promise<unknown> | undefined;
@@ -382,12 +398,10 @@ it.each(["success", "failure"] as const)(
         closeCounts.set(this, count);
         if (count === 1 && retainedOwner === undefined) {
           retainedOwner = this;
-          initialCloseEntered.resolve();
-          return initialClose.promise;
+          return initialClose.hold();
         }
         if (this === retainedOwner && count === 2) {
-          retryEntered.resolve();
-          return retryGate.promise.then(async () => {
+          return retryClose.hold().then(async () => {
             if (retryOutcome === "failure") throw retryCloseFailure;
             await closeOwner.call(this);
           });
@@ -399,28 +413,20 @@ it.each(["success", "failure"] as const)(
       .lookup(built.value.key)
       .catch((cause: unknown) => cause);
     try {
-      await awaitAcknowledgement(
-        initialCloseEntered.promise,
-        firstLookup,
-        "initial descriptor close",
-      );
+      await initialClose.reached(firstLookup, "initial descriptor close");
       initialClose.reject(initialCloseFailure);
       // The failed descriptor is retained before the first lookup binds its
       // originating error, so this lookup begins the retry in that window.
       concurrentLookup = Promise.resolve().then(() =>
         warmCache.lookup(built.value.key).catch((cause: unknown) => cause),
       );
-      await awaitAcknowledgement(
-        retryEntered.promise,
-        concurrentLookup,
-        "descriptor close retry",
-      );
+      await retryClose.reached(concurrentLookup, "descriptor close retry");
 
       const firstFailure = await firstLookup;
       expect(firstFailure).toBeInstanceOf(ProviderCleanupError);
       if (!(firstFailure instanceof ProviderCleanupError)) throw firstFailure;
       expect(firstFailure.cleanupIncomplete).toBe(true);
-      retryGate.resolve();
+      retryClose.release();
       if (concurrentLookup === undefined)
         throw new Error("Concurrent lookup did not start");
       const retryResult = await concurrentLookup;
@@ -449,8 +455,8 @@ it.each(["success", "failure"] as const)(
         expect(retryResult.cleanupIncomplete).toBe(false);
       }
     } finally {
-      initialClose.resolve();
-      retryGate.resolve();
+      initialClose.release();
+      retryClose.release();
       await Promise.allSettled([
         firstLookup,
         ...(concurrentLookup === undefined ? [] : [concurrentLookup]),
@@ -466,14 +472,15 @@ it("resolves a hash failure delivered after its retained owner was released", as
   const { installation, cache, target } = await fixture(
     "rea-kuna-cache-late-hash-",
   );
-  const built = await cache.build({
-    installation,
-    ...(await target("program")),
-  });
+  const built = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+    }),
+  );
   if (!built.ok) throw built.error;
   const warmCache = newCache(installation);
-  const failureRetained = deferred<void>();
-  const deliverFailure = deferred<void>();
+  const hashFailure = phaseGate();
   const hashFile = stableFileHash.observeStableFile;
   const hash = vi
     .spyOn(stableFileHash, "observeStableFile")
@@ -482,8 +489,7 @@ it("resolves a hash failure delivered after its retained owner was released", as
         return await hashFile(...args);
       } catch (cause: unknown) {
         if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-        failureRetained.resolve();
-        await deliverFailure.promise;
+        await hashFailure.hold();
         throw cause;
       }
     });
@@ -495,17 +501,13 @@ it("resolves a hash failure delivered after its retained owner was released", as
     .lookup(built.value.key)
     .catch((cause: unknown) => cause);
   try {
-    await awaitAcknowledgement(
-      failureRetained.promise,
-      firstLookup,
-      "retained hash failure",
-    );
+    await hashFailure.reached(firstLookup, "retained hash failure");
     expect(warmCache.hasPendingCleanup).toBe(true);
     expect(await warmCache.lookup(built.value.key)).toMatchObject({
       key: built.value.key,
     });
     expect(warmCache.hasPendingCleanup).toBe(false);
-    deliverFailure.resolve();
+    hashFailure.release();
     const error = await firstLookup;
     expect(error).toBeInstanceOf(ProviderCleanupError);
     if (!(error instanceof ProviderCleanupError)) throw error;
@@ -515,7 +517,7 @@ it("resolves a hash failure delivered after its retained owner was released", as
     expect(error.cause.cleanupCause).toBe(closeCause);
     expect(error.cause.owner.handle.fd).toBe(-1);
   } finally {
-    deliverFailure.resolve();
+    hashFailure.release();
     await firstLookup;
     hash.mockRestore();
     close.mockRestore();
@@ -529,12 +531,16 @@ it("blocks repeated cache reads while a retained hash descriptor cannot close", 
     "rea-kuna-cache-hash-admission-",
   );
   const input = await target("program");
-  const built = await cache.build({ installation, ...input });
+  const built = await cache.build(
+    withKunaProjectDeadline({ installation, ...input }),
+  );
   if (!built.ok) throw built.error;
-  const otherBuilt = await cache.build({
-    installation,
-    ...(await target("other")),
-  });
+  const otherBuilt = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("other")),
+    }),
+  );
   if (!otherBuilt.ok) throw otherBuilt.error;
   const keys = [built.value.key, otherBuilt.value.key] as const;
 
@@ -594,7 +600,6 @@ it("blocks repeated cache reads while a retained hash descriptor cannot close", 
       expect(originals.size).toBe(1);
     }
     const closed = await warmCache.close();
-    expect(closed.ok).toBe(false);
     if (closed.ok) throw new Error("Close lost the retained hash owner");
     expect(closed.error.cleanupIncomplete).toBe(true);
     expect(new Set(closed.error.cleanupResources).size).toBe(2);
@@ -634,17 +639,17 @@ it("keeps hash cleanup aggregates pending through retained staging removal", asy
     .mockRejectedValue(persistentCloseCause);
   let stagingPath: string | undefined;
   let retainedPath: string | undefined;
-  let buildFailure: ProviderCleanupError | undefined;
+  let buildFailure: AnalysisError | undefined;
   const aggregates: ProviderCleanupError[] = [];
   try {
-    const built = await cache.build({
-      installation,
-      ...(await target("program")),
-    });
-    expect(built.ok).toBe(false);
+    const built = await cache.build(
+      withKunaProjectDeadline({
+        installation,
+        ...(await target("program")),
+      }),
+    );
     if (built.ok) throw new Error("Expected the retained hash close to fail");
-    expect(built.error).toBeInstanceOf(ProviderCleanupError);
-    if (!(built.error instanceof ProviderCleanupError)) throw built.error;
+    expect(built.error.cleanupIncomplete).toBe(true);
     buildFailure = built.error;
 
     const [staging] = await entries(cacheRoot, "staging");
@@ -654,13 +659,11 @@ it("keeps hash cleanup aggregates pending through retained staging removal", asy
     await chmod(stagingPath, 0o500);
 
     const firstClose = await cache.close();
-    expect(firstClose.ok).toBe(false);
     if (firstClose.ok) throw new Error("Close lost the retained descriptor");
     aggregates.push(firstClose.error);
 
     close.mockRestore();
     const stagingClose = await cache.close();
-    expect(stagingClose.ok).toBe(false);
     if (stagingClose.ok) throw new Error("Close lost the retained staging");
     aggregates.push(stagingClose.error);
     retainedPath = stagingClose.error.cleanupResources[0];
@@ -695,8 +698,8 @@ it("shares one Kuna run between concurrent requests for one export", async () =>
   const input = await target("program");
 
   const [first, second] = await Promise.all([
-    cache.build({ installation, ...input }),
-    cache.build({ installation, ...input }),
+    cache.build(withKunaProjectDeadline({ installation, ...input })),
+    cache.build(withKunaProjectDeadline({ installation, ...input })),
   ]);
 
   expect(first.ok && second.ok).toBe(true);
@@ -714,11 +717,13 @@ it("preserves a pre-aborted caller reason without launching an export", async ()
   const reason = { caller: "before admission" };
   controller.abort(reason);
   const callsBefore = await fakeKunaCalls(kuna);
-  const result = await cache.build({
-    installation,
-    ...input,
-    signal: controller.signal,
-  });
+  const result = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...input,
+      signal: controller.signal,
+    }),
+  );
   if (result.ok)
     throw new Error("Expected pre-aborted cache request to cancel");
   expect(result.error._tag).toBe("AnalysisCancelledError");
@@ -736,16 +741,20 @@ it("stops the run only when every waiting request is cancelled", async () => {
   const firstCaller = new AbortController();
   const secondCaller = new AbortController();
 
-  const first = cache.build({
-    installation,
-    ...input,
-    signal: firstCaller.signal,
-  });
-  const second = cache.build({
-    installation,
-    ...input,
-    signal: secondCaller.signal,
-  });
+  const first = cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...input,
+      signal: firstCaller.signal,
+    }),
+  );
+  const second = cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...input,
+      signal: secondCaller.signal,
+    }),
+  );
   await expect.poll(() => callsOf(kuna, "decompile-project")).toHaveLength(1);
   const pid = (await callsOf(kuna, "decompile-project"))[0]?.pid ?? 0;
 
@@ -783,10 +792,12 @@ it("applies one deadline to the inventory and the export together", async () => 
     { environment: { REA_KUNA_PROJECT_TIMEOUT_MS: "800" } },
   );
 
-  const result = await cache.build({
-    installation,
-    ...(await target("program")),
-  });
+  const result = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+    }),
+  );
 
   expect(result).toMatchObject({
     ok: false,
@@ -798,7 +809,9 @@ it("applies one deadline to the inventory and the export together", async () => 
 
   await setFakeKunaBehavior(kuna, { inventory: "hang" });
   expect(
-    await cache.build({ installation, ...(await target("other")) }),
+    await cache.build(
+      withKunaProjectDeadline({ installation, ...(await target("other")) }),
+    ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisTimeoutError" } });
 });
 
@@ -808,10 +821,12 @@ it("reports a failed export with Kuna's diagnostics and retains nothing", async 
     { project: "exit-failure" },
   );
 
-  const result = await cache.build({
-    installation,
-    ...(await target("program")),
-  });
+  const result = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+    }),
+  );
 
   expect(result).toMatchObject({
     ok: false,
@@ -849,7 +864,9 @@ it.each([
   );
 
   expect(
-    await cache.build({ installation, ...(await target("program")) }),
+    await cache.build(
+      withKunaProjectDeadline({ installation, ...(await target("program")) }),
+    ),
   ).toMatchObject({
     ok: false,
     error: {
@@ -867,7 +884,9 @@ it("refuses to decompile a target that no longer matches its digest", async () =
   const input = await target("program");
   await appendFile(input.targetPath, "patched");
 
-  expect(await cache.build({ installation, ...input })).toMatchObject({
+  expect(
+    await cache.build(withKunaProjectDeadline({ installation, ...input })),
+  ).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisArtifactChangedError", path: input.targetPath },
   });
@@ -879,11 +898,13 @@ it("removes its staging when the target disappears before the copy", async () =>
     await fixture("rea-kuna-vanished-");
   const input = await target("program");
 
-  const result = await cache.build({
-    installation,
-    ...input,
-    targetPath: `${input.targetPath}.gone`,
-  });
+  const result = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...input,
+      targetPath: `${input.targetPath}.gone`,
+    }),
+  );
 
   expect(result).toMatchObject({
     ok: false,
@@ -899,7 +920,9 @@ it("discards an entry whose files no longer match their manifest", async () => {
   const { installation, cacheRoot, cache, target } =
     await fixture("rea-kuna-tamper-");
   const input = await target("program");
-  const built = await cache.build({ installation, ...input });
+  const built = await cache.build(
+    withKunaProjectDeadline({ installation, ...input }),
+  );
   if (!built.ok) throw built.error;
   await appendFile(join(built.value.directory, "program.c"), "// edited\n");
 
@@ -913,7 +936,9 @@ it("evicts least recently used entries above the cap, never a pinned one", async
   });
   const cache = newCache(installation, 1024 * 1024);
   const build = async (name: string, ageSeconds: number) => {
-    const result = await cache.build({ installation, ...(await target(name)) });
+    const result = await cache.build(
+      withKunaProjectDeadline({ installation, ...(await target(name)) }),
+    );
     if (!result.ok) throw result.error;
     const when = new Date(Date.now() - ageSeconds * 1000);
     await utimes(join(cacheRoot, "projects", result.value.key), when, when);
@@ -942,10 +967,12 @@ it("refuses an export larger than the whole cache may hold", async () => {
     { asmPadding: 8 * 1024 },
   );
 
-  const result = await newCache(installation, 4096).build({
-    installation,
-    ...(await target("program")),
-  });
+  const result = await newCache(installation, 4096).build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+    }),
+  );
 
   expect(result).toMatchObject({
     ok: false,
@@ -967,8 +994,12 @@ it("keeps the first publication when another process exports the same key", asyn
 
   // Two cache instances stand in for two REA processes sharing one root.
   const [first, second] = await Promise.all([
-    newCache(installation).build({ installation, ...input }),
-    newCache(installation).build({ installation, ...input }),
+    newCache(installation).build(
+      withKunaProjectDeadline({ installation, ...input }),
+    ),
+    newCache(installation).build(
+      withKunaProjectDeadline({ installation, ...input }),
+    ),
   ]);
 
   expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
@@ -985,11 +1016,13 @@ it("reports each build phase to every waiting request", async () => {
   const { installation, cache, target } = await fixture("rea-kuna-phases-");
   const statuses: KunaExportStatus[] = [];
 
-  const result = await cache.build({
-    installation,
-    ...(await target("program")),
-    onStatus: (status) => statuses.push(status),
-  });
+  const result = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+      onStatus: (status) => statuses.push(status),
+    }),
+  );
 
   expect(result.ok).toBe(true);
   expect(
@@ -1018,7 +1051,11 @@ it("sweeps retired entries but preserves staging with unresolved process ownersh
   await utimes(abandoned, twoDaysAgo, twoDaysAgo);
 
   expect(
-    (await cache.build({ installation, ...(await target("program")) })).ok,
+    (
+      await cache.build(
+        withKunaProjectDeadline({ installation, ...(await target("program")) }),
+      )
+    ).ok,
   ).toBe(true);
 
   expect(await entries(cacheRoot, "staging")).toEqual([
@@ -1041,7 +1078,9 @@ it.each(["sweep", "close"] as const)(
     let built;
     let closed;
     try {
-      built = await cache.build({ installation, ...(await target("program")) });
+      built = await cache.build(
+        withKunaProjectDeadline({ installation, ...(await target("program")) }),
+      );
       closed = await cache.close();
     } finally {
       await chmod(retired, 0o700);
@@ -1056,10 +1095,12 @@ it.each(["sweep", "close"] as const)(
       "retained export",
     );
     if (recovery === "sweep") {
-      const next = await cache.build({
-        installation,
-        ...(await target("other")),
-      });
+      const next = await cache.build(
+        withKunaProjectDeadline({
+          installation,
+          ...(await target("other")),
+        }),
+      );
       if (!next.ok) throw next.error;
     }
     expect(await cache.close()).toEqual({ ok: true, value: null });
@@ -1096,11 +1137,13 @@ it("keeps staging owned when a cancelled Kuna process cannot be proven stopped",
     },
   });
   const caller = new AbortController();
-  const build = cache.build({
-    installation,
-    ...(await target("program")),
-    signal: caller.signal,
-  });
+  const build = cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+      signal: caller.signal,
+    }),
+  );
   await expect.poll(() => callsOf(kuna, "decompile-project")).toHaveLength(1);
 
   caller.abort();
@@ -1128,10 +1171,12 @@ it("keeps staging owned when a cancelled Kuna process cannot be proven stopped",
   await utimes(retained, twoDaysAgo, twoDaysAgo);
   await setFakeKunaBehavior(kuna, {});
   const other = newCache(installation);
-  const built = await other.build({
-    installation,
-    ...(await target("other")),
-  });
+  const built = await other.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("other")),
+    }),
+  );
   if (!built.ok) throw built.error;
   expect(await entries(cacheRoot, "staging")).toEqual(staged);
   expect(await readFile(join(retained, "input", "program"), "utf8")).toBe(
@@ -1152,7 +1197,9 @@ it("rebuilds an entry another cache instance evicted after this one verified it"
     "rea-kuna-evicted-elsewhere-",
   );
   const input = await target("program");
-  const built = await cache.build({ installation, ...input });
+  const built = await cache.build(
+    withKunaProjectDeadline({ installation, ...input }),
+  );
   if (!built.ok) throw built.error;
   // Another process retires the entry the way #discard does.
   await mkdir(join(cacheRoot, "trash"), { recursive: true });
@@ -1162,7 +1209,9 @@ it("rebuilds an entry another cache instance evicted after this one verified it"
   );
 
   expect(await cache.lookup(built.value.key)).toBeUndefined();
-  const rebuilt = await cache.build({ installation, ...input });
+  const rebuilt = await cache.build(
+    withKunaProjectDeadline({ installation, ...input }),
+  );
 
   expect(rebuilt.ok).toBe(true);
   expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);
@@ -1175,8 +1224,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
     { project: "hang" },
   );
   let exports = 0;
-  const cleanupStarted = deferred<void>();
-  const releaseCleanup = deferred<void>();
+  const exportCleanup = phaseGate();
   const cache = new KunaProjectCache(cacheRoot, {
     maxBytes: 64 * 1024 ** 2,
     launcher: async (options) => {
@@ -1187,8 +1235,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
       return {
         ...spawned,
         cleanup: async () => {
-          cleanupStarted.resolve();
-          await releaseCleanup.promise;
+          await exportCleanup.hold();
           await cleanupOwnedProcessGroup(spawned.ownership);
           return { cleaned: false, reason: "first export unverified" };
         },
@@ -1197,11 +1244,13 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
   });
   const input = await target("program");
   const first = new AbortController();
-  const firstBuild = cache.build({
-    installation,
-    ...input,
-    signal: first.signal,
-  });
+  const firstBuild = cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...input,
+      signal: first.signal,
+    }),
+  );
   const second = new AbortController();
   let secondBuild: ReturnType<typeof cache.build> | undefined;
   let stopping: ReturnType<typeof cache.settled> | undefined;
@@ -1210,22 +1259,20 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
     first.abort();
     await firstBuild;
     stopping = cache.settled(keyOf(installation, input));
-    await awaitAcknowledgement(
-      cleanupStarted.promise,
-      stopping,
-      "abandoned export cleanup",
-    );
+    await exportCleanup.reached(stopping, "abandoned export cleanup");
 
     // A retry for the same key starts while the first is still stopping.
-    secondBuild = cache.build({
-      installation,
-      ...input,
-      signal: second.signal,
-    });
+    secondBuild = cache.build(
+      withKunaProjectDeadline({
+        installation,
+        ...input,
+        signal: second.signal,
+      }),
+    );
     await expect.poll(() => callsOf(kuna, "decompile-project")).toHaveLength(2);
     second.abort();
     await secondBuild;
-    releaseCleanup.resolve();
+    exportCleanup.release();
 
     expect(await cache.close()).toMatchObject({
       ok: false,
@@ -1234,7 +1281,7 @@ it("reports an abandoned build's unproven cleanup even after a retry replaced it
   } finally {
     first.abort();
     second.abort();
-    releaseCleanup.resolve();
+    exportCleanup.release();
     await Promise.allSettled([
       firstBuild,
       ...(secondBuild === undefined ? [] : [secondBuild]),
@@ -1250,10 +1297,12 @@ it("removes its staging when publication itself fails", async () => {
     { project: "block-manifest" },
   );
 
-  const result = await cache.build({
-    installation,
-    ...(await target("program")),
-  });
+  const result = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+    }),
+  );
 
   expect(result).toMatchObject({
     ok: false,
@@ -1297,7 +1346,9 @@ it.each(["missing", "corrupt"])(
       expect(await readFile(join(decoyEntry, "manifest.json"), "utf8")).toBe(
         "{}",
       );
-      const built = await cache.build({ installation, ...input });
+      const built = await cache.build(
+        withKunaProjectDeadline({ installation, ...input }),
+      );
       if (!built.ok) throw built.error;
       expect(built.value.directory).toBe(join(intendedEntry, "project"));
       expect(await reopened.lookup(key)).toEqual(built.value);
@@ -1326,10 +1377,12 @@ it("invalidates a warm export when same-length content changes", async () => {
     "rea-kuna-warm-integrity-",
   );
   try {
-    const built = await cache.build({
-      installation,
-      ...(await target("program")),
-    });
+    const built = await cache.build(
+      withKunaProjectDeadline({
+        installation,
+        ...(await target("program")),
+      }),
+    );
     if (!built.ok) throw built.error;
     const file = join(built.value.directory, built.value.manifest.files.c.path);
     const original = await readFile(file, "utf8");
@@ -1345,10 +1398,12 @@ it("refuses escaped manifest paths before reading export files and preserves the
   const { installation, cacheRoot, cache, target } = await fixture(
     "rea-kuna-escaped-manifest-",
   );
-  const built = await cache.build({
-    installation,
-    ...(await target("program")),
-  });
+  const built = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+    }),
+  );
   if (!built.ok) throw built.error;
   expect((await cache.close()).ok).toBe(true);
   const outside = join(dirname(cacheRoot), "saved-project");
@@ -1384,10 +1439,12 @@ it.each(["h", "readme", "inventory"] as const)(
     const { installation, cache, target } = await fixture(
       "rea-kuna-role-manifest-",
     );
-    const built = await cache.build({
-      installation,
-      ...(await target("program")),
-    });
+    const built = await cache.build(
+      withKunaProjectDeadline({
+        installation,
+        ...(await target("program")),
+      }),
+    );
     if (!built.ok) throw built.error;
     expect((await cache.close()).ok).toBe(true);
     const manifest = structuredClone(built.value.manifest);
@@ -1416,10 +1473,12 @@ it.each(["entry", "project", "manifest"] as const)(
       const { installation, cacheRoot, cache, target } = await fixture(
         "rea-kuna-linked-entry-",
       );
-      const built = await cache.build({
-        installation,
-        ...(await target("program")),
-      });
+      const built = await cache.build(
+        withKunaProjectDeadline({
+          installation,
+          ...(await target("program")),
+        }),
+      );
       if (!built.ok) throw built.error;
       expect((await cache.close()).ok).toBe(true);
       const reopened = newCache(installation);
@@ -1460,10 +1519,12 @@ it("keeps an empty symlinked projects parent outside its removal authority", asy
   const { installation, cacheRoot, cache, target } = await fixture(
     "rea-kuna-linked-projects-",
   );
-  const built = await cache.build({
-    installation,
-    ...(await target("program")),
-  });
+  const built = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program")),
+    }),
+  );
   if (!built.ok) throw built.error;
   expect((await cache.close()).ok).toBe(true);
   const outside = join(dirname(cacheRoot), "empty-projects");
@@ -1489,10 +1550,12 @@ it("preserves a legitimate POSIX backslash in the common export basename", async
   const { installation, cache, target } = await fixture(
     "rea-kuna-native-basename-",
   );
-  const built = await cache.build({
-    installation,
-    ...(await target("program\\name")),
-  });
+  const built = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("program\\name")),
+    }),
+  );
   if (!built.ok) throw built.error;
   expect((await cache.close()).ok).toBe(true);
   const reopened = newCache(installation);
@@ -1517,10 +1580,12 @@ it.each(["invalid JSON", "changed producing inputs", "valid rewrite"] as const)(
     const { installation, cache, target } = await fixture(
       "rea-kuna-warm-manifest-",
     );
-    const built = await cache.build({
-      installation,
-      ...(await target("program")),
-    });
+    const built = await cache.build(
+      withKunaProjectDeadline({
+        installation,
+        ...(await target("program")),
+      }),
+    );
     if (!built.ok) throw built.error;
     expect(await cache.lookup(built.value.key)).toBeDefined();
     const manifest = structuredClone(built.value.manifest);
@@ -1553,12 +1618,16 @@ it("separates equal target bytes whose native basenames change the export", asyn
   const { kuna, installation, cache, target } = await fixture(
     "rea-kuna-basename-key-",
   );
-  const first = await cache.build({
-    installation,
-    ...(await target("first", "same bytes")),
-  });
+  const first = await cache.build(
+    withKunaProjectDeadline({
+      installation,
+      ...(await target("first", "same bytes")),
+    }),
+  );
   const secondInput = await target("second", "same bytes");
-  const second = await cache.build({ installation, ...secondInput });
+  const second = await cache.build(
+    withKunaProjectDeadline({ installation, ...secondInput }),
+  );
   if (!first.ok) throw first.error;
   if (!second.ok) throw second.error;
   expect(second.value.key).not.toBe(first.value.key);
@@ -1575,7 +1644,9 @@ it("separates equal target bytes whose native basenames change the export", asyn
   expect((await cache.close()).ok).toBe(true);
   const reopened = newCache(installation);
   try {
-    const reused = await reopened.build({ installation, ...secondInput });
+    const reused = await reopened.build(
+      withKunaProjectDeadline({ installation, ...secondInput }),
+    );
     if (!reused.ok) throw reused.error;
     expect(reused.value.manifest).toEqual(second.value.manifest);
     expect(await callsOf(kuna, "decompile-project")).toHaveLength(2);

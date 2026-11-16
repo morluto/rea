@@ -179,7 +179,6 @@ test("retains final and producer paths when digest verification is cancelled", a
   const result = await f.provider.execute(f.request, {
     signal: controller.signal,
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.partialObservation).toMatchObject({
@@ -201,7 +200,6 @@ test("returns staging allocation failures without invoking device collection", a
   const f = await fixture();
   vi.mocked(mkdtemp).mockRejectedValueOnce(new Error("staging denied"));
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected output failure");
   expect(result.error._tag).toBe("AnalysisOutputError");
   expect(execFileBytes).not.toHaveBeenCalled();
@@ -212,7 +210,6 @@ test("retains published evidence and retries failed staging cleanup", async () =
   const f = await fixture();
   vi.mocked(rm).mockRejectedValueOnce(new Error("cleanup denied"));
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cleanup failure");
   expect(result.error.cleanupResources).toContain(dirname(f.reportedPath()));
   expect(result.error.partialObservation).toMatchObject({
@@ -252,7 +249,6 @@ test("provider close resolves the exact bugreport digest cleanup error", async (
   });
 
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected retained digest close failure");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.partialObservation).toMatchObject({
@@ -301,7 +297,6 @@ test("keeps a bugreport error unresolved until digest and staging owners recover
   });
 
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected digest and staging cleanup failure");
   const originatingError = result.error;
   const stagingDirectory = dirname(f.reportedPath());
@@ -350,7 +345,6 @@ test("refuses an archive reported outside the owned staging directory", async ()
     stderr: Buffer.alloc(0),
   });
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected protocol refusal");
   expect(result.error._tag).toBe("AnalysisProtocolError");
   expect(await readFile(existing, "utf8")).toBe("existing evidence");
@@ -366,7 +360,6 @@ test("preserves the primary protocol failure when staging cleanup also fails", a
   });
   vi.mocked(rm).mockRejectedValueOnce(new Error("cleanup denied"));
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected protocol and cleanup failure");
   expect(result.error.cause).toMatchObject({
     errors: [

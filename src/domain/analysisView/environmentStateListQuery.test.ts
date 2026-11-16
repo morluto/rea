@@ -376,6 +376,16 @@ describe("queries the state can always answer", () => {
 });
 
 describe("parameters that ask for an order", () => {
+  it("cannot apply a direction without a sort field, even when the recorded order happens to match", () => {
+    expect(explainLine(line("?direction=desc", [1, 2, 3, 4]))).toBeUndefined();
+    const parameters = { direction: { role: "direction" } } as const;
+    expect(ids("?direction=asc", parameters)).toBeUndefined();
+    expect(ids("?direction=desc", parameters)).toBeUndefined();
+    expect(
+      ids("?sort=id&direction=desc", { ...parameters, sort: { role: "sort" } }),
+    ).toEqual(["4", "3", "2", "1"]);
+  });
+
   it("reads a sort field in any spelling as a sort, never as a parameter without effect", () => {
     expect(explainLine(line("?_sort=id&_order=DESC", [4, 3, 2, 1]))).toEqual({
       _sort: { role: "sort" },

@@ -3,10 +3,13 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createPackage } from "@electron/asar";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
+import { CdpConnection } from "../../../src/browser/CdpConnection.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -44,13 +47,18 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: mainUrl },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: mainUrl,
+                },
                 childFrames:
                   reads > 1 || kind === "initial"
                     ? [
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             parentId: "frame-main",
                             url:
                               kind === "out-of-scope"
@@ -66,6 +74,7 @@ it.each(["late", "initial", "destroyed", "final-malformed", "out-of-scope"])(
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             parentId: "frame-main",
                             url: childUrl,
                           },
@@ -168,17 +177,27 @@ it.each(["reordered", "parent-changed", "path-changed"])(
         const first = {
           frame: {
             id: "first",
+            loaderId: "loader-first",
             parentId:
               reads > 2 && kind === "parent-changed" ? "second" : "frame-main",
             url: reads > 2 && kind === "path-changed" ? app : child,
           },
         };
         const second = {
-          frame: { id: "second", parentId: "frame-main", url: app },
+          frame: {
+            id: "second",
+            loaderId: "loader-second",
+            parentId: "frame-main",
+            url: app,
+          },
         };
         return {
           frameTree: {
-            frame: { id: "frame-main", url: main },
+            frame: {
+              id: "frame-main",
+              loaderId: "loader-frame-main",
+              url: main,
+            },
             childFrames: reads > 2 ? [second, first] : [first, second],
           },
         };
@@ -223,11 +242,16 @@ it.each([
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: main },
+              frame: { id: "frame-main", loaderId: "main", url: main },
               childFrames:
                 reads === 1 || kind === "same-document"
                   ? ["first", "second"].map((id) => ({
-                      frame: { id, parentId: "frame-main", url: child },
+                      frame: {
+                        id,
+                        loaderId: `loader-${id}`,
+                        parentId: "frame-main",
+                        url: child,
+                      },
                     }))
                   : [],
             },
@@ -292,6 +316,7 @@ it.each([
                   : {
                       frame: {
                         id: "first",
+                        loaderId: "loader-first",
                         parentId: "frame-main",
                         url: "https://foreign.test/",
                       },
@@ -365,11 +390,16 @@ it("excludes srcdoc scripts before source reads while retaining declared labels 
       method === "Page.getFrameTree"
         ? {
             frameTree: {
-              frame: { id: "frame-main", url: mainUrl },
+              frame: {
+                id: "frame-main",
+                loaderId: "loader-frame-main",
+                url: mainUrl,
+              },
               childFrames: [
                 {
                   frame: {
                     id: "srcdoc",
+                    loaderId: "loader-srcdoc",
                     parentId: "frame-main",
                     url: "about:srcdoc",
                   },
@@ -473,7 +503,6 @@ describe("CdpElectronProvider target access", () => {
       { signal: controller.signal },
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected late cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.partialObservation).toMatchObject({
@@ -490,7 +519,9 @@ describe("CdpElectronProvider target access", () => {
     expect(browser.activeConnectionCount()).toBe(0);
   });
 
-  it("returns every in-scope resource beyond the former collection ceiling", async () => {
+  // Resource count has no ceiling; only an exhausted resource budget
+  // truncates the section.
+  it("returns every in-scope resource of a large inventory without truncating the section", async () => {
     const root = await electronFixture();
     const index = join(root, "index.html");
     const count = 2_001;
@@ -533,6 +564,135 @@ describe("CdpElectronProvider target access", () => {
     expect(listed.value.targets).toHaveLength(206);
     expect(listed.value.targets[0]?.target_id).toBe("electron-page");
     expect(listed.value.targets.at(-1)?.target_id).toBe("electron-page-0204");
+  });
+});
+
+describe("CdpElectronProvider transport lifecycle", () => {
+  const inspectInput = (endpoint: string) =>
+    inspectElectronPageInputSchema.parse({
+      cdp_endpoint: endpoint,
+      target_id: "electron-page",
+      observation_ms: 0,
+    });
+  const connectionsClosed = (browser: FakeCdpBrowser): Promise<void> =>
+    new Promise((resolve) => {
+      const poll = (): void => {
+        if (browser.activeConnectionCount() === 0) resolve();
+        else setTimeout(poll, 5);
+      };
+      poll();
+    });
+
+  it("cancels a held Electron CDP handshake and admits the next inspection", async () => {
+    const root = await electronFixture();
+    const handshake = phaseGate<string>();
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+      handshakeGate: handshake,
+    });
+    browsers.push(browser);
+    const provider = new CdpElectronProvider();
+    const controller = new AbortController();
+    const reason = new Error("cancelled during the Electron handshake");
+    const inspecting = provider.inspectPage(inspectInput(browser.endpoint), {
+      signal: controller.signal,
+    });
+    // Release and join the held request and close the provider even when a
+    // barrier or assertion below fails.
+    onTestFinished(async () => {
+      handshake.release();
+      await inspecting;
+      await provider.close();
+    });
+    await handshake.reached(inspecting, "Electron CDP WebSocket handshake");
+    controller.abort(reason);
+    const cancelled = await inspecting;
+    if (cancelled.ok) throw new Error("Expected handshake cancellation");
+    expect(cancelled.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(cancelled.error.cause).toBe(reason);
+    expect(cancelled.error.cleanupIncomplete).toBe(false);
+    expect(browser.openedConnectionCount()).toBe(0);
+
+    handshake.release();
+    const inspected = await provider.inspectPage(
+      inspectInput(browser.endpoint),
+    );
+    if (!inspected.ok) throw inspected.error;
+    await provider.close();
+    await awaitAcknowledgement(
+      connectionsClosed(browser),
+      new Promise(() => undefined),
+      "Electron transports closed",
+    );
+  });
+
+  it("retains a failed Electron transport close and retries it before the next inspection", async () => {
+    const root = await electronFixture();
+    const browser = await startFakeCdpBrowser({
+      electronFileUrl: pathToFileURL(join(root, "index.html")).href,
+    });
+    browsers.push(browser);
+    const provider = new CdpElectronProvider();
+    const originalClose = CdpConnection.prototype.close;
+    let denyClose = true;
+    let closes = 0;
+    // The first close after denial ends is the retained transport's retry.
+    const retriedClose = phaseGate<number>();
+    let retryHeld = false;
+    // Each transport connect, observed when it is requested.
+    const connectSpy = vi.spyOn(CdpConnection, "connect");
+    let retrying: ReturnType<CdpElectronProvider["inspectPage"]> | undefined;
+    const closeSpy = vi
+      .spyOn(CdpConnection.prototype, "close")
+      .mockImplementation(async function (this: CdpConnection) {
+        closes += 1;
+        if (denyClose)
+          throw new Error("controlled Electron transport close failure");
+        if (!retryHeld) {
+          retryHeld = true;
+          await retriedClose.hold(connectSpy.mock.calls.length);
+        }
+        return originalClose.call(this);
+      });
+    try {
+      const first = await provider.inspectPage(inspectInput(browser.endpoint));
+      if (first.ok) throw new Error("Expected incomplete transport cleanup");
+      expect(first.error.cleanupIncomplete).toBe(true);
+      expect(first.error.partialObservation).toMatchObject({
+        kind: "electron-page-observation",
+        inspection: { target: { file_path: join(root, "index.html") } },
+      });
+      const failedCloses = closes;
+
+      const connectsBeforeRetry = connectSpy.mock.calls.length;
+
+      denyClose = false;
+      retrying = provider.inspectPage(inspectInput(browser.endpoint));
+      // The retained close is still running: no replacement connect yet.
+      expect(
+        await retriedClose.reached(retrying, "retained transport close retry"),
+      ).toBe(connectsBeforeRetry);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(connectSpy).toHaveBeenCalledTimes(connectsBeforeRetry);
+      retriedClose.release();
+      const retried = await retrying;
+      if (!retried.ok) throw retried.error;
+      expect(closes).toBeGreaterThan(failedCloses + 1);
+      expect(first.error.cleanupIncomplete).toBe(false);
+      await provider.close();
+      await awaitAcknowledgement(
+        connectionsClosed(browser),
+        new Promise(() => undefined),
+        "Electron transports closed",
+      );
+    } finally {
+      denyClose = false;
+      retriedClose.release();
+      await retrying?.catch(() => undefined);
+      closeSpy.mockRestore();
+      connectSpy.mockRestore();
+      await provider.close().catch(() => undefined);
+    }
   });
 });
 
@@ -731,7 +891,11 @@ describe("CdpElectronProvider frame capture", () => {
           command.method === "Page.getFrameTree"
             ? {
                 frameTree: {
-                  frame: { id: "frame-main", url: main },
+                  frame: {
+                    id: "frame-main",
+                    loaderId: "loader-frame-main",
+                    url: main,
+                  },
                   childFrames: [
                     {
                       frame: {
@@ -798,7 +962,9 @@ describe("CdpElectronProvider malformed source replies", () => {
         error: {
           operation: "inspect_electron_page",
           reason: "protocol_error",
-          userMessage: expect.stringContaining("scriptSource must be a string"),
+          userMessage: expect.stringContaining(
+            "Debugger.getScriptSource returned a malformed result at /scriptSource",
+          ),
         },
       });
       expect(browser.commands.map(({ method }) => method)).toContain(
@@ -952,7 +1118,10 @@ describe("CdpElectronProvider malformed inventory replies", () => {
       "resources",
       "Page.getResourceTree",
       (fileUrl: string) => ({
-        frameTree: { frame: { id: "main", url: fileUrl }, resources: null },
+        frameTree: {
+          frame: { id: "main", loaderId: "loader-main", url: fileUrl },
+          resources: null,
+        },
       }),
     ],
     ["workers", "Target.getTargets", () => ({ targetInfos: null })],
@@ -1120,7 +1289,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: main },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: main,
+                },
                 childFrames:
                   phase === "refreshed" && reads === 1
                     ? []
@@ -1128,6 +1301,7 @@ it.each(
                         {
                           frame: {
                             id: "child",
+                            loaderId: "loader-child",
                             url: child,
                             ...(parent === "missing"
                               ? {}
@@ -1137,6 +1311,7 @@ it.each(
                             {
                               frame: {
                                 id: "grandchild",
+                                loaderId: "loader-grandchild",
                                 parentId: "child",
                                 url: child,
                               },
@@ -1241,7 +1416,11 @@ it.each(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: main },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: main,
+                },
                 childFrames:
                   phase === "refreshed" && reads === 1
                     ? []
@@ -1249,6 +1428,7 @@ it.each(
                         {
                           frame: {
                             id: "parent",
+                            loaderId: "loader-parent",
                             parentId: "frame-main",
                             url: parentUrl,
                           },
@@ -1256,6 +1436,7 @@ it.each(
                             {
                               frame: {
                                 id: "local",
+                                loaderId: "loader-local",
                                 parentId: "parent",
                                 url: child,
                               },
@@ -1357,10 +1538,19 @@ it.each(["about:blank", "https://foreign.invalid/root"])(
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { id: "frame-main", url: rootUrl },
+                frame: {
+                  id: "frame-main",
+                  loaderId: "loader-frame-main",
+                  url: rootUrl,
+                },
                 childFrames: [
                   {
-                    frame: { id: "local", parentId: "frame-main", url: local },
+                    frame: {
+                      id: "local",
+                      loaderId: "loader-local",
+                      parentId: "frame-main",
+                      url: local,
+                    },
                   },
                 ],
               },
@@ -1415,7 +1605,7 @@ const replayFrameTree = (
   reads: number,
 ) => ({
   frameTree: {
-    frame: { id: "frame-main", url: main },
+    frame: { id: "frame-main", loaderId: "loader-frame-main", url: main },
     childFrames:
       reads === 1 || (kind === "during-tree" && reads === 2)
         ? [

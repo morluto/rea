@@ -15,7 +15,6 @@ import {
 } from "./javascriptApplicationGraph.js";
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
   isValidatedImmutableJavaScriptSemanticGraph,
   sealTransferredJavaScriptSemanticGraphSteps,
 } from "./javascriptSemanticGraph.js";
@@ -41,7 +40,7 @@ const ownedExample = () => {
       createImmutableJavaScriptApplicationGraphSteps(application),
     ),
     semantic_graph: complete(
-      createImmutableJavaScriptSemanticGraphSteps(semantic),
+      sealTransferredJavaScriptSemanticGraphSteps(semantic),
     ),
   };
 };
@@ -103,7 +102,6 @@ describe("immutable JavaScript result reuse", () => {
 
   it("borrows imported immutable results only after complete format validation", () => {
     const input = example();
-    delete input.statistics.skipped_javascript_files;
     freezeJsonSnapshot(input);
     const result = complete(
       parseOwnedJavaScriptApplicationAnalysisSteps(input),
@@ -112,7 +110,6 @@ describe("immutable JavaScript result reuse", () => {
     expect(result).toEqual(
       javascriptApplicationAnalysisResultSchema.parse(input),
     );
-    expect(result.statistics).not.toHaveProperty("skipped_javascript_files");
     expect(complete(parseOwnedJavaScriptApplicationAnalysisSteps(input))).toBe(
       input,
     );
@@ -179,7 +176,7 @@ describe("owned JavaScript graph validation", () => {
     ).toBe(false);
   });
 
-  it("keeps ordinary constructors mutable and clones inputs before sealing", () => {
+  it("keeps ordinary constructors mutable and seals independently owned inputs", () => {
     const input = example();
     const { graph_id: _applicationId, ...application } = input.graph;
     const { graph_id: _semanticId, ...semantic } = input.semantic_graph;
@@ -189,7 +186,9 @@ describe("owned JavaScript graph validation", () => {
     expect(Object.isFrozen(ordinarySemantic)).toBe(false);
     const applicationSteps =
       createImmutableJavaScriptApplicationGraphSteps(application);
-    const semanticSteps = createImmutableJavaScriptSemanticGraphSteps(semantic);
+    const semanticSteps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(semantic),
+    );
     application.limitations.push("Changed after factory input was cloned.");
     semantic.limitations.push("Changed after factory input was cloned.");
     expect(complete(applicationSteps)).toEqual(ordinaryApplication);
@@ -270,12 +269,16 @@ describe("owned JavaScript graph validation", () => {
     };
     const mutable = createJavaScriptSemanticGraph(semantic);
     const { graph_id: _mutableId, ...mutableInput } = mutable;
-    const steps = createImmutableJavaScriptSemanticGraphSteps(mutableInput);
+    const steps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(mutableInput),
+    );
     expect(steps.next().done).toBe(false);
     steps.return(mutable);
     expect(isValidatedImmutableJavaScriptSemanticGraph(mutable)).toBe(false);
     const sealed = complete(
-      createImmutableJavaScriptSemanticGraphSteps(mutableInput),
+      sealTransferredJavaScriptSemanticGraphSteps(
+        structuredClone(mutableInput),
+      ),
     );
     expect(sealed).toEqual(mutable);
     expect(isValidatedImmutableJavaScriptSemanticGraph(sealed)).toBe(true);
@@ -301,7 +304,7 @@ describe("owned JavaScript result bindings", () => {
           ];
         }
         input.semantic_graph = complete(
-          createImmutableJavaScriptSemanticGraphSteps(semantic),
+          sealTransferredJavaScriptSemanticGraphSteps(semantic),
         );
       }
       expect(
@@ -332,7 +335,7 @@ describe("owned JavaScript result bindings", () => {
       ...semantic.nodes.slice(1),
     ];
     input.semantic_graph = complete(
-      createImmutableJavaScriptSemanticGraphSteps(semantic),
+      sealTransferredJavaScriptSemanticGraphSteps(semantic),
     );
     freezeJsonSnapshot(input);
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);
@@ -421,19 +424,17 @@ describe("graphs transferred to their sealing steps", () => {
   });
 });
 
-describe("skipped_javascript_files backward compatibility", () => {
-  it("preserves omission for saved evidence that predates the skipped counter", () => {
-    const legacy = structuredClone(
+describe("skipped_javascript_files", () => {
+  it("refuses a result without the skipped counter", () => {
+    const withoutCounter = structuredClone(
       JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
     ) as Record<string, unknown>;
-    const statistics = legacy.statistics as Record<string, unknown>;
+    const statistics = withoutCounter.statistics as Record<string, unknown>;
     delete statistics.skipped_javascript_files;
-    const result = javascriptApplicationAnalysisResultSchema.parse(legacy);
-    // A pre-change result can contain the very resource-skipped files this
-    // field reports, but it has no counter: unknown must not become a
-    // measured zero that comparisons would treat as "nothing skipped".
-    expect("skipped_javascript_files" in result.statistics).toBe(false);
-    expect(result.statistics.skipped_javascript_files).toBeUndefined();
+    expect(
+      javascriptApplicationAnalysisResultSchema.safeParse(withoutCounter).error
+        ?.issues[0]?.path,
+    ).toEqual(["statistics", "skipped_javascript_files"]);
   });
 
   it("keeps the producer-written skipped count in current evidence", () => {
@@ -447,14 +448,15 @@ describe("skipped_javascript_files backward compatibility", () => {
   });
 });
 
-describe("Electron boundary summary compatibility", () => {
-  it("reads results produced before protocol registrations were counted", () => {
+describe("Electron boundary summary", () => {
+  it("refuses a summary without the protocol registration count", () => {
     const current = example();
     const { protocol_registrations: _count, ...summary } = current.summary;
-    const parsed = javascriptApplicationAnalysisResultSchema.parse({
-      ...current,
-      summary,
-    });
-    expect(parsed.summary).not.toHaveProperty("protocol_registrations");
+    expect(
+      javascriptApplicationAnalysisResultSchema.safeParse({
+        ...current,
+        summary,
+      }).error?.issues[0]?.path,
+    ).toEqual(["summary", "protocol_registrations"]);
   });
 });

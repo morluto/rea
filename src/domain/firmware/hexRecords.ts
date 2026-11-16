@@ -108,7 +108,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   readonly #line: Uint8Array;
   readonly #runs: RecordRun[] = [];
   #arena: Uint8Array;
-  #arenaUsed = 0;
+  #arenaWriteOffset = 0;
   #lineLength = 0;
   #lineNumber = 0;
   #recordCount = 0;
@@ -330,7 +330,7 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
     data: Uint8Array,
   ): Result<void, RegionDecodeFailure> {
     if (data.length === 0) return ok(undefined);
-    if (this.#arenaUsed + data.length > this.#arena.length)
+    if (this.#arenaWriteOffset + data.length > this.#arena.length)
       return err({
         kind: "limit",
         boundary: "file-size",
@@ -350,15 +350,15 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
         });
       this.#runs.push({
         address,
-        offset: this.#arenaUsed,
+        offset: this.#arenaWriteOffset,
         length: data.length,
         recordCount: 1,
         firstLine: this.#lineNumber,
         lastLine: this.#lineNumber,
       });
     }
-    this.#arena.set(data, this.#arenaUsed);
-    this.#arenaUsed += data.length;
+    this.#arena.set(data, this.#arenaWriteOffset);
+    this.#arenaWriteOffset += data.length;
     return ok(undefined);
   }
 

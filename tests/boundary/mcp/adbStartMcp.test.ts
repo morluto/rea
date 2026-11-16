@@ -8,12 +8,13 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
 import { AdbProvider } from "../../../src/adb/AdbProvider.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "preserves caller destination and reports the effective pushed file path through MCP",
@@ -61,7 +62,10 @@ else if (args[0] === "-s" && args[2] === "shell" && args[3] === "test") {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-push-boundary", version: "0.0.0" });
+    const client = new Client(
+      { name: "adb-push-boundary", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
     const response = await artifactMcpCall(client, {
@@ -203,7 +207,10 @@ it
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-start-boundary", version: "0.0.0" });
+    const client = new Client(
+      { name: "adb-start-boundary", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
 
@@ -342,10 +349,10 @@ it.skipIf(process.platform === "win32")(
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({
-      name: "adb-start-refusal-mcp",
-      version: "0.0.0",
-    });
+    const client = new Client(
+      { name: "adb-start-refusal-mcp", version: "0.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
 

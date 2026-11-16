@@ -26,7 +26,7 @@ describe("bounded file byte reads", () => {
     },
   );
 
-  it.each([undefined, 5])(
+  it.each([undefined, 0, 5])(
     "preserves raw reasons or caller-owned cancellation with expected size %s",
     async (expectedSize) => {
       const root = await createTestTempDirectory("rea-bounded-cancel-");
@@ -55,6 +55,48 @@ describe("bounded file byte reads", () => {
             }),
           ).rejects.toBe(typed);
         }
+      } finally {
+        await handle.close();
+      }
+    },
+  );
+
+  it.each([
+    { contents: "", maxBytes: 0, expectedSize: undefined, outcome: "EOF" },
+    { contents: "", maxBytes: 5, expectedSize: 5, outcome: "early EOF" },
+    {
+      contents: "hello",
+      maxBytes: 5,
+      expectedSize: 5,
+      outcome: "expected size",
+    },
+    {
+      contents: "hello",
+      maxBytes: 4,
+      expectedSize: undefined,
+      outcome: "overflow",
+    },
+  ])(
+    "honors cancellation while the $outcome read is in flight",
+    async ({ contents, maxBytes, expectedSize }) => {
+      const root = await createTestTempDirectory("rea-bounded-cancel-read-");
+      const path = join(root, "input");
+      await writeFile(path, contents);
+      const handle = await open(path, "r");
+      const controller = new AbortController();
+      const reason = new Error("cancelled during read");
+      const typed = new Error("typed cancellation", { cause: reason });
+      try {
+        const result = readBoundedFileBytes(handle, maxBytes, {
+          signal: controller.signal,
+          expectedSize,
+          cancellationFailure: (observed) => {
+            expect(observed).toBe(reason);
+            return typed;
+          },
+        });
+        controller.abort(reason);
+        await expect(result).rejects.toBe(typed);
       } finally {
         await handle.close();
       }

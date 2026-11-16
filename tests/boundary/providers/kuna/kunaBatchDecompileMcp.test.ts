@@ -1,8 +1,10 @@
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { batchDecompileResultSchema } from "../../../../src/domain/native/batchDecompile.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
+import { z } from "zod";
 
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
@@ -37,6 +39,40 @@ const getEvidenceBundle = SESSION_TOOL_CONTRACTS.find(
   > => contract.name === "get_evidence_bundle",
 );
 
+/** Read the retained batch's items view and check the per-item provider facts. */
+const expectRetainedItems = async (
+  call: (
+    name: string,
+    arguments_: Record<string, unknown>,
+  ) => Promise<{ structuredContent?: unknown }>,
+  evidenceId: string,
+  broken: { readonly limitations: readonly string[] },
+  puts: { readonly limitations: readonly string[] },
+) => {
+  const items = z
+    .looseObject({ items: z.array(z.looseObject({ address: z.string() })) })
+    .parse(
+      parseEvidence(
+        (
+          await call("inspect_analysis_view", {
+            source: { kind: "retained-evidence", evidence_id: evidenceId },
+            view: { kind: "batch-decompile", collection: "items" },
+          })
+        ).structuredContent,
+      ).normalized_result,
+    ).items;
+  const row = (address: string) =>
+    items.find((item) => item.address === address);
+  expect(row("broken")).toMatchObject({
+    pseudocode_absence: { kind: "provider-failure" },
+    limitations: broken.limitations,
+  });
+  expect(row("puts")).toMatchObject({
+    pseudocode_absence: { kind: "not-in-export" },
+    limitations: puts.limitations,
+  });
+};
+
 test("keeps each Kuna no-pseudocode observation's limitations on its batch item", async ({
   mcp,
 }) => {
@@ -55,7 +91,7 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       "kuna",
     ),
   );
-  try {
+  await withVerifierCleanup(async () => {
     const client = await mcp.connect(
       createServer({ kind: "session", session }),
     );
@@ -74,13 +110,20 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       parseEvidence(
         (await call("procedure_pseudo_code", { procedure })).structuredContent,
       );
+    const mainDirect = await direct("main");
     const broken = await direct("broken");
     const importSlot = await direct("puts");
     expect(broken.normalized_result).toBeNull();
+    expect(broken.raw_result).toMatchObject({
+      pseudocode_absence: { kind: "provider-failure" },
+    });
     expect(broken.limitations).toContain(
       "Kuna could not decompile this function: Flow exceeded maximum instructions",
     );
     expect(importSlot.normalized_result).toBeNull();
+    expect(importSlot.raw_result).toMatchObject({
+      pseudocode_absence: { kind: "not-in-export" },
+    });
 
     const batch = parseEvidence(
       (
@@ -129,7 +172,11 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     expect(result).toMatchObject({ total: 4, succeeded: 1, failed: 3 });
     const [main, failed, imported, unknown] = result.items;
     expect(main).toMatchObject({ address: "main", status: "ok" });
-    expect(main).not.toHaveProperty("limitations");
+    // A successful item keeps its own observation's caveats too, so a
+    // repeated selector answered differently stays distinguishable.
+    if (mainDirect.limitations.length === 0)
+      expect(main).not.toHaveProperty("limitations");
+    else expect(main).toMatchObject({ limitations: mainDirect.limitations });
     const noPseudocode = {
       status: "unavailable",
       reason: "no_pseudocode",
@@ -140,12 +187,14 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       address: "broken",
       procedure: { status: "resolved", address: "0x1080", name: "broken" },
       ...noPseudocode,
+      pseudocode_absence: { kind: "provider-failure" },
       limitations: broken.limitations,
     });
     expect(imported).toMatchObject({
       address: "puts",
       procedure: { status: "resolved", address: "0x2000" },
       ...noPseudocode,
+      pseudocode_absence: { kind: "not-in-export" },
       limitations: importSlot.limitations,
     });
     expect(imported).not.toEqual(
@@ -167,6 +216,9 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       ),
     ).toBe(true);
 
+    // The retained items view projects the same per-item facts.
+    await expectRetainedItems(call, batch.evidence_id, broken, importSlot);
+
     // A batch-only bundle keeps the association without another provider read.
     const bundle = evidenceBundleSchema.parse(
       getEvidenceBundle.outputSchema.parse(
@@ -177,8 +229,12 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
       ({ evidence_id }) => evidence_id === batch.evidence_id,
     );
     expect(retained?.normalized_result).toEqual(batch.normalized_result);
-  } finally {
-    await mcp.close();
-    expect(await session.close()).toEqual({ ok: true, value: null });
-  }
-}, 60_000);
+  }, [
+    async () => {
+      await mcp.close();
+    },
+    async () => {
+      expect(await session.close()).toEqual({ ok: true, value: null });
+    },
+  ]);
+});

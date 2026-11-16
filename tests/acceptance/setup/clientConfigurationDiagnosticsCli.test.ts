@@ -82,8 +82,23 @@ const cases = [
     client: "cursor",
     path: ".cursor/mcp.json",
     text: "not-json",
-    diagnostic: "Configuration is not valid JSON",
+    diagnostic: "Configuration is not valid JSONC and was not changed",
+    syntax: "JSONC",
+  },
+  {
+    // Pi loads mcp.json with strict JSON.parse, so REA's reader admits JSON only.
+    client: "pi",
+    path: ".pi/agent/mcp.json",
+    text: '{"mcpServers":{},}',
+    diagnostic: "Configuration is not valid JSON and was not changed",
     syntax: "JSON",
+  },
+  {
+    client: "codex",
+    path: ".codex/config.toml",
+    text: "[mcp_servers\n",
+    diagnostic: "Configuration is not valid TOML and was not changed",
+    syntax: "TOML",
   },
   {
     client: "hermes",
@@ -142,7 +157,7 @@ for (const scenario of cases)
         expect(setup.json).toMatchObject({
           remediation: expect.stringMatching(/\S/u),
         });
-        if (scenario.syntax === "JSON")
+        if (scenario.syntax === "JSONC")
           expect(setup.stdout).toContain("Invalid JSON/JSONC");
       } else {
         expect(setup.json).toMatchObject({
@@ -181,6 +196,9 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     const home = await createTestTempDirectory(
       "rea-doctor-denied-registration-",
     );
+    const moduleCache = await createTestTempDirectory(
+      "rea-doctor-swift-cache-",
+    );
     const locked = join(home, "owned-denied");
     const target = join(locked, "client.json");
     await mkdir(locked);
@@ -204,6 +222,7 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
           HOME: home,
           USERPROFILE: home,
           XDG_CONFIG_HOME: join(home, ".config"),
+          REA_DARWIN_MODULE_CACHE_PATH: moduleCache,
         },
       });
       expect(result.exitCode).toBe(1);
@@ -228,5 +247,51 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       ".claude.json",
       "owned-denied",
     ]);
+  },
+);
+
+cliTest(
+  "doctor reports unknown provider readiness for a malformed selected registration",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory(
+      "rea-doctor-unknown-registration-",
+    );
+    const config = join(home, ".config/opencode/opencode.json");
+    await mkdir(dirname(config), { recursive: true });
+    await writeFile(config, "not JSON");
+    const result = await cli.run({
+      arguments: [
+        "doctor",
+        "--client",
+        "opencode",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      cwd: home,
+      environment: {
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        GHIDRA_INSTALL_DIR: join(home, "ghidra"),
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "ghidra",
+          configured: null,
+          available: null,
+        }),
+      ]),
+      scope_checks: expect.arrayContaining([
+        expect.objectContaining({
+          name: "ghidra",
+          classification: "unknown",
+          ok: false,
+        }),
+      ]),
+    });
   },
 );

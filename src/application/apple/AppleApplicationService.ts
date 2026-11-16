@@ -1,5 +1,5 @@
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { projectAppleInventory } from "../../domain/apple/appleApplication.js";
 import type { Result } from "../../domain/result.js";
@@ -25,6 +25,5 @@ export const projectAppleApplicationEvidence = (
     operation: OPERATION,
     predicateType: "rea.apple-application-graph",
     provider: APPLE_APPLICATION_PROVIDER,
-    subjectFormat: (first) => first.subject?.format ?? "unknown",
   });
 };

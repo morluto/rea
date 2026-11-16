@@ -656,7 +656,7 @@ export async function writePrCiHealthReport(
   return { jsonPath, markdownPath };
 }
 
-export function renderMarkdownSummary(report) {
+function renderMarkdownSummary(report) {
   const rows = report.pullRequests.map(
     (pull) =>
       `| #${String(pull.number ?? "?")} | ${escapeCell(pull.head.repository ?? "unknown")} | ${escapeCell(pull.head.ref ?? "unknown")} | \`${pull.head.sha ?? "unknown"}\` | ${pull.ci.category} | ${escapeCell(pull.ci.reason)} |`,

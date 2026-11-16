@@ -1,7 +1,8 @@
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { isAbsolute, win32 } from "node:path";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
@@ -14,10 +15,12 @@ import {
   ExecFileOutputCancelledError,
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 
 /** Environment key selecting the caller's adb binary. */
 export const ADB_BINARY_ENV = "REA_ADB_PATH";
@@ -26,9 +29,9 @@ const VERSION_TIMEOUT_MS = 10_000;
 
 const ADB_VERSION_REMEDIATION = `Set ${ADB_BINARY_ENV} to an Android SDK Platform-Tools adb binary whose \`adb version\` reports its version, or put one on PATH.`;
 /** Repair when the selected adb binary does not exist. */
-export const ADB_MISSING_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary.`;
-/** Repair when execution of the selected adb binary is denied. */
-export const ADB_NOT_EXECUTABLE_REMEDIATION = `Check file type and execute permission for ${ADB_BINARY_ENV} or select an executable adb binary.`;
+const ADB_MISSING_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to an existing adb binary.`;
+/** Repair when execution of the adb binary selected by the environment is denied. */
+const ADB_NOT_EXECUTABLE_REMEDIATION = `Set ${ADB_BINARY_ENV} to an absolute path to the adb executable file, not a directory, and check execute permission on it and search permission on its parent directories.`;
 const VERSION_MAX_OUTPUT_BYTES = 64 * 1024;
 
 /** How the adb binary was selected for this provider instance. */
@@ -45,7 +48,7 @@ export interface AdbBinarySelection {
  */
 export const resolveAdbBinary = async (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   signal?: AbortSignal,
 ): Promise<AdbBinarySelection> => {
   const selectedEnvironment = snapshotEnvironment(environment, platform);
@@ -90,9 +93,7 @@ const resolveWindowsAdb = async (
     const failure = found.error;
     if (failure.kind === "interrupted") {
       if (deadline.interruption === "cancelled")
-        throw new AnalysisCancelledError("inspect_adb_client", {
-          cause: signal?.reason,
-        });
+        throw cancelledBy("inspect_adb_client", carriedReason(signal?.reason));
       throw new AnalysisTimeoutError("inspect_adb_client", VERSION_TIMEOUT_MS, {
         diagnostics: { phase: "windows_path_lookup" },
       });
@@ -156,10 +157,15 @@ export const parseAdbVersionOutput = (stdout: string): AdbClientIdentity => {
   const build = /^Version\s+(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\s*$/mu.exec(
     stdout,
   );
-  const installed = /^Installed as\s+(.+)$/mu.exec(stdout);
+  // The literal delimiter and line ending belong to the protocol; path
+  // whitespace belongs to the reported executable identity.
+  const installed = /^Installed as ([^\n]*)$/mu
+    .exec(stdout)?.[1]
+    ?.replace(/\r$/u, "");
   return {
     version: build === null ? null : build[1]!.trim(),
-    installedPath: installed === null ? null : installed[1]!.trim(),
+    installedPath:
+      installed === undefined || installed === "" ? null : installed,
   };
 };
 
@@ -204,16 +210,19 @@ export const inspectAdbClient = async (
     if (cause instanceof AdbConfigurationFailure) throw cause;
     const failure = execFileOutputFailure(cause);
     if (cause instanceof ExecFileOutputCancelledError)
-      throw new AnalysisCancelledError("inspect_adb_client", {
-        cause: cause.cause,
-        ...(failure === undefined
+      throw cancelledBy(
+        "inspect_adb_client",
+        carriedReason(cause.cause),
+        failure === undefined
           ? {}
-          : { capturedOutput: execFileFailureCapturedOutput(failure) }),
-      });
+          : { capturedOutput: execFileFailureCapturedOutput(failure) },
+      );
     const diagnostics = {
       selected_binary: selection.binary,
       path_source: selection.pathSource,
-      ...(failure === undefined ? {} : { exit_code: failure.code }),
+      ...(failure === undefined || failure.spawnFailed === true
+        ? {}
+        : { exit_code: failure.code }),
     };
     const options = {
       cause,
@@ -233,6 +242,7 @@ export const inspectAdbClient = async (
           ...fixedAllowanceOptions(
             `The adb version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes (this release has no runtime override)`,
             "capture",
+            { limit: VERSION_MAX_OUTPUT_BYTES, unit: "bytes" },
           ),
         },
       );
@@ -243,35 +253,65 @@ export const inspectAdbClient = async (
         userMessage: `adb version probe reached its ${String(VERSION_TIMEOUT_MS)} ms deadline (deadlineExpired). This release has no runtime override.`,
         remediationAction: `This ${String(VERSION_TIMEOUT_MS)} ms adb version probe has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
       });
-    if (failure?.code === "ENOENT")
-      throw new AdbConfigurationFailure(
-        "binary_missing",
-        `The selected adb binary was not found: ${selection.binary}`,
-        ADB_MISSING_REMEDIATION,
-        {
-          selected_binary: selection.binary,
-          path_source: selection.pathSource,
+    // The process never started: the launcher's errno is not an exit status,
+    // and no version probe ran.
+    const launch = launcherFailureOf(cause);
+    // The host, not the selected binary, refused this launch.
+    if (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+      throw classifyLaunchFailure(launch, {
+        providerId: "adb",
+        operation: "inspect_adb_client",
+        command: selection.binary,
+        fixedArguments: true,
+        selection: ADB_BINARY_ENV,
+        details: {
+          cause,
+          diagnostics: {
+            selected_binary: selection.binary,
+            path_source: selection.pathSource,
+          },
         },
-        { cause },
-      );
-    if (failure?.code === "EACCES" || failure?.code === "EPERM")
+      });
+    if (launch !== undefined) {
+      const code = launch.code ?? "no system code";
+      const fromEnvironment = selection.pathSource === "environment";
+      const facts = {
+        selected_binary: selection.binary,
+        path_source: selection.pathSource,
+        filesystem_error: code,
+      };
+      // Nothing executable resolves at the selected path.
+      if (launch.kind === "missing")
+        throw new AdbConfigurationFailure(
+          "binary_missing",
+          `The selected adb binary was not found: ${selection.binary}`,
+          ADB_MISSING_REMEDIATION,
+          facts,
+          { cause },
+        );
       throw new AdbConfigurationFailure(
         "binary_not_executable",
-        `Execution of the selected adb binary was denied (${failure.code}): ${selection.binary}`,
-        ADB_NOT_EXECUTABLE_REMEDIATION,
-        {
-          selected_binary: selection.binary,
-          path_source: selection.pathSource,
-          filesystem_error: failure.code,
-        },
+        code === "EACCES" || code === "EPERM"
+          ? `Execution of the selected adb binary was denied (${code}): ${selection.binary}`
+          : `The selected adb binary could not be started (${code}): ${selection.binary}`,
+        code === "EACCES"
+          ? fromEnvironment
+            ? ADB_NOT_EXECUTABLE_REMEDIATION
+            : `Make sure the adb found on PATH is a file with execute permission, not a directory, and that its parent directories have search permission, or set ${ADB_BINARY_ENV} to an absolute path to an executable adb binary.`
+          : code === "EPERM"
+            ? `The host refused to run this adb binary, for example because of a security policy or file flags; allow it to run, or set ${ADB_BINARY_ENV} to an absolute path to an adb binary the host permits.`
+            : `Select an adb executable this host can start directly: set ${ADB_BINARY_ENV} to its absolute path, or make it the adb found on PATH.`,
+        facts,
         { cause },
       );
+    }
     throw new AdbConfigurationFailure(
       "version_unresolved",
-      "The selected adb binary did not report a usable version",
+      `The selected adb binary did not report a usable version: ${selection.binary}`,
       ADB_VERSION_REMEDIATION,
       {
         selected_binary: selection.binary,
+        path_source: selection.pathSource,
         ...(failure === undefined
           ? {}
           : {

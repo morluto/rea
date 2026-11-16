@@ -1,12 +1,8 @@
 import {
   inspectPacketFieldsInputSchema,
   packetFieldsCatalogSchema,
-  type InspectPacketFieldsInput,
 } from "../../domain/captures/packetFields.js";
-import type {
-  AnalysisExecution,
-  ExecutionOptions,
-} from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
@@ -14,24 +10,11 @@ import type { Evidence } from "../../domain/evidence.js";
 import {
   inspectPacketCaptureInputSchema,
   packetCaptureSchema,
-  type InspectPacketCaptureInput,
 } from "../../domain/captures/packetCapture.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
-
-export interface PacketCapturePort {
-  /** Release per-call resources before returning, or retain failed cleanup for close/retry. */
-  inspect(
-    input: InspectPacketCaptureInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  inspectFields(
-    input: InspectPacketFieldsInput,
-    options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
-  close(): Promise<void>;
-}
+import type { PacketCapturePort } from "../../ports/captures/PacketCapturePort.js";
 
 /** One shared validation and Evidence owner for CLI and MCP. */
 export class PacketCaptureService {

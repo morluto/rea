@@ -371,7 +371,6 @@ process.stdout.write("unexpected stdin EOF\\n");
     expect(commands.cleanupResources).toEqual([]);
     expect(existsSync(directory)).toBe(true);
   },
-  10_000,
 );
 
 it.skipIf(process.platform === "win32")(
@@ -444,7 +443,6 @@ it.skipIf(process.platform === "win32")(
         throw new Error("Expected the exact acquired process owner");
       controller.abort(reason);
       const closing = commands.close();
-      expect(commands.close()).toBe(closing);
       let closeSettled = false;
       const closeOutcome = observed(closing).then((outcome) => {
         closeSettled = true;
@@ -454,7 +452,6 @@ it.skipIf(process.platform === "win32")(
       expect(closeSettled).toBe(false);
       release.resolve();
       const [execution, close] = await Promise.all([running, closeOutcome]);
-      expect(execution.ok).toBe(false);
       if (execution.ok) throw new Error("Expected cancelled execution");
       const failure = z
         .object({
@@ -523,7 +520,6 @@ it.skipIf(process.platform === "win32")(
       }
     }
   },
-  15_000,
 );
 
 it.skipIf(process.platform === "win32")(

@@ -1,18 +1,16 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
 
 import {
   createAnalysisExecution,
   type AnalysisClient,
-  type AnalysisOperation,
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../../src/application/AnalysisProvider.js";
+} from "../../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { BinarySession } from "../../../../src/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../../../src/application/binary/SessionProviderRouter.js";
@@ -27,7 +25,12 @@ import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { silentLogger } from "../../../../src/logger.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { observeProcessStartIdentity } from "../../../../src/process/ProcessOwnershipObservation.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+import {
+  HopperFixtureLauncher,
+  transportReplyContracts,
+  type TransportHopperClient,
+} from "./hopperClient.fixture.js";
+import { ArtifactResourceScope } from "../../../../src/resources/index.js";
 
 const identities = {
   hopper: { id: "hopper", name: "Hopper fixture", version: null },
@@ -89,8 +92,7 @@ const makeCandidate = (
 };
 
 const fixtureAnalysisClient = (identity: ProviderIdentity): AnalysisClient => ({
-  execute: (operation: AnalysisOperation) =>
-    Promise.resolve(ok(createAnalysisExecution(null, identity))),
+  execute: () => Promise.resolve(ok(createAnalysisExecution(null, identity))),
   close: () => Promise.resolve(ok(null)),
 });
 
@@ -104,11 +106,12 @@ const stopFixture = async (child: ChildProcess): Promise<void> => {
 class ExternalFixtureBridge {
   readonly fixture = new HopperFixtureLauncher();
   child: ChildProcess | undefined;
-  readonly client: HopperClient;
+  readonly client: TransportHopperClient;
 
   constructor() {
     const thisFixture = this;
     this.client = new HopperClient({
+      replyContracts: transportReplyContracts,
       startupTimeoutMs: 2_000,
       launcher: {
         async launch(session: BridgeSession) {
@@ -132,7 +135,7 @@ class ExternalFixtureBridge {
           rm(directory, { recursive: true, force: true }),
         ),
       );
-    }, 45_000);
+    });
   }
 }
 
@@ -233,6 +236,7 @@ it.skipIf(process.platform === "win32")(
       processSupervisor: undefined,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: {
         pid: started.value.processId,
         identity,

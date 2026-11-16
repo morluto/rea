@@ -156,6 +156,7 @@ describe("resource metadata through CDP", () => {
     { fields: { contentSize: -1 }, retained: true },
     { fields: { contentSize: null }, retained: true },
     { fields: { contentSize: "128" }, retained: true },
+    { fields: { contentSize: {} }, retained: true },
   ])(
     "keeps malformed resource fields uncertain: $fields",
     async ({ fields, retained }) => {
