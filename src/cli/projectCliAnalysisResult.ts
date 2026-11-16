@@ -27,7 +27,9 @@ export const isObject = (
  * Issue paths owned by this operation take the CLI key, and a per-call
  * control a failure reports (`details.limit.parameter`, which services name
  * by contract field) gains `cli_flag`, the option that sets it on this
- * command. Any other output is returned unchanged.
+ * command, and the fields its recovery names (`details.related_parameters`)
+ * gain `related_cli_flags`, each field's option. Any other output is returned
+ * unchanged.
  */
 export const projectCliInputFields = <Output>(
   output: Output,
@@ -37,15 +39,43 @@ export const projectCliInputFields = <Output>(
   if (!isObject(error) || !isObject(error.details)) return output;
   const issues = renamedIssues(error, error.details, binding);
   const limit = flaggedLimit(error.details.limit, binding);
-  if (issues === undefined && limit === undefined) return output;
+  const relatedFlags = relatedCliFlags(error.details, binding);
+  if (issues === undefined && limit === undefined && relatedFlags === undefined)
+    return output;
   return {
     ...error,
     details: {
       ...error.details,
       ...(issues === undefined ? {} : { issues }),
       ...(limit === undefined ? {} : { limit }),
+      ...(relatedFlags === undefined
+        ? {}
+        : { related_cli_flags: relatedFlags }),
     },
   } as Output;
+};
+
+/**
+ * The option of each field this command's failure names for its recovery,
+ * keyed by contract field, or undefined when it takes none of them. Fields
+ * of another operation are that command's to render.
+ */
+const relatedCliFlags = (
+  details: Record<string, JsonValue>,
+  binding: CliInputFieldBinding,
+): Record<string, JsonValue> | undefined => {
+  if (
+    details.operation !== binding.operation ||
+    !Array.isArray(details.related_parameters)
+  )
+    return undefined;
+  const flags: Record<string, JsonValue> = {};
+  for (const parameter of details.related_parameters) {
+    if (typeof parameter !== "string") continue;
+    const flag = cliFlagFor(parameter, binding);
+    if (flag !== undefined) flags[parameter] = flag;
+  }
+  return Object.keys(flags).length === 0 ? undefined : flags;
 };
 
 /** Issue paths renamed to CLI keys, or undefined when none changes. */

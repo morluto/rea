@@ -273,7 +273,10 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
       expect(result.json).toMatchObject(expectedError);
       const { call } = await connectLocalToolsMcp();
       const response = await call("inspect_sqlite_database", { path });
-      expect(parseMcpToolError(response).error).toMatchObject(expectedError);
+      const mcpError = parseMcpToolError(response).error;
+      expect(mcpError).toMatchObject(expectedError);
+      expect(mcpError.details).not.toHaveProperty("related_cli_flags");
+      expect(JSON.stringify(mcpError)).not.toContain("--column");
     },
   );
 }
@@ -1258,10 +1261,14 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       code: "capability_unavailable",
       retryable: false,
       message,
-      details: { provider_id: "sqlite", reason: message },
+      details: {
+        provider_id: "sqlite",
+        reason: message,
+        related_parameters: ["columns", "table", "schema_scope"],
+      },
       remediation: {
         action: expect.stringContaining(
-          'Select columns whose values were read: columns: ["a"] (CLI: one --column per name)',
+          'Select columns whose values were read: columns: ["a"];',
         ),
       },
     };
@@ -1279,6 +1286,16 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       });
       expect(result.exitCode, result.stdout + result.stderr).toBe(1);
       expect(result.json).toMatchObject(expectedError);
+      // The CLI renders each named field's flag; MCP output names fields only.
+      expect(result.json).toMatchObject({
+        details: {
+          related_cli_flags: {
+            columns: "--column",
+            table: "--table",
+            schema_scope: "--schema-scope",
+          },
+        },
+      });
       expect(result.stdout).not.toContain("invalid_format");
       const response = await call("inspect_sqlite_database", {
         path,
