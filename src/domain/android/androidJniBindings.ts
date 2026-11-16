@@ -1,5 +1,6 @@
 import { ARTIFACT_INTEGRITY_CHECKS } from "../artifactOperationError.js";
 import { coverageStatusSchema } from "../coverage.js";
+import { excludedValues } from "../schemaConstraints.js";
 import { z } from "zod";
 import {
   androidManifestSplitsSchema,
@@ -75,12 +76,11 @@ const androidJniLibraryFailureSchema = z.union([
     integrity_check: z.enum(ARTIFACT_INTEGRITY_CHECKS),
   }),
   z.strictObject({
-    kind: z
-      .string()
-      .refine(
-        (kind) => kind !== "integrity",
-        "an integrity failure names its integrity_check",
-      ),
+    kind: excludedValues(
+      z.string(),
+      ["integrity"],
+      "an integrity failure names its integrity_check",
+    ),
     message: z.string(),
   }),
 ]);
