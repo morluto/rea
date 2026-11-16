@@ -1968,14 +1968,9 @@ it.each([
     code: "E2BIG",
     tag: "AnalysisResourceConstraintError",
     // GDB's arguments are fixed, so the repair names the environment.
-    projected: {
-      code: "resource_constraint",
-      retryable: false,
-      remediation: {
-        action: expect.not.stringContaining("through a file"),
-      },
-    },
+    projected: { code: "resource_constraint", retryable: false },
     boundary: "provider-launch",
+    facts: { oversized_launch_input: "environment" },
   },
   {
     code: "EIO",
@@ -1988,7 +1983,7 @@ it.each([
   },
 ])(
   "classifies a $code launch failure once without retrying another MI dialect",
-  async ({ code, tag, projected, boundary }) => {
+  async ({ code, tag, projected, boundary, facts }) => {
     let attempts = 0;
     const manager = managerWithFakeSpawner(async () => {
       attempts += 1;
@@ -2009,6 +2004,7 @@ it.each([
             system_code: code,
             syscall: "spawn fake-gdb",
             command: "fake-gdb",
+            ...facts,
           },
         },
       });

@@ -246,11 +246,12 @@ it.each([
 );
 
 it.each([
-  ["EAGAIN", true],
-  ["E2BIG", false],
+  ["EAGAIN", true, {}],
+  // The probe's arguments are fixed, so only the environment can shrink.
+  ["E2BIG", false, { oversized_launch_input: "environment" }],
 ] as const)(
   "reports a host launch constraint %s as a resource constraint, not a Java refusal",
-  async (code, retryable) => {
+  async (code, retryable, facts) => {
     const resources = createInspectionResources();
     const prepare = vi
       .spyOn(systemProcessOwnershipHost, "prepare")
@@ -276,6 +277,7 @@ it.each([
             system_code: code,
             command: "/selected/java",
             java_executable: "/selected/java",
+            ...facts,
           },
         },
       });

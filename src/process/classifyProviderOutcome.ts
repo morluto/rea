@@ -145,6 +145,14 @@ export const classifyLaunchFailure = (
         },
         {
           ...details,
+          diagnostics: {
+            ...details.diagnostics,
+            // Fixed arguments leave the environment as the only input to shrink.
+            oversized_launch_input:
+              context.fixedArguments === true
+                ? "environment"
+                : "request_and_environment",
+          },
           retryable: false,
           remediationAction:
             context.fixedArguments === true
