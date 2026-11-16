@@ -1,6 +1,8 @@
 import { buffer } from "node:stream/consumers";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Readable } from "node:stream";
+import { deflateSync } from "node:zlib";
 
 import { expect, it, vi } from "vitest";
 
@@ -446,6 +448,21 @@ it("keeps a size-mismatched member unavailable through shared inspection", async
   expect(
     inventory.occurrences.find((row) => row.logical_path === "PackageInfo"),
   ).toMatchObject({ hash_status: "unavailable" });
+});
+
+it("stops a streamed XAR inflate before it emits past its allowance", async () => {
+  const inflate = createBoundedXarInflate(16, "PackageInfo");
+  let received = 0;
+  inflate.on("data", (chunk: Buffer) => {
+    received += chunk.length;
+  });
+  const done = new Promise<void>((resolve, reject) => {
+    inflate.on("end", resolve);
+    inflate.on("error", reject);
+  });
+  Readable.from([deflateSync(Buffer.alloc(1024 * 1024))]).pipe(inflate);
+  await expect(done).rejects.toMatchObject({ reason: "limit" });
+  expect(received).toBeLessThanOrEqual(16);
 });
 
 it("fails open() of an oversize gzip member with a limit error without inflating", async () => {

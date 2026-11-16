@@ -987,17 +987,22 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         : isXarStoredEncoding(entry.origin.encoding)
           ? entry.origin.archivedLength
           : entry.declaredSize;
+    const mismatch = (): ArtifactReaderFailure =>
+      new ArtifactReaderFailure(
+        "format",
+        `${entry.path} extracted size ${String(expected)} does not match the ${String(bytes)}-byte decoded member`,
+      );
     const check = async (): Promise<void> => {
-      if (expected !== null && bytes !== expected)
-        throw new ArtifactReaderFailure(
-          "format",
-          `${entry.path} extracted size ${String(expected)} does not match the ${String(bytes)}-byte decoded member`,
-        );
+      if (expected !== null && bytes !== expected) throw mismatch();
       await this.#source.read(signal);
     };
     return new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         bytes += chunk.length;
+        if (expected !== null && bytes > expected) {
+          callback(mismatch());
+          return;
+        }
         callback(null, chunk);
       },
       flush(callback) {

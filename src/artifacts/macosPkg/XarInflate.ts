@@ -158,14 +158,36 @@ export const mapXarInflateStreamError = (
 };
 
 /**
- * Stream-decode a zlib-encoded XAR member. `maxOutputLength` is the resource
- * policy, not the attacker-controlled TOC extracted size.
+ * Stream-decode a zlib-encoded XAR member, capped at the resource policy
+ * allowance rather than the attacker-controlled TOC extracted size.
+ * `maxOutputLength` does not bound a streaming inflater, so emitted bytes are
+ * counted here and the stream fails before any excess chunk is forwarded.
  */
 export const createBoundedXarInflate = (
   maxOutputBytes: number,
   path: string,
 ): Transform => {
-  const inflate = zlib.createInflate({ maxOutputLength: maxOutputBytes });
+  const inflate = zlib.createInflate();
+  let emitted = 0;
+  const push = inflate.push.bind(inflate);
+  inflate.push = ((chunk: unknown, encoding?: BufferEncoding) => {
+    if (chunk !== null && chunk !== undefined) {
+      emitted += (chunk as Buffer).length;
+      if (emitted > maxOutputBytes) {
+        inflate.destroy(
+          artifactReaderLimitFailure(
+            "artifact_limits.expanded_bytes",
+            maxOutputBytes,
+            "bytes",
+            emitted,
+            "memory",
+          ),
+        );
+        return false;
+      }
+    }
+    return push(chunk, encoding);
+  }) as typeof inflate.push;
   const emit = inflate.emit.bind(inflate);
   inflate.emit = ((event: string | symbol, ...args: unknown[]) => {
     if (event === "error") {
