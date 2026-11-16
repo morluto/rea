@@ -1,5 +1,5 @@
 import { contractNamed } from "./contractCliDescription.js";
-import { z } from "incur";
+import { z } from "zod";
 import { realpath, stat } from "node:fs/promises";
 import { findAppBundleResourceRoot } from "../application/AppBundleExecutable.js";
 

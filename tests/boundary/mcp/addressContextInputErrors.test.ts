@@ -16,6 +16,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import { err, ok } from "../../../src/domain/result.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const createContextRecoverySession = () => {
   const identity = { id: "fixture", name: "Fixture", version: "1" };
@@ -119,10 +120,13 @@ it.each(["compact"] as const)(
         },
       },
     );
-    const client = new Client({
-      name: "context-comment-recovery",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "context-comment-recovery",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -298,7 +302,10 @@ it.each([
         },
       },
     );
-    const client = new Client({ name: "context-input-error", version: "1" });
+    const client = new Client(
+      { name: "context-input-error", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

@@ -1,6 +1,7 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import pino from "pino";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";

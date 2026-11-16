@@ -298,10 +298,13 @@ it("recovers the complete parent when a single reference exceeds the page budget
   const retained = session.recordEvidence(parent);
   if (!retained.ok) throw retained.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "oversized-instruction-reference",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "oversized-instruction-reference",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

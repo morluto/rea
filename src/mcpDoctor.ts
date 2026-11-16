@@ -1,6 +1,6 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { OwnedMcpClient } from "./process/OwnedMcpClient.js";
-import { Help } from "incur";
+import { formatCommandHelp } from "./cli/help.js";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -37,7 +37,7 @@ import {
 } from "./config/mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
-import { isRecord } from "./domain/isRecord.js";
+import { isRecord } from "./kernel/isRecord.js";
 import { resolveMcpOutputSchemaProfile } from "./contracts/mcpSchemaPresentation.js";
 import { errorMessage } from "./kernel/errorMessage.js";
 
@@ -54,14 +54,12 @@ const HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
 
 /**
  * Answer an advertised help request without starting a diagnostic session.
- * Global options are hidden because this dispatcher entry accepts only the
- * options above; the hint says so explicitly instead of implying full
- * Incur parity.
+ * Global options are omitted because this dispatcher entry accepts only the
+ * options above; the hint says so explicitly.
  */
 const renderMcpDoctorHelp = (): string =>
-  Help.formatCommand(MCP_DOCTOR_COMMAND, {
+  formatCommandHelp(MCP_DOCTOR_COMMAND, {
     description: MCP_DOCTOR_DESCRIPTION,
-    hideGlobalOptions: true,
     options: MCP_DOCTOR_OPTIONS,
     alias: MCP_DOCTOR_ALIAS,
     hint: `${MCP_DOCTOR_SCOPE} This entry accepts only the options above.`,

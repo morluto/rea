@@ -27,6 +27,7 @@ import { requireAuthenticationHeadroom } from "../../src/application/JsonAuthent
 import { SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE } from "../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../support/holdFirstFileRead.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 vi.mock("../../src/application/JsonAuthenticationHeadroom.js", { spy: true });
 vi.mock("node:v8", { spy: true });
@@ -73,10 +74,13 @@ it.each(["compare_bundles", "match_native_functions"])(
           throw new Error("Comparison must not open a target");
         });
         const server = createServer({ kind: "session", session });
-        const client = new Client({
-          name: "bundle-operation-refusal",
-          version: "1",
-        });
+        const client = new Client(
+          {
+            name: "bundle-operation-refusal",
+            version: "1",
+          },
+          { jsonSchemaValidator: createMcpSchemaValidation() },
+        );
         const [clientTransport, serverTransport] =
           InMemoryTransport.createLinkedPair();
         try {

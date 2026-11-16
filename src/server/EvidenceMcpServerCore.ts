@@ -274,7 +274,7 @@ export const forgetPendingMcpRequest = (
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import {
   advertisedToolPresentation,
   resolveMcpOutputSchemaProfile,

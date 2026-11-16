@@ -1,5 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import type { z } from "incur";
+import type { z } from "zod";
 
 import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import {

@@ -38,13 +38,15 @@ import { FridaInstrumentationManager } from "../../../src/frida/FridaInstrumenta
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerFridaTools } from "../../../src/server/registerFridaTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
+import { FridaInstrumentationService } from "../../../src/application/frida/FridaInstrumentationService.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const nativeFixture = () => {
   const created: string[] = [];
@@ -203,7 +205,10 @@ const connectedFixture = async () => {
     { kind: "session", session },
     { fridaInstrumentation: manager },
   );
-  const client = new Client({ name: "frida-lifecycle", version: "1" });
+  const client = new Client(
+    { name: "frida-lifecycle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     native.controls.detachFailures = 0;
     native.controls.removalFailures = 0;
@@ -787,11 +792,18 @@ const callPartialFridaLoadError = async (
     recordEvidence,
     delivery,
   );
-  registerFridaTools(server, provider, silentLogger, delivery, recordEvidence);
-  const client = new Client({
-    name: "frida-partial-probe-client",
-    version: "1",
-  });
+  registerServiceTools(
+    server,
+    { frida: new FridaInstrumentationService(provider) },
+    { logger: silentLogger, recordEvidence },
+  );
+  const client = new Client(
+    {
+      name: "frida-partial-probe-client",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -1274,6 +1286,39 @@ it.each([
     ).not.toBe(true);
   },
 );
+
+it("retains a start cancelled after attach as partial Evidence in the session", async () => {
+  const fixture = await connectedFixture();
+  const held = phaseGate();
+  onTestFinished(() => held.release());
+  fixture.controls.attach = () => held.hold();
+  const controller = new AbortController();
+  const starting = fixture.client
+    .callTool(
+      {
+        name: "start_frida_session",
+        arguments: { mode: "attach", pid: 512, device_id: "local" },
+      },
+      { signal: controller.signal },
+    )
+    .catch(() => undefined);
+  await held.reached(starting, "Frida attach");
+  controller.abort();
+  held.release();
+  await starting;
+  // The client stops waiting on cancel; the server still records the
+  // cancelled session's cleanup record through the session writer.
+  const partial = await waitFor(() => {
+    const recorded = fixture.session
+      .exportEvidenceBundle()
+      .records.find(({ operation }) => operation === "start_frida_session");
+    expect(recorded).toBeDefined();
+    return recorded;
+  });
+  expect(partial?.normalized_result).toMatchObject({
+    instrumentation_cleanup: "released",
+  });
+});
 
 it("awaits an admitted attach on server shutdown and retries failed native cleanup", async () => {
   const fixture = await connectedFixture();
