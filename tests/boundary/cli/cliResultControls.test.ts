@@ -137,7 +137,8 @@ it("parses a union branch only when the value's keys cannot select it", () => {
   const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
   const spy = <Schema extends z.ZodType>(schema: Schema) => ({
     schema,
-    parse: vi.spyOn(schema, "safeParse"),
+    // spyOn cannot name a method key of an unresolved type parameter.
+    parse: vi.spyOn(schema as z.ZodType, "safeParse"),
   });
   // A uniquely selected branch and a branch without controls are not parsed.
   const view = spy(
