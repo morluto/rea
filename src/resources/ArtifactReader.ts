@@ -246,6 +246,7 @@ export interface ArtifactReader {
     | "esp-flash-image"
     | "fit"
     | "ntfs-mft"
+    | "pkg"
     | "file";
   entries(
     signal?: AbortSignal,

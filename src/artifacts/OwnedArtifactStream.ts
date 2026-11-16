@@ -12,16 +12,22 @@ export const ownArtifactStream = (
     signal,
     cancellationFailure,
     label,
+    decode,
   }: {
     readonly scope: ArtifactResourceScope;
     readonly streams: Set<Readable>;
     readonly signal: AbortSignal | undefined;
     readonly cancellationFailure: (reason: unknown) => Error;
     readonly label: string;
+    readonly decode?: Transform;
   },
 ): void => {
   output.on("error", () => undefined);
   streams.add(output);
+  if (decode !== undefined) {
+    decode.on("error", () => undefined);
+    streams.add(decode);
+  }
   let producerComplete = false;
   const onAbort = (): void => {
     // Active I/O and validation own failure precedence; cancellation also
@@ -32,6 +38,7 @@ export const ownArtifactStream = (
   const retired = new Promise<void>((resolve) => {
     output.once("close", () => {
       streams.delete(output);
+      if (decode !== undefined) streams.delete(decode);
       signal?.removeEventListener("abort", onAbort);
       resolve();
     });
@@ -48,11 +55,13 @@ export const ownArtifactStream = (
     .run(async () => {
       await Promise.all([
         new Promise<void>((resolve) => {
-          pipeline(source, output, () => {
+          const onPipeline = (): void => {
             producerComplete = true;
             if (signal?.aborted) onAbort();
             resolve();
-          });
+          };
+          if (decode === undefined) pipeline(source, output, onPipeline);
+          else pipeline(source, decode, output, onPipeline);
         }),
         retired,
       ]);

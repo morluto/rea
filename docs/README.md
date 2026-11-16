@@ -187,6 +187,7 @@ the exact commit messages and references from the release they describe.
 - [IL2CPP metadata](il2cpp-metadata.md)
 - [Static JavaScript route inventory](javascript-route-inventory.md)
 - [Linux kernel modules](kernel-modules.md)
+- [macOS flat installer packages](macos-pkg.md)
 - [Kuna provider](kuna-provider.md)
 - [Model file declarations](model-artifacts.md)
 - [Match native functions across builds](native-function-matching.md)

@@ -361,6 +361,19 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect a macOS flat installer package without `pkgutil` or installer
+execution:
+
+```sh
+rea inspect-artifact installer.pkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact installer.pkg --json
+```
+
+The portable XAR reader reports header and TOC facts, Distribution/PackageInfo
+fields, gzip cpio Scripts and Payload members, and named refusals for pbzx
+payloads or truncated archives. XAR signatures are not verified. See
+[macOS flat installer packages](../macos-pkg.md).
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the

@@ -89,7 +89,8 @@ it("rejects a root path replaced between its initial stat and open", async () =>
 it("keeps unavailable container traversal distinct from observed root bytes", async () => {
   const root = await createTestTempDirectory("rea-artifact-root-scope-");
   const path = join(root, "fixture.pkg");
-  // The recognized XAR prefix selects PKG inventory; no child decoder is installed.
+  // A recognized XAR prefix that cannot be decoded still inventories the root
+  // hash and records a truncated-header refusal instead of inventing children.
   await writeFile(path, Buffer.from("xar!fixture"));
   const inventory = await inventoryArtifact(path);
   expect(inventory.manifest).toMatchObject({
@@ -102,6 +103,10 @@ it("keeps unavailable container traversal distinct from observed root bytes", as
   expect(inventory.coverage).toEqual({
     scope: "container-entries",
     status: "unknown",
+  });
+  expect(inventory.occurrences[0]?.format_metadata).toMatchObject({
+    kind: "macos-pkg",
+    refusals: [expect.objectContaining({ code: "truncated-header" })],
   });
 });
 
