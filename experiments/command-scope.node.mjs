@@ -4,7 +4,7 @@ import { withCommands } from "./command-scope.mjs";
 import { DarwinProcessOwnershipInspectionError } from "../dist/process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../dist/process/OwnedCommand.js";
 
-test("retains cancellation and the native preparation owner through cleanup retry", async () => {
+await test("retains cancellation and the native preparation owner through cleanup retry", async () => {
   let denied = true,
     closes = 0,
     preparation,

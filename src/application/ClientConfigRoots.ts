@@ -43,6 +43,30 @@ export const absoluteXdgConfigHome = ({
     : join(home, ".config");
 };
 
+/** MCPorter's expandHome recognizes only a leading, complete `~` segment. */
+export const mcporterExpandHome = (value: string, home: string): string =>
+  value === "~"
+    ? home
+    : value.startsWith("~/") || value.startsWith("~\\")
+      ? join(home, value.slice(2))
+      : value;
+
+/** MCPorter trims and expands XDG_CONFIG_HOME, admitting only absolute roots. */
+export const mcporterConfigDirectory = ({
+  home,
+  platform,
+  env,
+}: ClientRootContext): string => {
+  const configHome = mcporterExpandHome(
+    env.XDG_CONFIG_HOME?.trim() ?? "",
+    home,
+  );
+  const pathApi = platform === "win32" ? win32 : posix;
+  return pathApi.isAbsolute(configHome)
+    ? join(configHome, "mcporter")
+    : join(home, ".mcporter");
+};
+
 /**
  * Code-OSS's `getUserDataPath` for one product's data folder (`Code` for VS
  * Code; `Cursor`, `Windsurf`, `VSCodium` or `Code - Insiders` for builds that

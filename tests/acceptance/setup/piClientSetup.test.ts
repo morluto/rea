@@ -495,7 +495,7 @@ cliTest(
           { client: "codex", state: "aligned" },
           {
             client: "pi",
-            state: "invalid",
+            state: "unknown",
             remediation: expect.stringContaining("PI_CODING_AGENT_DIR"),
           },
         ],

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { LINUX_SYSTEM_PS_LOCATIONS } from "../dist/process/systemPs.js";
+import { isOwnershipInventoryExecution } from "./verify/recorded-crash/trace-ownership.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -1478,8 +1480,8 @@ try {
         `Incomplete exec observation: ${line}`,
       );
       const ownershipInspection =
-        ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-        line.includes('["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]');
+        LINUX_SYSTEM_PS_LOCATIONS.includes(match[1]) &&
+        isOwnershipInventoryExecution(match[1], line);
       assert.ok(
         [process.execPath, python].includes(match[1]) || ownershipInspection,
         `Unexpected attempted host execution: ${line}`,

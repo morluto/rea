@@ -665,6 +665,9 @@ const ingestEvent = (event: CdpReceivedEvent, state: CaptureState): void => {
       state.eventsObserved += 1;
       ingestContext(registered, state);
       return;
+    default:
+      // This metadata projection does not retain other CDP event families.
+      return;
   }
 };
 
