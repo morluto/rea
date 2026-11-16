@@ -220,22 +220,42 @@ export const parseCpioOdc = (
   }
 };
 
+const cpioArchiveLimit = (maximum: number): MacosPkgParseError =>
+  macosPkgLimitFailure(
+    `cpio archive exceeds the ${String(maximum)}-byte decode allowance`,
+    { name: "macos_pkg_cpio_archive_bytes", maximum },
+    "cpio",
+  );
+
+/**
+ * Inflates a gzip member without producing more than `maximum` bytes. Callers
+ * that share an aggregate expansion budget pass what remains of it, so the
+ * decoded size is accounted for before the output is allocated.
+ */
 export const gunzipBounded = (
   bytes: Buffer,
+  maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
 ): Result<Buffer, MacosPkgParseError> => {
+  const limit = Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES);
   try {
-    return ok(
-      gunzipSync(bytes, { maxOutputLength: MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES }),
-    );
+    return ok(gunzipSync(bytes, { maxOutputLength: limit }));
   } catch (cause: unknown) {
     const message = cause instanceof Error ? cause.message : String(cause);
-    if (/exceeding/iu.test(message) || /maxOutputLength/u.test(message))
+    const code =
+      typeof cause === "object" && cause !== null && "code" in cause
+        ? cause.code
+        : undefined;
+    if (
+      code === "ERR_BUFFER_TOO_LARGE" ||
+      /exceeding/iu.test(message) ||
+      /maxOutputLength/u.test(message)
+    )
       return err(
         macosPkgLimitFailure(
-          `gzip payload exceeds the ${String(MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES)}-byte decode allowance`,
+          `gzip payload exceeds the ${String(limit)}-byte decode allowance`,
           {
             name: "macos_pkg_cpio_archive_bytes",
-            maximum: MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
+            maximum: limit,
           },
           "gzip",
         ),
@@ -251,18 +271,26 @@ export const gunzipBounded = (
 
 export const parseGzipCpioOdc = (
   bytes: Buffer,
+  maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
 ): Result<readonly CpioMember[], MacosPkgParseError> => {
-  const inflated = gunzipBounded(bytes);
+  const inflated = gunzipBounded(bytes, maximum);
   if (!inflated.ok) return inflated;
   return parseCpioOdc(inflated.value);
 };
 
+/**
+ * Inventories a Scripts or Payload archive. `maximum` caps the decoded cpio
+ * bytes; `decodedBytes` reports what the decode produced so a caller can
+ * charge it against a shared budget.
+ */
 export const inventoryCompressedArchive = (
   bytes: Buffer,
+  maximum: number = MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES,
 ): Result<
   {
     readonly compression: PayloadCompression;
     readonly members: readonly CpioMember[];
+    readonly decodedBytes: number;
   },
   MacosPkgParseError
 > => {
@@ -282,10 +310,22 @@ export const inventoryCompressedArchive = (
         undecodedContent: true,
       }),
     );
-  const parsed =
-    compression === "gzip-cpio-odc"
-      ? parseGzipCpioOdc(bytes)
-      : parseCpioOdc(bytes);
+  if (compression === "gzip-cpio-odc") {
+    const inflated = gunzipBounded(bytes, maximum);
+    if (!inflated.ok) return inflated;
+    const parsed = parseCpioOdc(inflated.value);
+    if (!parsed.ok) return parsed;
+    return ok({
+      compression,
+      members: parsed.value,
+      decodedBytes: inflated.value.length,
+    });
+  }
+  if (bytes.length > Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES))
+    return err(
+      cpioArchiveLimit(Math.min(maximum, MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES)),
+    );
+  const parsed = parseCpioOdc(bytes);
   if (!parsed.ok) return parsed;
-  return ok({ compression, members: parsed.value });
+  return ok({ compression, members: parsed.value, decodedBytes: bytes.length });
 };

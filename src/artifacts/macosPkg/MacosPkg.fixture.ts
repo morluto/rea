@@ -481,3 +481,44 @@ export const buildMultiComponentProductArchive = (): Buffer =>
       { path: "B.pkg/Payload", bytes: payloadArchive("hello from B\n") },
     ],
   });
+
+/**
+ * Two components whose small gzip Payload members each decode to
+ * `decodedBytes` of zeros, so their stored sizes understate what expansion
+ * retains.
+ */
+export const buildExpandingPayloadsProductArchive = (
+  decodedBytes: number,
+): Buffer => {
+  const payload = (): Buffer =>
+    gzipCpio([
+      { name: ".", mode: 0o040755 },
+      { name: "big.bin", mode: 0o100644, data: Buffer.alloc(decodedBytes) },
+    ]);
+  return buildXar({
+    files: [
+      {
+        path: "Distribution",
+        bytes: Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>REA Expanding</title>
+  <pkg-ref id="com.rea.fixture.a" version="1.0.0" installKBytes="1">#A.pkg</pkg-ref>
+  <pkg-ref id="com.rea.fixture.b" version="1.0.0" installKBytes="1">#B.pkg</pkg-ref>
+</installer-gui-script>
+`),
+      },
+      { path: "A.pkg", type: "directory" },
+      {
+        path: "A.pkg/PackageInfo",
+        bytes: Buffer.from(packageInfoXml("com.rea.fixture.a")),
+      },
+      { path: "A.pkg/Payload", bytes: payload() },
+      { path: "B.pkg", type: "directory" },
+      {
+        path: "B.pkg/PackageInfo",
+        bytes: Buffer.from(packageInfoXml("com.rea.fixture.b")),
+      },
+      { path: "B.pkg/Payload", bytes: payload() },
+    ],
+  });
+};

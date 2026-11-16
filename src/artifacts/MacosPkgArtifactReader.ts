@@ -135,6 +135,15 @@ const basename = (path: string): string => {
   return slash === -1 ? path : path.slice(slash + 1);
 };
 
+/** True when a decode stopped at the remaining shared expansion budget. */
+const stoppedBySharedBudget = (
+  error: MacosPkgParseError,
+  remainingBudget: number,
+): boolean =>
+  error.kind === "limit" &&
+  remainingBudget < MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES &&
+  error.failure.limit.maximum === remainingBudget;
+
 const refusalFromParse = (
   error: MacosPkgParseError,
   path: string | null,
@@ -683,12 +692,24 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     ): Promise<void> => {
       for (const archive of listed) {
         const declared = archive.declaredSize ?? 0;
-        if (used + declared > this.#expansionBudgetBytes) {
+        const remaining = this.#expansionBudgetBytes - used;
+        if (declared > remaining) {
           skipped.push(archive.path);
           continue;
         }
-        used += declared;
-        await this.#expandArchive(handle, archive, role, metadata, signal);
+        const charged = await this.#expandArchive(
+          handle,
+          archive,
+          role,
+          metadata,
+          remaining,
+          signal,
+        );
+        if (charged === "over-budget") {
+          skipped.push(archive.path);
+          continue;
+        }
+        used += Math.max(declared, charged);
       }
     };
     await expandListed(scripts, "scripts");
@@ -704,9 +725,10 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     entry: StoredEntry | undefined,
     role: "scripts" | "payload",
     metadata: MacosPkgMetadata,
+    remainingBudget: number,
     signal?: AbortSignal,
-  ): Promise<void> {
-    if (entry === undefined) return;
+  ): Promise<number | "over-budget"> {
+    if (entry === undefined) return 0;
     const bytes = await this.#readXarEntry(
       handle,
       entry,
@@ -714,9 +736,14 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       metadata,
       signal,
     );
-    if (bytes === undefined) return;
+    if (bytes === undefined) return 0;
     const compression = detectPayloadCompression(bytes);
-    const parsed = inventoryCompressedArchive(bytes);
+    // Decoded cpio bytes are retained as member contents, so the decode is
+    // capped by what remains of the shared expansion budget, not only by the
+    // per-archive allowance.
+    const parsed = inventoryCompressedArchive(bytes, remainingBudget);
+    if (!parsed.ok && stoppedBySharedBudget(parsed.error, remainingBudget))
+      return "over-budget";
     if (!parsed.ok) {
       const item = refusalFromParse(parsed.error, entry.path);
       metadata.refusals.push(item);
@@ -734,7 +761,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
           compression,
           members: [],
         });
-      return;
+      return 0;
     }
     const members = parsed.value.members;
     const names = members.map((member) => basename(member.name));
@@ -801,6 +828,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         origin: { kind: "memory", bytes: bytesForOpen },
       });
     }
+    return parsed.value.decodedBytes;
   }
 
   #mergeScripts(

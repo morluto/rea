@@ -25,6 +25,7 @@ import {
   buildBadCpioPackage,
   buildBadInflatePackage,
   buildComponentPackage,
+  buildExpandingPayloadsProductArchive,
   buildExtractedSizeMismatchGzipPackage,
   buildGzipPackageInfo,
   buildHeapOutOfBoundsPackage,
@@ -478,6 +479,33 @@ it("names skipped component archives when the expansion budget is exhausted", as
     expect(paths).not.toContain("A.pkg/Payload/usr/local/rea/hello.txt");
     expect(paths).not.toContain("B.pkg/Payload/usr/local/rea/hello.txt");
     expect(reader.formatMetadata()?.scripts.present).toBe(false);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("charges decoded payload bytes against the shared expansion budget", async () => {
+  const decoded = 256 * 1024;
+  const { reader, entries, coverage } = await entriesOf(
+    buildExpandingPayloadsProductArchive(decoded),
+    "expanding-payloads.pkg",
+    decoded + decoded / 2,
+  );
+  try {
+    const paths = entries.map((entry) => entry.path);
+    expect(paths).toContain("A.pkg/Payload/big.bin");
+    expect(paths).not.toContain("B.pkg/Payload/big.bin");
+    expect(paths).toContain("B.pkg/Payload");
+    expect(coverage).toEqual([
+      expect.objectContaining({
+        status: "unknown",
+        limitations: [
+          expect.stringMatching(
+            /Did not expand Scripts\/Payload for B\.pkg\/Payload/u,
+          ),
+        ],
+      }),
+    ]);
   } finally {
     await reader.close();
   }
