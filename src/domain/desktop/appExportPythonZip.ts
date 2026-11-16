@@ -213,6 +213,19 @@ class _BoundedArchive(io.RawIOBase):
         return count
 
 
+def _zip_directory_tail(records: list[bytes], offset: int) -> bytes:
+    """Encode kept records with exact Zip64 values and saturated classic fields (APPNOTE 4.3.16).
+    zipfile follows a Zip64 locator signature wherever one sits before the classic end record, including in
+    a kept record's comment, so every bounded decoder copy has real Zip64 end records."""
+    kept, count = b"".join(records), len(records)
+    classic_count = min(count, 0xFFFF)
+    return (kept
+            + struct.pack("<4sQ2H2I4Q", ZIP64_END, 44, 45, 45, 0, 0, count, count, len(kept), offset)
+            + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
+            + struct.pack("<4s4H2IH", ZIP_END, 0, 0, classic_count, classic_count,
+                          min(len(kept), 0xFFFFFFFF), min(offset, 0xFFFFFFFF), 0))
+
+
 def _zip(file, size: int) -> dict:
     """A zip archive's file entries in archive order, up to REA's entry, size, ratio and archive limits; nothing is
     extracted to disk, no archive inside is opened, and zipfile is shown only the directory records listed."""
@@ -222,14 +235,8 @@ def _zip(file, size: int) -> dict:
         if directory is None:
             raise zipfile.BadZipFile("no readable central directory")
         start, declared, records, count, names = directory
-        kept = b"".join(records)
         offset = declared if declared <= 0xFFFFFFFF else start
-        # zipfile follows a Zip64 locator signature wherever one sits before the end record, and the kept records
-        # may end in those bytes, so a real Zip64 end record and locator for them come first.
-        tail = (kept
-                + struct.pack("<4sQ2H2I4Q", ZIP64_END, 44, 45, 45, 0, 0, len(records), len(records), len(kept), offset)
-                + struct.pack("<4sIQI", ZIP64_LOCATOR, 0, offset + len(kept), 1)
-                + struct.pack("<4s4H2IH", ZIP_END, 0, 0, len(records), len(records), len(kept), offset, 0))
+        tail = _zip_directory_tail(records, offset)
         with zipfile.ZipFile(_BoundedArchive(file, start, tail)) as archive:
             for info, name in zip(archive.infolist(), names, strict=True):
                 refusal = _zip_refusal(info, spent)
