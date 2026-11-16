@@ -30,8 +30,8 @@ import { excludeDeclaredSensitiveArguments } from "./explicitSensitiveArguments.
 import {
   CLI_CUSTOM_GLOBAL_OPTIONS,
   CLI_DESCRIPTION,
-  writeHelpPage,
-} from "./helpPages.js";
+  serveDiscovery,
+} from "./discovery.js";
 import { reportUnknownMcpSubcommand } from "./mcpBuiltinCommands.js";
 import { serveMcpRegistration } from "./mcpRegistration.js";
 import { presentOmittableDefaults } from "./omittableDefaults.js";
@@ -145,6 +145,13 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   );
 
   presentOmittableDefaults(cli);
+  // Discovery reads the arguments the dispatcher would, after result output
+  // has adapted them, so its documents are counted and buffered alike.
+  const dispatch = cli.serve.bind(cli);
+  cli.serve = (arguments_ = process.argv.slice(2), serveOptions) =>
+    serveDiscovery(cli, arguments_, serveOptions ?? {})
+      ? Promise.resolve()
+      : dispatch(arguments_, serveOptions);
   if (options.resultOutput !== undefined)
     streamCliCommandResults(cli, options.resultOutput);
   const serveStrict = validateCliArguments(cli);
@@ -168,13 +175,7 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
     if (registration !== undefined) return registration;
     const result = serveStrict(global, serveOptions ?? {}, (selected) =>
       serveDeclared(global, selected, (declaredOptions) =>
-        reportUnknownMcpSubcommand(cli.name, global, declaredOptions) ||
-        writeHelpPage(
-          cli,
-          global,
-          declaredOptions.stdout ??
-            ((text: string) => process.stdout.write(text)),
-        )
+        reportUnknownMcpSubcommand(cli.name, global, declaredOptions)
           ? Promise.resolve()
           : serve(
               adaptCliOutputArgumentsForIncur(global.arguments),

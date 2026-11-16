@@ -163,7 +163,23 @@ const CASES: readonly ParityCase[] = [
     name: "schema-command-json",
     arguments: fixed("inspect-byte-entropy", "--schema", "--format", "json"),
   },
+  {
+    name: "schema-command-md",
+    arguments: fixed("inspect-byte-entropy", "--schema", "--format", "md"),
+  },
+  {
+    name: "schema-unknown-command",
+    arguments: fixed("inspect-byte-entropi", "--schema"),
+  },
   { name: "llms-command", arguments: fixed("inspect-byte-entropy", "--llms") },
+  {
+    name: "llms-command-json",
+    arguments: fixed("inspect-byte-entropy", "--llms", "--format", "json"),
+  },
+  {
+    name: "llms-full-command-yaml",
+    arguments: fixed("inspect-byte-entropy", "--llms-full", "--format", "yaml"),
+  },
   {
     name: "llms-full-command",
     arguments: fixed("inspect-byte-entropy", "--llms-full"),
