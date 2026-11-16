@@ -432,6 +432,22 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// A refusal for a limit a parser stopped at is built from the failure's
+// LimitRef by parseLimitConstraint in src/domain/parseFailureAnalysisError; a
+// hand-built AnalysisResourceConstraintError spells the limit key and reason
+// again beside the parser that named them (#11456). Each migrated producer
+// lowers this count.
+checkCounted(
+  "hand-built resource-constraint refusal (use parseLimitConstraint from src/domain/parseFailureAnalysisError when the cause is a parse limit)",
+  "resource-constraint-constructor",
+  files,
+  /new AnalysisResourceConstraintError\(/gu,
+  [
+    "src/domain/analysisErrorCore.ts",
+    "src/domain/parseFailureAnalysisError.ts",
+  ],
+);
+
 // A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
 // src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
 // class on plain Error hides the limit's name and maximum from both; a limit
