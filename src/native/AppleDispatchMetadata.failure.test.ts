@@ -28,7 +28,9 @@ it.each([new RangeError("unexpected range"), new TypeError("unexpected type")])(
 it.each(["integrity", "path"] as const)(
   "reports a %s source-read refusal as a change to the bound target, not a provider failure",
   (reason) => {
-    const cause = new ArtifactReaderFailure(reason, "source boundary refused");
+    const cause = new ArtifactReaderFailure(reason, "source boundary refused", {
+      integrityCheck: reason === "integrity" ? "container-identity" : undefined,
+    });
     expect(appleDispatchMetadataFailure(cause, "/selected")._tag).toBe(
       "AnalysisArtifactChangedError",
     );

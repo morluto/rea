@@ -109,6 +109,7 @@ it.each([false, true])(
     const failure = new ArtifactReaderFailure(
       "integrity",
       "controlled physical archive refusal",
+      { integrityCheck: "container-identity" },
     );
     const open = vi
       .spyOn(DirectoryArtifactReader.prototype, "open")
