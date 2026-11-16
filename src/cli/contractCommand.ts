@@ -58,6 +58,12 @@ import {
   projectCliAnalysisResult,
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
+import {
+  cliCommands,
+  contractDescriptionOperations,
+  distinctOperations,
+  registerCliCommand,
+} from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { isRecord } from "../kernel/isRecord.js";
 
@@ -549,12 +555,13 @@ const commandPositionals = (
   ...description.cliPositionals,
 ];
 
-const descriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
-
 /** Commands registered on this CLI through `registerContractCommand`. */
 export const contractCommandDescriptions = (
   cli: CliInstance,
-): readonly ContractCliDescription[] => descriptions.get(cli) ?? [];
+): readonly ContractCliDescription[] =>
+  cliCommands(cli).flatMap(({ source }) =>
+    source.kind === "contract" ? [source.description] : [],
+  );
 
 const incurOptions = (description: ContractCliDescription): z.ZodType => {
   const object = z.object(
@@ -624,118 +631,128 @@ export const registerContractCommand = <
       short === undefined || positional ? [] : [[key, short]],
     ),
   );
-  cli.command(description.command, {
-    description: description.description,
-    ...(positionals.length === 0
-      ? {}
-      : {
-          args: z.object(
-            Object.fromEntries(
-              positionals.map(({ key, schema }) => [key, schema]),
+  registerCliCommand(
+    cli,
+    description.command,
+    {
+      description: description.description,
+      ...(positionals.length === 0
+        ? {}
+        : {
+            args: z.object(
+              Object.fromEntries(
+                positionals.map(({ key, schema }) => [key, schema]),
+              ),
             ),
-          ),
-        }),
-    options: incurOptions(description),
-    ...(Object.keys(alias).length === 0 ? {} : { alias }),
-    run: ({
-      args,
-      options,
-    }: {
-      readonly args?: Readonly<Record<string, unknown>>;
-      readonly options: Readonly<Record<string, unknown>>;
-    }) => {
-      const values: Record<string, unknown> = { ...options, ...args };
-      // A selector's positional and named option may share one key.
-      for (const { key, selectorOption } of description.parameters)
-        if (selectorOption !== undefined) {
-          values[key] = args?.[key];
-          for (const option of [selectorOption, selectorOption.alternative])
-            if (option !== undefined)
-              values[option.valueKey] = options[option.key];
-        }
-      const selected =
-        projection.operationBy === undefined
-          ? description
-          : (chosen.get(values[projection.operationBy.option]) ?? description);
-      return withCommandCancellation((signal) =>
-        logCliCommand(logger, description.command, async () => {
-          const options = selected.admitDeliveryOptions(values);
-          if (!options.ok) return projectAnalysisError(options.error);
-          const read = await readJsonInputs(selected, values, signal);
-          if (!read.ok) return read.error;
-          const admitted = selected.admit(read.value);
-          // Admission and handler issues alike name renamed fields by CLI key.
-          if (!admitted.ok)
-            return projectCliInputFields(
-              projectAnalysisError(admitted.error),
-              selected.inputBinding,
+          }),
+      options: incurOptions(description),
+      ...(Object.keys(alias).length === 0 ? {} : { alias }),
+      run: ({
+        args,
+        options,
+      }: {
+        readonly args?: Readonly<Record<string, unknown>>;
+        readonly options: Readonly<Record<string, unknown>>;
+      }) => {
+        const values: Record<string, unknown> = { ...options, ...args };
+        // A selector's positional and named option may share one key.
+        for (const { key, selectorOption } of description.parameters)
+          if (selectorOption !== undefined) {
+            values[key] = args?.[key];
+            for (const option of [selectorOption, selectorOption.alternative])
+              if (option !== undefined)
+                values[option.valueKey] = options[option.key];
+          }
+        const selected =
+          projection.operationBy === undefined
+            ? description
+            : (chosen.get(values[projection.operationBy.option]) ??
+              description);
+        return withCommandCancellation((signal) =>
+          logCliCommand(logger, description.command, async () => {
+            const options = selected.admitDeliveryOptions(values);
+            if (!options.ok) return projectAnalysisError(options.error);
+            const read = await readJsonInputs(selected, values, signal);
+            if (!read.ok) return read.error;
+            const admitted = selected.admit(read.value);
+            // Admission and handler issues alike name renamed fields by CLI key.
+            if (!admitted.ok)
+              return projectCliInputFields(
+                projectAnalysisError(admitted.error),
+                selected.inputBinding,
+              );
+            const opening = admitOpening(selected, values);
+            if (!opening.ok) return projectAnalysisError(opening.error);
+            // A composed command also takes its sources' options; a control
+            // its result records from a source is set by that option.
+            const resultBinding =
+              description.evidenceTargets === undefined
+                ? selected.inputBinding
+                : {
+                    ...selected.inputBinding,
+                    flags: {
+                      ...description.evidenceTargets.sourceFlags,
+                      ...selected.inputBinding.flags,
+                    },
+                  };
+            return projectCliResult(
+              await run(
+                admitted.value.input as z.input<Contract["inputSchema"]>,
+                {
+                  signal,
+                  operation: selected.contract.name,
+                  callerInputs: selected.callerInputs(values),
+                  sessionTarget:
+                    description.sessionTarget === undefined
+                      ? undefined
+                      : (values[description.sessionTarget.key] as string),
+                  evidenceTargets:
+                    description.evidenceTargets === undefined
+                      ? undefined
+                      : {
+                          source: description.evidenceTargets.source,
+                          sourceFlags: description.evidenceTargets.sourceFlags,
+                          targets: description.evidenceTargets.targets.map(
+                            ({ field, key }) => ({
+                              field,
+                              key,
+                              target: values[key] as string,
+                            }),
+                          ),
+                        },
+                  opening: opening.value,
+                  delivery: admitted.value.delivery,
+                  parsed: admitted.value.parsed as
+                    | z.output<Contract["inputSchema"]>
+                    | undefined,
+                  parseWholeInput: admitted.value.parseWholeInput as
+                    | (() => Result<
+                        z.output<Contract["inputSchema"]>,
+                        AnalysisInputError
+                      >)
+                    | undefined,
+                  checked: read.checked as CliCheckedJsonInputs<Checks>,
+                  cliOptions: selected.cliOptionValues(
+                    values,
+                  ) as CliOptionValues<CliOptions>,
+                },
+              ),
+              selected.contract.outputSchema,
+              resultBinding,
             );
-          const opening = admitOpening(selected, values);
-          if (!opening.ok) return projectAnalysisError(opening.error);
-          // A composed command also takes its sources' options; a control
-          // its result records from a source is set by that option.
-          const resultBinding =
-            description.evidenceTargets === undefined
-              ? selected.inputBinding
-              : {
-                  ...selected.inputBinding,
-                  flags: {
-                    ...description.evidenceTargets.sourceFlags,
-                    ...selected.inputBinding.flags,
-                  },
-                };
-          return projectCliResult(
-            await run(
-              admitted.value.input as z.input<Contract["inputSchema"]>,
-              {
-                signal,
-                operation: selected.contract.name,
-                callerInputs: selected.callerInputs(values),
-                sessionTarget:
-                  description.sessionTarget === undefined
-                    ? undefined
-                    : (values[description.sessionTarget.key] as string),
-                evidenceTargets:
-                  description.evidenceTargets === undefined
-                    ? undefined
-                    : {
-                        source: description.evidenceTargets.source,
-                        sourceFlags: description.evidenceTargets.sourceFlags,
-                        targets: description.evidenceTargets.targets.map(
-                          ({ field, key }) => ({
-                            field,
-                            key,
-                            target: values[key] as string,
-                          }),
-                        ),
-                      },
-                opening: opening.value,
-                delivery: admitted.value.delivery,
-                parsed: admitted.value.parsed as
-                  | z.output<Contract["inputSchema"]>
-                  | undefined,
-                parseWholeInput: admitted.value.parseWholeInput as
-                  | (() => Result<
-                      z.output<Contract["inputSchema"]>,
-                      AnalysisInputError
-                    >)
-                  | undefined,
-                checked: read.checked as CliCheckedJsonInputs<Checks>,
-                cliOptions: selected.cliOptionValues(
-                  values,
-                ) as CliOptionValues<CliOptions>,
-              },
-            ),
-            selected.contract.outputSchema,
-            resultBinding,
-          );
-        }),
-      );
+          }),
+        );
+      },
+    } as never,
+    {
+      operations: distinctOperations(
+        [description, ...chosen.values()].flatMap(
+          contractDescriptionOperations,
+        ),
+      ),
+      source: { kind: "contract", description },
     },
-  } as never);
-  const registered = descriptions.get(cli) ?? [];
-  registered.push(description);
-  descriptions.set(cli, registered);
+  );
 };
 
 /** One contract input a routed command runs, with the inputs it takes. */
@@ -849,12 +866,13 @@ const commandShape = (description: ContractCliDescription) => ({
 const schemaSignature = (schema: z.ZodType): string =>
   JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
 
-const routedDescriptions = new WeakMap<CliInstance, ContractCliDescription[]>();
-
 /** Route descriptions of commands registered through `registerRoutedCommand`. */
 export const routedCommandDescriptions = (
   cli: CliInstance,
-): readonly ContractCliDescription[] => routedDescriptions.get(cli) ?? [];
+): readonly ContractCliDescription[] =>
+  cliCommands(cli).flatMap(({ source }) =>
+    source.kind === "routed" ? source.descriptions : [],
+  );
 
 /**
  * Register one CLI command whose input chooses the contract input it runs,
@@ -920,100 +938,112 @@ export const registerRoutedCommand = (
     Object.hasOwn(shapes[routes.indexOf(route)]!.options, key);
   // Only JSON inputs every route takes alike are decoded before routing.
   const sharedJson = sharedJsonInputs(name, routes);
-  cli.command(name, {
-    description: command.description,
-    args: z.object(Object.fromEntries(args)),
-    options: z.object(Object.fromEntries(options)),
-    run: ({
-      args: given,
-      options: chosen,
-    }: {
-      readonly args: Readonly<Record<string, unknown>>;
-      readonly options: Readonly<Record<string, unknown>>;
-    }) => {
-      const values: Record<string, unknown> = { ...chosen, ...given };
-      const supplied = Object.keys(values).filter(
-        (key) => values[key] !== undefined,
-      );
-      return withCommandCancellation((signal) =>
-        logCliCommand(logger, name, async () => {
-          const shared = await readJsonInputs(
-            routes[0]!.description,
-            values,
-            signal,
-            sharedJson,
-          );
-          if (!shared.ok) return shared.error;
-          let route = routes.at(-1)!;
-          for (const candidate of routes)
-            if (
-              candidate.takes !== undefined &&
-              supplied.every((key) => owns(candidate, key)) &&
-              (await candidate.takes(shared.value))
-            ) {
-              route = candidate;
-              break;
-            }
-          const { description } = route;
-          const refused = supplied.filter((key) => !owns(route, key));
-          if (refused.length > 0)
-            return projectAnalysisError(
-              new AnalysisInputError(
-                description.contract.name,
-                undefined,
-                refused.map((key) => ({
-                  path: [key],
-                  reason: "invalid_value" as const,
-                  message: `--${kebabCase(key)} requires ${owners.get(key)!.requirement}; the given input selects ${route.requirement}, which does not take it.`,
-                })),
-              ),
+  registerCliCommand(
+    cli,
+    name,
+    {
+      description: command.description,
+      args: z.object(Object.fromEntries(args)),
+      options: z.object(Object.fromEntries(options)),
+      run: ({
+        args: given,
+        options: chosen,
+      }: {
+        readonly args: Readonly<Record<string, unknown>>;
+        readonly options: Readonly<Record<string, unknown>>;
+      }) => {
+        const values: Record<string, unknown> = { ...chosen, ...given };
+        const supplied = Object.keys(values).filter(
+          (key) => values[key] !== undefined,
+        );
+        return withCommandCancellation((signal) =>
+          logCliCommand(logger, name, async () => {
+            const shared = await readJsonInputs(
+              routes[0]!.description,
+              values,
+              signal,
+              sharedJson,
             );
-          const options = description.admitDeliveryOptions(shared.value);
-          if (!options.ok) return projectAnalysisError(options.error);
-          const read = await readJsonInputs(
-            description,
-            shared.value,
-            signal,
-            ownJsonInputs(description, sharedJson),
-          );
-          if (!read.ok) return read.error;
-          const admitted = description.admit(read.value);
-          if (!admitted.ok)
-            return projectCliInputFields(
-              projectAnalysisError(admitted.error),
+            if (!shared.ok) return shared.error;
+            let route = routes.at(-1)!;
+            for (const candidate of routes)
+              if (
+                candidate.takes !== undefined &&
+                supplied.every((key) => owns(candidate, key)) &&
+                (await candidate.takes(shared.value))
+              ) {
+                route = candidate;
+                break;
+              }
+            const { description } = route;
+            const refused = supplied.filter((key) => !owns(route, key));
+            if (refused.length > 0)
+              return projectAnalysisError(
+                new AnalysisInputError(
+                  description.contract.name,
+                  undefined,
+                  refused.map((key) => ({
+                    path: [key],
+                    reason: "invalid_value" as const,
+                    message: `--${kebabCase(key)} requires ${owners.get(key)!.requirement}; the given input selects ${route.requirement}, which does not take it.`,
+                  })),
+                ),
+              );
+            const options = description.admitDeliveryOptions(shared.value);
+            if (!options.ok) return projectAnalysisError(options.error);
+            const read = await readJsonInputs(
+              description,
+              shared.value,
+              signal,
+              ownJsonInputs(description, sharedJson),
+            );
+            if (!read.ok) return read.error;
+            const admitted = description.admit(read.value);
+            if (!admitted.ok)
+              return projectCliInputFields(
+                projectAnalysisError(admitted.error),
+                description.inputBinding,
+              );
+            const opening = admitOpening(description, values);
+            if (!opening.ok) return projectAnalysisError(opening.error);
+            return projectCliResult(
+              await route.run(admitted.value.input, {
+                signal,
+                operation: description.contract.name,
+                callerInputs: description.callerInputs(values),
+                sessionTarget:
+                  description.sessionTarget === undefined
+                    ? undefined
+                    : (values[description.sessionTarget.key] as string),
+                evidenceTargets: undefined,
+                opening: opening.value,
+                delivery: admitted.value.delivery,
+                parsed: admitted.value.parsed,
+                parseWholeInput: admitted.value.parseWholeInput,
+                checked: { ...shared.checked, ...read.checked },
+                cliOptions: description.cliOptionValues(
+                  withCliOnlyDefaults(description, values),
+                ),
+              }),
+              description.contract.outputSchema,
               description.inputBinding,
             );
-          const opening = admitOpening(description, values);
-          if (!opening.ok) return projectAnalysisError(opening.error);
-          return projectCliResult(
-            await route.run(admitted.value.input, {
-              signal,
-              operation: description.contract.name,
-              callerInputs: description.callerInputs(values),
-              sessionTarget:
-                description.sessionTarget === undefined
-                  ? undefined
-                  : (values[description.sessionTarget.key] as string),
-              evidenceTargets: undefined,
-              opening: opening.value,
-              delivery: admitted.value.delivery,
-              parsed: admitted.value.parsed,
-              parseWholeInput: admitted.value.parseWholeInput,
-              checked: { ...shared.checked, ...read.checked },
-              cliOptions: description.cliOptionValues(
-                withCliOnlyDefaults(description, values),
-              ),
-            }),
-            description.contract.outputSchema,
-            description.inputBinding,
-          );
-        }),
-      );
+          }),
+        );
+      },
+    } as never,
+    {
+      operations: distinctOperations(
+        routes.flatMap(({ description }) =>
+          contractDescriptionOperations(description),
+        ),
+      ),
+      source: {
+        kind: "routed",
+        descriptions: routes.map(({ description }) => description),
+      },
     },
-  } as never);
-  const registered = routedDescriptions.get(cli) ?? [];
-  registered.push(...routes.map(({ description }) => description));
-  routedDescriptions.set(cli, registered);
+  );
 };
 
 /**
@@ -1080,16 +1110,13 @@ export interface ContractDocumentContext<
   readonly opening: Readonly<Record<string, unknown>>;
 }
 
-const documentDescriptions = new WeakMap<
-  CliInstance,
-  ContractCliDocumentDescription[]
->();
-
 /** Commands registered on this CLI through `registerContractDocumentCommand`. */
 export const contractDocumentCommandDescriptions = (
   cli: CliInstance,
 ): readonly ContractCliDocumentDescription[] =>
-  documentDescriptions.get(cli) ?? [];
+  cliCommands(cli).flatMap(({ source }) =>
+    source.kind === "document" ? [source.description] : [],
+  );
 
 /**
  * A document field the projection omits or takes as an option is refused
@@ -1263,94 +1290,103 @@ export const registerContractDocumentCommand = <
       ...description.cliOnlyOptions,
     ].map(({ key, schema }) => [key, schema]),
   );
-  cli.command(description.command, {
-    description: description.description,
-    args: z.object({
-      ...(description.sessionTarget === undefined
+  registerCliCommand(
+    cli,
+    description.command,
+    {
+      description: description.description,
+      args: z.object({
+        ...(description.sessionTarget === undefined
+          ? {}
+          : {
+              [description.sessionTarget.key]: description.sessionTarget.schema,
+            }),
+        [description.key]: jsonInputArgument(
+          description.documentDescription,
+          description.content,
+        ),
+      }),
+      ...(Object.keys(options).length === 0
         ? {}
-        : {
-            [description.sessionTarget.key]: description.sessionTarget.schema,
+        : { options: z.object(options) }),
+      run: ({
+        args,
+        options: values,
+      }: {
+        readonly args: Readonly<Record<string, string>>;
+        readonly options: Readonly<Record<string, unknown>>;
+      }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, description.command, async () => {
+            // Delivery options are checked before the document is read.
+            const delivery = description.admitDelivery(values);
+            if (!delivery.ok) return projectAnalysisError(delivery.error);
+            const opening = admitOpening(description, { ...values, ...args });
+            if (!opening.ok) return projectAnalysisError(opening.error);
+            const decoded = await parseCliJsonInput(
+              args[description.key]!,
+              contract.name,
+              signal,
+            );
+            if (!decoded.ok) return decoded.error;
+            // A document that is not an object has no fields to refuse; the
+            // contract refuses it.
+            const refused =
+              typeof decoded.value === "object" && decoded.value !== null
+                ? refusedDocumentFieldError(
+                    contract.name,
+                    description.documentRefusals,
+                    decoded.value,
+                  )
+                : undefined;
+            if (refused !== undefined) return projectAnalysisError(refused);
+            const document = resolveCliJsonPaths(
+              decoded.value,
+              description.callerPaths,
+            );
+            let admitted:
+              | Result<z.output<Contract["inputSchema"]>, AnalysisInputError>
+              | undefined;
+            const parseWholeInput = () =>
+              (admitted ??= (() => {
+                const parsed = contract.inputSchema.safeParse(document);
+                return parsed.success
+                  ? ok(parsed.data as z.output<Contract["inputSchema"]>)
+                  : err(
+                      analysisInputErrorFromIssues(
+                        contract.name,
+                        parsed.error.issues,
+                        decoded.value,
+                      ),
+                    );
+              })());
+            return run(document, {
+              signal,
+              operation: contract.name,
+              spelled: decoded.value,
+              parsed: undefined,
+              parseWholeInput,
+              frame: description.content,
+              delivery: delivery.value,
+              opening: opening.value,
+              sessionTarget:
+                description.sessionTarget === undefined
+                  ? undefined
+                  : args[description.sessionTarget.key],
+              cliOptions: description.cliOptionValues(
+                values,
+              ) as CliOptionValues<CliOptions>,
+            });
           }),
-      [description.key]: jsonInputArgument(
-        description.documentDescription,
-        description.content,
-      ),
-    }),
-    ...(Object.keys(options).length === 0
-      ? {}
-      : { options: z.object(options) }),
-    run: ({
-      args,
-      options: values,
-    }: {
-      readonly args: Readonly<Record<string, string>>;
-      readonly options: Readonly<Record<string, unknown>>;
-    }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, description.command, async () => {
-          // Delivery options are checked before the document is read.
-          const delivery = description.admitDelivery(values);
-          if (!delivery.ok) return projectAnalysisError(delivery.error);
-          const opening = admitOpening(description, { ...values, ...args });
-          if (!opening.ok) return projectAnalysisError(opening.error);
-          const decoded = await parseCliJsonInput(
-            args[description.key]!,
-            contract.name,
-            signal,
-          );
-          if (!decoded.ok) return decoded.error;
-          // A document that is not an object has no fields to refuse; the
-          // contract refuses it.
-          const refused =
-            typeof decoded.value === "object" && decoded.value !== null
-              ? refusedDocumentFieldError(
-                  contract.name,
-                  description.documentRefusals,
-                  decoded.value,
-                )
-              : undefined;
-          if (refused !== undefined) return projectAnalysisError(refused);
-          const document = resolveCliJsonPaths(
-            decoded.value,
-            description.callerPaths,
-          );
-          let admitted:
-            | Result<z.output<Contract["inputSchema"]>, AnalysisInputError>
-            | undefined;
-          const parseWholeInput = () =>
-            (admitted ??= (() => {
-              const parsed = contract.inputSchema.safeParse(document);
-              return parsed.success
-                ? ok(parsed.data as z.output<Contract["inputSchema"]>)
-                : err(
-                    analysisInputErrorFromIssues(
-                      contract.name,
-                      parsed.error.issues,
-                      decoded.value,
-                    ),
-                  );
-            })());
-          return run(document, {
-            signal,
-            operation: contract.name,
-            spelled: decoded.value,
-            parsed: undefined,
-            parseWholeInput,
-            frame: description.content,
-            delivery: delivery.value,
-            opening: opening.value,
-            sessionTarget:
-              description.sessionTarget === undefined
-                ? undefined
-                : args[description.sessionTarget.key],
-            cliOptions: description.cliOptionValues(
-              values,
-            ) as CliOptionValues<CliOptions>,
-          });
-        }),
-      ),
-  } as never);
-  const registered = documentDescriptions.get(cli) ?? [];
-  registered.push(description);
-  documentDescriptions.set(cli, registered);
+        ),
+    } as never,
+    {
+      // A document's fields are set in the document, not by flags.
+      operations: contractDescriptionOperations({
+        contract: description.contract,
+        sessionTarget: description.sessionTarget,
+      }),
+      source: { kind: "document", description },
+    },
+  );
 };

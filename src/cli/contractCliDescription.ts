@@ -382,6 +382,8 @@ export interface ContractCliSessionTarget {
   /** The positional key, taken before every other positional. */
   readonly key: string;
   readonly schema: z.ZodType;
+  /** The contract that opens the target, when the command takes its fields. */
+  readonly opening: string | undefined;
   /** Options that supply fields of the opening contract. */
   readonly options: readonly ContractCliOpeningOption[];
   /**
@@ -1488,6 +1490,7 @@ const describeSessionTarget = (
   return {
     key: SESSION_TARGET_KEY,
     schema: localPathStringSchema.describe(target.description),
+    opening: target.open?.contract.name,
     options,
     admitOpening: (operation, values) =>
       admit(operation, values, values[SESSION_TARGET_KEY] as string),
