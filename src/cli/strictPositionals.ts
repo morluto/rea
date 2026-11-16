@@ -1,15 +1,16 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { Errors, Parser } from "incur";
+import { Errors } from "incur";
 import { z } from "zod";
 
 import { splitIncurBuiltinArguments } from "../cliBuiltinArguments.js";
+import { parseCliArgv } from "./argvParser.js";
 import type { CliInstance } from "./types.js";
 import { visitRegisteredCommands } from "./visitRegisteredCommands.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 
-/** Match the wrapper types the pinned Incur parser unwraps for token binding. */
+/** Match the wrapper types the argv parser unwraps for token binding. */
 const tokenType = (field: z.ZodType): z.ZodType => {
   let inner = field;
   while ("innerType" in inner.def) {
@@ -111,11 +112,21 @@ export const validateCliArguments = (
                     : token,
               )
             : rest;
-          const parsed = Parser.parse(admitted, {
+          const bound = parseCliArgv(admitted, {
             args,
             options,
             alias: command.alias as Record<string, string> | undefined,
           });
+          // The dispatcher already bound these tokens with the real schemas,
+          // so a refusal here is reported as the dispatcher reports its own.
+          if (!bound.ok)
+            throw bound.error.kind === "parse"
+              ? new Errors.ParseError({ message: bound.error.message })
+              : new Errors.ValidationError({
+                  message: bound.error.message,
+                  fieldErrors: [...bound.error.fieldErrors],
+                });
+          const parsed = bound.value;
           const dryRunValues: unknown =
             "dryRun" in parsed.options ? parsed.options.dryRun : undefined;
           if (
