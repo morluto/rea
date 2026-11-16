@@ -9,7 +9,7 @@ import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComp
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 it.each([
   { profile: "compact", preexisting: false },

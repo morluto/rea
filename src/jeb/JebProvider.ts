@@ -10,13 +10,13 @@ import { z } from "zod";
 import type {
   JebAnalysisPort,
   JebAnalysisAvailability,
-} from "../application/jeb/JebAnalysisPort.js";
+} from "../ports/jeb/JebAnalysisPort.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { JebOperation, JebRequest } from "../domain/jeb/jebAnalysis.js";
 import { jebResultSchemas } from "../domain/jeb/jebAnalysis.js";
 import {
@@ -30,7 +30,8 @@ import {
 import {
   jvmExhaustionArea,
   RUNTIME_EXHAUSTION_TOKENS,
-  type RuntimeExhaustionArea,
+  externalJvmExhaustionRecovery,
+  type ExternalJvm,
 } from "../process/RuntimeExhaustion.js";
 import {
   classifyProviderFailure,
@@ -50,6 +51,7 @@ import {
   type JebMcpConnection,
   type JebMcpConnectionFactory,
 } from "./JebMcpConnection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const JEB_CONNECTION_REMEDIATION = `Start a JEB client serving MCP (default ${DEFAULT_JEB_MCP_ENDPOINT}) or set REA_JEB_MCP_URL to the running endpoint.`;
 
@@ -116,21 +118,15 @@ const envelope = z.discriminatedUnion("success", [
   failure,
 ]);
 
-/** Recovery for the JVM memory area JEB reported; each area has its own limit. */
-const JEB_EXHAUSTION_REMEDIATION: Readonly<
-  Record<RuntimeExhaustionArea | "unknown", string>
-> = {
-  heap: "REA does not set JEB's Java heap. Restart the JEB client with a larger maximum heap (-Xmx), or select a smaller input.",
-  "gc-overhead":
-    "REA does not set JEB's Java heap. The engine JVM spent nearly all its time collecting garbage; restart the JEB client with a larger maximum heap (-Xmx), or select a smaller input.",
-  metaspace:
-    "REA does not set JEB's class metadata limit. Restart the JEB client with a larger -XX:MaxMetaspaceSize; a larger heap (-Xmx) does not raise it.",
-  "array-size":
-    "The engine requested an array larger than the JVM allows; a larger heap (-Xmx) does not lift this limit. Select a smaller input.",
-  "native-thread":
-    "The engine JVM could not create a native thread. Reduce concurrent work in the JEB client or review the engine host's thread and process limits; a larger heap (-Xmx) does not help.",
-  unknown:
-    "REA does not set the memory limits of JEB's JVM. Review the reported out-of-memory line and the JEB client's JVM memory settings, or select a smaller input.",
+/** JEB runs in the user's own JVM; REA sets none of its memory limits. */
+const JEB_JVM: ExternalJvm = {
+  program: "JEB's",
+  role: "engine",
+  raise: (option) => `Restart the JEB client with a larger ${option}`,
+  settings: "the JEB client's JVM memory settings",
+  threads:
+    "Reduce concurrent work in the JEB client or review the engine host's thread and process limits",
+  smaller: "select a smaller input",
 };
 
 /**
@@ -155,7 +151,7 @@ const refusalExhaustion = (
     null,
     {
       diagnostics: { ...diagnostics, jvm_exhaustion_area: area ?? null },
-      remediationAction: JEB_EXHAUSTION_REMEDIATION[area ?? "unknown"],
+      remediationAction: externalJvmExhaustionRecovery(area, JEB_JVM),
     },
   );
 };
@@ -619,7 +615,7 @@ export class JebProvider implements JebAnalysisPort {
         return new AnalysisCapabilityUnavailableError(
           "jeb",
           operation,
-          physical instanceof Error ? physical.message : String(physical),
+          errorMessage(physical),
           { cause, diagnostics, userMessage: JEB_CONNECTION_REMEDIATION },
         );
       },

@@ -4,6 +4,7 @@ import {
   Asn1BerReader,
   type Asn1BerNode,
 } from "../../domain/asn1Ber.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 const OID_NAMES: Readonly<Record<string, string>> = {
   "1.2.840.113549.1.7.1": "data",
@@ -219,7 +220,7 @@ const decodeDirectoryString = (
       return node.content.toString("latin1");
     default:
       return fail(
-        `Unsupported certificate name encoding (DER tag 0x${node.tag.toString(16).padStart(2, "0")}).`,
+        `Unsupported certificate name encoding (DER tag 0x${byteToHex(node.tag)}).`,
       );
   }
 };

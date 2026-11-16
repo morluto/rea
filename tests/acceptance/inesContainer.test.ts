@@ -86,8 +86,7 @@ cliTest(
 const inventoryFrom = (input: unknown) => {
   const evidence = parseEvidence(input);
   expect(evidence.subject).toMatchObject({
-    format: "ines",
-    architecture: null,
+    identity: { format: "ines", architecture: null },
   });
   const inspection = artifactInspectionResultSchema.parse(
     evidence.normalized_result,

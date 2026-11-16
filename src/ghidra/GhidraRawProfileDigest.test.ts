@@ -5,18 +5,18 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ghidraBridgeSourcesDigest } from "./GhidraBridgeSources.js";
+import { ghidraProducerIdentity } from "./GhidraProducerIdentity.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 
 // A profile digest is the digest of its committed parameters; these tests pin
-// the parameters (semantic revisions and the bridge sources) rather than a
-// literal hash that every bridge or marker change would have to re-record.
+// the parameters (runtime selections and the producer identity) rather than a
+// literal hash that every bridge or REA release would have to re-record.
 const expectCommittedProfile = (
   profile: ReturnType<typeof createAnalysisProfile> | null | undefined,
 ): void => {
   if (profile == null) throw new Error("Expected an analysis profile");
   expect(profile.parameters).toMatchObject({
-    bridge_sources_sha256: ghidraBridgeSourcesDigest(),
+    producer: ghidraProducerIdentity(),
   });
   expect(profile.digest).toBe(
     createAnalysisProfile(profile.provider, profile.parameters).digest,
@@ -51,19 +51,8 @@ describe("raw-binary analysis profile commitments", () => {
       target_format: "raw-binary",
       loader: "BinaryLoader",
       language_id: "6502:LE:16:default",
-      language_selection: "caller-supplied-v1",
-      load_image_evidence: "independent-raw-mapping-context-v4",
-      load_image_observations:
-        "source-mappings-entry-context-relocation-symbol-v3",
-      instruction_status: "unlisted-and-containing-code-data-v3",
-      inventory_search_projection: "provider-inventory-facts-v1",
-      value_flow_effect_scope: "pcode-load-store-explicit-v1",
-      native_value_flow_projection: "accepted-runtime-budgets-v1",
-      byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
-      byte_search_coverage: "separate-loaded-overlays-v1",
-      data_type_observations: "bit-field-base-and-lookup-v1",
-      instruction_references:
-        "exact-address-incoming-without-synthetic-entry-v3",
+      language_selection: "caller-supplied",
+      entry_point: "0x8001",
       analyzer_preset: "ghidra-default",
     });
   });
@@ -81,10 +70,7 @@ describe("raw-binary analysis profile commitments", () => {
     if (!resolved.ok) throw resolved.error;
     expectCommittedProfile(resolved.value.profile);
     expect(resolved.value.profile?.parameters).toMatchObject({
-      inventory_search_projection: "provider-inventory-facts-v1",
-      value_flow_effect_scope: "pcode-load-store-explicit-v1",
-      native_value_flow_projection: "accepted-runtime-budgets-v1",
-      byte_search_coverage: "separate-loaded-overlays-v1",
+      analyzer_preset: expect.any(String),
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],
       },

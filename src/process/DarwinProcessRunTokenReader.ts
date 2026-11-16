@@ -27,7 +27,7 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
 import { createDarwinHelperCache } from "./DarwinHelperCache.js";
@@ -42,6 +42,7 @@ import type {
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const responseSchema = z.strictObject({
   results: z.array(
@@ -229,10 +230,7 @@ export class DarwinProcessOwnershipInspectionError extends Error {
     const combined =
       this.cleanupFailure === undefined || this.cleanupFailure === cleanup
         ? cleanup
-        : analysisErrorWithCleanupFailure(
-            this.cleanupFailure,
-            cleanup,
-          ).bindCleanupDependencies([this.cleanupFailure, cleanup]);
+        : analysisErrorWithCleanupDependencies(this.cleanupFailure, cleanup);
     return new DarwinProcessOwnershipInspectionError(this.message, {
       ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
       ...(this.compilerOutcome === undefined
@@ -365,7 +363,7 @@ const compilerInspectionError = (
   const suffix = diagnostics
     ? `: ${diagnostics}${truncationNote}`
     : outcome === undefined
-      ? `: ${cause instanceof Error ? cause.message : String(cause)}`
+      ? `: ${errorMessage(cause)}`
       : ": no compiler diagnostics were captured";
   return new DarwinProcessOwnershipInspectionError(
     `${prefix} (${description})${suffix}`,
@@ -907,10 +905,10 @@ export const createDarwinProcessRunTokenReader = (
         rootCleanup.reason instanceof ProviderCleanupError &&
         cacheCleanup.reason instanceof ProviderCleanupError
       )
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           rootCleanup.reason,
           cacheCleanup.reason,
-        ).bindCleanupDependencies([rootCleanup.reason, cacheCleanup.reason]);
+        );
       if (rootCleanup.status === "rejected") throw rootCleanup.reason;
       if (cacheCleanup.status === "rejected") throw cacheCleanup.reason;
     })().catch((cause: unknown) => {

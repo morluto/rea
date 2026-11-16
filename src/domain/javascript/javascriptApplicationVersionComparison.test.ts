@@ -1,3 +1,4 @@
+import { unknownTarget } from "../targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../evidence.js";
@@ -128,7 +129,7 @@ const unrelatedGraph = (artifactSha: string): JavaScriptApplicationGraph => {
 const nativeEvidence = (sha256: string | undefined, ordinal: number) =>
   createEvidence(
     sha256 === undefined
-      ? undefined
+      ? unknownTarget("not-observed")
       : {
           path: `/fixture/native-${ordinal}.js`,
           sha256,

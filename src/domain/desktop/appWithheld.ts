@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import { z } from "zod";
@@ -7,6 +6,7 @@ import { err, ok, type Result } from "../result.js";
 import type { DesktopCheckpoint } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { BUILD_COMPUTER_SETTINGS } from "./buildComputerSettings.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** The checkpoints a build marks around a sign-in or a licence's activation; what changes between them is withheld. */
 export const SIGN_IN_START = "pre-sign-in";
@@ -206,11 +206,7 @@ export const withheldSettings = (
   const taken = new Set<string>(BUILD_COMPUTER_SETTINGS);
   const settings = new Set<string>();
   return files.map((file) => {
-    const hash = createHash("sha256")
-      .update(file)
-      .digest("hex")
-      .slice(0, 8)
-      .toUpperCase();
+    const hash = sha256Hex(file).slice(0, 8).toUpperCase();
     const plain = `${prefix}${upper(file) || "FILE"}`;
     const variable =
       plain.length <= MAX_VARIABLE && !taken.has(plain)

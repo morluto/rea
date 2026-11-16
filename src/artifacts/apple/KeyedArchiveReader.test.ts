@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { build, buildBinary, type PlistValue } from "plist";
-import { estimateBinaryPlistExpansion } from "./PropertyListDecodeBudget.js";
+import { estimateBinaryPlistExpansion } from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   decodeKeyedArchiveBytes,
   inspectBundleKeyedArchive,

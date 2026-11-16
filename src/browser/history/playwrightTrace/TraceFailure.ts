@@ -5,16 +5,17 @@ import {
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
+  fixedCeilingConstraint,
 } from "../../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../../domain/artifactOperationError.js";
 import { PLAYWRIGHT_TRACE_OPERATION as operation } from "../../../domain/playwrightTrace/playwrightTrace.js";
-import { ArtifactReaderFailure } from "../../../artifacts/ArtifactReader.js";
-import { artifactFileCancellationCause } from "../../../artifacts/ArtifactFileOperation.js";
-import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 import {
+  ArtifactReaderFailure,
+  artifactFileCancellationCause,
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../../../artifacts/StableArtifactFailure.js";
+} from "../../../resources/index.js";
+import { isSelectedRegularFileError } from "../../../filesystem/RegularFile.js";
 
 /** Classify the archive owner's facts without interpreting opaque cancellation reasons. */
 export const traceFailure = (cause: unknown, path: string): AnalysisError => {
@@ -28,17 +29,25 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
     if (cause.reason === "integrity")
       return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        cause.boundary ?? "memory",
-        cause.message,
-        null,
-        {
-          cause,
-          remediationAction:
-            "Select a smaller complete recorder chunk. Reply selection does not increase archive parsing allowances.",
-        },
-      );
+      return cause.fixedAllowance === undefined
+        ? new AnalysisResourceConstraintError(
+            operation,
+            cause.boundary ?? "memory",
+            cause.message,
+            null,
+            {
+              cause,
+              remediationAction:
+                "Select a smaller complete recorder chunk. Reply selection does not increase archive parsing allowances.",
+            },
+          )
+        : fixedCeilingConstraint(
+            operation,
+            cause.boundary ?? "memory",
+            cause.message,
+            cause.fixedAllowance,
+            { cause },
+          );
     if (cause.reason === "format" || cause.reason === "path")
       return stableArtifactInputFailure(cause, operation);
     return new ArtifactOperationError(

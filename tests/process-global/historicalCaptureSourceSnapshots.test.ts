@@ -64,7 +64,7 @@ import { decodeHarCapture } from "../../src/browser/history/HarCapture.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../src/domain/webNetworkCapture.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { historicalHar } from "../fixtures/historicalHar.js";
 

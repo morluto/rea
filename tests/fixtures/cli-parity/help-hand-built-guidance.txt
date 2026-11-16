@@ -1,0 +1,30 @@
+$ rea guidance --help
+exit: 0
+--- stdout
+rea guidance — Search or read the installed REA workflow guidance
+
+Usage: rea guidance [options]
+
+Options:
+  --action <search|read>  Guidance action to perform: search or read (default: search)
+  --query <string>        Required with search; all non-generic query words must match
+  --locator <string>      Required with --action read; locator returned by search
+  --limit <value>         Maximum search matches; search only, defaults to 8
+  --cursor <string>       Continue a search page; search only
+
+Custom Global Options:
+  --timings  Write measured command timing to stderr.
+
+Global Options:
+  --filter-output <keys>                      Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
+  --full-output                               Show full output envelope
+  --help                                      Show help
+  --llms, --llms-full                         Print LLM-readable manifest
+  --schema                                    Show JSON Schema for command
+  --token-count                               Print token count of output (instead of output)
+  --token-limit <n>                           Limit output to n tokens
+  --token-offset <n>                          Skip first n tokens of output
+<end>
+--- stderr
+<end>

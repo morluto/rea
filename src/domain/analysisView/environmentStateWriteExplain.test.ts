@@ -74,6 +74,27 @@ const updated = (
   ...context,
 });
 
+/**
+ * The body behind a counting proxy: each member read counts, and a read past
+ * `budget` fails at once, so searching the body again per field cannot finish.
+ */
+const countedBody = (
+  body: JsonObject,
+  reads: { count: number; readonly budget: number },
+): JsonObject => {
+  const wrap = (value: JsonValue): JsonValue =>
+    typeof value === "object" && value !== null
+      ? (new Proxy(value, {
+          get(target, key, receiver) {
+            if (typeof key === "string" && ++reads.count > reads.budget)
+              throw new Error("Request body read budget exceeded");
+            return wrap(Reflect.get(target, key, receiver) as JsonValue);
+          },
+        }) as JsonValue)
+      : value;
+  return wrap(body) as JsonObject;
+};
+
 const ruleFor = (
   rules: readonly FieldRule[],
   field: string,
@@ -937,8 +958,12 @@ it("explains many copied and slugged fields of a wide body without searching it 
       value(index),
     ]),
   );
-  const started = performance.now();
-  const copied = explainCreate(created({ id: 1, ...copies }, nested));
+  // Indexing reads each member a few times (72,000 and 64,001 reads here);
+  // searching the body again for each field reads all of it per field.
+  const reads = { count: 0, budget: 8 * 2 * n };
+  const copied = explainCreate(
+    created({ id: 1, ...copies }, countedBody(nested, reads)),
+  );
   expect(ruleFor(copied.rules, `c${String(n - 1)}`)).toEqual({
     field: `c${String(n - 1)}`,
     rule: "copy",
@@ -957,26 +982,25 @@ it("explains many copied and slugged fields of a wide body without searching it 
       `x${String(index)}`,
     ]),
   );
+  reads.count = 0;
   const slugged = explainCreate(
-    created({ id: 1, ...others, s: "member-7" }, flat),
+    created({ id: 1, ...others, s: "member-7" }, countedBody(flat, reads)),
   );
   expect(ruleFor(slugged.rules, "s")).toEqual({
     field: "s",
     rule: "slug",
     from: "m7",
   });
-  // Searching the body again for each field is quadratic in its members.
-  expect(performance.now() - started).toBeLessThan(5_000);
 });
 
 it("searches a wide request body for a copied value in linear time", () => {
-  // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
-  const wide = Array.from({ length: 500_000 }, () => 0);
-  const started = performance.now();
+  // Shifting each value off the queue makes the search quadratic: about 18 s
+  // for 500,000 zeros and about a minute for this body, past the test's
+  // deadline, which is the guard. The linear walk takes well under a second.
+  const wide = Array.from({ length: 1_000_000 }, () => 0);
   const result = explainCreate(
     created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
   );
-  expect(performance.now() - started).toBeLessThan(5_000);
   expect(ruleFor(result.rules, "note")).toBeUndefined();
 });
 
