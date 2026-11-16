@@ -1,5 +1,13 @@
 import { BinaryReader } from "./binaryContainer.js";
 
+/** Expected malformed container/mapping input, not an arbitrary runtime RangeError. */
+export class RasterLogicalInputError extends RangeError {
+  constructor(message: string) {
+    super(message);
+    this.name = "RasterLogicalInputError";
+  }
+}
+
 /** Maximum retained record/coverage spans in the bounded logical image. */
 export const MAX_RASTER_LOGICAL_SEGMENTS = 500000;
 
@@ -31,7 +39,7 @@ export function materializeRasterSegments(
     segments.length < 1 ||
     segments.length > MAX_RASTER_LOGICAL_SEGMENTS
   )
-    throw new RangeError("Invalid source or segment budget");
+    throw new RasterLogicalInputError("Invalid source or segment budget");
   const ordered = segments
     .map((s) => ({ ...s }))
     .sort((a, b) => a.logicalOffset - b.logicalOffset);
@@ -48,21 +56,21 @@ export function materializeRasterSegments(
       s.fileOffset < sourceOffset ||
       s.length > source.length - (s.fileOffset - sourceOffset)
     )
-      throw new RangeError(
+      throw new RasterLogicalInputError(
         "Segment is outside the selected source or exact logical range",
       );
     if (s.logicalOffset < end)
-      throw new RangeError("Overlapping logical segments");
+      throw new RasterLogicalInputError("Overlapping logical segments");
     end = s.logicalOffset + s.length;
     fileRanges.push({ offset: s.fileOffset, end: s.fileOffset + s.length });
   }
   fileRanges.sort((a, b) => a.offset - b.offset);
   for (let i = 1; i < fileRanges.length; i++)
     if (fileRanges[i]!.offset < fileRanges[i - 1]!.end)
-      throw new RangeError("Overlapping source segments");
+      throw new RasterLogicalInputError("Overlapping source segments");
   const logicalBase = ordered[0]!.logicalOffset;
   if (end - logicalBase > LIMIT)
-    throw new RangeError("Logical span exceeds 16 MiB");
+    throw new RasterLogicalInputError("Logical span exceeds 16 MiB");
   const bytes = new Uint8Array(end - logicalBase),
     coverage: { offset: number; length: number }[] = [];
   for (const s of ordered) {
@@ -104,7 +112,7 @@ export function parseFgsRasterSegments(
   source: Uint8Array,
 ): RasterLogicalSegment[] {
   if (source.length < 16 || source.length > LIMIT)
-    throw new RangeError(
+    throw new RasterLogicalInputError(
       "FGS records require a complete file of 16 bytes..16 MiB",
     );
   const reader = new BinaryReader(
@@ -119,7 +127,9 @@ export function parseFgsRasterSegments(
     reader.u32(footer + 8) !== source.length ||
     reader.u32(footer + 12) !== crc32(source.subarray(0, source.length - 4))
   )
-    throw new RangeError("FGS footer, declared size or CRC32 mismatch");
+    throw new RasterLogicalInputError(
+      "FGS footer, declared size or CRC32 mismatch",
+    );
   const segments: RasterLogicalSegment[] = [];
   let logicalEnd = 0;
   for (let at = 0; at < footer; at++) {
@@ -130,7 +140,8 @@ export function parseFgsRasterSegments(
       source[at + 3] !== 0x24
     )
       continue;
-    if (at + 12 > footer) throw new RangeError("Truncated FGS record header");
+    if (at + 12 > footer)
+      throw new RasterLogicalInputError("Truncated FGS record header");
     const length = reader.u32(at + 4),
       logicalOffset = reader.u32(at + 8);
     if (
@@ -141,13 +152,16 @@ export function parseFgsRasterSegments(
       at + 12 + length > footer ||
       logicalOffset < logicalEnd
     )
-      throw new RangeError("Invalid, overlapping or nonmonotone FGS records");
+      throw new RasterLogicalInputError(
+        "Invalid, overlapping or nonmonotone FGS records",
+      );
     if (segments.length >= MAX_RASTER_LOGICAL_SEGMENTS)
-      throw new RangeError("FGS record budget exceeded");
+      throw new RasterLogicalInputError("FGS record budget exceeded");
     segments.push({ logicalOffset, fileOffset: at + 12, length });
     logicalEnd = logicalOffset + length;
     at += 11 + length;
   }
-  if (segments.length === 0) throw new RangeError("No FGS data records");
+  if (segments.length === 0)
+    throw new RasterLogicalInputError("No FGS data records");
   return segments;
 }

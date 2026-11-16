@@ -1,10 +1,13 @@
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { discoverStructuredRasters } from "../../domain/structuredRasterDiscovery.js";
 import {
   materializeRasterSegments,
+  RasterLogicalInputError,
   parseFgsRasterSegments,
 } from "../../domain/rasterLogicalSegments.js";
 import {
   inspectStructuredRasterCandidatesInputSchema,
+  inspectStructuredRasterCandidatesRequestSchema,
   structuredRasterCandidatesSchema,
 } from "../../domain/native/structuredRasterCandidates.js";
 import { SelectedRasterAnalysisService } from "./SelectedRasterAnalysisService.js";
@@ -23,21 +26,33 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
       {
         operation: "inspect_structured_raster_candidates",
         inputSchema: inspectStructuredRasterCandidatesInputSchema,
+        callerInputSchema: inspectStructuredRasterCandidatesRequestSchema,
         reportSchema: structuredRasterCandidatesSchema,
         analyze(bytes, input, fileSize, signal) {
-          if (
-            input.profile === "fgs-records" &&
-            (input.segments !== undefined ||
-              input.offset !== 0 ||
-              bytes.length !== fileSize)
-          )
-            throw new RangeError(
-              "fgs-records requires the complete selected file and no explicit segments",
+          const invalid = (field: string, message: string) =>
+            new AnalysisInputError(
+              "inspect_structured_raster_candidates",
+              undefined,
+              [{ path: [field], reason: "invalid_value", message }],
             );
+          if (input.profile === "fgs-records" && bytes.length !== fileSize)
+            throw invalid(
+              "length",
+              "fgs-records requires the complete selected file",
+            );
+          const mappedInput = <T>(field: string, action: () => T): T => {
+            try {
+              return action();
+            } catch (cause) {
+              if (cause instanceof RasterLogicalInputError)
+                throw invalid(field, cause.message);
+              throw cause;
+            }
+          };
           const segments =
             input.segments ??
             (input.profile === "fgs-records"
-              ? parseFgsRasterSegments(bytes)
+              ? mappedInput("path", () => parseFgsRasterSegments(bytes))
               : [
                   {
                     logicalOffset: input.offset,
@@ -45,10 +60,9 @@ export class StructuredRasterDiscoveryService extends SelectedRasterAnalysisServ
                     length: bytes.length,
                   },
                 ]);
-          const logical = materializeRasterSegments(
-            bytes,
-            segments,
-            input.offset,
+          const logical = mappedInput(
+            input.segments ? "segments" : "path",
+            () => materializeRasterSegments(bytes, segments, input.offset),
           );
           const report = discoverStructuredRasters(
             logical.bytes,

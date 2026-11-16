@@ -1,3 +1,7 @@
+import {
+  validateStructuredRasterGrammar,
+  validateStructuredRasterRecordLimits,
+} from "./structuredRasterGrammarValidation.js";
 import { BinaryReader } from "./binaryContainer.js";
 import { MAX_RASTER_LOGICAL_SEGMENTS } from "./rasterLogicalSegments.js";
 
@@ -124,50 +128,7 @@ export function discoverStructuredRasters(
       ]),
     ) as StructuredRasterGrammar["fields"],
   };
-  integer(grammar.recordStride, "recordStride", 4, 128);
-  integer(grammar.scanAlignment, "scanAlignment", 1, 128);
-  if (grammar.recordStride % grammar.scanAlignment !== 0)
-    throw new RangeError("recordStride must be divisible by scanAlignment");
-  if (grammar.endianness !== "little" && grammar.endianness !== "big")
-    throw new RangeError("Unsupported endianness");
-  if (grammar.payloadBase !== "table-end")
-    throw new RangeError(
-      "Only the explicit table-end base hypothesis is supported",
-    );
-  integer(grammar.maxDimension, "maxDimension", 1, 4096);
-  integer(grammar.maxFormat, "maxFormat", 0, 65535);
-  if (
-    typeof grammar.requireZeroReserved !== "boolean" ||
-    typeof grammar.requireMonotonicOffsets !== "boolean"
-  )
-    throw new RangeError("Grammar predicates must be boolean");
-  const occupied = new Set<number>();
-  for (const name of [
-    "format",
-    "width",
-    "height",
-    "payloadOffset",
-    "reserved",
-  ] as const) {
-    const field = grammar.fields[name];
-    if (field === undefined) {
-      if (name === "reserved") continue;
-      throw new RangeError(`Missing ${name} field`);
-    }
-    integer(field.offset, `${name}.offset`, 0, grammar.recordStride - 1);
-    if (
-      ![1, 2, 4].includes(field.byteWidth) ||
-      field.offset + field.byteWidth > grammar.recordStride
-    )
-      throw new RangeError("Field lies outside descriptor record");
-    for (let i = field.offset; i < field.offset + field.byteWidth; i++) {
-      if (occupied.has(i))
-        throw new RangeError("Descriptor fields must not overlap");
-      occupied.add(i);
-    }
-  }
-  if (grammar.requireZeroReserved && grammar.fields.reserved === undefined)
-    throw new RangeError("Zero-reserved predicate requires a reserved field");
+  validateStructuredRasterGrammar(grammar);
   const minRecords = integer(options.minRecords ?? 8, "minRecords", 2, 4096);
   const minConsistency = options.minConsistency ?? 0.9;
   if (
@@ -178,6 +139,7 @@ export function discoverStructuredRasters(
     throw new RangeError("minConsistency must be in 0.5..1");
   const maxWork = integer(options.maxWork ?? 10000000, "maxWork", 1, 50000000);
   const maxTables = integer(options.maxTables ?? 32, "maxTables", 1, 128);
+  validateStructuredRasterRecordLimits(minRecords, options.maxRecords ?? 4096);
   const maxRecords = integer(
     options.maxRecords ?? 4096,
     "maxRecords",

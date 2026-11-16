@@ -1,4 +1,21 @@
 import { z } from "zod";
+import {
+  StructuredRasterControlError,
+  validateStructuredRasterGrammar,
+  validateStructuredRasterRecordLimits,
+} from "../structuredRasterGrammarValidation.js";
+function reportControlFailure(action: () => void, ctx: z.RefinementCtx): void {
+  try {
+    action();
+  } catch (cause) {
+    if (!(cause instanceof StructuredRasterControlError)) throw cause;
+    ctx.addIssue({
+      code: "custom",
+      path: [...cause.fieldPath],
+      message: cause.message,
+    });
+  }
+}
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const positive = offset.min(1);
@@ -6,29 +23,33 @@ const field = z.strictObject({
   offset: offset.max(255),
   byteWidth: z.union([z.literal(1), z.literal(2), z.literal(4)]),
 });
-export const structuredRasterGrammarSchema = z.strictObject({
-  recordStride: positive.min(4).max(128),
-  endianness: z.enum(["little", "big"]),
-  scanAlignment: positive.max(128),
-  fields: z.strictObject({
-    format: field,
-    width: field,
-    height: field,
-    payloadOffset: field,
-    reserved: field.exactOptional(),
-  }),
-  requireZeroReserved: z.boolean(),
-  requireMonotonicOffsets: z.boolean(),
-  payloadBase: z.literal("table-end"),
-  maxDimension: positive.max(4096),
-  maxFormat: offset.max(65535),
-});
+export const structuredRasterGrammarSchema = z
+  .strictObject({
+    recordStride: positive.min(4).max(128),
+    endianness: z.enum(["little", "big"]),
+    scanAlignment: positive.max(128),
+    fields: z.strictObject({
+      format: field,
+      width: field,
+      height: field,
+      payloadOffset: field,
+      reserved: field.exactOptional(),
+    }),
+    requireZeroReserved: z.boolean(),
+    requireMonotonicOffsets: z.boolean(),
+    payloadBase: z.literal("table-end"),
+    maxDimension: positive.max(4096),
+    maxFormat: offset.max(65535),
+  })
+  .superRefine((grammar, ctx) =>
+    reportControlFailure(() => validateStructuredRasterGrammar(grammar), ctx),
+  );
 export const rasterLogicalSegmentSchema = z.strictObject({
   logicalOffset: offset,
   fileOffset: offset,
   length: positive,
 });
-export const inspectStructuredRasterCandidatesInputSchema = z.strictObject({
+const structuredRasterInputShape = z.strictObject({
   path: absoluteLocalPathStringSchema,
   offset: offset.default(0),
   length: positive.max(16 * 1024 * 1024).optional(),
@@ -65,6 +86,89 @@ export const inspectStructuredRasterCandidatesInputSchema = z.strictObject({
   max_previews: offset.max(8).default(4),
   thumbnail_side: positive.max(128).default(96),
 });
+function refineStructuredControls(
+  input: {
+    min_records?: number | undefined;
+    max_records?: number | undefined;
+    profile?: "flat" | "fgs-records" | undefined;
+    offset?: number | undefined;
+    segments?: unknown;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  reportControlFailure(
+    () =>
+      validateStructuredRasterRecordLimits(
+        input.min_records ?? 8,
+        input.max_records ?? 4096,
+      ),
+    ctx,
+  );
+  if (input.profile === "fgs-records") {
+    if (input.segments !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        path: ["segments"],
+        message: "fgs-records does not accept explicit segments",
+      });
+    if ((input.offset ?? 0) !== 0)
+      ctx.addIssue({
+        code: "custom",
+        path: ["offset"],
+        message: "fgs-records requires the complete file at offset zero",
+      });
+  }
+}
+export const inspectStructuredRasterCandidatesInputSchema =
+  structuredRasterInputShape.superRefine(refineStructuredControls);
+/** Caller-supplied controls preserve omission; resolved defaults are reported separately. */
+export const inspectStructuredRasterCandidatesRequestSchema =
+  structuredRasterInputShape
+    .extend({
+      offset: structuredRasterInputShape.shape.offset
+        .removeDefault()
+        .optional(),
+      profile: structuredRasterInputShape.shape.profile
+        .removeDefault()
+        .optional(),
+      min_records: structuredRasterInputShape.shape.min_records
+        .removeDefault()
+        .optional(),
+      min_consistency: structuredRasterInputShape.shape.min_consistency
+        .removeDefault()
+        .optional(),
+      max_work: structuredRasterInputShape.shape.max_work
+        .removeDefault()
+        .optional(),
+      max_tables: structuredRasterInputShape.shape.max_tables
+        .removeDefault()
+        .optional(),
+      max_records: structuredRasterInputShape.shape.max_records
+        .removeDefault()
+        .optional(),
+      bits_per_pixel: structuredRasterInputShape.shape.bits_per_pixel
+        .removeDefault()
+        .optional(),
+      offset_units: structuredRasterInputShape.shape.offset_units
+        .removeDefault()
+        .optional(),
+      resource_offset: structuredRasterInputShape.shape.resource_offset
+        .removeDefault()
+        .optional(),
+      max_resources: structuredRasterInputShape.shape.max_resources
+        .removeDefault()
+        .optional(),
+      max_previews: structuredRasterInputShape.shape.max_previews
+        .removeDefault()
+        .optional(),
+      thumbnail_side: structuredRasterInputShape.shape.thumbnail_side
+        .removeDefault()
+        .optional(),
+    })
+    .superRefine(refineStructuredControls);
+const resolvedStructuredRasterControlsSchema = structuredRasterInputShape
+  .omit({ path: true })
+  .superRefine(refineStructuredControls);
 const range = z.strictObject({ offset, length: offset });
 const hypothesis = z.strictObject({
   bitsPerPixel: positive,
@@ -103,6 +207,7 @@ const resource = z.strictObject({
     .optional(),
 });
 export const structuredRasterCandidatesSchema = z.strictObject({
+  resolved_controls: resolvedStructuredRasterControlsSchema,
   artifact: z.strictObject({
     path: z.string(),
     bytes: offset,
