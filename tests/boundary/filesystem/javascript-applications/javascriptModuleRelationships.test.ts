@@ -81,7 +81,7 @@ it.each(["browser", "module", "renderer", "main"] as const)(
             kind === "electron-renderer" &&
             observations.some(
               ({ properties }) =>
-                properties.mechanism === "package.json:renderer" &&
+                properties.mechanism === `package.json:${field}` &&
                 properties.resolved_path === "lib/window.cjs",
             ),
         ),
@@ -122,8 +122,8 @@ it.each([
         ),
       ).toEqual([semanticResourceLimitReason(limit)]);
       expect(evidence.coverage.status).toBe("partial");
-      expect(evidence.limitations).toContain(
-        "Static syntax does not prove that this relationship executes at runtime.",
+      expect(evidence.limitations).toContainEqual(
+        expect.stringMatching(/static syntax.*not prove.*runtime/iu),
       );
       expect(evidence.limitations).toContain(
         "Values and aliases were recovered from inert syntax only; no JavaScript was executed.",
@@ -667,7 +667,7 @@ it("does not assign one module origin to an export with colliding path encodings
 });
 
 describe("complete static application projections", () => {
-  it("retains exports and JSON keys beyond the former projection prefix", async () => {
+  it("retains all 140 exports and JSON keys", async () => {
     const root = await moduleFixture();
     const exportNames = Array.from(
       { length: 140 },
@@ -780,6 +780,46 @@ it("retains CommonJS exports through erased receiver wrappers", async () => {
     );
   }
 });
+
+it.each([
+  ["app.cts", ["direct", "indirect"], 0],
+  ["app.ts", [], 2],
+  ["app.mts", [], 0],
+] as const)(
+  "preserves runtime authority for wrapped CommonJS exports in %s",
+  async (path, names, candidates) => {
+    const root = await createTestTempDirectory("rea-wrapped-commonjs-host-");
+    await writeFixtureFiles(root, {
+      [path]: `
+        var exports;
+        var module;
+        (exports as any).direct = 1;
+        (module as any).exports.indirect = 2;
+      `,
+    });
+    const graph = await relationshipGraph(root);
+    expect(
+      findSourceModule(graph, path)?.observations.find(
+        ({ properties }) => properties.semantic_role === "source-module",
+      )?.properties,
+    ).toMatchObject({
+      export_names: names,
+      omitted_export_names: candidates,
+    });
+    for (const name of ["direct", "indirect"]) {
+      const exported = findExportNode(graph, path, name);
+      if (path === "app.mts") expect(exported).toBeUndefined();
+      else {
+        expect(exported).toBeDefined();
+        expect(
+          exported?.observations.find(
+            ({ properties }) => properties.semantic_role === "export-binding",
+          )?.properties.loader_authority,
+        ).toBe(candidates > 0 ? "candidate" : undefined);
+      }
+    }
+  },
+);
 
 it("preserves CommonJS receiver lifetime and shadowing through erased wrappers", async () => {
   const root = await createTestTempDirectory("rea-wrapped-commonjs-");

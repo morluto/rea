@@ -7,49 +7,31 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
-  isUnshadowedGlobal,
   resolveSemanticBindingState,
+  semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
-import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
-import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import { semanticModuleInteropWithAmbientWrites } from "./javascriptModuleInterop.js";
+import {
+  ambientPathWriteSites,
+  bindingMemberEffectMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
-import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
-import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
-
-const exportInvocations = new WeakMap<
-  JavaScriptSemanticAnalysisState,
-  ReturnType<typeof createSemanticModuleInterop>
->();
+import {
+  isUnshadowedGlobal,
+  semanticBindingHasPriorValueWrite,
+} from "./javascriptSemanticMutationInitializers.js";
+import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 
 /** Share the intrinsic owner's positional and capture proofs across CJS consumers. */
 const commonJsExportInvocation = (
   node: t.CallExpression,
   state: JavaScriptSemanticAnalysisState,
-) => {
-  let interop = exportInvocations.get(state);
-  if (interop === undefined) {
-    interop = createSemanticModuleInterop(state);
-    for (const { node: write, path } of state.ambientWriteEffects)
-      if (write !== undefined && path[0] === "global")
-        interop.retainWrite(write, [
-          "intrinsic",
-          ...path
-            .slice(1)
-            .map((key) =>
-              typeof key === "string" || typeof key === "number"
-                ? String(key)
-                : null,
-            ),
-        ]);
-    exportInvocations.set(state, interop);
-  }
-  return interop.intrinsicInvocation(node);
-};
+) => semanticModuleInteropWithAmbientWrites(state).intrinsicInvocation(node);
 
 type ReceiverStatus = "connected" | "detached" | "uncertain";
 export interface CommonJsExportReceiverEffect {
@@ -65,14 +47,6 @@ export const commonJsExportApplicability = (
   effect?.receiver === "detached"
     ? "detached"
     : (effect?.fields?.get(name) ?? effect?.receiver ?? "connected");
-
-/** Erased expression wrappers preserve the CommonJS receiver's identity. */
-const isCommonJsGlobal = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-  name: "module" | "exports",
-): boolean =>
-  isUnshadowedGlobal(unwrapJavaScriptExpression(node).node, state, name);
 
 /** A CommonJS export assignment or `Object.defineProperty` export call. */
 export type CommonJsExportSite = t.AssignmentExpression | t.CallExpression;
@@ -95,7 +69,7 @@ const copiedOwnFields = (
   while (pending.length > 0) {
     const node = unwrapJavaScriptExpression(pending.pop()!).node;
     if (seen.has(node)) continue;
-    if (seen.size >= SEMANTIC_ALIAS_SELECTION_LIMIT) {
+    if (seen.size >= state.precision.alias_selections) {
       state.valueResourceLimits.add("alias-selections");
       return unknown;
     }
@@ -103,22 +77,7 @@ const copiedOwnFields = (
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) return unknown;
-      if (
-        binding.memberWrites.some(
-          (effect) =>
-            semanticEffectTiming(source, effect.node, state) !== "after",
-        ) ||
-        binding.escapedPaths.some(
-          (effect) =>
-            effect.node !== undefined &&
-            !(
-              (effect.node.start ?? -1) <= (source.start ?? -1) &&
-              (effect.node.end ?? -1) >= (source.end ?? -1)
-            ) &&
-            semanticEffectTiming(source, effect.node, state) !== "after",
-        )
-      )
-        return unknown;
+      if (bindingMemberEffectMayPrecede(state, binding, source)) return unknown;
       const selected = semanticProjectedSourcesAtRead(
         binding,
         node,
@@ -135,7 +94,7 @@ const copiedOwnFields = (
         return unknown;
       if (
         seen.size + pending.length + selected.length >
-        SEMANTIC_ALIAS_SELECTION_LIMIT
+        state.precision.alias_selections
       ) {
         state.valueResourceLimits.add("alias-selections");
         return unknown;
@@ -182,6 +141,32 @@ const copiedOwnFields = (
   return { definite: common ?? new Set(), complete };
 };
 
+/** A possible wrapper export remains a candidate when its host is unknown. */
+const isCommonJsExportReference = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  name: string,
+): boolean => {
+  node = unwrapJavaScriptExpression(node).node;
+  const context = javaScriptRuntimeContext(state.program);
+  if (context === "module") return false;
+  if (isUnshadowedGlobal(node, state, name)) return true;
+  if (
+    context !== "unknown" ||
+    !t.isIdentifier(node, { name }) ||
+    semanticResolutionBlocked(state, node, name)
+  )
+    return false;
+  const binding = resolveSemanticBindingState(state, node, name);
+  return (
+    binding !== undefined &&
+    state.scopesById.get(binding.scopeId)?.kind === "program" &&
+    binding.declarationKinds.size === 1 &&
+    binding.declarationKinds.has("var") &&
+    !semanticBindingHasPriorValueWrite(node, binding, state)
+  );
+};
+
 const isCommonJsModuleExports = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -189,7 +174,7 @@ const isCommonJsModuleExports = (
   node = unwrapJavaScriptExpression(node).node;
   return (
     (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-    isCommonJsGlobal(node.object, state, "module") &&
+    isCommonJsExportReference(node.object, state, "module") &&
     semanticStaticPropertyKey(node.property, node.computed) === "exports"
   );
 };
@@ -204,7 +189,7 @@ export const commonJsExportName = (
     return undefined;
   const key = semanticStaticPropertyKey(node.property, node.computed);
   if (
-    isCommonJsGlobal(node.object, state, "exports") ||
+    isCommonJsExportReference(node.object, state, "exports") ||
     isCommonJsModuleExports(node.object, state)
   )
     return key === null ? "*" : key;
@@ -241,7 +226,7 @@ export const commonJsDefinedExport = (
     return undefined;
   const receiver = unwrapJavaScriptExpression(target).node;
   if (
-    (!isUnshadowedGlobal(receiver, state, "exports") &&
+    (!isCommonJsExportReference(receiver, state, "exports") &&
       !isCommonJsModuleExports(receiver, state)) ||
     !isUnmodifiedGlobalReference(node.callee, state, [
       "Object",
@@ -283,7 +268,7 @@ const commonJsAssignedExports = (
   if (!t.isExpression(target)) return undefined;
   const receiver = unwrapJavaScriptExpression(target).node;
   if (
-    !isUnshadowedGlobal(receiver, state, "exports") &&
+    !isCommonJsExportReference(receiver, state, "exports") &&
     !isCommonJsModuleExports(receiver, state)
   )
     return undefined;
@@ -300,11 +285,8 @@ const commonJsAssignedExports = (
   };
 };
 
-/** Runtime values published by the CommonJS syntax owner, before receiver applicability. */
-export const commonJsRuntimeExportValues = (
-  node: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): readonly {
+interface CommonJsRuntimeExportValue {
+  readonly loaderAuthority?: "candidate";
   readonly exportedName: string;
   readonly value: t.Node | null;
   /** Retained input to unresolved iteration; never a selected yielded value. */
@@ -312,7 +294,13 @@ export const commonJsRuntimeExportValues = (
   /** Own enumerable fields copied at this source, after later-source overwrites. */
   readonly projection?: JavaScriptSemanticPropertyPath;
   readonly ownEnumerable?: true;
-}[] => {
+}
+
+/** Runtime values published by the CommonJS syntax owner, before receiver applicability. */
+const commonJsExportValues = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly CommonJsRuntimeExportValue[] => {
   if (t.isAssignmentExpression(node)) {
     const exportedName = commonJsExportName(node.left, state);
     return exportedName === undefined
@@ -321,8 +309,7 @@ export const commonJsRuntimeExportValues = (
   }
   const assigned = commonJsAssignedExports(node, state);
   if (assigned !== undefined) {
-    const exported: ReturnType<typeof commonJsRuntimeExportValues>[number][] =
-      [];
+    const exported: CommonJsRuntimeExportValue[] = [];
     const overwritten = new Set<string>();
     for (let index = assigned.sources.length - 1; index >= 0; index--) {
       const { value, iterationSource } = assigned.sources[index]!;
@@ -370,6 +357,20 @@ export const commonJsRuntimeExportValues = (
   ];
 };
 
+/** Preserve potential exports without asserting an unobserved CommonJS wrapper. */
+export const commonJsRuntimeExportValues = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): readonly CommonJsRuntimeExportValue[] => {
+  const values = commonJsExportValues(node, state);
+  return javaScriptRuntimeContext(state.program) === "unknown"
+    ? values.map((value) => ({
+        ...value,
+        loaderAuthority: "candidate" as const,
+      }))
+    : values;
+};
+
 type Identity = t.Node | null;
 type Execution = "ordered" | "conditional" | "deferred";
 
@@ -413,16 +414,12 @@ export function* indexCommonJsExportReceiversSteps(
   const publicCallWrites = new WeakSet<t.Node>();
   // Consume the shared write owner's resolved aliases, intrinsic invocation
   // and keyed mutator facts instead of reinterpreting call names here.
-  for (const { node, path } of state.ambientWriteEffects) {
-    if (
-      (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-      path[0] === "commonjs-module" &&
-      path.length <= 2 &&
-      (path.length === 1 ||
-        semanticPropertyPathKeyMatches(path[1] ?? null, "exports"))
-    )
+  for (const node of ambientPathWriteSites(state, [
+    "commonjs-module",
+    "exports",
+  ]))
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
       publicCallWrites.add(node);
-  }
   const valueOf = (node: t.Node): Identity => {
     const value = unwrapJavaScriptExpression(node).node;
     // An opaque result may alias another object, but reading the current
@@ -434,12 +431,12 @@ export function* indexCommonJsExportReceiversSteps(
     target = unwrapJavaScriptExpression(target).node;
     const possiblePublicWrite =
       (t.isMemberExpression(target) || t.isOptionalMemberExpression(target)) &&
-      isCommonJsGlobal(target.object, state, "module") &&
+      isCommonJsExportReference(target.object, state, "module") &&
       semanticStaticPropertyKey(target.property, target.computed) === null;
     const publicWrite =
       isCommonJsModuleExports(target, state) || possiblePublicWrite;
-    const exportsWrite = isCommonJsGlobal(target, state, "exports");
-    const moduleWrite = isCommonJsGlobal(target, state, "module");
+    const exportsWrite = isCommonJsExportReference(target, state, "exports");
+    const moduleWrite = isCommonJsExportReference(target, state, "module");
     if (!publicWrite && !exportsWrite && !moduleWrite) return;
     if (mode === "deferred") {
       // A source offset cannot order an invocation against module completion.
@@ -500,14 +497,14 @@ export function* indexCommonJsExportReceiversSteps(
             mode !== "ordered"
               ? null
               : receiver !== null &&
-                  isCommonJsGlobal(receiver, state, "exports")
+                  isCommonJsExportReference(receiver, state, "exports")
                 ? exportsIdentity
                 : publicIdentity,
           );
         }
         const descriptor = commonJsDefinedExport(node, state);
         if (descriptor !== undefined) {
-          const receiver = isUnshadowedGlobal(
+          const receiver = isCommonJsExportReference(
             descriptor.receiver,
             state,
             "exports",
@@ -524,7 +521,7 @@ export function* indexCommonJsExportReceiversSteps(
             node,
             mode !== "ordered"
               ? null
-              : isUnshadowedGlobal(defined.receiver, state, "exports")
+              : isCommonJsExportReference(defined.receiver, state, "exports")
                 ? exportsIdentity
                 : publicIdentity,
           );
@@ -571,7 +568,7 @@ export function* indexCommonJsExportReceiversSteps(
               (t.isMemberExpression(argument) ||
                 t.isOptionalMemberExpression(argument))
             ) {
-              const receiver = isCommonJsGlobal(
+              const receiver = isCommonJsExportReference(
                 argument.object,
                 state,
                 "exports",
@@ -587,7 +584,7 @@ export function* indexCommonJsExportReceiversSteps(
             }
           }
           write(argument, null, mode);
-        } else if (isCommonJsGlobal(node, state, "exports")) {
+        } else if (isCommonJsExportReference(node, state, "exports")) {
           values.set(node, exportsIdentity);
         } else if (isCommonJsModuleExports(node, state)) {
           values.set(node, publicIdentity);

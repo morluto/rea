@@ -69,7 +69,7 @@ describe("curated Windows test lane", () => {
       paths.map(async (path) => ((await exists(path)) ? undefined : path)),
     );
     expect(missing.filter((path) => path !== undefined)).toEqual([]);
-  }, 10_000);
+  });
 
   it("keeps the native multi-megabyte output regression in the lane", async () => {
     expect(await explicitPaths("windows")).toContain(
@@ -80,6 +80,12 @@ describe("curated Windows test lane", () => {
   it("keeps the adjacent npm fallback regression in the lane", async () => {
     expect(await explicitPaths("windows")).toContain(
       "tests/boundary/process/packageNpmInvocation.test.ts",
+    );
+  });
+
+  it("keeps real Git dependency-patch admission in the Windows lane", async () => {
+    expect(await explicitPaths("windows")).toContain(
+      "tests/boundary/filesystem/releaseProposal.test.ts",
     );
   });
 
@@ -111,6 +117,18 @@ describe("curated Windows test lane", () => {
     );
   });
 
+  it("keeps advertised schema checks in the lane", async () => {
+    // Windows hosts advertise their own absolute-path pattern (#7151); only
+    // this lane compiles it and validates host paths against it.
+    expect(await explicitPaths("windows")).toEqual(
+      expect.arrayContaining([
+        "tests/boundary/mcp/advertisedDialect.test.ts",
+        "tests/boundary/mcp/absoluteLocalPathSchema.test.ts",
+        "tests/boundary/mcp/toolSchemaValidity.test.ts",
+      ]),
+    );
+  });
+
   it("keeps Windows runner cancellation coverage in the lane", async () => {
     expect(await explicitPaths("windows")).toEqual(
       expect.arrayContaining([
@@ -138,6 +156,41 @@ describe("curated Windows test lane", () => {
     expect(verify).toBeGreaterThan(download);
     expect(build).toBeGreaterThan(verify);
   });
+
+  it("executes native behavior and recovery proofs before unrelated curated tests", async () => {
+    const workflow = workflowSchema.parse(
+      parse(await readFile(WORKFLOW, "utf8")),
+    );
+    const steps = workflow.jobs["windows-curated"]?.steps ?? [];
+    const build = steps.findIndex(
+      (step) => step.run === "npm run build:cached",
+    );
+    const boundary = steps.findIndex(
+      (step) => step.with?.name === "windows-process-boundary-fixture",
+    );
+    const native = steps.findIndex((step) =>
+      step.run?.startsWith("npm run verify:windows-native -- "),
+    );
+    const inspectionFixture = steps.findIndex(
+      (step) => step.with?.name === "windows-native-inspection-fixture",
+    );
+    const inspection = steps.findIndex(
+      (step) =>
+        step.run === "node scripts/verify-windows-native-inspection.mjs",
+    );
+    const curated = steps.findIndex(
+      (step) =>
+        step.run?.includes("src/windows/WindowsNativeLoader.test.ts") &&
+        step.run.includes("npx vitest run"),
+    );
+    expect(build).toBeGreaterThanOrEqual(0);
+    expect(boundary).toBeGreaterThan(build);
+    expect(native).toBeGreaterThan(boundary);
+    expect(steps[native]?.run).toContain("process-boundary.exe");
+    expect(inspectionFixture).toBeGreaterThan(native);
+    expect(inspection).toBeGreaterThan(inspectionFixture);
+    expect(curated).toBeGreaterThan(inspection);
+  });
 });
 
 it("keeps every explicit focused CI test path executable after file moves", async () => {
@@ -147,7 +200,7 @@ it("keeps every explicit focused CI test path executable after file moves", asyn
     paths.map(async (path) => ((await exists(path)) ? undefined : path)),
   );
   expect(missing.filter((path) => path !== undefined)).toEqual([]);
-}, 10_000);
+});
 
 it("checks the complete source with the fallback compiler before Windows build reuse", async () => {
   const workflow = workflowSchema.parse(

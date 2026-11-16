@@ -4,7 +4,7 @@ import {
   probeWindowsCapabilities,
   systemNoFollowOpenCapability,
   type WindowsCapabilityDependencies,
-} from "../../../../src/application/WindowsCapabilities.js";
+} from "../../../../scripts/lib/windows-capabilities.mjs";
 
 const dependencies = (
   overrides: Partial<WindowsCapabilityDependencies> = {},

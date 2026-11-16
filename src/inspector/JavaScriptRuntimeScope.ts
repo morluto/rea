@@ -2,6 +2,7 @@ import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -13,8 +14,11 @@ import type {
   JavaScriptRuntimeLocation,
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { authorizedElectronFile } from "../browser/ElectronFileScope.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
+import {
+  authorizedElectronFile,
+  type ElectronFileScope,
+} from "../browser/ElectronFileScope.js";
 
 export type RuntimeLocationDecision =
   | { readonly allowed: true; readonly location: JavaScriptRuntimeLocation }
@@ -30,8 +34,7 @@ export const throwIfRuntimeObservationCancelled = (
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "observe_javascript_runtime",
 ): void => {
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(operation, { cause: signal.reason });
+  if (signal?.aborted === true) throw cancelledBy(operation, signal);
 };
 
 /**
@@ -56,14 +59,16 @@ export const authorizeRuntimeLocation = async (
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "observe_javascript_runtime",
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  files?: ElectronFileScope,
 ): Promise<RuntimeLocationDecision> => {
   throwIfRuntimeObservationCancelled(signal, operation);
-  if (value.startsWith("file:")) {
+  if (URL.parse(value)?.protocol === "file:") {
     const filePath = await authorizedElectronFile(
       value,
       signal,
       operation,
       asarHeaderAdmission,
+      files,
     );
     throwIfRuntimeObservationCancelled(signal, operation);
     return filePath === undefined
@@ -114,6 +119,7 @@ export const authorizeRuntimeTargetLocation = async (
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "list_javascript_runtime_targets",
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  files?: ElectronFileScope,
 ): Promise<
   | {
       readonly allowed: true;
@@ -132,6 +138,7 @@ export const authorizeRuntimeTargetLocation = async (
       signal,
       operation,
       asarHeaderAdmission,
+      files,
     );
   const reportedPath = value.slice("file://".length);
   if (!reportedPath.startsWith("/") && !/^[a-z]:[/\\_]/iu.test(reportedPath))
@@ -140,17 +147,20 @@ export const authorizeRuntimeTargetLocation = async (
       signal,
       operation,
       asarHeaderAdmission,
+      files,
     );
 
   // Node concatenates the pathname, then replaces quotes and backslashes with
   // underscores. A remaining underscore cannot prove which pathname was used.
-  if (process.platform !== "win32" && !/[_"\\]/u.test(reportedPath)) {
+  // The runtime runs on this host and reports one of this host's paths.
+  if (HOST_PLATFORM.platform !== "win32" && !/[_"\\]/u.test(reportedPath)) {
     if (reportedPath.startsWith("/")) {
       const decision = await authorizeRuntimeLocation(
         pathToFileURL(reportedPath).href,
         signal,
         operation,
         asarHeaderAdmission,
+        files,
       );
       if (decision.allowed) return decision;
     }

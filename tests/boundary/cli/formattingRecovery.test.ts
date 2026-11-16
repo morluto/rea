@@ -15,8 +15,97 @@ import {
 } from "../../../src/cliLogging.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { silentLogger } from "../../../src/logger.js";
+import {
+  cliEvidencePublicationReceipt,
+  recordCliEvidencePublication,
+  withCliEvidencePublication,
+} from "../../../src/cli/cliEvidencePublication.js";
 
 const metadata = { command: "fixture", duration: "1ms", format: "toon" };
+
+it("keeps receipts isolated across concurrent invocations", async () => {
+  const results = await Promise.all(
+    ["first", "second"].map((path) =>
+      withCliEvidencePublication(async () => {
+        recordCliEvidencePublication({ path, bytes: 1 });
+        await Promise.resolve();
+        return cliEvidencePublicationReceipt();
+      }),
+    ),
+  );
+  expect(results).toEqual([
+    { path: "first", bytes: 1 },
+    { path: "second", bytes: 1 },
+  ]);
+  expect(cliEvidencePublicationReceipt()).toBeUndefined();
+});
+
+it("retains a publication receipt when formatting fails after the invocation context ends", async () => {
+  const chunks: Buffer[] = [];
+  const output = createCliResultOutput(
+    parseCliOutputArguments([]),
+    new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        chunks.push(chunk);
+        callback();
+      },
+    }),
+  );
+  if (output === undefined) throw new Error("Missing output owner");
+  await withCliEvidencePublication(async () => {
+    recordCliEvidencePublication({ path: "/tmp/result.json", bytes: 123 });
+    expect(await output.write({ result: "completed" }, metadata)).toBe(false);
+  });
+  expect(
+    await output.recoverFormattingFailure(
+      new RangeError("Invalid string length"),
+    ),
+  ).toBe(true);
+  expect(output.error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      diagnostics: {
+        evidence_bundle: { path: "/tmp/result.json", bytes: 123 },
+      },
+    },
+  });
+  expect(Buffer.concat(chunks).toString("utf8")).toContain("/tmp/result.json");
+});
+
+it.each([
+  { format: "md", value: "\u0000", window: false },
+  { format: "toon", value: "\ud800", window: false },
+  { format: "toon", value: "\ud800", window: true },
+] as const)(
+  "retains the committed receipt when $format cannot encode output (token window: $window)",
+  async ({ format, value, window }) => {
+    const chunks: Buffer[] = [];
+    const receipt = { path: "/authored/retained.json", bytes: 123 };
+    const output = createCliResultOutput(
+      parseCliOutputArguments([
+        "--format",
+        format,
+        ...(window ? ["--token-limit", "1000"] : []),
+      ]),
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      }),
+    );
+    if (output === undefined) throw new Error("Missing output owner");
+    await withCliEvidencePublication(async () => {
+      recordCliEvidencePublication(receipt);
+      expect(await output.write({ value }, { ...metadata, format })).toBe(true);
+    });
+    expect(output.error).toMatchObject({
+      code: "invalid_request",
+      details: { diagnostics: { evidence_bundle: receipt } },
+    });
+    expect(Buffer.concat(chunks).toString("utf8")).toContain(receipt.path);
+  },
+);
 
 describe("CLI formatting stage admission", () => {
   it("preserves native CTA sentinel output", async () => {

@@ -2,7 +2,10 @@ import { expect, it, vi } from "vitest";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { runSourceMapCommand } from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
+import {
+  runSourceMapCommand,
+  type SourceMapCleanupRetention,
+} from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
 
 it.each([
   null,
@@ -11,6 +14,7 @@ it.each([
   "preserves opaque cancellation during ownership preparation: %s",
   async (reason) => {
     const controller = new AbortController();
+    const retainedCleanup: SourceMapCleanupRetention = {};
     const createRuntime = vi.fn(async () => {
       throw new Error("Cancelled preparation must not acquire a runtime");
     });
@@ -29,7 +33,9 @@ it.each([
         createRuntime,
         launcher,
       },
+      retainedCleanup,
     );
+    expect(retainedCleanup.owner).toBeUndefined();
     if (result.ok) throw new Error("Preparation must return cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
@@ -46,19 +52,27 @@ it.each([
 
 it("retains diagnostics for an unknown ownership preparation failure", async () => {
   const cause = new Error("unexpected ownership failure");
+  const retainedCleanup: SourceMapCleanupRetention = {};
   const createRuntime = vi.fn(async () => {
     throw new Error("Failed preparation must not acquire a runtime");
   });
   const launcher = vi.fn(async () => {
     throw new Error("Failed preparation must not launch a codec");
   });
-  const result = await runSourceMapCommand("{}", "/selected.map", undefined, {
-    prepareOwnership: async () => {
-      throw cause;
+  const result = await runSourceMapCommand(
+    "{}",
+    "/selected.map",
+    undefined,
+    {
+      prepareOwnership: async () => {
+        throw cause;
+      },
+      createRuntime,
+      launcher,
     },
-    createRuntime,
-    launcher,
-  });
+    retainedCleanup,
+  );
+  expect(retainedCleanup.owner).toBeUndefined();
   if (result.ok) throw new Error("Preparation must return its failure");
   expect(result.error).toBeInstanceOf(ProviderAdapterError);
   expect(result.error.cause).toBe(cause);

@@ -9,7 +9,6 @@ import { compareArtifacts } from "../../domain/artifactComparison.js";
 import { parseArtifactInventoryEvidence } from "../../domain/artifactInventoryEvidence.js";
 import { projectAppleInventory } from "../../domain/apple/appleApplication.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { thinMach } from "../../domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
@@ -32,7 +31,7 @@ const observeArchive = async (order: readonly string[]) => {
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventory),
+      result: inventory,
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -128,7 +127,7 @@ describe("content identity and occurrence facts", () => {
             {
               operation: "inventory_artifact",
               parameters: {},
-              result: jsonValueSchema.parse(inventory),
+              result: inventory,
               confidence: "observed",
               authority: "shipped-artifact",
             },

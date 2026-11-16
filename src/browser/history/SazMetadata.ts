@@ -1,7 +1,7 @@
+import { captureBudgets } from "./CaptureBudgets.js";
 import type { Node } from "@xmldom/xmldom";
 import { parseXmlDocument } from "../../domain/xmlDocument.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import {
   decodeXmlPlistText,
   XmlPlistTextDecodeError,
@@ -29,7 +29,7 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
       cause.reason === "encoding-mismatch"
     )
       throw new CaptureFormatError(
-        "format",
+        "malformed",
         "SAZ metadata encoding declaration disagrees with its bytes.",
         "",
         cause,
@@ -47,8 +47,8 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
   });
   if (!parsed.ok)
     throw new CaptureFormatError(
-      parsed.error.reason === "doctype" ? "unsupported" : "format",
-      parsed.error.reason === "doctype"
+      parsed.error.kind === "unsupported" ? "unsupported" : "malformed",
+      parsed.error.kind === "unsupported"
         ? "SAZ metadata DTDs are unsupported."
         : "SAZ metadata is not well-formed XML.",
       "",
@@ -57,14 +57,14 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
   const document = parsed.value;
   if (document.documentElement?.tagName !== "Session")
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "SAZ metadata must have a Session document element.",
     );
   const visit = (node: Node, depth: number): JsonValue => {
-    if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
+    if (depth > captureBudgets().depth)
       throw new CaptureFormatError(
-        "input-limit",
-        "SAZ metadata exceeds the complete-evidence nesting budget. This release has no runtime override.",
+        { name: "nesting-depth", maximum: captureBudgets().depth },
+        `SAZ metadata exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
       );
     const children: JsonValue[] = [];
     for (let child = node.firstChild; child !== null; child = child.nextSibling)

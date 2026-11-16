@@ -1,3 +1,4 @@
+import { evidenceSubjectDisplay } from "../evidence.js";
 import { z } from "zod";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 
@@ -19,8 +20,7 @@ import {
   hasCompleteInventoryCoverage,
   type ParsedInventorySet,
 } from "../artifactInventoryEvidence.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   bridgeCandidateCoverageSchema,
@@ -115,7 +115,7 @@ export const projectAppleInventory = (
     projectedInventoryEntries(inventory);
   const inventoried = projectedFileComponents(entries);
   const { roots, bundles } = projectAppleBundleAnatomy(entries, {
-    name: evidence[0]?.subject?.name ?? "",
+    name: evidenceSubjectDisplay(evidence[0] ?? {})?.name ?? "",
     format: rootFormat,
   });
   const { all, unattributed } = attributeComponents(

@@ -348,7 +348,7 @@ export const ghidraMipsProfileParameters = (
       ? {
           language_id: language.languageId,
           compiler_spec_id: language.compilerSpecId ?? "default",
-          language_selection: "provider-pinned-v1",
+          language_selection: "provider-pinned",
         }
       : {};
   return {
@@ -410,17 +410,16 @@ export const ghidraMipsProfileParameters = (
     ...(isGhidraMipsSoftFloatTarget(target)
       ? { mips_soft_float_storage: GHIDRA_MIPS_SOFT_FLOAT_STORAGE }
       : {}),
-    instruction_context_evidence: "per-address-isa-mode-v1",
     mips_support_lane: legacy
       ? isMips1Header(target)
-        ? "elf32-exec-mips1-legacy-pinned-v1"
-        : "elf32-exec-arch32-legacy-pinned-v1"
+        ? "elf32-exec-mips1-legacy-pinned"
+        : "elf32-exec-arch32-legacy-pinned"
       : isGhidraMips16SharedTarget(target)
-        ? "elf32-dyn-o32-arch32r2-mips16-local-rel32-v1"
+        ? "elf32-dyn-o32-arch32r2-mips16-local-rel32"
         : target.mips.type === MIPS_ET_REL
-          ? "elf32-rel-o32-arch32r2-standard-v1"
-          : "elf32-exec-o32-arch32r2-standard-v3",
-    ...(legacy ? { mips_abi_basis: "inferred-o32-assumption-v1" } : {}),
+          ? "elf32-rel-o32-arch32r2-standard"
+          : "elf32-exec-o32-arch32r2-standard",
+    ...(legacy ? { mips_abi_basis: "inferred-o32-assumption" } : {}),
     ...pinnedLanguage,
   };
 };
@@ -435,18 +434,20 @@ export const ghidraMipsProfileParameters = (
 export const ghidraMipsProfileMismatchReason = (
   target: BinaryTarget,
   parameters: Readonly<Record<string, unknown>>,
+  existingProject: boolean,
 ): string | null => {
   if (target.architecture !== "mips" || target.mips === undefined) return null;
   const expected = ghidraMipsProfileParameters(target);
   // PSP keeps its own loader and lane but still commits target-derived MIPS
   // metadata; bind that metadata without demanding the generic lane name.
-  const pspLane = "psp-elf32-exec-eabi32-allegrex-v2";
+  const pspLane = "psp-elf32-exec-eabi32-allegrex";
   const committedLane = parameters.mips_support_lane;
   const expectedLane =
     committedLane === pspLane ? pspLane : expected.mips_support_lane;
   const expectedBasis =
     committedLane === pspLane ? undefined : expected.mips_abi_basis;
   if (
+    !existingProject &&
     expectedLane !== undefined &&
     (committedLane !== expectedLane ||
       parameters.mips_abi_basis !== expectedBasis)
@@ -458,18 +459,4 @@ export const ghidraMipsProfileMismatchReason = (
   )
     return "The committed MIPS ELF metadata does not match the current target; reopen the target to resolve a new profile.";
   return null;
-};
-
-/** Read the provider-pinned import language back from a resolved legacy profile. */
-export const ghidraPinnedMipsLanguage = (
-  parameters: Readonly<Record<string, unknown>>,
-): GhidraLanguageOverride | undefined => {
-  if (parameters.language_selection !== "provider-pinned-v1") return undefined;
-  const languageId = parameters.language_id;
-  const compilerSpecId = parameters.compiler_spec_id;
-  if (typeof languageId !== "string" || typeof compilerSpecId !== "string")
-    return undefined;
-  return compilerSpecId === "language-default"
-    ? { languageId }
-    : { languageId, compilerSpecId };
 };

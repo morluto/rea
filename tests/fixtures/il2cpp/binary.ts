@@ -507,13 +507,95 @@ export interface ElfFixtureOptions {
   readonly relaEntry?: bigint;
   /** Move mscorlib.dll's method pointers into zero-fill past the file end. */
   readonly zeroFilledTable?: boolean;
+  /** Declare DT_SYMTAB / DT_SYMENT with dynamic symbol 1 of this `st_size`, which sizes a COPY. */
+  readonly symbolSize?: bigint;
+  /** A defined ordinary dynamic symbol for static link-image relocation tests. */
+  readonly symbolDefinition?: {
+    readonly value: bigint;
+    readonly type?: number;
+    readonly section?: number;
+  };
 }
+
+/** A valid large RELA image; extra file-backed pointers do not add IL2CPP registrations. */
+export const createLargeElfRelativeFixture = (
+  image: Buffer,
+  extraRecords: number,
+  machine = 183,
+): Buffer => {
+  const original = createElfFixture(image, { machine });
+  const originalDynamic = Number(original.readBigUInt64LE(128));
+  const originalRelaSize = Number(
+    original.readBigUInt64LE(originalDynamic + 24),
+  );
+  const pointersAt = Math.ceil(original.length / 8) * 8;
+  const relaAt = pointersAt + extraRecords * 8;
+  const relaSize = originalRelaSize + extraRecords * 24;
+  const dynamicAt = relaAt + relaSize;
+  const bytes = Buffer.alloc(dynamicAt + 64);
+  original.copy(bytes);
+  original.copy(bytes, relaAt, 0x1000, 0x1000 + originalRelaSize);
+  for (let index = 0; index < extraRecords; index++) {
+    const row = relaAt + originalRelaSize + index * 24;
+    bytes.writeBigUInt64LE(
+      FIXTURE_BINARY_BASE + BigInt(pointersAt + index * 8),
+      row,
+    );
+    bytes.writeBigUInt64LE(machine === 62 ? 8n : 1027n, row + 8);
+    bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x100n, row + 16);
+  }
+  for (const [index, [tag, value]] of [
+    [7n, FIXTURE_BINARY_BASE + BigInt(relaAt)],
+    [8n, BigInt(relaSize)],
+    [9n, 24n],
+    [0n, 0n],
+  ].entries()) {
+    bytes.writeBigUInt64LE(tag!, dynamicAt + index * 16);
+    bytes.writeBigUInt64LE(value!, dynamicAt + index * 16 + 8);
+  }
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 96);
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 104);
+  bytes.writeBigUInt64LE(BigInt(dynamicAt), 128);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(dynamicAt), 136);
+  bytes.writeBigUInt64LE(FIXTURE_BINARY_BASE + BigInt(dynamicAt), 144);
+  bytes.writeBigUInt64LE(64n, 152);
+  bytes.writeBigUInt64LE(64n, 160);
+  return bytes;
+};
 
 /**
  * Rewrap a fixture image as a 64-bit ELF shared object loaded at the same
  * base: every pointer slot into the image is zeroed on disk and restored by
  * an R_AARCH64_RELATIVE entry, as a position-independent libil2cpp.so stores it.
  */
+/** The null symbol, then symbol 1 with the requested COPY size or definition. */
+const dynamicSymbols = (
+  size: bigint | undefined,
+  definition: ElfFixtureOptions["symbolDefinition"],
+): Buffer => {
+  if (size === undefined && definition === undefined) return Buffer.alloc(0);
+  const symbols = Buffer.alloc(48);
+  symbols.writeBigUInt64LE(size ?? 0n, 24 + 16);
+  if (definition !== undefined) {
+    symbols[24 + 4] = 0x10 | (definition.type ?? 1);
+    symbols.writeUInt16LE(definition.section ?? 1, 24 + 6);
+    symbols.writeBigUInt64LE(definition.value, 24 + 8);
+  }
+  return symbols;
+};
+
+/** DT_SYMTAB and DT_SYMENT for a symbol table at `address`; none for an empty table. */
+const symbolTableTags = (
+  symbols: Buffer,
+  address: bigint,
+): [bigint, bigint][] =>
+  symbols.length === 0
+    ? []
+    : [
+        [6n, address],
+        [11n, 24n],
+      ];
+
 export const createElfFixture = (
   image: Buffer,
   options: ElfFixtureOptions = {},
@@ -537,11 +619,24 @@ export const createElfFixture = (
       0n,
       relocation.kind,
     ]);
+  const symbols = dynamicSymbols(options.symbolSize, options.symbolDefinition);
+  const hash = Buffer.alloc(options.symbolDefinition === undefined ? 0 : 20);
+  if (hash.length !== 0)
+    [1, 2, 1, 0, 0].forEach((value, index) =>
+      hash.writeUInt32LE(value, index * 4),
+    );
   const tagCount =
     4 +
     (options.duplicateRela === true ? 1 : 0) +
-    (options.androidPacked === true ? 1 : 0);
-  const fileSize = SIZE + relocations.length * 24 + tagCount * 16;
+    (options.androidPacked === true ? 1 : 0) +
+    symbolTableTags(symbols, 0n).length +
+    (hash.length === 0 ? 0 : 1);
+  const fileSize =
+    SIZE +
+    relocations.length * 24 +
+    tagCount * 16 +
+    symbols.length +
+    hash.length;
   if (options.zeroFilledTable === true) {
     // The second module record's methodPointers field (MODULES + 0x40 + 16).
     const slot = FIXTURE_BINARY_BASE + BigInt(0x400 + 0x40 + 16);
@@ -569,6 +664,18 @@ export const createElfFixture = (
     ...(options.androidPacked === true
       ? [[0x60000011n, 0n] as [bigint, bigint]]
       : []),
+    ...symbolTableTags(
+      symbols,
+      FIXTURE_BINARY_BASE + BigInt(fileSize - symbols.length - hash.length),
+    ),
+    ...(hash.length === 0
+      ? []
+      : [
+          [4n, FIXTURE_BINARY_BASE + BigInt(fileSize - hash.length)] as [
+            bigint,
+            bigint,
+          ],
+        ]),
     [0n, 0n],
   ];
   const dynamic = Buffer.alloc(tags.length * 16);
@@ -576,7 +683,7 @@ export const createElfFixture = (
     dynamic.writeBigInt64LE(tag, index * 16);
     dynamic.writeBigUInt64LE(value, index * 16 + 8);
   });
-  const file = Buffer.concat([body, rela, dynamic]);
+  const file = Buffer.concat([body, rela, dynamic, symbols, hash]);
   if (file.length !== fileSize) throw new Error("ELF fixture size drifted");
   const withDynamic = options.dynamic !== false;
   // ELF64 header: little-endian shared object, no section headers.

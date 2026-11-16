@@ -1,5 +1,5 @@
+import { createVerifierHttpServer } from "../lib/verifier-http-server.mjs";
 import { once } from "node:events";
-import { createServer } from "node:http";
 
 /** The CSRF cookie and the stored bearer token the page holds; request steps must send both and the capture must not keep them. */
 export const requestFixtureCsrf = "csrf-fixture-7c1d2e";
@@ -52,7 +52,7 @@ export async function startBrowserRequestSite() {
   };
   const writes = [];
   const hosts = [];
-  const server = createServer(async (request, response) => {
+  const handleRequest = async (request, response) => {
     const url = new URL(request.url, "http://fixture.test");
     hosts.push(`${request.headers.host} ${url.pathname}`);
     const chunks = [];
@@ -94,6 +94,12 @@ export async function startBrowserRequestSite() {
       writes.push({
         method: request.method,
         path: url.pathname,
+        query: url.search,
+        body,
+        contentType: request.headers["content-type"],
+        cookie:
+          request.headers.cookie?.includes(`csrftoken=${requestFixtureCsrf}`) ??
+          false,
         csrf: request.headers["x-csrftoken"] === requestFixtureCsrf,
         bearer:
           request.headers.authorization === `Bearer ${requestFixtureToken}`,
@@ -108,7 +114,8 @@ export async function startBrowserRequestSite() {
     }
     const [status, value] = answerItems(store, request.method, id, body);
     json(response, status, value);
-  });
+  };
+  const { server, close } = createVerifierHttpServer(handleRequest);
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
@@ -120,11 +127,6 @@ export async function startBrowserRequestSite() {
     /** Host header and path of every request the server received. */
     hosts,
     items: store.items,
-    async close() {
-      server.closeAllConnections();
-      await new Promise((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      );
-    },
+    close,
   };
 }

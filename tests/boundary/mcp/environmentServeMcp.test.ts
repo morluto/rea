@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
+import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { advertisedInputDialectViolations } from "../../../src/contracts/advertisedDialect.js";
 
 import {
   Client,
@@ -19,12 +22,12 @@ import {
   processTest,
   type TestProcesses,
 } from "../../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 const CARD_PATH = "/.well-known/agent-env.json";
-/** SHA-256 of the 13,882-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
+/** SHA-256 of the card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
 const REPLAY_CARD_SHA256 =
-  "27370fe0a89556dcd0dd1bc6ddd0439d77b628349829afd56e4af4ee393d0a64";
+  "825703b02f48d614b3c4690445b0b6b00333d975406dc7e8dd335836bceb7d59";
 
 /** Serve the fixture pair as pure replay through the built CLI. */
 const serveReplayOnly = async (
@@ -52,10 +55,107 @@ const serveReplayOnly = async (
 
 const connect = async (url: URL) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name: "environment-boundary", version: "1" });
+  const client = new Client(
+    { name: "environment-boundary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   await client.connect(transport);
   return client;
 };
+
+processTest(
+  "replays a recorded list containing an initially deleted entity",
+  async ({ processes }) => {
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence(INITIAL_TRASH_ROWS),
+    );
+    const root = await createTestTempDirectory("rea-environment-trash-mcp-");
+    const files = await writeEnvironmentServeFiles(root, fixture);
+    const started = await startListeningProcess(processes, [
+      "environment-serve",
+      files.manifestPath,
+      "--evidence",
+      files.capturePath,
+      "--port",
+      "0",
+    ]);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_contacts",
+        arguments: { maxSize: "20", offset: "0" },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({
+        body: INITIAL_TRASH_ROWS[0]![2],
+      });
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+processTest(
+  "accepts numbers and booleans for query parameters, sent as their JSON text",
+  async ({ processes }) => {
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence([
+        [
+          "GET",
+          "/api/contacts?maxSize=2&withItems=true",
+          [{ id: 1, name: "Ada" }],
+        ],
+      ]),
+    );
+    const started = await serveReplayOnly(processes, {}, fixture);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_contacts",
+        arguments: { maxSize: 2, withItems: true },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({
+        body: [{ id: 1, name: "Ada" }],
+        replay: {
+          exact_match: true,
+          recorded_query: "?maxSize=2&withItems=true",
+        },
+      });
+    } finally {
+      await client.close();
+    }
+  },
+);
+
+processTest(
+  "replays recorded own JSON keys without interpreting inherited members as fields",
+  async ({ processes }) => {
+    const body = JSON.parse(
+      '{"id":1,"__proto__":{"source":"recorded"},"nested":{"constructor":null,"__proto__":[false,0,""]}}',
+    );
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence([["GET", "/api/books/1", body]]),
+    );
+    const started = await serveReplayOnly(processes, {}, fixture);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_books_by_id",
+        arguments: { id: "1" },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({ body });
+      const replayed = jsonObjectSchema.parse(
+        jsonObjectSchema.parse(response.structuredContent).body,
+      );
+      expect(Object.hasOwn(replayed, "__proto__")).toBe(true);
+      expect(Object.hasOwn(replayed, "constructor")).toBe(false);
+    } finally {
+      await client.close();
+    }
+  },
+);
 
 processTest(
   "validates repeated query arrays through the advertised MCP contract",
@@ -80,8 +180,12 @@ processTest(
         tools.find(({ name }) => name === tool.name)?.inputSchema.properties
           ?.tag,
       ).toMatchObject({
-        oneOf: [
+        // The recorded `oneOf` is advertised as the portable `anyOf`; the
+        // branches are disjoint, so both accept the same values.
+        anyOf: [
           { type: "string" },
+          { type: "number" },
+          { type: "boolean" },
           { type: "array", items: { type: "string" } },
         ],
       });
@@ -98,7 +202,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 describe("rea environment-serve --replay-only", () => {
@@ -116,6 +219,29 @@ describe("rea environment-serve --replay-only", () => {
         expect(tools.map(({ name }) => name).sort()).toEqual(
           source.manifest.tools.map(({ name }) => name).sort(),
         );
+        // A served catalog reaches models through the same clients as REA's.
+        // The dialect has no portable form for a query parameter's
+        // string, number, boolean or string-list union yet, so only that
+        // union's untyped node remains outside it.
+        for (const violation of tools.flatMap(
+          advertisedInputDialectViolations,
+        )) {
+          expect(violation).toMatchObject({ rule: "type", detail: "untyped" });
+          const property = /^\$\.properties\.([^.]+)$/u.exec(violation.path);
+          const name = property?.[1] ?? "";
+          const tool = tools.find(
+            ({ name: listed }) => listed === violation.tool,
+          );
+          expect(tool?.inputSchema.properties?.[name], violation.path).toEqual({
+            description: expect.stringMatching(/^Query parameter /u),
+            anyOf: [
+              { type: "string" },
+              { type: "number" },
+              { type: "boolean" },
+              { type: "array", items: { type: "string" } },
+            ],
+          });
+        }
         const users = tools.find(({ name }) => name === "get_users_by_id");
         expect(users?.description).toContain(
           '; returns a JSON object with fields "id", "uid", "login", "email"; recorded statuses 200;',
@@ -163,7 +289,6 @@ describe("rea environment-serve --replay-only", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -206,7 +331,6 @@ describe("rea environment-serve --replay-only", () => {
       });
       expect(started.stderr()).toContain('"transport":"streamable-http"');
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });
 
@@ -325,6 +449,5 @@ describe("rea environment-serve", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });

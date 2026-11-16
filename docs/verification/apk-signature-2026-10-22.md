@@ -92,7 +92,7 @@ checks are retained in the JSON record. Current-head CI/review follows publicati
 Issue [#4537](https://github.com/morluto/rea/issues/4537), existing PR
 [#4158](https://github.com/morluto/rea/pull/4158). Runtime `f85a887a05fa62d0675139746dbce6eba7548aee`,
 tree `ff1f42613847e198988bf84dfb2d50d578084bdb`, integrates main `a4a548718d696d7329ffc7b9caa64ee72a215461` while retaining
-contributor head `76445a83c8e6542131f7b38290ec749b3a199ba4`. The [JSON record](apk-signature-2026-10-22.json)
+contributor head `76445a83c8e6542131f7b38290ec749b3a199ba4`. The [JSON record](https://github.com/morluto/rea/blob/main/docs/verification/apk-signature-2026-10-22.json)
 pins commands, inputs, resource profiles, failed controls and limits.
 
 The selected-file provider owns ZIP/signing/PKCS#7 parsing and digest work.

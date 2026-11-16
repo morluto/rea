@@ -1,8 +1,10 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { afterAll, expect, it } from "vitest";
+import { INSPECT_MODEL_ARTIFACT_CONTRACT } from "../../src/contracts/model/modelToolContracts.js";
 import {
   modelArtifactSchema,
   type ModelArtifact,
@@ -10,7 +12,7 @@ import {
 import {
   modelArtifactSummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../src/domain/analysisView/analysisView.js";
+} from "../../src/domain/analysisView/analysisViewResult.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
@@ -22,7 +24,27 @@ import {
   safetensorsFixture,
 } from "../fixtures/model/model.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, createSharedMcpSession } from "../support/cli/cliFixture.js";
+
+/** A malformed model header is an invalid `path` on both adapters. */
+const MALFORMED_MODEL = {
+  code: "invalid_request",
+  category: "invalid_input",
+  details: {
+    operation: "inspect_model_artifact",
+    issues: [
+      expect.objectContaining({ path: ["path"], reason: "invalid_format" }),
+    ],
+  },
+} as const;
+
+// Model queries are target-free; share immutable registration and schema setup.
+// Portable export keeps its separate post-CLI connection below.
+const modelMcp = createSharedMcpSession(async (registerCleanup) => {
+  const { call } = await connectLocalToolsMcp({}, registerCleanup);
+  return call;
+});
+afterAll(() => modelMcp.close());
 
 cliTest(
   "preserves lowercase hyphenated GGUF architecture metadata from the published writer",
@@ -60,7 +82,7 @@ cliTest(
       });
       expect(response.exitCode, response.stderr).toBe(0);
       const report = modelArtifactSchema.parse(
-        toolContract("inspect_model_artifact").outputSchema.parse(response.json)
+        INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(response.json)
           .normalized_result,
       );
       expect(report.metadata.map(({ key, value }) => ({ key, value }))).toEqual(
@@ -78,7 +100,7 @@ cliTest(
   "preserves unresolved Q8_1 layout through CLI, MCP summaries and retained tensor/type pages",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-q8-layout-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     for (const blockBytes of [36, 40]) {
       const path = join(root, `blocks-${String(blockBytes)}.gguf`);
       const base = ggufFixture();
@@ -163,7 +185,7 @@ cliTest(
         coverage,
       });
       expect(summary.summary.limitations).toContainEqual(limitation);
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
       await unlink(path);
 
       const source = {
@@ -305,7 +327,7 @@ cliTest(
   "preserves released K and shifted integer/IQ uncertainty through CLI and retained MCP views",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-historical-layouts-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     for (const layout of ["legacy", "modern"] as const) {
       const path = join(root, `${layout}.gguf`);
       const base = ggufFixture();
@@ -419,7 +441,7 @@ cliTest(
           reason.includes("have released") || reason.includes("has released"),
       ))
         expect(summary.summary.limitations).toContain(limitation);
-      expect(await readFile(path)).toEqual(fixture.bytes);
+      expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
       await unlink(path);
       await assertRetainedLayoutViews(
         call,
@@ -432,7 +454,7 @@ cliTest(
 );
 
 cliTest(
-  "preserves exact large safetensors dimensions while bounding actual offsets",
+  "preserves exact large safetensors dimensions while rejecting impossible file offsets",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-shape-precision-");
     const path = join(root, "empty.safetensors");
@@ -454,7 +476,7 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = modelArtifactSchema.parse(
-      toolContract("inspect_model_artifact").outputSchema.parse(result.json)
+      INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(result.json)
         .normalized_result,
     );
     expect(
@@ -487,7 +509,7 @@ cliTest(
     expect(report.artifact.sha256).toBe(
       createHash("sha256").update(fixture.bytes).digest("hex"),
     );
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const response = await call("inspect_model_artifact", {
       path,
       detail: "complete",
@@ -508,10 +530,20 @@ cliTest(
     const offsetFailure = parseMcpToolError(
       await call("inspect_model_artifact", { path }),
     );
+    // The raw extent is outside this empty file, and that check runs before
+    // the offset is converted to a host number.
     expect(offsetFailure.error).toMatchObject({
-      code: "resource_constraint",
+      code: "invalid_request",
+      category: "invalid_input",
       details: {
-        reported_limits: { maximum_exact_offset: Number.MAX_SAFE_INTEGER },
+        operation: "inspect_model_artifact",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `Selected artifact ${path}: Declared extent is outside the file`,
+          },
+        ],
       },
     });
   },
@@ -545,7 +577,7 @@ it.each(["named", "default", "inventory-only", "absent"] as const)(
             ? [names]
             : [];
     await writeFile(path, ggufFixture({ metadata }).bytes);
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const response = await call("inspect_model_artifact", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
     const summary = modelArtifactSummaryViewResultSchema.parse(
@@ -591,7 +623,7 @@ it("keeps generated headline keys and imported compound metadata out of compact 
       ],
     }).bytes,
   );
-  const { call } = await connectLocalToolsMcp();
+  const call = await modelMcp.session.call();
   const compact = await call("inspect_model_artifact", { path });
   expect(compact.isError, JSON.stringify(compact)).not.toBe(true);
   const summary = modelArtifactSummaryViewResultSchema.parse(
@@ -608,11 +640,15 @@ it("keeps generated headline keys and imported compound metadata out of compact 
     { key: `${architecture}.context_length`, value: 2048 },
   ]);
   report.metadata[0]!.value = { future: architecture };
-  const imported = createEvidence(undefined, full.provider, {
-    operation: "inspect_model_artifact",
-    parameters: full.parameters,
-    result: report,
-  });
+  const imported = createEvidence(
+    unknownTarget("not-observed"),
+    full.provider,
+    {
+      operation: "inspect_model_artifact",
+      parameters: full.parameters,
+      result: report,
+    },
+  );
   const page = await call("inspect_analysis_view", {
     source: { kind: "inline", evidence: imported },
     view: { kind: "summary" },
@@ -628,7 +664,7 @@ it("rejects noncanonical imported model indexes and duplicate identities through
   const root = await createTestTempDirectory("rea-model-import-");
   const path = join(root, "model");
   await writeFile(path, ggufFixture().bytes);
-  const { call } = await connectLocalToolsMcp();
+  const call = await modelMcp.session.call();
   const response = await call("inspect_model_artifact", {
     path,
     detail: "complete",
@@ -655,11 +691,15 @@ it("rejects noncanonical imported model indexes and duplicate identities through
   for (const corrupt of corruptions) {
     const result = structuredClone(report);
     corrupt(result);
-    const evidence = createEvidence(undefined, complete.provider, {
-      operation: "inspect_model_artifact",
-      parameters: complete.parameters,
-      result,
-    });
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      complete.provider,
+      {
+        operation: "inspect_model_artifact",
+        parameters: complete.parameters,
+        result,
+      },
+    );
     const failure = parseMcpToolError(
       await call("inspect_analysis_view", {
         source: { kind: "inline", evidence },
@@ -691,7 +731,7 @@ it("bounds compact model warnings and omits unselected long labels while retaini
       Buffer.alloc(0),
     ).bytes,
   );
-  const { call } = await connectLocalToolsMcp();
+  const call = await modelMcp.session.call();
   const response = await call("inspect_model_artifact", { path });
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   expect(JSON.stringify(response).length).toBeLessThan(16_000);
@@ -868,7 +908,7 @@ cliTest(
   "shares scoped model facts through real CLI/MCP and pages retained metadata after source removal",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-cli-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     for (const [format, fixture] of [
       ["gguf", ggufFixture()],
       ["safetensors", safetensorsFixture()],
@@ -892,13 +932,13 @@ cliTest(
         ],
       });
       expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = toolContract(
-        "inspect_model_artifact",
-      ).outputSchema.parse(result.json);
+      const evidence = INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(
+        result.json,
+      );
       const report = modelArtifactSchema.parse(evidence.normalized_result);
       expect(report.format).toBe(format);
       expect(report.artifact.sha256).toBeNull();
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       const complete = await call("inspect_model_artifact", {
         path,
         detail: "complete",
@@ -914,7 +954,7 @@ cliTest(
       });
       expect(hashed.isError, JSON.stringify(hashed)).not.toBe(true);
       expect(
-        parseEvidence(hashed.structuredContent).subject?.digest.sha256,
+        fileIdentity(parseEvidence(hashed.structuredContent).subject).sha256,
       ).toBe(createHash("sha256").update(fixture.bytes).digest("hex"));
       const summary = await call("inspect_model_artifact", { path });
       expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
@@ -965,7 +1005,7 @@ cliTest(
   "preserves optional safetensors fields and aligns empty GGUF data in CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-boundary-compat-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const safetensors = safetensorsFixture(
       '{"__metadata__":null,"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":{"source":"local","flags":[null,false,-1,1.25]}}}',
       Buffer.alloc(4),
@@ -993,7 +1033,7 @@ cliTest(
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const report = modelArtifactSchema.parse(
-        toolContract("inspect_model_artifact").outputSchema.parse(result.json)
+        INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(result.json)
           .normalized_result,
       );
       if (name.endsWith("safetensors")) {
@@ -1041,7 +1081,7 @@ cliTest(
     });
     expect(mapCli.exitCode, mapCli.stderr).toBe(0);
     const mapReport = modelArtifactSchema.parse(
-      toolContract("inspect_model_artifact").outputSchema.parse(mapCli.json)
+      INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(mapCli.json)
         .normalized_result,
     );
     expect(
@@ -1072,17 +1112,13 @@ cliTest(
       });
       expect(malformedCli.exitCode).toBe(1);
       expect(malformedCli.json).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
       const malformedMcp = parseMcpToolError(
         await call("inspect_model_artifact", { path: malformedPath }),
       );
       expect(malformedMcp.error).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
     }
   },
@@ -1092,7 +1128,7 @@ cliTest(
   "inspects unpadded zero-tensor vocab GGUF through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-vocab-only-");
-    const { call } = await connectLocalToolsMcp();
+    const call = await modelMcp.session.call();
     const base = ggufFixture();
     const vocab = ggufFixture({
       tensors: [],
@@ -1132,9 +1168,8 @@ cliTest(
       });
       expect(cliResult.exitCode, cliResult.stderr).toBe(0);
       const report = modelArtifactSchema.parse(
-        toolContract("inspect_model_artifact").outputSchema.parse(
-          cliResult.json,
-        ).normalized_result,
+        INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(cliResult.json)
+          .normalized_result,
       );
       expect(report.metadata.map(({ key, value }) => ({ key, value }))).toEqual(
         [
@@ -1182,17 +1217,13 @@ cliTest(
       });
       expect(cliResult.exitCode).toBe(1);
       expect(cliResult.json).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
       const mcpResult = parseMcpToolError(
         await call("inspect_model_artifact", { path }),
       );
       expect(mcpResult.error).toMatchObject({
-        code: "target_unavailable",
-        category: "unsupported_target",
-        details: { constraint: "file_format_rejected" },
+        ...MALFORMED_MODEL,
       });
     }
   },
@@ -1271,9 +1302,7 @@ cliTest(
       await call("inspect_model_artifact", { path }),
     );
     expect(malformed.error).toMatchObject({
-      code: "target_unavailable",
-      category: "unsupported_target",
-      details: { constraint: "file_format_rejected" },
+      ...MALFORMED_MODEL,
     });
   },
 );

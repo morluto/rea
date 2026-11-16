@@ -200,7 +200,7 @@ it("reports invalid packed Python syntax with the member filename", async () => 
 it.each(["valid", "invalid"] as const)(
   "parses %s source under an owned private root and preserves owner cleanup",
   async (kind) => {
-    expect(privateRuntimeRootCapability().available).toBe(true);
+    expect(privateRuntimeRootCapability(process.platform).available).toBe(true);
     const input = await fixture(
       kind === "valid" ? validSource : "def broken(:\n",
     );
@@ -221,7 +221,9 @@ it.each(["valid", "invalid"] as const)(
           expectedPythonCommandFailure("SyntaxError"),
         );
       expect(await readdir(root.path)).toEqual(["pack"]);
-      expect(await readFile(tarball)).toEqual(await readFile(input.tarball));
+      expect(
+        Buffer.compare(await readFile(tarball), await readFile(input.tarball)),
+      ).toBe(0);
     }, [() => (commands === undefined ? root.close() : commands.close())]);
     await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
   },

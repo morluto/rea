@@ -9,6 +9,7 @@ import {
   execFileOutput,
 } from "../../../../src/process/ExecFileOutput.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { AdbInputSnapshotFailure } from "../../../../src/adb/AdbInputSnapshot.js";
@@ -129,7 +130,6 @@ test("retains failed snapshot cleanup ownership and retries it on close", async 
   });
 
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected snapshot cleanup failure");
   expect(result.error.cleanupResources).toContain(dirname(f.snapshotPath()));
   const evidence = parseEvidence(result.error.partialObservation);
@@ -144,9 +144,9 @@ test("retains failed snapshot cleanup ownership and retries it on close", async 
       sha256: f.digest,
     },
   });
-  await expect(readFile(f.snapshotPath())).resolves.toEqual(
-    await readFile(f.source),
-  );
+  expect(
+    Buffer.compare(await readFile(f.snapshotPath()), await readFile(f.source)),
+  ).toBe(0);
 
   await f.provider.close();
   await expect(lstat(dirname(f.snapshotPath()))).rejects.toMatchObject({
@@ -359,7 +359,6 @@ test.each([
     const result = await f.provider.execute(f.request, {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected snapshot operation failure");
     expect(result.error._tag).toBe(tag);
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -372,9 +371,10 @@ test.each([
     const secondary = result.error.secondaryFailures[0];
     expect(secondary).toBeInstanceOf(AnalysisOutputError);
     expect(secondary?.cause).toBeInstanceOf(AdbInputSnapshotFailure);
-    expect(
-      (secondary?.cause as AdbInputSnapshotFailure).cleanupCause,
-    ).toBeDefined();
+    const snapshotFailure = secondary?.cause;
+    if (!(snapshotFailure instanceof AdbInputSnapshotFailure))
+      throw new Error("Expected snapshot cleanup failure");
+    expect(snapshotFailure.cleanupCause).toBeDefined();
   },
 );
 
@@ -436,7 +436,6 @@ test.each([
       },
       cancelDuringClose ? { signal: controller.signal } : undefined,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected retained digest cleanup failure");
     expect(result.error._tag).toBe(
       cancelDuringClose ? "AnalysisCancelledError" : "ProviderAdapterError",
@@ -464,7 +463,7 @@ test.each([
             }),
       },
     });
-    await expect(readFile(localPath)).resolves.toEqual(pulledBytes);
+    expect(Buffer.compare(await readFile(localPath), pulledBytes)).toBe(0);
     const originatingError = result.error;
     await f.provider.close();
     expect(closeAttempts).toBe(failClose ? 2 : 1);
@@ -546,7 +545,9 @@ test.each([false, true])(
       throw new Error("expected retained package digest cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(!cancelDuringClose);
     if (cancelDuringClose) {
-      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(primaryAnalysisError(result.error)._tag).toBe(
+        "AnalysisCancelledError",
+      );
       expect(result.error.cause).toBe(reason);
       expect(result.error.cleanupResources).toEqual([]);
     }
@@ -612,7 +613,6 @@ test("resolves package-directory cleanup on the originating pull error", async (
       output_directory: outputDirectory,
     },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected pull and cleanup failure");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toContain(packageDirectory);
@@ -651,9 +651,10 @@ test.each([false, true])(
     const result = await f.provider.execute(f.request, {
       signal: controller.signal,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected cancellation");
-    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(primaryAnalysisError(result.error)._tag).toBe(
+      "AnalysisCancelledError",
+    );
     if (failCleanup) {
       expect(result.error.cause).toBeInstanceOf(AggregateError);
       const causes = (result.error.cause as AggregateError).errors as [
@@ -681,7 +682,12 @@ test.each([false, true])(
         dirname(f.snapshotPath()),
       );
     else expect(result.error.cleanupIncomplete).toBe(false);
-    expect(await readFile(f.source)).toEqual(Buffer.from("immutable payload"));
+    expect(
+      Buffer.compare(
+        await readFile(f.source),
+        Buffer.from("immutable payload"),
+      ),
+    ).toBe(0);
     await f.provider.close();
   },
 );
@@ -711,10 +717,12 @@ test("cancels after the input snapshot copy and before contacting the device", a
   const result = await f.provider.execute(f.request, {
     signal: controller.signal,
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected cancellation");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
+  expect(primaryAnalysisError(result.error)._tag).toBe(
+    "AnalysisCancelledError",
+  );
   expect(execFileOutput).toHaveBeenCalledTimes(1);
+  expect(execFileBytes).not.toHaveBeenCalled();
   expect(await readFile(f.source, "utf8")).toBe("immutable payload");
   await f.provider.close();
 });
@@ -738,10 +746,10 @@ test("reports input snapshot capacity failures before contacting the device", as
   });
 
   const result = await f.provider.execute(f.request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected snapshot capacity failure");
   expect(result.error._tag).toBe("AnalysisOutputError");
   expect(result.error.cause).toBe(capacityFailure);
   expect(execFileOutput).toHaveBeenCalledTimes(1);
+  expect(execFileBytes).not.toHaveBeenCalled();
   await f.provider.close();
 });

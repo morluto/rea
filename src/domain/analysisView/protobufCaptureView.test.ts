@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { createEvidence } from "../evidence.js";
 import { projectAnalysisView } from "./analysisView.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
@@ -113,6 +114,7 @@ const capture = async () => {
   return {
     report,
     parent: {
+      predicateType: evidence.predicate_type,
       evidenceId: evidence.evidence_id,
       operation: evidence.operation,
       normalizedResult: report,
@@ -207,7 +209,12 @@ it("omits large values by default, returns requested text inline and preserves p
     items: [{ text: "hello", body_status: "partial" }],
   });
   const changedSubject = projectAnalysisView(
-    { ...parent, subject: { ...parent.subject!, local_path: "/other.har" } },
+    {
+      ...parent,
+      subject: changedEvidenceSubject(parent.subject, {
+        sha256: "e".repeat(64),
+      }),
+    },
     { kind: "protobuf", collection: "bodies", offset: 0, limit: 1 },
   );
   expect(changedSubject.ok).toBe(false);

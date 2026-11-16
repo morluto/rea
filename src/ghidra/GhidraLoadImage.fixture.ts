@@ -1,3 +1,4 @@
+import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import { createHash } from "node:crypto";
 import { dosMz } from "../domain/binaryTarget.fixture.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
@@ -21,7 +22,7 @@ export const compareDosFixture = (
     return err(
       "Ghidra load-image snapshot digest does not match the admitted target",
     );
-  const image = prepareGhidraDosLoadImage(bytes, bytes.length);
+  const image = prepareGhidraDosLoadImage(bytes, parseMzHeaderEvidence(bytes));
   if (!image.ok) return image;
   return attestGhidraDosLoadImage(
     {
@@ -141,6 +142,7 @@ export const fixtureDosLoadImage = (
           offset: 9,
           status: "APPLIED",
           type: 0,
+          symbol: null,
           values: [0, 9, 0x1004],
           original_bytes_hex: "0400",
           memory_bytes_hex: "0410",
@@ -199,6 +201,7 @@ export const fixtureDosOverlapLoadImage = () => {
       offset: 9,
       status: "APPLIED",
       type: 0,
+      symbol: null,
       values: [0, 9, 0x1004],
       original_bytes_hex: "0400",
       memory_bytes_hex: "1410",
@@ -209,6 +212,7 @@ export const fixtureDosOverlapLoadImage = () => {
       offset: 8,
       status: "APPLIED",
       type: 0,
+      symbol: null,
       values: [0, 8, 0x1400],
       original_bytes_hex: "0004",
       memory_bytes_hex: "0014",

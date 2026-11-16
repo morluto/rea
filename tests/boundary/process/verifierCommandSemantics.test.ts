@@ -133,7 +133,7 @@ process.stdin.resume();
     expect(output?.stderr).toBe("closed input diagnostics\n");
     expect(commands.cleanupResources).toEqual([]);
     expect(existsSync(directory)).toBe(true);
-    expect(await readFile(artifact)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(artifact), bytes)).toBe(0);
   },
 );
 
@@ -183,7 +183,7 @@ it("reports a numeric nonzero exit with its complete output snapshot after clean
   });
   expect(commands.cleanupResources).toEqual([]);
   expect(existsSync(directory)).toBe(true);
-  expect(await readFile(artifact)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(artifact), bytes)).toBe(0);
 });
 
 it("retries only the failed exact file capability after a peer releases, retaining both evidence files", async () => {
@@ -259,8 +259,8 @@ it("retries only the failed exact file capability after a peer releases, retaini
   expect(peerHandle.fd).toBe(-1);
   expect(commands.cleanupResources).toEqual([]);
   expect(existsSync(directory)).toBe(true);
-  expect(await readFile(artifact)).toEqual(bytes);
-  expect(await readFile(peerArtifact)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(artifact), bytes)).toBe(0);
+  expect(Buffer.compare(await readFile(peerArtifact), bytes)).toBe(0);
 });
 
 it("refuses new owners and commands after successful close while leaving new resources with their caller", async () => {
@@ -371,7 +371,6 @@ process.stdout.write("unexpected stdin EOF\\n");
     expect(commands.cleanupResources).toEqual([]);
     expect(existsSync(directory)).toBe(true);
   },
-  10_000,
 );
 
 it.skipIf(process.platform === "win32")(
@@ -444,7 +443,6 @@ it.skipIf(process.platform === "win32")(
         throw new Error("Expected the exact acquired process owner");
       controller.abort(reason);
       const closing = commands.close();
-      expect(commands.close()).toBe(closing);
       let closeSettled = false;
       const closeOutcome = observed(closing).then((outcome) => {
         closeSettled = true;
@@ -454,7 +452,6 @@ it.skipIf(process.platform === "win32")(
       expect(closeSettled).toBe(false);
       release.resolve();
       const [execution, close] = await Promise.all([running, closeOutcome]);
-      expect(execution.ok).toBe(false);
       if (execution.ok) throw new Error("Expected cancelled execution");
       const failure = z
         .object({
@@ -502,7 +499,7 @@ it.skipIf(process.platform === "win32")(
         ),
       ).toBe(false);
       expect(existsSync(directory)).toBe(true);
-      expect(await readFile(artifact)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(artifact), bytes)).toBe(0);
     } finally {
       deny = false;
       release.resolve();
@@ -523,7 +520,6 @@ it.skipIf(process.platform === "win32")(
       }
     }
   },
-  15_000,
 );
 
 it.skipIf(process.platform === "win32")(

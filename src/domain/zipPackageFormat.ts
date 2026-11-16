@@ -1,3 +1,9 @@
+import {
+  zipEndOfCentralDirectoryCandidates,
+  ZIP_EOCD_BYTES,
+  ZIP_MAX_COMMENT_BYTES,
+} from "./zipEndOfCentralDirectory.js";
+
 /** ZIP-backed application package families that share the hardened archive reader. */
 export const ZIP_PACKAGE_FORMATS = [
   "zip",
@@ -27,11 +33,8 @@ export const hasZipSignature = (bytes: Uint8Array): boolean =>
     (bytes[2] === 0x06 && bytes[3] === 0x06) ||
     (bytes[2] === 0x07 && bytes[3] === 0x08));
 
-const END_OF_CENTRAL_DIRECTORY = 0x06054b50;
 const CENTRAL_DIRECTORY_HEADER = 0x02014b50;
 const LOCAL_FILE_HEADER = 0x04034b50;
-const END_RECORD_BYTES = 22;
-const MAXIMUM_COMMENT_BYTES = 0xffff;
 const CENTRAL_HEADER_BYTES = 46;
 
 /** Positional read of at most `length` bytes; a short result means end of file. */
@@ -51,29 +54,24 @@ export const locateTrailingZipArchive = async (
   size: number,
   read: PositionalRead,
 ): Promise<{ readonly leadingBytes: number } | undefined> => {
-  if (!Number.isSafeInteger(size) || size < END_RECORD_BYTES) return undefined;
-  const tailStart = Math.max(
-    0,
-    size - END_RECORD_BYTES - MAXIMUM_COMMENT_BYTES,
-  );
+  if (!Number.isSafeInteger(size) || size < ZIP_EOCD_BYTES) return undefined;
+  const tailStart = Math.max(0, size - ZIP_EOCD_BYTES - ZIP_MAX_COMMENT_BYTES);
   const tail = Buffer.from(await read(tailStart, size - tailStart));
   if (tail.length !== size - tailStart) return undefined;
   // A comment may contain EOCD-like bytes; validate each candidate's directory.
-  for (let record = tail.length - END_RECORD_BYTES; record >= 0; record -= 1) {
+  for (const candidate of zipEndOfCentralDirectoryCandidates(tail)) {
+    const {
+      offset: record,
+      entriesOnDisk,
+      directorySize: directoryBytes,
+      directoryOffset: declaredDirectory,
+    } = candidate;
     if (
-      tail.readUInt32LE(record) !== END_OF_CENTRAL_DIRECTORY ||
-      record + END_RECORD_BYTES + tail.readUInt16LE(record + 20) !== tail.length
-    )
-      continue;
-    const entriesOnDisk = tail.readUInt16LE(record + 8);
-    const directoryBytes = tail.readUInt32LE(record + 12);
-    const declaredDirectory = tail.readUInt32LE(record + 16);
-    if (
-      tail.readUInt16LE(record + 4) !== 0 ||
-      tail.readUInt16LE(record + 6) !== 0 ||
+      candidate.disk !== 0 ||
+      candidate.directoryDisk !== 0 ||
       entriesOnDisk === 0 ||
       entriesOnDisk === 0xffff ||
-      entriesOnDisk !== tail.readUInt16LE(record + 10) ||
+      entriesOnDisk !== candidate.totalEntries ||
       directoryBytes === 0xffffffff ||
       declaredDirectory === 0xffffffff
     )
@@ -105,7 +103,7 @@ export const locateTrailingZipArchive = async (
  * is intentionally absent: the suffix also names HTTP Archive JSON, so a
  * Harmony shared archive is only established from verified ZIP bytes. The
  * HarmonyOS App Pack suffix `.app` is also absent here: it applies only to
- * root inputs (see `classifyAndHashRoot`), because a nested ZIP entry ending
+ * root inputs (see `classifyAndHashRootForInventory`), because a nested ZIP entry ending
  * in `.app` inside another package, such as an IPA, is not an App Pack.
  */
 export const zipPackageFormatForPath = (

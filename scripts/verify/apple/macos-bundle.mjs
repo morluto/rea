@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createPackageVerifierCommands } from "../../lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import {
   artifactCliEvidence,
@@ -18,11 +17,11 @@ import { verifyDyldEnvironment } from "./dyld-environment.mjs";
 import { verifyDylibResolution } from "./macos-dylib-e2e.mjs";
 import { verifyMachOOccurrences } from "./macho-occurrences.mjs";
 import { verifyNativeProvenance } from "./native-provenance.mjs";
-
-const exec = promisify(execFile);
+import { VerifierFixture } from "../../lib/verifier-fixture.mjs";
 
 await preflightMacosBundleFixture();
-const root = await mkdtemp(join(tmpdir(), "rea-macos-bundle-"));
+const fixture = await VerifierFixture.open({ prefix: "rea-macos-bundle-" });
+const root = fixture.path;
 
 /** Bundle roles relative to the application root, independent of the container. */
 const anatomy = (projection, applicationRoot) => {
@@ -67,8 +66,19 @@ const EXPECTED_BUNDLES = [
   ["Contents/XPCServices/Svc.xpc", "xpc-service", "macos-deep", "."],
 ];
 
+const commands = await createPackageVerifierCommands({
+  workspace: {
+    path: root,
+    close: () => fixture.release(),
+  },
+});
+const exec = (command, args) =>
+  commands.exec(command, args, {
+    timeout: 120_000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
 let report;
-try {
+await withVerifierCleanup(async () => {
   const { app, executable } = await buildMacosBundleFixture(root);
   const nativeProvenance = await verifyNativeProvenance(app, executable);
   const machoOccurrences = await verifyMachOOccurrences(app, executable);
@@ -112,7 +122,7 @@ try {
       input,
     );
     const projection = evidence.normalized_result;
-    assert.equal(evidence.subject?.format, format);
+    assert.equal(evidence.subject?.identity.format, format);
     assert.equal(projection.root_format, format);
     assert.deepEqual(projection.platforms, ["macos"]);
     assert.deepEqual(projection.application_roots, [applicationRoot]);
@@ -173,7 +183,5 @@ try {
     dylib_resolution: dylibs,
     dyld_environment: dyldEnvironment,
   };
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+}, [() => commands.close()]);
 process.stdout.write(`${JSON.stringify(report)}\n`);

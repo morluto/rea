@@ -1,9 +1,12 @@
 #!/usr/bin/env node
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -22,7 +25,10 @@ if (!process.env.REA_WAKARU_COMMAND)
   );
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("../../rea.mjs", import.meta.url));
-const root = await mkdtemp(join(tmpdir(), "rea-real-recovery-"));
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-real-recovery-",
+});
+const root = rootFixture.path;
 const environment = { ...process.env, REA_LOG_LEVEL: "silent" };
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -51,7 +57,11 @@ const call = async (name, args) => {
 const fingerprint = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const counts = [];
 let finalReport;
-try {
+// The MCP server reads the built fixtures and writes recovered output under
+// the root: the client and its transport close before the root is removed.
+rootFixture.releaseAfter(() => client.close());
+rootFixture.releaseAfter(() => transport.close());
+await withVerifierFixture(rootFixture, async () => {
   const fixtures = await buildRecoveryFixtures(
     root,
     process.env.REA_JAVASCRIPT_FIXTURE_TOOLS,
@@ -165,11 +175,7 @@ try {
     results: counts,
     verified: true,
   };
-} finally {
-  await client.close();
-  await transport.close();
-  await rm(root, { recursive: true, force: true });
-}
+});
 console.log(JSON.stringify(finalReport));
 
 async function assertRecoveredArtifacts(evidence, result, fixture) {

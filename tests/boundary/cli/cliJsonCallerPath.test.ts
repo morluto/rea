@@ -15,8 +15,8 @@ import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 
-import type { BrowserScenarioCapturePort } from "../../../src/application/BrowserScenarioCapturePort.js";
-import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
+import type { BrowserScenarioCapturePort } from "../../../src/ports/BrowserScenarioCapturePort.js";
+import type { ElectronActiveObservationPort } from "../../../src/ports/javascript/ElectronActiveObservationPort.js";
 import { registerBrowserScenarioCommands } from "../../../src/cliBrowserScenarioCommands.js";
 import { registerAnalysisViewCommands } from "../../../src/cli/analysisViewCommands.js";
 import { registerElectronCommands } from "../../../src/cli/electronCommands.js";

@@ -36,6 +36,9 @@ unchecked. Maintainers can help resolve open questions.
 Use "none" or "not applicable" only when established. -->
 
 - Semantic owner and earliest changed stage:
+  <!-- Name the producer of parsed facts or resources and its affected consumers.
+  Summarize superseded paths removed and any distinct policy, lifecycle,
+  lazy-loading, or compatibility responsibility retained. -->
 - Contribution scope fit and linked maintainer decision:
 - CLI and MCP/tool-catalog contract:
 - Provider, bridge, target-format, or platform compatibility:
@@ -68,6 +71,10 @@ source, link, or rendered-document checks. -->
 - User-visible CLI/MCP output (if applicable):
 - Remaining proof gaps:
 
+For boundary fixes, identify the applicable [boundary regressions](https://github.com/morluto/rea/blob/main/docs/development/testing.md#boundary-regressions)
+and [lifecycle regressions](https://github.com/morluto/rea/blob/main/docs/development/testing.md#lifecycle-regressions)
+covered by the evidence above, and explain relevant gaps.
+
 For evidence-bearing changes:
 
 - [ ] Observed, derived, and inferred claims remain distinguishable.
@@ -92,14 +99,15 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
   its new behavior and migration, and why compatibility/deprecation cannot
   preserve it. Every release increments minor, including breaking changes;
   keep breaking markers and migration notes so callers can assess compatibility.
-  See docs/releasing.md. -->
+  See docs/development/releasing.md. -->
 - Real Hopper/Ghidra, browser, or OS coverage:
 - Package or release metadata impact:
 - Security, privacy, process, or containment review:
 
 ## Author readiness
 
-<!-- The human owner completes these declarations before requesting review.
+<!-- The human owner completes these declarations before requesting review,
+unless the PR author is exempt as listed in CONTRIBUTING.md.
 The PR author is the owner by default. A different owner must explicitly accept
 ownership on this PR.
 AI agents must leave these declarations to a human to dictate to them or there could be catastrophic consequences for many users of REA.

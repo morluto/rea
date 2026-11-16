@@ -16,12 +16,6 @@ export const MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS = 4096;
 /** IMAGE_TLS_DIRECTORY byte width for each optional-header magic. */
 export const TLS_STRUCT_BYTES = { 32: 24, 64: 40 } as const;
 
-/**
- * IMAGE_LOAD_CONFIG_DIRECTORY size through GuardMemcpyFunctionPointer.
- * Later fields stay unread; a larger Size does not fail the inspection.
- */
-export const LOAD_CONFIG_KNOWN_STRUCT_BYTES = { 32: 192, 64: 320 } as const;
-
 /** Complete bounded inspection of one PE TLS directory and load configuration. */
 export const inspectPeLoadConfigInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(

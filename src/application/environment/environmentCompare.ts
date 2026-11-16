@@ -1,4 +1,9 @@
-import { decodedSegment } from "../../domain/analysisView/environmentStateRules.js";
+import { boundedList } from "../../domain/boundedList.js";
+import {
+  ownMember,
+  decodedSegment,
+  same,
+} from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { fromJsonSchema } from "@modelcontextprotocol/server";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -57,7 +62,6 @@ import {
   type EnvironmentToolAnswer,
 } from "./environmentToolAnswer.js";
 import type { EnvironmentToolDefinition } from "./environmentTools.js";
-import { same } from "../../domain/analysisView/environmentStateRules.js";
 
 /** One probe capture file: its label for the report and its parsed JSON. */
 export interface CompareProbeInput {
@@ -78,6 +82,10 @@ export interface CompareStep {
   readonly equal_ignoring_order: boolean;
   readonly categories: DifferenceCategory[];
   readonly differences: Difference[];
+  /** All differences computed for this step, before the returned list is capped. */
+  readonly differences_total: number;
+  readonly differences_omitted: number;
+  readonly differences_truncated: boolean;
   readonly ignored_query: string[];
 }
 
@@ -238,7 +246,7 @@ const answersCall = (
   const body = probeArguments(call.tool, run.bodies).body;
   // A tool with no body parameter matches; one that takes a body matches only the body this call sent, including none.
   if (body === undefined) return true;
-  return same(run.recordedBodies.get(exchange.ordinal), args[body]);
+  return same(run.recordedBodies.get(exchange.ordinal), ownMember(args, body));
 };
 
 /** A served tool's input check: the first problem with a call's arguments, or undefined. */
@@ -284,6 +292,10 @@ const stepOf = (
   outcome: { env_status: number | null; differences: Difference[] },
 ): CompareStep => {
   const categories = [...new Set(outcome.differences.map((d) => d.category))];
+  const { items: differences, omitted } = boundedList(
+    outcome.differences,
+    STEP_DIFFERENCE_LIMIT,
+  );
   return {
     ...base,
     tool: call?.tool.name ?? null,
@@ -293,7 +305,11 @@ const stepOf = (
       (difference) => difference.category === "order",
     ),
     categories,
-    differences: outcome.differences.slice(0, STEP_DIFFERENCE_LIMIT),
+    differences: [...differences],
+    differences_total: outcome.differences.length,
+    differences_omitted: omitted,
+    differences_truncated: omitted > 0,
+    // optional-fact-default: with no matched call (tool null) no query was mapped.
     ignored_query: [...(call?.ignoredQuery ?? [])],
   };
 };
@@ -346,7 +362,7 @@ const compareStep = (
     });
   const held = heldIds(run.store);
   const unknownPath = call.pathArguments.some((name) => {
-    const value = call.args[name];
+    const value = ownMember(call.args, name);
     if (typeof value !== "string") return false;
     const id = decodedSegment(value);
     return !run.map.hasEnv(id) && !held.has(id);

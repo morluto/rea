@@ -1,13 +1,14 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
-import { analyzeJavaScriptStaticSource } from "../javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { completeSemanticSteps } from "../javascript/javascriptSemanticTraversal.js";
 import { buildJavaScriptRouteInventorySteps } from "../javascript/javascriptRouteInventory.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
-import {
-  projectAnalysisView,
-  analysisViewRequestSchema,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisError } from "../analysisErrorProjection.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const inventory = (
   text = `createBrowserRouter([{path:'/reports',children:[{path:':id'},{path:'settings'}]}]);router.push('/login');`,
@@ -27,6 +28,7 @@ const inventory = (
     ]),
   );
 const parent = (): AnalysisViewParent => ({
+  predicateType: "rea.javascript-application-analysis",
   evidenceId: `ev_${"b".repeat(64)}`,
   operation: "analyze_javascript_application",
   limitations: [],
@@ -150,7 +152,7 @@ it("accepts captured-page Evidence with an explicitly absent local artifact", ()
     {
       ...parent(),
       operation: "analyze_web_bundle",
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
       normalizedResult: {
         capture: { target_url: "https://example.test/" },
         route_inventory: inventory(),
@@ -176,13 +178,12 @@ it("checks subject identity again after warming an immutable parent", () => {
   const result = projectAnalysisView(
     {
       ...sealed,
-      subject: {
+      subject: evidenceSubject({
         name: "app",
-        local_path: "/different",
-        digest: { sha256: "c".repeat(64) },
+        path: "/different",
+        sha256: "d".repeat(64),
         format: "javascript-bundle",
-        architecture: null,
-      },
+      }),
     },
     analysisViewRequestSchema.parse({
       kind: "javascript-routes",
@@ -264,9 +265,48 @@ it("returns a typed retained-parent resource error when even a summary identity 
       collection: "summary",
     }),
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a resource error");
   expect(result.error.message).toContain("cannot fit");
+});
+
+it("explains how to recover an oversized route row without changing the parent", () => {
+  const source = {
+    ...parent(),
+    normalizedResult: {
+      input_path: "/gone/app",
+      root_artifact_sha256: "c".repeat(64),
+      route_inventory: inventory(`router.push('/${"a".repeat(1_100_000)}');`),
+    },
+  };
+  const selection = { collection: "routes", limit: 1 };
+  const result = projectAnalysisView(
+    source,
+    analysisViewRequestSchema.parse({
+      kind: "javascript-routes",
+      ...selection,
+    }),
+  );
+  if (result.ok) throw new Error("Expected an oversized-row refusal");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: {
+        parent_evidence_id: source.evidenceId,
+        limit_bytes: 1024 * 1024,
+      },
+    },
+  });
+  expect(projected.remediation.action).toContain("select fewer fields");
+  expect(projected.remediation.action).toContain("no runtime override");
+  expect(projected.remediation.action).toContain("caller-supplied bundle");
+  const narrow = query(source, {
+    ...selection,
+    fields: ["classification", "confidence"],
+  });
+  expect(narrow.items).toHaveLength(1);
+  expect(narrow.items[0]).not.toHaveProperty("path");
 });
 
 it.each(["summary", "routes"] as const)(
@@ -295,7 +335,6 @@ it.each(["summary", "routes"] as const)(
         ...selection,
       }),
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a sealed-page resource error");
     expect(result.error.message).toContain("cannot fit");
   },

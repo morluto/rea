@@ -2,7 +2,7 @@
 
 REA ships one Windows x64 Node-API 8 addon. Users do not compile it or install
 another runtime. Ghidra and a full JDK remain bring-your-own prerequisites.
-The addon uses Windows 10+ APIs and admits fixed local NTFS volumes only.
+The addon uses Windows 10+ APIs and admits fixed local NTFS/ReFS volumes only.
 
 The package owns the artifact path. The loader checks the package version,
 ABI, Node-API compatibility, PE architecture, and SHA-256 before loading it.
@@ -54,9 +54,9 @@ automatically. Alternatively, build it using the Linux/MinGW lane above.
 - Opaque Node objects carry a native type tag, resource kind, and closed state.
   A pathname, serialized object, or forged handle cannot grant authority.
 - Input admission opens every component with `OPEN_REPARSE_POINT`, verifies
-  the actual NTFS object, and retains handles that deny replacement and source
+  the actual NTFS/ReFS object, and retains handles that deny replacement and source
   writing. An admitted child keeps each ancestor nonempty; ancestor handles
-  permit unrelated writes while NTFS rejects in-place reparse conversion. Volume serial, 128-bit file ID, final handle path,
+  permit unrelated writes while NTFS/ReFS rejects in-place reparse conversion. Volume serial, 128-bit file ID, final handle path,
   requested path, size, and digest observations are preserved separately.
 - New runtime roots and private child objects are created relative to admitted
   parent handles with `NtCreateFile`. A protected DACL and current-user owner
@@ -200,7 +200,7 @@ node scripts/verify-windows-native-inspection.mjs
 ```
 
 This artifact injects an access-denied disposition result while using real
-NTFS directories, and separately denies post-create validation and rollback.
+NTFS/ReFS directories, and separately denies post-create validation and rollback.
 The verifier checks retained ownership after inspection and direct runtime
 creation failures, recovery on later admission, cached successful inspection,
 and cleanup on environment teardown. It
@@ -221,8 +221,12 @@ and the wrapper's exit event), and a control under the same limit that
 completes normally.
 A separately built `tests/fixtures/windows/processBoundary.cc` executable adds
 breakaway, caller/child token and environment semantics observations and an
-in-place ancestor reparse attempt. The lane skips all of them when the
-executable is absent, so both Windows workflows cross-build it in the same
+in-place ancestor reparse attempt. It independently reports the volume's
+filesystem and persistent ACL support so the verifier can check source, runtime,
+inspection and snapshot identities. When `REA_TEST_CROSS_VOLUME_SOURCE` names a
+fixture on the other admitted volume, the verifier also proves that snapshot
+source and destination identities remain distinct. The lane skips these
+additional observations when the executable is absent, so both Windows workflows cross-build it in the same
 MinGW job that builds their artifact and pass it: the capability and package
 lane in `.github/workflows/ci.yml`, and the real Ghidra proof run in
 `.github/workflows/real-ghidra-windows.yml`. Build it locally with any Windows
@@ -231,6 +235,12 @@ C++ compiler, or the same way they do, and pass its path:
 ```powershell
 node scripts/verify-windows-native.mjs . C:\fixtures\process-boundary.exe
 ```
+
+The capability lane runs native behavior and inspection-recovery proofs after
+the verified artifact and runtime build, before the broad curated test group.
+An unrelated curated failure therefore cannot hide those real native checks.
+Inert PE identity fixtures are shared under `tests/fixtures/`; they exercise
+artifact admission and simulated loader outcomes, never native authority.
 
 `nonAdminRunner.cc` is a test-only launcher for an elevated development shell.
 It duplicates an existing non-elevated Explorer token belonging to the same

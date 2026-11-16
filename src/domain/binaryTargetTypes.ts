@@ -1,5 +1,8 @@
 import type { DolHeader } from "./gamecubeDol.js";
-import type { ZipPackageFormat } from "./zipPackageFormat.js";
+import {
+  ZIP_PACKAGE_FORMATS,
+  type ZipPackageFormat,
+} from "./zipPackageFormat.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
@@ -14,6 +17,7 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
   "m68k",
   "hexagon",
+  "xtensa",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -62,10 +66,19 @@ export const isElfMetadataArchitecture = (
 ): architecture is ElfMetadataArchitecture =>
   (ELF_METADATA_ARCHITECTURES as readonly string[]).includes(architecture);
 
-/** Recognized family with no ELF metadata member; the header alone is the fact. */
+/** Families that require a specialized target variant instead of generic headers. */
+export const HEADER_ARCHITECTURE_EXCLUSIONS = [
+  ...ELF_METADATA_ARCHITECTURES,
+  ...RAW_ONLY_ARCHITECTURES,
+  "hexagon",
+  "xtensa",
+  "arm64_32",
+] as const satisfies readonly BinaryArchitecture[];
+
+/** Recognized family with no specialized target member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon" | "arm64_32"
+  (typeof HEADER_ARCHITECTURE_EXCLUSIONS)[number]
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
@@ -86,6 +99,32 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
       }
     | { readonly status: "unavailable"; readonly reason: string };
 }
+
+/** Raw ELF facts; family recognition does not establish ISA or ABI support. */
+export interface RiscvElfMetadata extends ElfFamilyMetadata {
+  /** Undefined until `.riscv.attributes` is inspected. */
+  readonly isa?: RiscvIsaDeclaration;
+}
+
+/** The ISA an image declares in `.riscv.attributes`; not proof of every instruction. */
+export type RiscvIsaDeclaration =
+  | {
+      readonly status: "declared";
+      /** `Tag_RISCV_arch` exactly as declared. */
+      readonly arch: string;
+      readonly xlen: 32 | 64;
+      readonly base: "i" | "e";
+      /** Extension names in declaration order, without versions. */
+      readonly extensions: readonly string[];
+    }
+  /** Every section header was examined and none declares `Tag_RISCV_arch`. */
+  | { readonly status: "absent" }
+  | {
+      readonly status: "unavailable";
+      readonly reason: string;
+      /** The declared string, when one was read but not understood. */
+      readonly arch?: string;
+    };
 
 /** Declared fields of the 24-byte MIPS ABI flags record, not inferred semantics. */
 export interface MipsAbiFlags {
@@ -110,24 +149,23 @@ export interface MipsGnuAttributes {
   readonly msa: number | null;
 }
 
-/**
- * ELF class and flags retain the width and ABI declarations used by this lane.
- * ISA extensions in `.riscv.attributes` are not inspected by this header parser.
- */
-export type RiscvElfMetadata = ElfFamilyMetadata;
-
-/** Raw PowerPC declarations; family identity does not select a processor variant. */
-export type PowerPcElfMetadata = ElfFamilyMetadata;
-
 /** Byte range of the selected slice inside its universal Mach-O container. */
 export interface UniversalMachOSlice {
   readonly offset: number;
   readonly size: number;
 }
 
+/** FAT-table identity; CPU family alone cannot identify a universal slice. */
+export interface UniversalMachOSliceIdentity extends UniversalMachOSlice {
+  readonly cpuType: number;
+  readonly cpuSubtype: number;
+}
+
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
+  /** Selected artifact spelling determines name-based format hints and external companions. */
+  readonly artifactSelectedPath?: string;
   /** Info.plist of the app bundle the target was resolved from. */
   readonly bundleInfoPlist?: string;
   readonly sha256: string;
@@ -174,7 +212,8 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "powerpc";
       readonly availableArchitectures: readonly "powerpc"[];
-      readonly powerpc: PowerPcElfMetadata;
+      /** Family identity does not select a processor variant. */
+      readonly powerpc: ElfFamilyMetadata;
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -183,6 +222,14 @@ export type BinaryTarget =
       readonly format: "elf";
       readonly architecture: "hexagon";
       readonly availableArchitectures: readonly "hexagon"[];
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -205,6 +252,8 @@ export type BinaryTarget =
       readonly format: "mach-o-universal";
       /** Selected slice range a provider must analyze instead of the container. */
       readonly universalSlice: UniversalMachOSlice;
+      /** Exact validated FAT declarations, when supplied by target admission. */
+      readonly universalSlices?: readonly UniversalMachOSliceIdentity[];
       readonly executableRole?: never;
       readonly managed?: never;
     })
@@ -262,9 +311,27 @@ export type BinaryTarget =
         readonly format:
           | ZipPackageFormat
           | "asar"
+          | "ines"
           | "godot-pck"
+          | "unityfs"
+          | "wxapkg"
+          | "uimage"
           | "dmg"
-          | "pkg";
+          | "pkg"
+          | "intel-hex"
+          | "srec"
+          | "esp-image"
+          | "uf2"
+          | "dfuse"
+          | "fit"
+          | "ntfs-mft";
+      })
+  | (BinaryTargetIdentity &
+      NonExecutableMetadata & {
+        readonly kind: "archive";
+        readonly format: "esp-flash-image";
+        /** How the dump is read; null inputs take their defaults. */
+        readonly espFlash: EspFlashTargetSelection;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {
@@ -272,8 +339,73 @@ export type BinaryTarget =
         readonly format: "plist" | "javascript" | "source-map";
       });
 
+/** The kind of every target variant that may carry `Format`. */
+type TargetKindOf<Format> = BinaryTarget extends infer Target
+  ? Target extends { readonly format: infer Formats; readonly kind: infer Kind }
+    ? Format extends Formats
+      ? Kind
+      : never
+    : never
+  : never;
+
+/**
+ * The one kind each target format has. A target, snapshot or identity whose
+ * kind disagrees with its format is malformed.
+ */
+export const BINARY_TARGET_FORMAT_KINDS = {
+  "analysis-database": "database",
+  "mach-o": "executable",
+  "mach-o-universal": "executable",
+  elf: "executable",
+  pe: "executable",
+  "dos-mz": "executable",
+  "dos-com": "executable",
+  "raw-binary": "executable",
+  "gamecube-dol": "executable",
+  ...(Object.fromEntries(
+    ZIP_PACKAGE_FORMATS.map((format) => [format, "archive"]),
+  ) as Record<ZipPackageFormat, "archive">),
+  asar: "archive",
+  ines: "archive",
+  "godot-pck": "archive",
+  unityfs: "archive",
+  wxapkg: "archive",
+  uimage: "archive",
+  dmg: "archive",
+  pkg: "archive",
+  "intel-hex": "archive",
+  srec: "archive",
+  "esp-image": "archive",
+  uf2: "archive",
+  dfuse: "archive",
+  "esp-flash-image": "archive",
+  fit: "archive",
+  "ntfs-mft": "archive",
+  plist: "artifact",
+  javascript: "artifact",
+  "source-map": "artifact",
+} as const satisfies {
+  readonly [Format in BinaryTarget["format"]]: TargetKindOf<Format>;
+};
+
+/** Caller inputs that select how an ESP flash dump is read. */
+export interface EspFlashTargetSelection {
+  /** The caller selected the format, so the table scan runs without a bootloader. */
+  readonly selected: boolean;
+  /** Flash address of the dump's first byte. */
+  readonly flashOffset: number | null;
+  /** Flash address of the partition table. */
+  readonly partitionTableOffset: number | null;
+}
+
 /** Whether an executable target contains a thin or universal Mach-O image. */
 export const isMachOFormat = (
   format: unknown,
 ): format is "mach-o" | "mach-o-universal" =>
   format === "mach-o" || format === "mach-o-universal";
+
+/** Result-affecting artifact selection; canonical packed identity remains target.path. */
+export const artifactTargetSelectedPath = (target: BinaryTarget): string =>
+  target.kind === "archive" || target.kind === "artifact"
+    ? (target.artifactSelectedPath ?? target.sourcePath ?? target.path)
+    : (target.sourcePath ?? target.path);

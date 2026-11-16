@@ -8,25 +8,29 @@ import type {
 } from "../application/environment/environmentExport.js";
 import type { EnvironmentSource } from "../application/environment/environmentSource.js";
 import type { ServedState } from "../application/environment/environmentState.js";
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
-import { parseCliJsonInput } from "../cliJsonInput.js";
+import {
+  CLI_COMMANDS,
+  DEFAULT_INFO_LOGGING_COMMANDS,
+} from "../contracts/cliCommandNames.js";
+import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
+  mcpHttpHostSchema,
+  mcpHttpPortSchema,
   parseMcpHttpEndpoint,
-  mcpHttpListenerPortSchema,
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -35,8 +39,10 @@ import { createLogger } from "../logger.js";
 import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.js";
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField, publishArgvInput } from "./options.js";
 
 /** Same envelope label as the other JSON-input commands and `parseCliJsonInput`. */
 const cliError = (error: AnalysisError): JsonValue => ({
@@ -46,10 +52,12 @@ const cliError = (error: AnalysisError): JsonValue => ({
 
 /** The listener announces its URL, and a build its stages, at info like `rea mcp --http`; an explicit REA_LOG_LEVEL still wins. */
 const infoLogger = (
+  command: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   logger: Logger,
 ): Logger =>
-  environment.REA_LOG_LEVEL === undefined
+  environment.REA_LOG_LEVEL === undefined &&
+  DEFAULT_INFO_LOGGING_COMMANDS.has(command)
     ? createLogger("cli", "info")
     : logger;
 
@@ -67,8 +75,11 @@ const untilAborted = (signal: AbortSignal): Promise<undefined> =>
 export const transportError = (
   endpoint: McpHttpEndpoint,
   cause: StreamableHttpListenError,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
+): AnalysisResourceConstraintError => {
+  const failure = cause.classification.ok
+    ? cause.classification.value
+    : cause.classification.error;
+  return new AnalysisResourceConstraintError(
     CLI_COMMANDS.environmentServe,
     "transport",
     cause.message,
@@ -77,38 +88,22 @@ export const transportError = (
       cause,
       retryable: false,
       diagnostics: {
-        listener_failure: cause.classification.ok
-          ? {
-              kind: cause.classification.value.kind,
-              system_code: cause.classification.value.systemCode,
-            }
-          : {
-              kind: cause.classification.error.kind,
-              ...(cause.classification.error.systemCode === undefined
-                ? {}
-                : { system_code: cause.classification.error.systemCode }),
-            },
+        listener_failure: {
+          kind: failure.kind,
+          ...("systemCode" in failure && failure.systemCode !== undefined
+            ? { system_code: failure.systemCode }
+            : {}),
+          ...(failure.kind === "host_allowlist"
+            ? {
+                reason: failure.reason,
+              }
+            : {}),
+        },
         listener_phase: cause.phase,
       },
-      remediationAction: listenerRemediation(cause.classification),
+      remediationAction: cause.remediationAction,
     },
   );
-
-const listenerRemediation = (
-  classification: StreamableHttpListenError["classification"],
-): string => {
-  if (!classification.ok)
-    return "Check the selected listener host, port, and binding permissions, then retry.";
-  switch (classification.value.kind) {
-    case "host_lookup":
-      return "Check --host or MCP_HOST and host name resolution; correct the value or resolve the lookup failure, then retry.";
-    case "host_unavailable":
-      return "Choose an address assigned to this machine with --host or MCP_HOST, then retry.";
-    case "port_in_use":
-      return "Choose another --port or MCP_PORT, or stop the process using it.";
-    case "permission_denied":
-      return "Choose a host and port this process is permitted to bind; if the selected port is restricted, use an allowed port.";
-  }
 };
 
 interface ServeArguments {
@@ -124,8 +119,8 @@ interface ServeInputs {
   readonly served: ServedState;
 }
 
-const cancelledServe = (): JsonValue =>
-  cliError(new AnalysisCancelledError(CLI_COMMANDS.environmentServe));
+const cancelledServe = (signal: AbortSignal): JsonValue =>
+  cliError(cancelledBy(CLI_COMMANDS.environmentServe, signal));
 
 /** Pure replay, as `--replay-only` asks for: no state is derived. */
 const REPLAY_ONLY: ServedState = {
@@ -149,14 +144,14 @@ const loadServeInputs = async (
   if (!evidence.ok) return evidence;
   const { loadEnvironmentSource } =
     await import("../application/environment/environmentSource.js");
-  if (signal.aborted) return err(cancelledServe());
+  if (signal.aborted) return err(cancelledServe(signal));
   const source = loadEnvironmentSource(manifest.value, evidence.value);
   if (!source.ok) return err(cliError(source.error));
   if (input.replayOnly)
     return ok({ source: source.value, served: REPLAY_ONLY });
   const { prepareServedState } =
     await import("../application/environment/environmentState.js");
-  if (signal.aborted) return err(cancelledServe());
+  if (signal.aborted) return err(cancelledServe(signal));
   return ok({
     source: source.value,
     served: prepareServedState(source.value, evidence.value, {
@@ -172,7 +167,7 @@ const serveEnvironmentCommand = async (
   logger: Logger,
   signal: AbortSignal,
 ): Promise<JsonValue> => {
-  if (signal.aborted) return cancelledServe();
+  if (signal.aborted) return cancelledServe(signal);
   const endpoint = parseMcpHttpEndpoint(environment, {
     ...(input.host === undefined ? {} : { host: input.host }),
     ...(input.port === undefined ? {} : { port: input.port }),
@@ -186,19 +181,23 @@ const serveEnvironmentCommand = async (
     source,
     served: { state, report },
   } = inputs.value;
-  const commandLogger = infoLogger(environment, logger);
+  const commandLogger = infoLogger(
+    CLI_COMMANDS.environmentServe,
+    environment,
+    logger,
+  );
   if (!report.served && report.reason === "unavailable")
     commandLogger.warn(
       { code: report.code, error: report.message },
       "Environment state unavailable; serving recorded replay",
     );
-  if (signal.aborted) return cancelledServe();
+  if (signal.aborted) return cancelledServe(signal);
   // Loaded here so registering the command catalog never loads the HTTP listener.
   const { serveEnvironment } =
     await import("../server/environment/serveEnvironment.js");
   const { StreamableHttpListenError } =
     await import("../server/http/streamableHttpListenError.js");
-  if (signal.aborted) return cancelledServe();
+  if (signal.aborted) return cancelledServe(signal);
   // A listener that fails after binding ends the command instead of serving nothing.
   let failListener: (error: StreamableHttpListenError) => void = () =>
     undefined;
@@ -221,7 +220,8 @@ const serveEnvironmentCommand = async (
     if (!started.ok) return cliError(started.error);
     served = started.value;
   } catch (cause: unknown) {
-    if (signal.aborted && cause === signal.reason) return cancelledServe();
+    if (signal.aborted && cause === signal.reason)
+      return cancelledServe(signal);
     if (!(cause instanceof StreamableHttpListenError)) throw cause;
     return cliError(transportError(endpoint.value, cause));
   }
@@ -242,11 +242,11 @@ const serveEnvironmentCommand = async (
     if (!(cause instanceof AnalysisError)) throw cause;
     if (listenerError !== undefined)
       return cliError(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           listenerError,
           cause,
           CLI_COMMANDS.environmentServe,
-        ).bindCleanupDependencies([cause]),
+        ),
       );
     cause.retainDiagnostics({
       shutdown_observation: { status: "shutdown_requested", ...observation },
@@ -338,28 +338,23 @@ const conflictingRules = (): JsonValue =>
     ]),
   );
 
-const isEvidenceValue = (value: unknown): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  "evidence_id" in value &&
-  "normalized_result" in value;
-
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
+  callerInputPath: string,
   captureTimeoutMs: number | undefined,
   environment: Readonly<NodeJS.ProcessEnv>,
   signal: AbortSignal,
 ): Promise<Result<EnvironmentExportFile, JsonValue>> => {
   const { createWebNetworkCaptureService } =
     await import("../composition/webNetworkCaptures.js");
-  const { parseEvidence } = await import("../domain/evidence.js");
   const { environmentExportEvidenceFile } =
     await import("../application/environment/environmentExport.js");
   const { ENVIRONMENT_BUILD_OPERATION } =
     await import("../application/environment/environmentBuild.js");
   const service = createWebNetworkCaptureService(environment);
-  const inspected = await finishAnalysisCommand(
+  const inspected = await finishCliEvidenceCommand(
+    callerInputPath,
     () =>
       service.inspect(
         {
@@ -376,18 +371,18 @@ const inspectBuildHar = async (
     "inspect_web_network_capture",
     signal,
   );
-  if (!isEvidenceValue(inspected))
+  if (!inspected.ok)
     return err({
       error: "Application workflow failed",
-      ...(inspected as Record<string, JsonValue>),
+      ...inspected.error,
     });
   const file = await environmentExportEvidenceFile(
     "evidence",
     capturePath,
-    parseEvidence(inspected),
+    inspected.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
-  return file.ok ? ok(file.value) : err(cliError(file.error));
+  return file.ok ? file : err(cliError(file.error));
 };
 
 /** Read the capture once, then build or plan the bundle from it. */
@@ -422,7 +417,11 @@ const buildEnvironmentCommand = async (
         ],
       ),
     );
-  const commandLogger = infoLogger(environment, logger);
+  const commandLogger = infoLogger(
+    CLI_COMMANDS.environmentBuild,
+    environment,
+    logger,
+  );
   const progress = (stage: string): void => {
     commandLogger.info({ stage }, "Building environment");
   };
@@ -431,6 +430,7 @@ const buildEnvironmentCommand = async (
     progress("inspect");
     const inspected = await inspectBuildHar(
       capturePath,
+      input.capture,
       input.captureTimeoutMs,
       environment,
       signal,
@@ -444,12 +444,13 @@ const buildEnvironmentCommand = async (
       "evidence",
       capturePath,
       ENVIRONMENT_BUILD_OPERATION,
+      ["capture"],
     );
     if (!read.ok) return cliError(read.error);
     capture = read.value;
   }
   if (signal.aborted)
-    return cliError(new AnalysisCancelledError(CLI_COMMANDS.environmentBuild));
+    return cliError(cancelledBy(CLI_COMMANDS.environmentBuild, signal));
   const captureInput: EnvironmentBuildCaptureInput = kind.value;
   const built = await buildEnvironment({
     capture,
@@ -482,7 +483,7 @@ const registerBuildCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.environmentBuild, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentBuild, {
     description:
       "Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes",
     args: z.object({
@@ -521,8 +522,10 @@ const registerBuildCommand = (
         .boolean()
         .default(false)
         .describe("Run every stage and report, but write nothing"),
-      captureTimeoutMs:
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -605,7 +608,7 @@ const compareEnvironmentCommand = async (
 
 /** Register the comparison of an environment with probe captures of its application. */
 const registerCompareCommand = (cli: CliInstance, logger: Logger): void => {
-  cli.command(CLI_COMMANDS.environmentCompare, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentCompare, {
     description:
       "Compare an environment with probe captures of the application it was captured from: each probe is one call sequence recorded against a freshly reset application, answered by the environment from a reset state, with agreement reported per step, tool and probe",
     args: z.object({ manifest: manifestArgument }),
@@ -631,7 +634,7 @@ const registerCompareCommand = (cli: CliInstance, logger: Logger): void => {
 
 /** Register the one-shot bundle export command. */
 const registerExportCommand = (cli: CliInstance, logger: Logger): void => {
-  cli.command(CLI_COMMANDS.environmentExport, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentExport, {
     description:
       "Export an environment manifest and its capture Evidence as an agent environment bundle folder the agentenv framework runs with agent-env run",
     args: z.object({
@@ -676,7 +679,7 @@ export const registerEnvironmentCommands = (
   registerBuildCommand(cli, logger, environment);
   registerExportCommand(cli, logger);
   registerCompareCommand(cli, logger);
-  cli.command(CLI_COMMANDS.environmentServe, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentServe, {
     description:
       "Serve an environment manifest as an agent environment over streamable HTTP until SIGINT or SIGTERM: read tools, and write tools whose effect the capture confirmed, answer from the state the capture observed, derived at startup, or every tool replays retained capture records with --replay-only or when the state is unavailable",
     args: z.object({ manifest: manifestArgument }),
@@ -688,16 +691,17 @@ export const registerEnvironmentCommands = (
         .describe(
           "Serve pure replay: derive no state, serve every manifest tool from its retained records and answer every /agentenv method as not found",
         ),
-      host: z
-        .string()
-        .min(1)
+      // Flags use the MCP_HOST and MCP_PORT owners shared with rea mcp --http.
+      host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpListenerPortSchema
-        .optional()
-        .describe(
-          "Listener port; default MCP_PORT, else 0 for an ephemeral port",
-        ),
+      port: publishArgvInput(
+        mcpHttpPortSchema
+          .optional()
+          .describe(
+            "Listener port; default MCP_PORT, else 0 for an ephemeral port",
+          ),
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

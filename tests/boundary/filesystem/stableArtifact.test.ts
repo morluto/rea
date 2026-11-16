@@ -10,23 +10,27 @@ import {
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { expect, it, onTestFinished } from "vitest";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import {
   artifactFileCompletion,
   ArtifactFileCleanupFailure,
   ArtifactFileCancelled,
   withArtifactFileHandle,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("reads exact binary and empty bytes and rejects symlink/size/cancellation boundaries", async () => {
   const root = await createTestTempDirectory("rea-stable-artifact-");
   const path = join(root, "source.bin");
   await writeFile(path, Buffer.from([0, 255, 254]));
-  expect((await readStableArtifact(path, 3)).bytes).toEqual(
-    Buffer.from([0, 255, 254]),
-  );
+  expect(
+    Buffer.compare(
+      (await readStableArtifact(path, 3)).bytes,
+      Buffer.from([0, 255, 254]),
+    ),
+  ).toBe(0);
   await expect(readStableArtifact(path, 2)).rejects.toMatchObject({
     reason: "limit",
   });
@@ -125,16 +129,7 @@ it.each(["complete", "fail"] as const)(
     const physical = Object.assign(new Error("pending physical read failed"), {
       code: "EIO",
     });
-    let enter!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    let release!: () => void;
-    let reject!: (cause: unknown) => void;
-    const blocked = new Promise<void>((resolve, fail) => {
-      release = resolve;
-      reject = fail;
-    });
+    const stableRead = phaseGate();
     let descriptor: Awaited<ReturnType<typeof open>> | undefined;
     const reading = readStableArtifact(path, 64, controller.signal, {
       lstat: (selected) => lstat(selected, { bigint: true }),
@@ -143,8 +138,7 @@ it.each(["complete", "fail"] as const)(
         descriptor = handle;
         Object.defineProperty(handle, "read", {
           value: async (buffer: Buffer, offset: number) => {
-            enter();
-            await blocked;
+            await stableRead.hold();
             buffer.set(bytes, offset);
             return { bytesRead: bytes.length, buffer };
           },
@@ -159,13 +153,13 @@ it.each(["complete", "fail"] as const)(
         settled = true;
       });
     try {
-      await entered;
+      await stableRead.reached(result, "stable artifact read");
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
       expect(descriptor?.fd).toBeGreaterThanOrEqual(0);
-      if (outcome === "fail") reject(physical);
-      else release();
+      if (outcome === "fail") stableRead.reject(physical);
+      else stableRead.release();
       const failure = await result;
       if (outcome === "fail") expect(failure).toBe(physical);
       else
@@ -173,7 +167,8 @@ it.each(["complete", "fail"] as const)(
       expect(artifactFileCompletion(failure)).toBeUndefined();
       expect(descriptor?.fd).toBe(-1);
     } finally {
-      release();
+      controller.abort(reason);
+      stableRead.release();
       await result;
     }
   },

@@ -48,8 +48,12 @@ cliTest(
         },
       };
       await writeFile(queryFile, JSON.stringify(query));
-      const traced = await cli.run({
+      const trace = {
         arguments: ["trace-javascript-semantics", queryFile, "--json"],
+      };
+      const traced = await cli.run({
+        ...trace,
+        freshProcess: name === "declaration",
       });
       expect(traced.exitCode, `${name} traced: ${traced.stderr}`).toBe(0);
       const { normalized_result: result } = z
@@ -83,5 +87,4 @@ cliTest(
       );
     }
   },
-  120_000,
 );

@@ -1,17 +1,13 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
-import { z } from "zod";
 
-import {
-  expandToolAvailability,
-  sessionProvider,
-} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 // The server enables default packet tools only on Linux, where they can run.
 const linux = process.platform === "linux";
@@ -23,33 +19,24 @@ const packetCaptureAvailability = async (
   const session = createTestBinarySession(() => {
     throw new Error("binary analysis must not start during status discovery");
   });
-  const server = createServer(
-    { kind: "session", session },
-    { environment: { ...environment, REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
-  );
-  const client = new Client({
-    name: "packet-capture-availability",
-    version: "1",
+  const { client } = await createApplicationMcpHarness({
+    session,
+    serverOptions: {
+      environment: { ...environment, REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
+    },
+    clientIdentity: { name: "packet-capture-availability", version: "1" },
   });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  try {
-    const response = await client.callTool({
-      name: "binary_session",
-      arguments: {},
-    });
-    if (response.isError === true) throw new Error("binary_session failed");
-    const parsed = z
-      .object({ result: sessionProvider })
-      .parse(response.structuredContent).result;
-    return expandToolAvailability(parsed.tool_availability).find(
-      (tool) => tool.name === name,
-    );
-  } finally {
-    await Promise.allSettled([client.close(), server.close(), session.close()]);
-  }
+  const response = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  if (response.isError === true) throw new Error("binary_session failed");
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    response.structuredContent,
+  ).result;
+  return expandToolAvailability(parsed.tool_availability).find(
+    (tool) => tool.name === name,
+  );
 };
 
 const executableTshark = async (prefix: string): Promise<string> => {

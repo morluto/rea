@@ -2,11 +2,10 @@ import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { webSourceMapReportSchema } from "../../../src/domain/webSourceLocation.js";
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
-import {
-  SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
-  type SourceMapDecoderDependencies,
-} from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
+import type { SourceMapDecoderDependencies } from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
@@ -14,6 +13,11 @@ import {
   webSourceLocationArgs,
   webSourceLocationFixture,
 } from "../../fixtures/webSourceLocation.js";
+
+const expectedProcessMemoryLimitBytes =
+  process.platform === "win32" && process.versions.bun !== undefined
+    ? 704 * 1024 * 1024
+    : null;
 
 const realDecoder = (dependencies: SourceMapDecoderDependencies = {}) =>
   new SourceMapDecoder({
@@ -71,49 +75,180 @@ it("starts the codec deadline after cold ownership preparation", async () => {
   }
 });
 
-it("runs the real pinned codec with an independent heap and removes its private request directory", async () => {
-  let path: string | undefined;
-  const environment = {
-    ...process.env,
-    NODE_OPTIONS: "--require=/rea-file-that-does-not-exist",
-  };
-  const decoder = realDecoder({
-    environment,
-    createRuntime: async () => {
-      const root = await PrivateRuntimeRoot.create();
-      path = root.path;
-      return root;
-    },
-  });
-  const response = await decoder.trace(input);
-  if (!response.ok) throw response.error;
-  expect(response.value).toMatchObject({
-    engine: { id: "jridgewell-trace-mapping", version: "0.3.31" },
-    matches: [{ content: { text: "original" } }],
-  });
-  if (process.versions.bun === undefined) {
-    expect(response.value.runtime).toMatchObject({
-      id: "node-v8",
-      version: process.version,
+it.each([
+  { heap: undefined, effectiveHeap: 192 },
+  { heap: 384, effectiveHeap: 384 },
+])(
+  "runs the real pinned codec with selected heap $heap and removes its private request directory",
+  async ({ heap, effectiveHeap }) => {
+    let path: string | undefined;
+    const environment = {
+      ...process.env,
+      NODE_OPTIONS: "--require=/rea-file-that-does-not-exist",
+    };
+    const decoder = realDecoder({
+      environment,
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        path = root.path;
+        return root;
+      },
     });
-    expect(response.value.runtime.v8_heap_limit_bytes).toBeLessThanOrEqual(
-      256 * 1024 * 1024,
+    const response = await decoder.trace({
+      ...input,
+      ...(heap === undefined ? {} : { limits: { codec_heap_mib: heap } }),
+    });
+    if (!response.ok) throw response.error;
+    expect(response.value).toMatchObject({
+      engine: { id: "jridgewell-trace-mapping", version: "0.3.31" },
+      matches: [{ content: { text: "original" } }],
+    });
+    if (process.versions.bun === undefined) {
+      expect(response.value.runtime).toMatchObject({
+        id: "node-v8",
+        version: process.version,
+      });
+      expect(response.value.runtime.v8_heap_limit_bytes).toBeGreaterThan(
+        (effectiveHeap - 1) * 1024 * 1024,
+      );
+      expect(response.value.runtime.v8_heap_limit_bytes).toBeLessThanOrEqual(
+        (effectiveHeap + 64) * 1024 * 1024,
+      );
+    } else
+      expect(response.value.runtime).toEqual({
+        id: "bun",
+        version: process.versions.bun,
+        node_compatibility_version: process.versions.node,
+        v8_heap_limit_bytes: null,
+        // Windows enforces a Job Object commit limit in place of the heap flags.
+        process_memory_limit_bytes:
+          process.platform === "win32"
+            ? (effectiveHeap + 512) * 1024 * 1024
+            : null,
+      });
+    expect(environment.NODE_OPTIONS).toBe(
+      "--require=/rea-file-that-does-not-exist",
     );
-  } else
-    expect(response.value.runtime).toEqual({
-      id: "bun",
-      version: process.versions.bun,
-      node_compatibility_version: process.versions.node,
-      v8_heap_limit_bytes: null,
-      // Windows enforces a Job Object commit limit in place of the heap flags.
-      process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+    if (path === undefined) throw new Error("runtime not acquired");
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.each([
+  { cancel: false, denyCleanup: false },
+  { cancel: true, denyCleanup: false },
+  { cancel: false, denyCleanup: true },
+  { cancel: true, denyCleanup: true },
+])(
+  "retains completed real-codec matches through finalization (cancel=$cancel, denied=$denyCleanup)",
+  async ({ cancel, denyCleanup }) => {
+    const controller = new AbortController();
+    const reason = { phase: "source-map root finalization" };
+    let path: string | undefined;
+    let cleanupAttempts = 0;
+    const decoder = realDecoder({
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        path = root.path;
+        return {
+          path: root.path,
+          close: async () => {
+            cleanupAttempts += 1;
+            if (cancel) controller.abort(reason);
+            if (denyCleanup && cleanupAttempts === 1)
+              throw new Error("controlled source-map cleanup denial");
+            await root.close();
+          },
+        };
+      },
     });
-  expect(environment.NODE_OPTIONS).toBe(
-    "--require=/rea-file-that-does-not-exist",
-  );
-  if (path === undefined) throw new Error("runtime not acquired");
-  await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-});
+    try {
+      const response = await decoder.trace(input, {
+        signal: controller.signal,
+      });
+      expect(response.ok).toBe(!cancel && !denyCleanup);
+      const report = webSourceMapReportSchema.parse(
+        response.ok ? response.value : response.error.partialObservation,
+      );
+      expect(report).toMatchObject({
+        source_map_sha256: fixture.sourceMap.file.sha256,
+        url_context: input.url,
+        lookup: { requested: input.position },
+        matches: [{ state: "mapped", content: { text: "original" } }],
+      });
+      if (path === undefined) throw new Error("runtime not acquired");
+      if (!response.ok) {
+        expect(response.error).toMatchObject({
+          operation: "trace_web_source_location",
+        });
+        expect(projectAnalysisError(response.error)).toMatchObject({
+          details: { partial_observation: report },
+        });
+        if (cancel) {
+          const primary = response.error.cleanupPrimary ?? response.error;
+          expect(primary._tag).toBe("AnalysisCancelledError");
+          expect(primary.cause).toBe(reason);
+        }
+        expect(response.error.cleanupIncomplete).toBe(denyCleanup);
+        if (denyCleanup) {
+          expect(response.error.cleanupResources).toEqual([path]);
+          await expect(access(path)).resolves.toBeUndefined();
+          await decoder.close();
+          expect(cleanupAttempts).toBe(2);
+          expect(response.error.cleanupIncomplete).toBe(false);
+          expect(response.error.cleanupResources).toEqual([]);
+          expect(response.error.partialObservation).toEqual(report);
+        }
+      }
+      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await decoder.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "keeps the completed codec refusal primary over late cancellation (denied=%s)",
+  async (denyCleanup) => {
+    const controller = new AbortController();
+    const reason = new Error("cancel after codec refusal");
+    let cleanupAttempts = 0;
+    const decoder = realDecoder({
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        return {
+          path: root.path,
+          close: async () => {
+            cleanupAttempts += 1;
+            controller.abort(reason);
+            if (denyCleanup && cleanupAttempts === 1)
+              throw new Error("controlled refusal cleanup denial");
+            await root.close();
+          },
+        };
+      },
+    });
+    try {
+      const response = await decoder.trace(
+        { ...input, text: "{" },
+        { signal: controller.signal },
+      );
+      if (response.ok) throw new Error("Expected malformed-map refusal");
+      expect(controller.signal.reason).toBe(reason);
+      expect(response.error.cleanupPrimary ?? response.error).toBeInstanceOf(
+        AnalysisInputError,
+      );
+      expect(response.error.partialObservation).toBeUndefined();
+      expect(response.error.cleanupIncomplete).toBe(denyCleanup);
+      await decoder.close();
+      expect(response.error.cleanupIncomplete).toBe(false);
+      expect(cleanupAttempts).toBe(denyCleanup ? 2 : 1);
+    } finally {
+      await decoder.close();
+    }
+  },
+);
+
 it.each([
   {
     failure: "malformed JSON",
@@ -222,26 +357,6 @@ it("keeps indexed section overlap typed as a malformed source map", async () => 
     ]),
   );
 });
-it("reports cleanup failure with the actual owning operation", async () => {
-  const response = await realDecoder({
-    createRuntime: async () => {
-      const root = await PrivateRuntimeRoot.create();
-      return {
-        path: root.path,
-        close: async () => {
-          await root.close();
-          throw new Error("observed cleanup failure");
-        },
-      };
-    },
-  }).trace(input);
-  if (response.ok) throw new Error("expected cleanup failure");
-  expect(response.error).toMatchObject({
-    cleanupIncomplete: true,
-    operation: "trace_web_source_location",
-    diagnostics: { cleanup_failures: ["observed cleanup failure"] },
-  });
-});
 it("cancels a real owned process and removes the runtime request", async () => {
   const controller = new AbortController();
   let path: string | undefined;
@@ -311,6 +426,7 @@ it("rejects a malformed actual subprocess reply", async () => {
   }).trace(input);
   if (response.ok) throw new Error("expected malformed reply");
   expect(response.error._tag).toBe("AnalysisOutputError");
+  expect(response.error.partialObservation).toBeUndefined();
 });
 it("rejects a codec report from a runtime other than the launching one", async () => {
   const actual = await realDecoder().trace(input);
@@ -344,6 +460,7 @@ it("rejects a codec report from a runtime other than the launching one", async (
   });
   if (response.ok) throw new Error("expected runtime mismatch");
   expect(response.error._tag).toBe("AnalysisOutputError");
+  expect(response.error.partialObservation).toBeUndefined();
   if (actual.value.runtime.id !== "bun") return;
   // A Bun codec must report exactly the process limit its launcher enforced.
   const limit = await replay({
@@ -351,7 +468,7 @@ it("rejects a codec report from a runtime other than the launching one", async (
     runtime: {
       ...actual.value.runtime,
       process_memory_limit_bytes:
-        SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES === null ? 4096 : null,
+        expectedProcessMemoryLimitBytes === null ? 4096 : null,
     },
   });
   if (limit.ok) throw new Error("expected process limit mismatch");
@@ -363,7 +480,7 @@ it.each([true, false])(
     const response = await realDecoder({
       launcher: async ({ memoryLimitBytes, ...options }) => {
         expect(memoryLimitBytes).toBe(
-          SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES ?? undefined,
+          expectedProcessMemoryLimitBytes ?? undefined,
         );
         // Without a job limit any artifact runs the child; its handle reports
         // the notification an owned Windows job records before exit.
@@ -392,8 +509,7 @@ it.each([true, false])(
             resource: "memory",
             reason: expect.stringContaining("process memory limit"),
             reportedLimits: {
-              codec_process_memory_limit_bytes:
-                SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+              codec_process_memory_limit_bytes: expectedProcessMemoryLimitBytes,
             },
             capturedOutput: { stderr: "panic: out of memory" },
           }

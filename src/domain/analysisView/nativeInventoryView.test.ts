@@ -1,11 +1,10 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { nativeInventoryRowsSchemas } from "../native/nativeInventory.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -19,13 +18,14 @@ const rows = () => [
   { address: "0x20", value: "last" },
 ];
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "search_procedures",
   normalizedResult,
   sealedResult: true,
   provider: { id: "fixture", name: "Fixture", version: "1" },
   artifact: null,
-  subject: null,
+  subject: UNKNOWN_EVIDENCE_SUBJECT,
   parameters: { pattern: "a", mode: "literal", case_sensitive: false },
   limitations: ["Provider discovery is partial."],
 });
@@ -94,6 +94,21 @@ it("reuses only authenticated immutable validation while rebinding provenance to
     artifact: null,
     limitations: source.limitations,
   });
+});
+
+it("retains caller metadata in Evidence while reusing owner-normalized inventory rows", () => {
+  const original = [{ ...rows()[0]!, caller_metadata: { label: "keep me" } }];
+  const source = parent(freezeJsonSnapshot(original));
+  const parse = vi.spyOn(nativeInventoryRowsSchemas.names, "safeParse");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const page = project(source, { kind: "native-inventory", limit: 1 });
+    expect(page).toMatchObject({
+      rows: [{ source_index: 0, record: rows()[0] }],
+    });
+  }
+  expect(parse).toHaveBeenCalledOnce();
+  expect(source.normalizedResult).toEqual(original);
+  expect(original[0]?.caller_metadata).toEqual({ label: "keep me" });
 });
 
 it("revalidates mutable and shallow-frozen arrays despite a forged sealing flag", () => {

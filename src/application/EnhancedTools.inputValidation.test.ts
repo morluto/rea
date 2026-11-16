@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import { ok } from "../domain/result.js";
 

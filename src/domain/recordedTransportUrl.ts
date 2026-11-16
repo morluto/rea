@@ -17,15 +17,31 @@ export interface RecordedTransportUrl {
  */
 export const parseRecordedTransportUrl = (
   value: string,
-  options: { readonly includeQuery?: boolean } = {},
+  options: {
+    readonly includeQuery?: boolean;
+    /** Recorded request context for credential interpretation, never projected identity. */
+    readonly credentialBaseUrl?: string;
+  } = {},
 ): RecordedTransportUrl => {
   const prefix = /^[\x00-\x20]*(?:([A-Za-z][A-Za-z0-9+.-]*):)?\/\//u.exec(
     value,
   );
   const absolute = URL.parse(value);
+  const credentialBase =
+    options.credentialBaseUrl === undefined
+      ? null
+      : URL.parse(options.credentialBaseUrl);
+  if (credentialBase !== null) {
+    // Inherited request authentication is not part of a relative header's text.
+    credentialBase.username = "";
+    credentialBase.password = "";
+  }
   // Resolve references only to recognize credentials (including WHATWG's
   // backslash/control-character spellings), never to supply a projected origin.
-  const parsed = absolute ?? URL.parse(value, "https://rea.invalid");
+  const parsed =
+    credentialBase === null
+      ? (absolute ?? URL.parse(value, "https://rea.invalid"))
+      : URL.parse(value, credentialBase);
   const hasCredentials =
     parsed !== null && (parsed.username !== "" || parsed.password !== "");
   const origin =

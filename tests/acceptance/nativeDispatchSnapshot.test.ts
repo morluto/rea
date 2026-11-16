@@ -62,6 +62,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     await good("record_unknown", { ...unknown, severity: "high" });
     await good("close_binary", { snapshot_path: conflicting, overwrite: true });
     await good("open_binary", { path: first });
+    await good("reset_investigation", {});
     const original = parseEvidence(
       (await good("inspect_native_dispatch_metadata", { max_records: 100 }))
         .structuredContent,
@@ -113,10 +114,9 @@ cliTest.skipIf(process.platform !== "darwin")(
     ).toEqual(
       savedSnapshot.value.workflow_entries[0]?.execution.analysis_profile,
     );
-    expect(await readFile(first)).toEqual(Buffer.from(bytes));
-    expect(await readFile(second)).toEqual(Buffer.from(bytes));
+    expect(Buffer.compare(await readFile(first), Buffer.from(bytes))).toBe(0);
+    expect(Buffer.compare(await readFile(second), Buffer.from(bytes))).toBe(0);
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(
@@ -170,10 +170,9 @@ cliTest.skipIf(process.platform !== "darwin")(
         },
       });
     }
-    expect(await readFile(target)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(target), bytes)).toBe(0);
     await client.ping();
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(
@@ -304,10 +303,9 @@ cliTest.skipIf(process.platform !== "darwin")(
     });
     expect(reobserved.isError, JSON.stringify(reobserved)).not.toBe(true);
     expect(parseEvidence(reobserved.structuredContent)).toEqual(mcpEvidence);
-    expect(await readFile(target)).toEqual(Buffer.from(bytes));
+    expect(Buffer.compare(await readFile(target), Buffer.from(bytes))).toBe(0);
     await client.ping();
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(

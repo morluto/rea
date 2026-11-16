@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createEvidence } from "../../domain/evidence.js";
 import type {
   ManagedMemberInspection,
@@ -64,13 +65,17 @@ const emptyManagedMembers = (
 });
 
 const evidence = (result: ManagedMemberInspection) =>
-  createEvidence(undefined, MANAGED_STATIC_EXAMPLE_PROVIDER, {
-    operation: "inspect_managed_members",
-    parameters: {},
-    result,
-    rawResult: null,
-    limitations: result.limitations,
-  });
+  createEvidence(
+    unknownTarget("not-observed"),
+    MANAGED_STATIC_EXAMPLE_PROVIDER,
+    {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result,
+      rawResult: null,
+      limitations: result.limitations,
+    },
+  );
 
 const runtimeMembers = (): ManagedMemberInspection => {
   const result = emptyManagedMembers(
@@ -79,6 +84,8 @@ const runtimeMembers = (): ManagedMemberInspection => {
   );
   return {
     ...result,
+    signature_resolution: "type-names-v2",
+    method_rows: { offset: 0, count: 1, total: 1 },
     methods: [
       {
         token: "0x06000001",
@@ -111,6 +118,7 @@ const runtimeMembers = (): ManagedMemberInspection => {
           max_stack: 8,
           init_locals: false,
           local_var_sig_token: null,
+          local_var_signature: null,
           il_size: 1,
           il_sha256: "4".repeat(64),
           normalized_il_sha256: "5".repeat(64),
@@ -219,13 +227,17 @@ const boundaryEvidence = () => {
     coverage: { state: "complete", issues: [] },
     limitations: [],
   };
-  return createEvidence(undefined, MANAGED_STATIC_EXAMPLE_PROVIDER, {
-    operation: "inspect_managed_native_boundaries",
-    parameters: {},
-    result,
-    rawResult: null,
-    limitations: result.limitations,
-  });
+  return createEvidence(
+    unknownTarget("not-observed"),
+    MANAGED_STATIC_EXAMPLE_PROVIDER,
+    {
+      operation: "inspect_managed_native_boundaries",
+      parameters: {},
+      result,
+      rawResult: null,
+      limitations: result.limitations,
+    },
+  );
 };
 
 const nativeExportEvidence = () => {
@@ -246,6 +258,7 @@ const nativeExportEvidence = () => {
     exports: coverage([
       {
         name: "open_native",
+        runtime_name: "open_native",
         address: "0x1000",
         weak: false,
         reexport: false,
@@ -253,6 +266,7 @@ const nativeExportEvidence = () => {
       },
     ]),
     segments: coverage([]),
+    encryption: coverage([]),
     provenance: [],
     limitations: [
       "Selected Mach-O slice container offset is unknown in this synthetic example.",

@@ -417,7 +417,7 @@ cliTest.for(
             evidence: expect.objectContaining({
               coverage: expect.objectContaining({ status: "complete" }),
               limitations: expect.arrayContaining([
-                "Static syntax does not prove that this relationship executes at runtime.",
+                expect.stringMatching(/static syntax.*not prove.*runtime/iu),
               ]),
             }),
           }),

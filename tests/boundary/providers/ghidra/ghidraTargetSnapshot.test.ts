@@ -19,11 +19,11 @@ describe("Ghidra target snapshot", () => {
       platform: "linux",
     });
     expect(snapshot.admission).toBeUndefined();
-    await expect(readFile(snapshot.path)).resolves.toEqual(bytes);
+    expect(Buffer.compare(await readFile(snapshot.path), bytes)).toBe(0);
     await expect(
       createGhidraTargetSnapshot(source, root, sha256, { platform: "linux" }),
     ).rejects.toMatchObject({ code: "EEXIST" });
-    await expect(readFile(snapshot.path)).resolves.toEqual(bytes);
+    expect(Buffer.compare(await readFile(snapshot.path), bytes)).toBe(0);
     await expect(
       createGhidraTargetSnapshot(source, root, sha256, { platform: "win32" }),
     ).rejects.toThrow(/No native private runtime owns/u);

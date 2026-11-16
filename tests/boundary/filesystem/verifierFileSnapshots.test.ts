@@ -44,7 +44,9 @@ it("preserves selected path spelling, UTF-8 bytes and missing-file facts", async
     { path: missing, exists: false, content: null },
     { path, exists: true, content: Buffer.from(content, "utf8") },
   ]);
-  expect(await readFile(path)).toEqual(Buffer.from(content, "utf8"));
+  expect(
+    Buffer.compare(await readFile(path), Buffer.from(content, "utf8")),
+  ).toBe(0);
 });
 
 it("detects distinct invalid UTF-8 bytes in verifier file readback", async () => {
@@ -261,11 +263,11 @@ processTest(
       else await removeTestWorkspace(workspace.root);
     }
   `;
-    const result = await processes.run(
-      process.execPath,
-      ["--input-type=module", "--eval", program],
-      { timeoutMs: 20_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      program,
+    ]);
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.signal, result.stderr).toBeNull();

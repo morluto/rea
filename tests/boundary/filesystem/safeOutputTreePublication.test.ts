@@ -27,7 +27,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     },
   };
 });
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
 
 it.skipIf(process.platform === "win32")(
   "syncs nested directory entries before their parents and refuses publication when one cannot sync",
@@ -68,9 +68,12 @@ it.skipIf(process.platform === "win32")(
             output,
             dirname(output),
           ]);
-          expect(await readFile(join(output, "a", "b", "payload.txt"))).toEqual(
-            bytes,
-          );
+          expect(
+            Buffer.compare(
+              await readFile(join(output, "a", "b", "payload.txt")),
+              bytes,
+            ),
+          ).toBe(0);
         }
       } finally {
         observation.refuseSync = undefined;

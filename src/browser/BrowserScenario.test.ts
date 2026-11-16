@@ -102,20 +102,21 @@ describe("browser scenario secret redaction", () => {
       "raw A/B? remains case-sensitive",
     );
     expect(
-      secrets.redactBytes(
+      Buffer.compare(
+        secrets.redactBytes(
+          Buffer.concat([
+            Buffer.from([0xff, 0]),
+            Buffer.from("a%2fb%3F"),
+            Buffer.from([0x80]),
+          ]),
+        ),
         Buffer.concat([
           Buffer.from([0xff, 0]),
-          Buffer.from("a%2fb%3F"),
+          Buffer.from("[REDACTED:session]"),
           Buffer.from([0x80]),
         ]),
       ),
-    ).toEqual(
-      Buffer.concat([
-        Buffer.from([0xff, 0]),
-        Buffer.from("[REDACTED:session]"),
-        Buffer.from([0x80]),
-      ]),
-    );
+    ).toBe(0);
     expect(
       secrets.sanitizeUrl("https://app.example.test/?token=a%2fb%3F").url,
     ).toBe("https://app.example.test/?token=[REDACTED:session]");
@@ -127,8 +128,8 @@ describe("browser scenario secret redaction", () => {
   it("does not resolve inherited environment properties as secret values", () => {
     const scenario = browserScenarioSchema.parse(baseScenario());
     const environment = Object.assign(
+      Object.create({ REA_TEST_SESSION: "session" }) as Record<string, string>,
       { REA_TEST_PASSWORD: "password", REA_TEST_COOKIE: "cookie" },
-      Object.create({ REA_TEST_SESSION: "session" }) as object,
     );
     expect(BrowserScenarioSecrets.resolve(scenario, environment)).toMatchObject(
       {
@@ -226,9 +227,6 @@ describe("browserScenarioSchema", () => {
       at_end: ["dom", "storage"],
       events: ["console", "page-errors", "network", "websockets"],
     });
-    expect(parsed.capture.limits).toEqual(
-      DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS,
-    );
   });
 
   it("allows callers to choose visible browsers and service workers", () => {

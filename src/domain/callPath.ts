@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { relationshipCoverageLimitations } from "./relationshipCoverage.js";
+import {
+  combineRelationshipDiscovery,
+  relationshipCoverageLimitations,
+  type RelationshipDiscoveryStatus,
+} from "./relationshipCoverage.js";
 import {
   callPathInputSchema,
   callPathResultSchema,
@@ -10,12 +14,15 @@ import { AnalysisInputError } from "./analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
 import { nativeAddressInputSchema } from "./native/nativeAddress.js";
+import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import {
   parseFunctionEvidence,
   type FunctionSnapshot,
 } from "./functionDossierEvidence.js";
 import { isCallerOnlyIncompleteCoverage } from "./functionCallCoverage.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+import { appendAll } from "./appendAll.js";
+import { sameTargetIdentity } from "./targetIdentity.js";
 
 /** Minimal directed caller-to-callee adjacency for call-path search. */
 class CallGraph {
@@ -78,6 +85,7 @@ interface SearchState {
    */
   readonly explored: CallPathResult["explored"];
   readonly exhaustive: boolean;
+  readonly discovery: RelationshipDiscoveryStatus;
   readonly limitations: readonly string[];
 }
 
@@ -125,7 +133,16 @@ export const buildCallPath = (input: unknown): CallPathResult => {
     evidence_links: uniqueEvidence(snapshots.values()),
     limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
   };
-  const searchScope = { exhaustive };
+  const searchScope = {
+    exhaustive,
+    graph: "supplied_evidence" as const,
+    discovery: search.discovery,
+    observed_status: found
+      ? ("found" as const)
+      : exhaustive
+        ? ("not_found" as const)
+        : ("unknown" as const),
+  };
   if (found)
     return callPathResultSchema.parse({
       ...resultContext,
@@ -136,7 +153,8 @@ export const buildCallPath = (input: unknown): CallPathResult => {
     });
   return callPathResultSchema.parse({
     ...resultContext,
-    status: exhaustive ? "not_found" : "unknown",
+    status:
+      exhaustive && search.discovery === "complete" ? "not_found" : "unknown",
     shortest_hops: null,
     search_scope: searchScope,
     paths: [],
@@ -201,11 +219,7 @@ const assertCompatible = (
   if (firstEntry.done) return;
   const first = firstEntry.value;
   for (const snapshot of snapshots.values()) {
-    if (
-      snapshot.subject.digest.sha256 !== first.subject.digest.sha256 ||
-      snapshot.subject.format !== first.subject.format ||
-      snapshot.subject.architecture !== first.subject.architecture
-    )
+    if (!sameTargetIdentity(snapshot.target, first.target))
       throw invalidCallPathSelection(
         ["functions"],
         "Call-path Evidence mixes artifact subjects",
@@ -218,6 +232,17 @@ const assertCompatible = (
       throw invalidCallPathSelection(
         ["functions"],
         "Call-path Evidence mixes providers",
+      );
+    const firstProfile = first.evidence.analysis_profile;
+    const profile = snapshot.evidence.analysis_profile;
+    if (
+      (firstProfile?.parameters.function_coordinate_context !== undefined ||
+        profile?.parameters.function_coordinate_context !== undefined) &&
+      !functionCoordinateContextsEqual(firstProfile, profile)
+    )
+      throw invalidCallPathSelection(
+        ["functions"],
+        "Call-path Evidence has incompatible or unestablished function coordinate contexts",
       );
   }
 };
@@ -247,6 +272,7 @@ const inspectSearch = ({
   const queue = [start];
   const limitations: string[] = [];
   let incompleteExpandedCoverage = false;
+  let discovery: RelationshipDiscoveryStatus = "complete";
   let expandedEdges = 0;
   let depthReached = 0;
   for (let index = 0; index < queue.length; index += 1) {
@@ -259,7 +285,7 @@ const inspectSearch = ({
       const coverage = snapshot.evidence.relationship_coverage;
       for (const limitation of snapshot.limitations)
         limitations.push(limitation);
-      limitations.push(...snapshot.unresolvedCallCaveats);
+      appendAll(limitations, snapshot.unresolvedCallCaveats);
       if (coverage !== null) {
         for (const limitation of relationshipCoverageLimitations(coverage))
           limitations.push(limitation);
@@ -270,6 +296,16 @@ const inspectSearch = ({
       // cannot add a path to the goal, so its dossier limits are contextual
       // but do not make the searched start-to-goal closure incomplete.
       if (node === goal) continue;
+      const discoveryFact = coverage?.discovery?.callees;
+      if (
+        discoveryFact !== undefined &&
+        discoveryFact.status !== "complete" &&
+        discoveryFact.reason !== undefined
+      )
+        limitations.push(
+          `Call discovery for ${node} is ${discoveryFact.status}: ${discoveryFact.reason}`,
+        );
+      discovery = combineRelationshipDiscovery(discovery, coverage, "callees");
       if (snapshot.unresolvedCallCaveats.length > 0)
         incompleteExpandedCoverage = true;
       const callees = snapshot.dossier.facet_availability?.callees;
@@ -278,8 +314,9 @@ const inspectSearch = ({
         incompleteExpandedCoverage = true;
       }
       // Explicit, Evidence-bound relationship coverage owns completeness;
-      // generic provider/dossier limitations remain contextual. Legacy Evidence
-      // without that metadata retains its conservative limitation-based rule.
+      // generic provider/dossier limitations remain contextual. Evidence from
+      // a provider that reports no relationship coverage keeps the
+      // conservative limitation-based rule.
       // The search only expands callee edges, so coverage that is unknown
       // solely because callers are unobservable does not make the searched
       // callee closure incomplete; the caller caveat stays in limitations.
@@ -294,6 +331,7 @@ const inspectSearch = ({
       continue;
     }
     if (snapshot === undefined) {
+      discovery = combineRelationshipDiscovery(discovery, null, "callees");
       limitations.push(
         `No analyze_function Evidence covers reachable function ${node}`,
       );
@@ -319,6 +357,7 @@ const inspectSearch = ({
       depth_reached: depthReached,
     },
     exhaustive: !incompleteExpandedCoverage,
+    discovery,
     limitations,
   };
 };

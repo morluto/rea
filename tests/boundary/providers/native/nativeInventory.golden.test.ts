@@ -1,5 +1,5 @@
 import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
-import { realpath, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
@@ -8,14 +8,14 @@ import {
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { err, ok } from "../../../../src/domain/result.js";
+import { parseExecutableHeader } from "../../../../src/domain/binaryTarget.js";
 import {
   NativeCommandFailure,
   type NativeCommandCapture,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { parseOtoolLoadCommands } from "../../../../src/native/parsers/otool.js";
 import {
   parseDyldExports,
   parseDyldImports,
@@ -23,11 +23,65 @@ import {
 import {
   NativeFixtureRunner as FixtureRunner,
   nativeFixture as fixture,
-  nativeMachoTarget as machoTarget,
   nativeMachoTargetForFile,
-  withOtoolMachHeader,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+
+/** One format-1 `LC_DYLD_CHAINED_FIXUPS` payload holding only import names. */
+const chainedImportPayload = (names: readonly string[]): Buffer => {
+  const pool = Buffer.from(`\0${names.join("\0")}\0`);
+  const imports = Buffer.alloc(names.length * 4);
+  let nameOffset = 1;
+  names.forEach((name, index) => {
+    imports.writeUInt32LE((nameOffset << 9) >>> 0, index * 4);
+    nameOffset += Buffer.byteLength(name) + 1;
+  });
+  const starts = Buffer.alloc(4);
+  const header = Buffer.alloc(28);
+  header.writeUInt32LE(28, 4);
+  header.writeUInt32LE(28 + starts.length, 8);
+  header.writeUInt32LE(28 + starts.length + imports.length, 12);
+  header.writeUInt32LE(names.length, 16);
+  header.writeUInt32LE(1, 20);
+  return Buffer.concat([header, starts, imports, pool]);
+};
+
+const inventoryTarget = async (chained = false, payload?: Buffer) => {
+  const path = join(
+    await createTestTempDirectory("rea-native-inventory-"),
+    "fixture",
+  );
+  const segment = Buffer.alloc(72);
+  segment.writeUInt32LE(0x19, 0);
+  segment.writeUInt32LE(segment.length, 4);
+  segment.write("__TEXT", 8);
+  segment.writeBigUInt64LE(0x100000000n, 24);
+  segment.writeBigUInt64LE(0x4000n, 32);
+  segment.writeBigUInt64LE(0x4000n, 48);
+  segment.writeUInt32LE(7, 56);
+  segment.writeUInt32LE(5, 60);
+  const payloadOffset = 0x2000;
+  const fixups = Buffer.alloc(16);
+  fixups.writeUInt32LE(0x80000034, 0);
+  fixups.writeUInt32LE(16, 4);
+  if (payload !== undefined) {
+    fixups.writeUInt32LE(payloadOffset, 8);
+    fixups.writeUInt32LE(payload.length, 12);
+  }
+  const image = machoImage({
+    cpu: CPU.arm64,
+    commands: chained ? [segment, fixups] : [segment],
+  });
+  const file = Buffer.concat([image, Buffer.alloc(0x4000 - image.byteLength)]);
+  payload?.copy(file, payloadOffset);
+  await writeFile(path, file);
+  return nativeMachoTargetForFile(path);
+};
+
+const thinLipo =
+  "input file fixture is not a fat file\nNon-fat file: fixture is architecture: arm64\n";
+const inventoryRunner = (outputs: Readonly<Record<string, string>> = {}) =>
+  new FixtureRunner({ lipo: thinLipo, ...outputs });
 
 const signatureTarget = async (
   signedArchitecture: "arm64" | "arm64e" = "arm64",
@@ -45,7 +99,11 @@ const signatureTarget = async (
       })),
     ),
   );
-  return nativeMachoTargetForFile(path);
+  const target = await nativeMachoTargetForFile(path);
+  const header = parseExecutableHeader(await readFile(path), "arm64");
+  if (!header.ok || header.value.format !== "mach-o-universal")
+    throw new Error("expected a universal Mach-O fixture");
+  return { ...target, ...header.value };
 };
 
 it("distinguishes a codesign execution failure from an observed unsigned artifact", async () => {
@@ -113,11 +171,14 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
       identifier: "com.example.fixture",
       designated_requirement: null,
       entitlements: { "com.apple.security.app-sandbox": true },
+      slices: {
+        described: signedArchitecture,
+        architectures: expect.arrayContaining([signedArchitecture, "x86_64"]),
+        unmapped: false,
+        checked: expect.arrayContaining([signedArchitecture, "x86_64"]),
+        unsigned: ["x86_64"],
+      },
       limitations: expect.arrayContaining([
-        expect.stringContaining(
-          "signature identity, hashes, designated requirement",
-        ),
-        "Unsigned Mach-O slices: x86_64.",
         "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
       ]),
       provenance: expect.arrayContaining([
@@ -140,6 +201,303 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
     });
   }
 });
+
+it("uses the admitted universal target when codesign describes only its selected slice", async () => {
+  const existing = await signatureTarget();
+  const header = parseExecutableHeader(await readFile(existing.path), "arm64");
+  if (!header.ok || header.value.format !== "mach-o-universal")
+    throw new Error("expected a universal Mach-O fixture");
+  const signed = (await fixture("codesign.txt")).replace(
+    /^Format=.*$/mu,
+    "Format=Mach-O thin (arm64)",
+  );
+  const client = new NativeMacOSProvider(
+    {},
+    signatureRunner({
+      signed,
+      unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+      entitlements: await fixture("entitlements.xml"),
+      unsignedHeader: true,
+    }),
+    "darwin",
+  ).createClient({ ...existing, ...header.value });
+  const execution = await client.execute("inspect_signature", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    signed: true,
+    format: "Mach-O thin (arm64)",
+    // The admitted universal target, not codesign's thin format, lists the slices.
+    slices: {
+      described: "arm64",
+      architectures: ["x86_64", "arm64"],
+      unmapped: false,
+      checked: ["x86_64", "arm64"],
+      unsigned: ["x86_64"],
+    },
+    provenance: expect.arrayContaining([
+      expect.objectContaining({
+        command: expect.arrayContaining(["-a", "x86_64"]),
+        exit: { code: 1, signal: null },
+      }),
+    ]),
+  });
+});
+
+it("retains distinct same-family FAT slices for signature coverage", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-native-same-family-"),
+    "fixture",
+  );
+  await writeFile(
+    path,
+    fatImage(
+      [CPU.arm64, CPU.arm64e].map((cpu) => ({
+        cpu,
+        bytes: machoImage({ cpu }),
+      })),
+    ),
+  );
+  const header = parseExecutableHeader(await readFile(path), "arm64");
+  if (!header.ok || header.value.format !== "mach-o-universal")
+    throw new Error("expected universal fixture");
+  const replay = signatureRunner({
+    signed: (await fixture("codesign.txt")).replace(
+      /^Format=.*$/mu,
+      "Format=Mach-O thin (arm64)",
+    ),
+    unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+    entitlements: await fixture("entitlements.xml"),
+    unsignedHeader: true,
+  });
+  const runner: NativeCommandRunner = {
+    async run(tool, args, options) {
+      const result = await replay.run(
+        tool,
+        args.map((value) => (value === "arm64e" ? "x86_64" : value)),
+        options,
+      );
+      return result.ok ? ok({ ...result.value, arguments: [...args] }) : result;
+    },
+  };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient({
+    ...(await nativeMachoTargetForFile(path)),
+    ...header.value,
+  });
+  const execution = await client.execute("inspect_signature", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    slices: {
+      described: "arm64",
+      architectures: ["arm64", "arm64e"],
+      unmapped: false,
+      checked: ["arm64", "arm64e"],
+      unsigned: ["arm64e"],
+    },
+    provenance: expect.arrayContaining([
+      expect.objectContaining({
+        command: expect.arrayContaining(["-a", "arm64e"]),
+        exit: { code: 1, signal: null },
+      }),
+    ]),
+  });
+});
+
+// 0xc1000002 carries an arm64e capability flag outside the versioned
+// pointer-authentication ABI, so codesign may name it differently.
+it.each([42, 0xc1000002])(
+  "reports unknown signature coverage for unmapped FAT subtype %i",
+  async (subtype) => {
+    const path = join(
+      await createTestTempDirectory("rea-native-unknown-subtype-"),
+      "fixture",
+    );
+    const unknown = { type: CPU.arm64.type, subtype };
+    await writeFile(
+      path,
+      fatImage(
+        [CPU.arm64, unknown].map((cpu) => ({
+          cpu,
+          bytes: machoImage({ cpu }),
+        })),
+      ),
+    );
+    const header = parseExecutableHeader(await readFile(path), "arm64");
+    if (!header.ok || header.value.format !== "mach-o-universal")
+      throw new Error("expected universal fixture");
+    const client = new NativeMacOSProvider(
+      {},
+      signatureRunner({
+        signed: await fixture("codesign.txt"),
+        unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+        entitlements: await fixture("entitlements.xml"),
+      }),
+      "darwin",
+    ).createClient({
+      ...(await nativeMachoTargetForFile(path)),
+      ...header.value,
+    });
+    const execution = await client.execute("inspect_signature", {});
+    if (!execution.ok) throw execution.error;
+    // The one known slice is the described one; no per-slice check runs.
+    expect(execution.value.result).toMatchObject({
+      slices: {
+        described: "arm64",
+        architectures: ["arm64"],
+        unmapped: true,
+        checked: [],
+        unsigned: [],
+      },
+    });
+  },
+);
+
+const ARM64E_V0 = { type: CPU.arm64.type, subtype: 0x80000002 } as const;
+const ARM64E_V1 = { type: CPU.arm64.type, subtype: 0x81000002 } as const;
+
+it.each([
+  ["arm64e.v1 beside x86_64", [ARM64E_V1, CPU.x86_64], false],
+  ["arm64e.v1 before arm64e", [ARM64E_V1, ARM64E_V0], true],
+  ["arm64e before arm64e.v1", [ARM64E_V0, ARM64E_V1], true],
+] as const)(
+  "inspects the selected %s slice through codesign's arm64e selector",
+  async (_label, cpus, laterSliceShadowed) => {
+    const path = join(
+      await createTestTempDirectory("rea-native-arm64e-abi-"),
+      "fixture",
+    );
+    await writeFile(
+      path,
+      fatImage(cpus.map((cpu) => ({ cpu, bytes: machoImage({ cpu }) }))),
+    );
+    const header = parseExecutableHeader(await readFile(path), "arm64");
+    if (!header.ok || header.value.format !== "mach-o-universal")
+      throw new Error("expected universal fixture");
+    // Admission selects the first slice; codesign resolves -a arm64e to the
+    // first arm64e slice in table order, whatever its ABI version.
+    expect(header.value.universalSlice.offset).toBe(
+      header.value.universalSlices[0]?.offset,
+    );
+    const replay = signatureRunner({
+      signed: await fixture("codesign.txt"),
+      unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+      entitlements: await fixture("entitlements.xml"),
+      unsignedHeader: true,
+    });
+    const calls: (readonly string[])[] = [];
+    const runner: NativeCommandRunner = {
+      run(tool, args, options) {
+        calls.push(args);
+        return replay.run(tool, args, options);
+      },
+    };
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient({
+      ...(await nativeMachoTargetForFile(path)),
+      ...header.value,
+    });
+    const result = await client.execute("inspect_signature", {});
+    if (!result.ok) throw result.error;
+    expect(calls[0]).toEqual(expect.arrayContaining(["-a", "arm64e"]));
+    // A later slice with the same selector name has no exact selector.
+    expect(
+      inspectSignatureSchema.parse(result.value.result).slices.unmapped,
+    ).toBe(laterSliceShadowed);
+  },
+);
+
+it("keeps an arm64e.v1 slice unknown behind an unmapped arm64e variant", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-native-arm64e-shadow-"),
+    "fixture",
+  );
+  const variant = { type: CPU.arm64.type, subtype: 0xc1000002 };
+  await writeFile(
+    path,
+    fatImage(
+      [variant, ARM64E_V1, CPU.x86_64].map((cpu) => ({
+        cpu,
+        bytes: machoImage({ cpu }),
+      })),
+    ),
+  );
+  const header = parseExecutableHeader(await readFile(path), "x64");
+  if (!header.ok || header.value.format !== "mach-o-universal")
+    throw new Error("expected universal fixture");
+  expect(header.value.universalSlice.offset).toBe(
+    header.value.universalSlices[2]?.offset,
+  );
+  const replay = signatureRunner({
+    signed: await fixture("codesign.txt"),
+    unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+    entitlements: await fixture("entitlements.xml"),
+    unsignedHeader: true,
+  });
+  const calls: (readonly string[])[] = [];
+  const runner: NativeCommandRunner = {
+    run(tool, args, options) {
+      calls.push(args);
+      return replay.run(tool, args, options);
+    },
+  };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient({
+    ...(await nativeMachoTargetForFile(path)),
+    ...header.value,
+  });
+  const result = await client.execute("inspect_signature", {});
+  if (!result.ok) throw result.error;
+  // codesign -a arm64e may resolve to the earlier variant, so neither arm64e
+  // slice has an exact selector.
+  expect(calls.filter((args) => args.includes("arm64e"))).toEqual([]);
+  expect(
+    inspectSignatureSchema.parse(result.value.result).slices.unmapped,
+  ).toBe(true);
+});
+
+it.each(["x64", "arm64"] as const)(
+  "inspects an x86_64 LIB64 slice when %s is selected",
+  async (host) => {
+    const path = join(
+      await createTestTempDirectory("rea-native-lib64-"),
+      "fixture",
+    );
+    const lib64 = { type: CPU.x86_64.type, subtype: 0x80000003 };
+    await writeFile(
+      path,
+      fatImage(
+        [lib64, CPU.arm64].map((cpu) => ({ cpu, bytes: machoImage({ cpu }) })),
+      ),
+    );
+    const header = parseExecutableHeader(await readFile(path), host);
+    if (!header.ok || header.value.format !== "mach-o-universal")
+      throw new Error("expected universal fixture");
+    const replay = signatureRunner({
+      signed: await fixture("codesign.txt"),
+      unsigned: await fixture("dyld-inventory/codesign-unsigned.txt"),
+      entitlements: await fixture("entitlements.xml"),
+      unsignedHeader: true,
+    });
+    const calls: (readonly string[])[] = [];
+    const runner: NativeCommandRunner = {
+      run(tool, args, options) {
+        calls.push(args);
+        return replay.run(tool, args, options);
+      },
+    };
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient({
+      ...(await nativeMachoTargetForFile(path)),
+      ...header.value,
+    });
+    const result = await client.execute("inspect_signature", {});
+    if (!result.ok) throw result.error;
+    expect(calls.some((args) => args.includes("x86_64"))).toBe(true);
+    expect(result.value.result).toMatchObject({
+      slices: { unsigned: ["x86_64"] },
+    });
+    if (host === "x64")
+      expect(calls.slice(0, 3).every((args) => args.includes("x86_64"))).toBe(
+        true,
+      );
+  },
+);
 
 it("rejects nonzero supplemental codesign output that is not an unsigned observation", async () => {
   const signed = await fixture("codesign.txt");
@@ -227,10 +585,12 @@ it.each([
       identifier: "com.example.fixture",
       entitlements: { "com.apple.security.app-sandbox": true },
       designated_requirement: null,
-      limitations: expect.arrayContaining([
-        expect.stringContaining("Partial signature coverage"),
-        expect.stringContaining("did not complete"),
-      ]),
+      // Slices checked before the failing one keep their states; the rest stay unknown.
+      slices: {
+        architectures: ["x86_64", "arm64"],
+        checked: kind === "later slice diagnostic" ? ["x86_64"] : [],
+        unsigned: kind === "later slice diagnostic" ? ["x86_64"] : [],
+      },
     });
     expect(partial.provenance).toHaveLength(
       kind === "later slice diagnostic" ? 5 : 4,
@@ -241,7 +601,6 @@ it.each([
     if (kind === "later slice diagnostic") {
       expect(partial.limitations).toEqual(
         expect.arrayContaining([
-          "Unsigned Mach-O slices: x86_64.",
           "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
         ]),
       );
@@ -259,25 +618,33 @@ it.each([
 
 it("retains native inventory facts from captured Apple tool output", async () => {
   const outputs: Record<string, string> = {};
-  for (const tool of ["lipo", "otool", "nm", "dwarfdump", "vtool"])
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
     outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
-  outputs.otool = withOtoolMachHeader(outputs.otool ?? "");
+  outputs["nm:-gju"] = "_puts\n_fixture_weak\n";
   outputs["dyld_info:-imports"] = await fixture("dyld-inventory/imports.txt");
   const exportsOutput = await fixture("dyld-inventory/exports.txt");
   outputs["dyld_info:-exports"] = exportsOutput;
   const client = new NativeMacOSProvider(
     {},
-    new FixtureRunner(outputs),
+    inventoryRunner(outputs),
     "darwin",
-  ).createClient(machoTarget("/private/fixture"));
+  ).createClient(await inventoryTarget(true));
   const execution = await client.execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
     imports: {
       items: [
-        { name: "_puts", address: null, source: "libSystem" },
+        {
+          name: "_puts",
+          runtime_name: "puts",
+          name_status: "exact",
+          address: null,
+          source: "libSystem",
+        },
         {
           name: "_fixture_weak",
+          runtime_name: "fixture_weak",
+          name_status: "exact",
           address: null,
           source: "<weak-def-coalesce>",
         },
@@ -287,6 +654,7 @@ it("retains native inventory facts from captured Apple tool output", async () =>
       items: expect.arrayContaining([
         expect.objectContaining({
           name: "_fixture_export",
+          runtime_name: "fixture_export",
           address: "0x100000468",
         }),
         expect.objectContaining({
@@ -301,7 +669,9 @@ it("retains native inventory facts from captured Apple tool output", async () =>
       ]),
     },
   });
-  expect(parseDyldImports(await fixture("dyld-imports.txt"), false)).toEqual([
+  expect(
+    parseDyldImports(await fixture("dyld-imports.txt"), false).items,
+  ).toEqual([
     {
       name: "__Block_copy",
       raw_name: null,
@@ -347,37 +717,278 @@ it("retains native inventory facts from captured Apple tool output", async () =>
   });
 });
 
+it("preserves literal import suffixes and whitespace through native inspection", async () => {
+  // Actual Apple dyld_info output for .quad references in an inert arm64
+  // executable, linked with -no_fixup_chains and -undefined dynamic_lookup.
+  const imports = [
+    "    -imports:",
+    "        _leading  (from <flat-namespace>)",
+    "      _literal [weak-import]  (from <flat-namespace>)",
+    "      _trailing    (from <flat-namespace>)",
+    "      _weak [weak-import] (from <flat-namespace>)",
+    "",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner({ "dyld_info:-imports": imports }),
+    "darwin",
+  ).createClient(await inventoryTarget());
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      exhaustive: false,
+      items: [
+        {
+          name: "  _leading",
+          runtime_name: "  _leading",
+          name_status: "exact",
+        },
+        {
+          name: "_literal [weak-import]",
+          runtime_name: "literal [weak-import]",
+          weak: null,
+          name_status: "exact",
+        },
+        {
+          name: "_trailing  ",
+          runtime_name: "trailing  ",
+          weak: null,
+          name_status: "exact",
+        },
+        {
+          name: "_weak",
+          runtime_name: "weak",
+          weak: true,
+          name_status: "exact",
+        },
+      ],
+    },
+  });
+});
+
+it("retains unfamiliar and competing import boundaries as unknown", () => {
+  for (const row of [
+    "_future [new-flag] (from library)",
+    "_literal  (from name)  (from library)",
+  ])
+    expect(parseDyldImports(`      ${row}`, false).items).toEqual([
+      {
+        name: null,
+        raw_name: row,
+        name_status: "ambiguous",
+        addend: null,
+        address: null,
+        weak: null,
+        reexport: null,
+        source: null,
+      },
+    ]);
+});
+
+it("uses independent undefined names to resolve chained producer spacing", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] =
+    "  _leading\n_literal [weak-import]\n_trailing  \n_weak\n";
+  // Actual forced-chained output from the same inert assembler references.
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  _weak [weak-import] (from <flat-namespace>)",
+    "      0x0001  _trailing    (from <flat-namespace>)",
+    "      0x0002  _literal [weak-import]  (from <flat-namespace>)",
+    "      0x0003    _leading  (from <flat-namespace>)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(await inventoryTarget(true));
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        { name: "_weak", weak: true, name_status: "exact" },
+        { name: "_trailing  ", weak: null, name_status: "exact" },
+        { name: "_literal [weak-import]", weak: null, name_status: "exact" },
+        { name: "  _leading", weak: null, name_status: "exact" },
+      ],
+    },
+    exports: {
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "_main", runtime_name: "main" }),
+      ]),
+    },
+  });
+});
+
+it("names chained imports from the binary's import table when the symbol table omits them", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  // Weak-def coalescing binds a defined symbol, and Swift images can import
+  // names that have no symbol-table entry, so nm -gju lists neither.
+  outputs["nm:-gju"] = "";
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  __Z3inli  (from <weak-def-coalesce>)",
+    "      0x0001  _$s10AppIntents0A4EnumMp  (from AppIntents)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(
+    await inventoryTarget(
+      true,
+      chainedImportPayload(["__Z3inli", "_$s10AppIntents0A4EnumMp"]),
+    ),
+  );
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        {
+          name: "__Z3inli",
+          name_status: "exact",
+          source: "<weak-def-coalesce>",
+        },
+        {
+          name: "_$s10AppIntents0A4EnumMp",
+          name_status: "exact",
+          source: "AppIntents",
+        },
+      ],
+    },
+  });
+  // The binary-owned table settles the spacing without the nm inventory.
+  expect(JSON.stringify(execution.value.result)).not.toContain('"-gju"');
+});
+
+it("names each chained row by its ordinal when the table holds both spacing readings", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "_foo\n";
+  // Ordinal 1 names " _foo"; installed dyld_info prints two spaces before it.
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  _foo  (from <weak-def-coalesce>)",
+    "      0x0001   _foo  (from <weak-def-coalesce>)",
+  ].join("\n");
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(
+    await inventoryTarget(true, chainedImportPayload(["_foo", " _foo"])),
+  );
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: {
+      items: [
+        { name: "_foo", name_status: "exact" },
+        { name: " _foo", name_status: "exact" },
+      ],
+    },
+  });
+});
+
+it("records why an unusable chained import table falls back to the symbol table", async () => {
+  const outputs: Record<string, string> = {};
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
+    outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
+  outputs["nm:-gju"] = "__Z3inli\n";
+  outputs["dyld_info:-imports"] = [
+    "    -imports:",
+    "      0x0000  __Z3inli  (from libc++)",
+  ].join("\n");
+  // A compressed symbol pool has no decodable names.
+  const payload = chainedImportPayload(["__Z3inli"]);
+  payload.writeUInt32LE(1, 24);
+  const client = new NativeMacOSProvider(
+    {},
+    inventoryRunner(outputs),
+    "darwin",
+  ).createClient(await inventoryTarget(true, payload));
+  const execution = await client.execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(execution.value.result).toMatchObject({
+    imports: { items: [{ name: "__Z3inli", name_status: "exact" }] },
+    limitations: expect.arrayContaining([
+      expect.stringContaining(
+        "Compressed chained-fixup symbol names are not supported",
+      ),
+    ]),
+  });
+  expect(JSON.stringify(execution.value.result)).toContain('"-gju"');
+});
+
+it("keeps a chained row unknown when its ordinal is outside the import table", () => {
+  const output = "      0x0005  _foo  (from library)";
+  expect(parseDyldImports(output, true, undefined, ["_foo"]).items).toEqual([
+    {
+      name: null,
+      raw_name: output.slice(6),
+      name_status: "ambiguous",
+      addend: null,
+      address: null,
+      weak: null,
+      reexport: null,
+      source: "library",
+    },
+  ]);
+});
+
+it("keeps missing and competing undefined-name matches unknown", () => {
+  const output = "      0x0000  _literal  (from library)";
+  expect(parseDyldImports(output, true).needsNameInventory).toBe(true);
+  for (const names of [new Set<string>(), new Set(["_literal", " _literal"])])
+    expect(parseDyldImports(output, true, names)).toEqual({
+      needsNameInventory: false,
+      items: [
+        {
+          name: null,
+          raw_name: "0x0000  _literal  (from library)",
+          name_status: "ambiguous",
+          addend: null,
+          address: null,
+          weak: null,
+          reexport: null,
+          source: "library",
+        },
+      ],
+    });
+});
+
 it("reports a chained bind addend separately in native inspection", async () => {
   const outputs: Record<string, string> = {};
-  for (const tool of ["lipo", "otool", "nm", "dwarfdump", "vtool"])
+  for (const tool of ["lipo", "nm", "dwarfdump", "vtool"])
     outputs[tool] = await fixture(`dyld-inventory/${tool}.txt`);
-  outputs.otool = withOtoolMachHeader(
-    `${outputs.otool ?? ""}Load command 17
-      cmd LC_DYLD_CHAINED_FIXUPS
-  cmdsize 16
-    dataoff 100
-   datasize 20
-`,
-  );
   outputs["dyld_info:-imports"] =
-    "-imports:\n 0x0000 _fixture_data (from libFixture)\n 0x0001 _fixture_data+0x4 (from libFixture)\n";
+    "-imports:\n      0x0000 _fixture_data  (from libFixture)\n      0x0001 _fixture_data+0x4  (from libFixture)\n";
   outputs["dyld_info:-exports"] = await fixture("dyld-inventory/exports.txt");
   const client = new NativeMacOSProvider(
     {},
-    new FixtureRunner(outputs),
+    inventoryRunner(outputs),
     "darwin",
-  ).createClient(machoTarget("/private/fixture"));
+  ).createClient(await inventoryTarget(true));
   const execution = await client.execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
     imports: {
       exhaustive: false,
       limitations: expect.arrayContaining([
-        "Chained import text contains symbol/addend expressions whose split is ambiguous.",
+        "Import text contains name, flags, library, or addend boundaries whose split is ambiguous.",
       ]),
       items: [
         {
           name: "_fixture_data",
+          runtime_name: "fixture_data",
           raw_name: null,
           name_status: "exact",
           addend: null,
@@ -388,6 +999,7 @@ it("reports a chained bind addend separately in native inspection", async () => 
         },
         {
           name: null,
+          runtime_name: null,
           raw_name: "_fixture_data+0x4",
           name_status: "ambiguous",
           addend: null,
@@ -404,14 +1016,14 @@ it("reports a chained bind addend separately in native inspection", async () => 
 it("reports a renamed re-export once under its exported name", async () => {
   const client = new NativeMacOSProvider(
     {},
-    new FixtureRunner({
+    inventoryRunner({
       "dyld_info:-exports": await fixture(
         "dyld-inventory/renamed-reexports.txt",
       ),
       nm: "_foo_renamed\n_own\n",
     }),
     "darwin",
-  ).createClient(machoTarget("/private/fixture"));
+  ).createClient(await inventoryTarget());
   const execution = await client.execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
@@ -475,7 +1087,7 @@ it("splits re-export rows at the source library", () => {
 
 it("retains symbol names containing spaces in dyld inventory rows", () => {
   expect(
-    parseDyldImports("  0x0000  _entry with space  (from fixture)", false),
+    parseDyldImports("      _entry with space  (from fixture)", false).items,
   ).toEqual([
     {
       name: "_entry with space",
@@ -530,47 +1142,6 @@ it("retains symbol names containing spaces in dyld inventory rows", () => {
     },
   ]);
 });
-
-it.each([
-  ["0001", "0002"],
-  [" seg ", " sec "],
-])(
-  "preserves exact segment %j and section %j names from otool",
-  (segment, section) => {
-    const parsed = parseOtoolLoadCommands(
-      withOtoolMachHeader(`Load command 0
-      cmd LC_SEGMENT_64
-  cmdsize 152
-  segname ${segment}
-   vmaddr 0x0000000000004000
-   vmsize 0x0000000000004000
-  fileoff 16384
- filesize 16384
-  maxprot 0x00000003
- initprot 0x00000003
-   nsects 1
-    flags 0x4
-Section
-  sectname ${section}
-   segname ${segment}
-      addr 0x0000000000004000
-      size 0x0000000000000008
-    offset 16384
-     align 2^0 (1)
-    reloff 0
-    nreloc 0
-     flags 0x00000000
- reserved1 0
- reserved2 0
-`),
-    );
-    expect(parsed.segments[0]).toMatchObject({
-      name: segment,
-      file_offset: 16384,
-      sections: [{ segment, name: section, size: 8 }],
-    });
-  },
-);
 
 const signatureRunner = (outputs: {
   readonly signed: string;
@@ -635,39 +1206,6 @@ const signatureRunner = (outputs: {
   },
 });
 
-it.each([
-  "/tmp/Load command 12/plugin.dylib",
-  "@rpath/plugin-Load command 34.dylib",
-])(
-  "keeps load-command-looking text inside native install names: %s",
-  (installName) => {
-    const parsed = parseOtoolLoadCommands(
-      withOtoolMachHeader(`Load command 0
-          cmd LC_ID_DYLIB
-      cmdsize 80
-         name ${installName} (offset 24)
-   time stamp 2 Thu Jan  1 00:00:02 1970
-      current version 3.2.1
-compatibility version 1.0.0
-Load command 1
-          cmd LC_UUID
-      cmdsize 24
-         uuid 01234567-89AB-CDEF-0123-456789ABCDEF
-`),
-    );
-    expect(parsed.commands.map(({ index, kind }) => ({ index, kind }))).toEqual(
-      [
-        { index: 0, kind: "LC_ID_DYLIB" },
-        { index: 1, kind: "LC_UUID" },
-      ],
-    );
-    expect(parsed.commands[0]?.fields.name).toBe(`${installName} (offset 24)`);
-    expect(parsed.dependencies).toEqual([]);
-    expect(parsed.commands[1]?.fields.uuid).toBe(
-      "01234567-89AB-CDEF-0123-456789ABCDEF",
-    );
-  },
-);
 it.each(["weak-def", "absolute", "literal suffix"])(
   "preserves an nm-proven export name ending in [%s]",
   (suffix) => {
@@ -701,9 +1239,9 @@ it("keeps true weak annotations when nm establishes the unannotated name", () =>
 it("retains chained import suffixes as ambiguous raw text", () => {
   expect(
     parseDyldImports(
-      "0x0000 _fixture_data (from libFixture)\n0x0001 _fixture_data+0x4 (from libFixture)\n0x0002 _fixture_weak+0x8 [weak-import] (from libFixture)",
+      "      0x0000 _fixture_data  (from libFixture)\n      0x0001 _fixture_data+0x4  (from libFixture)\n      0x0002 _fixture_weak+0x8 [weak-import] (from libFixture)",
       true,
-    ),
+    ).items,
   ).toEqual([
     {
       name: "_fixture_data",
@@ -737,7 +1275,8 @@ it("retains chained import suffixes as ambiguous raw text", () => {
     },
   ]);
   expect(
-    parseDyldImports("0x0001 _literal+0x4 (from libFixture)", true),
+    parseDyldImports("      0x0001 _literal+0x4  (from libFixture)", true)
+      .items,
   ).toEqual([
     {
       name: null,
@@ -751,7 +1290,7 @@ it("retains chained import suffixes as ambiguous raw text", () => {
     },
   ]);
   expect(
-    parseDyldImports("0x0001 _literal+0x4 (from libFixture)", false),
+    parseDyldImports("      _literal+0x4  (from libFixture)", false).items,
   ).toMatchObject([{ name: "_literal+0x4", name_status: "exact" }]);
 });
 
@@ -798,11 +1337,11 @@ const symbolTableRunner = (
 ) => {
   const nmArguments: (readonly string[])[] = [];
   const replay = (output: string) =>
-    new FixtureRunner({ ...outputs, nm: output });
+    inventoryRunner({ ...outputs, nm: output });
   const runner: NativeCommandRunner = {
     run: (tool, arguments_) => {
       if (tool !== "nm") return replay("").run(tool, arguments_);
-      nmArguments.push(arguments_);
+      nmArguments.push([...arguments_.slice(0, -1), "/private/fixture"]);
       return replay(
         arguments_.includes("--no-dyldinfo") ? nm.symbolTable : nm.withDyldInfo,
       ).run(tool, arguments_);
@@ -824,13 +1363,46 @@ it("reads exports from the symbol table without llvm-nm's dyld-info pass", async
     { symbolTable: names, withDyldInfo: names },
   );
   const execution = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(machoTarget("/private/fixture"))
+    .createClient(await inventoryTarget())
     .execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(nmArguments).toEqual([
     ["-gjU", "--no-dyldinfo", "-arch", "arm64", "/private/fixture"],
   ]);
   expect(nmCommands(execution.value.result)).toEqual(nmArguments);
+});
+
+it("binds leading-space exports to their exact nm identities", async () => {
+  // Real clang dylib: .globl "  _spaced"; "  _spaced": ret; .globl _spaced; _spaced: ret.
+  // dyld_info separates the address from the literal symbol with two spaces.
+  const names = "  _spaced\n_spaced\n";
+  const { runner, nmArguments } = symbolTableRunner(
+    {
+      "dyld_info:-exports": [
+        "fixture [arm64]:",
+        "    -exports:",
+        "        offset      symbol",
+        "        0x000002A0    _spaced",
+        "        0x000002A4  _spaced",
+        "",
+      ].join("\n"),
+    },
+    { symbolTable: names, withDyldInfo: names },
+  );
+  const execution = await new NativeMacOSProvider({}, runner, "darwin")
+    .createClient(await inventoryTarget())
+    .execute("inspect_macho", {});
+  if (!execution.ok) throw execution.error;
+  expect(nmArguments).toHaveLength(1);
+  const exported = (
+    execution.value.result as {
+      exports: { items: { name: string; address: string | null }[] };
+    }
+  ).exports.items;
+  expect(exported).toEqual([
+    expect.objectContaining({ name: "  _spaced", address: "0x1000002a0" }),
+    expect.objectContaining({ name: "_spaced", address: "0x1000002a4" }),
+  ]);
 });
 
 it("keeps an export name ending in a carriage return distinct", async () => {
@@ -852,7 +1424,7 @@ it("keeps an export name ending in a carriage return distinct", async () => {
     { symbolTable: names, withDyldInfo: names },
   );
   const execution = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(machoTarget("/private/fixture"))
+    .createClient(await inventoryTarget())
     .execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(nmArguments).toHaveLength(1);
@@ -878,7 +1450,7 @@ it("reruns nm with its dyld-info pass when a stripped symbol table omits trie ex
     { symbolTable: "", withDyldInfo: trieNames },
   );
   const execution = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(machoTarget("/private/fixture"))
+    .createClient(await inventoryTarget())
     .execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   const rerun = ["-gjU", "-arch", "arm64", "/private/fixture"];
@@ -904,7 +1476,7 @@ it("reruns nm with its dyld-info pass when a dyld_info export row is unreadable"
     { symbolTable: names, withDyldInfo: names },
   );
   const execution = await new NativeMacOSProvider({}, runner, "darwin")
-    .createClient(machoTarget("/private/fixture"))
+    .createClient(await inventoryTarget())
     .execute("inspect_macho", {});
   if (!execution.ok) throw execution.error;
   expect(nmArguments.map((arguments_) => arguments_.slice(0, 2))).toEqual([
@@ -913,10 +1485,48 @@ it("reruns nm with its dyld-info pass when a dyld_info export row is unreadable"
   ]);
 });
 
+it("lets codesign select the only slice of a thin arm64e target", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-thin-signature-"),
+    "fixture",
+  );
+  await writeFile(path, machoImage({ cpu: CPU.arm64e }));
+  const calls: (readonly string[])[] = [];
+  const display = (await fixture("codesign.txt")).replace(
+    /^Format=.*$/mu,
+    "Format=Mach-O thin (arm64e)",
+  );
+  const runner: NativeCommandRunner = {
+    run(tool, args, options) {
+      calls.push(args);
+      return new FixtureRunner({ codesign: display }).run(tool, args, options);
+    },
+  };
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    await nativeMachoTargetForFile(path),
+  );
+  const result = await client.execute("inspect_signature", {});
+  if (!result.ok) throw result.error;
+  // The admitted architecture is the arm64 family; codesign names the slice.
+  expect(result.value.result).toMatchObject({
+    signed: true,
+    slices: { described: "arm64e", architectures: [], checked: [] },
+  });
+  expect(calls).toHaveLength(3);
+  expect(calls.every((args) => !args.includes("-a"))).toBe(true);
+  await client.close();
+});
+
 it.each(["arm64", "x86_64"] as const)(
   "binds every signature facet to the requested %s slice when all slices are signed",
   async (architecture) => {
     const registered = await signatureTarget();
+    const header = parseExecutableHeader(
+      await readFile(registered.path),
+      architecture === "x86_64" ? "x64" : "arm64",
+    );
+    if (!header.ok || header.value.format !== "mach-o-universal")
+      throw new Error("expected universal fixture");
     const display = (await fixture("codesign.txt")).replace(
       /^Format=.*$/mu,
       "Format=Mach-O universal (x86_64 arm64)",
@@ -938,7 +1548,7 @@ it.each(["arm64", "x86_64"] as const)(
       },
     };
     const result = await new NativeMacOSProvider({}, runner, "darwin")
-      .createClient({ ...registered, architecture })
+      .createClient({ ...registered, ...header.value })
       .execute("inspect_signature", {});
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({

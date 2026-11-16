@@ -11,9 +11,9 @@ import {
   retryRegularFileCleanupFailures,
   RetainedRegularFileCleanupFailure,
   bindRegularFileCleanup,
-} from "../../../src/application/RegularFileRead.js";
+} from "../../../src/process/RegularFileRead.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { RegularFileOperationCancelled } from "../../../src/filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import {
@@ -434,7 +434,7 @@ it.each(
       expect(admitted?.fd).toBe(-1);
       expect(resources?.hasPending ?? false).toBe(false);
       await resources?.retryCleanup();
-      expect(await readFile(path)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
     } finally {
       vi.restoreAllMocks();
       await resources?.close();

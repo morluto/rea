@@ -1,14 +1,19 @@
+import { boundedList } from "../../domain/boundedList.js";
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
+import { z } from "zod";
 import { basename } from "node:path";
 import { isIP } from "node:net";
 
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
 import {
   decodeRetainedBase64,
   readRecordedResponseBody,
   type RecordedResponseBody,
 } from "../../domain/analysisView/recordedResponseBody.js";
 import { scenarioContentMediaType } from "../../domain/analysisView/scenarioCaptureRecords.js";
-import { mediaTypeEssence } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { BrowserScenarioEvent } from "../../domain/browserScenarioCaptureValues.js";
 import type { EnvironmentBuildReport } from "../../domain/environmentBundleExport.js";
 import {
@@ -79,9 +84,6 @@ export const credentialNamed = (name: string): boolean => {
 const SCAN_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 /** Pointers the report lists; the count covers every match. */
 const REPORTED_POINTERS = 20;
-
-const pointerToken = (name: string): string =>
-  name.replaceAll("~", "~0").replaceAll("/", "~1");
 
 /** A held value: a non-empty string, or an array holding one. */
 const holdsValue = (value: unknown): boolean =>
@@ -195,7 +197,7 @@ const credentialTally = () => {
       const entries = Object.entries(value);
       for (let index = entries.length - 1; index >= 0; index--) {
         const [name, child] = entries[index]!;
-        const path = `${pointer}/${pointerToken(name)}`;
+        const path = `${pointer}/${escapeJsonPointerToken(name)}`;
         field(`${label} ${path}`, name, child);
         stack.push([child, path]);
       }
@@ -206,7 +208,7 @@ const credentialTally = () => {
     else if (scanned?.kind === "json") walk(scanned.value, label);
     else if (scanned?.kind === "form")
       for (const [name, value] of scanned.fields)
-        field(`${label} /${pointerToken(name)}`, name, value);
+        field(`${label} /${escapeJsonPointerToken(name)}`, name, value);
   };
   return {
     field,
@@ -328,6 +330,58 @@ export const credentialScanWarnings = (capture: {
       pointers: scanned.skipped.pointers,
     });
   return warnings;
+};
+
+const savedEntries = z.array(
+  z.object({ name: z.string(), secret: z.boolean().optional() }),
+);
+const scenarioSaves = z.object({
+  actions: z.array(
+    z
+      .object({
+        save: savedEntries.optional(),
+        save_response: z.object({ save: savedEntries }).optional(),
+      })
+      .loose(),
+  ),
+});
+
+/** A browser scenario's saved values named like credentials but not marked secret, which the capture records unredacted. */
+export const savedCredentialWarnings = (
+  parameters: unknown,
+): EnvironmentBuildWarning[] => {
+  const parsed = scenarioSaves.safeParse(parameters);
+  if (!parsed.success) return [];
+  const pointers: string[] = [];
+  parsed.data.actions.forEach((action, index) => {
+    const unmarked = (
+      entries:
+        | readonly {
+            readonly name: string;
+            readonly secret?: boolean | undefined;
+          }[]
+        | undefined,
+      at: string,
+    ) =>
+      entries?.forEach((entry, position) => {
+        if (entry.secret !== true && credentialNamed(entry.name))
+          pointers.push(
+            `/parameters/actions/${String(index)}/${at}/${String(position)}`,
+          );
+      });
+    unmarked(action.save, "save");
+    unmarked(action.save_response?.save, "save_response/save");
+  });
+  const reported = boundedList(pointers, REPORTED_POINTERS);
+  return pointers.length === 0
+    ? []
+    : [
+        {
+          code: "credential-named-saved-values",
+          message: `${String(pointers.length)} saved values have credential-like names but are not marked secret, so the capture records them unredacted; mark them \`secret: true\` and record again before sharing.`,
+          pointers: [...reported.items],
+        },
+      ];
 };
 
 /** Whether an origin's host is a loopback name or an IP literal, which says nothing about the application. */

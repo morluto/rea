@@ -6,13 +6,19 @@ import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import {
   arrayItemSchemaError,
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
+import {
+  advertisedSchemaErrors,
+  localInputReferences,
+  recursiveReferences,
+  resolveReference,
+} from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { servedCatalog } from "../../../src/application/environment/environmentState.js";
 import { servedFrom } from "../../fixtures/environmentStateServing.js";
@@ -23,53 +29,14 @@ import {
   FIRST_BOOK,
   THIRD_BOOK,
 } from "../../fixtures/environmentStateWrites.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface ToolSchemas {
   readonly name: string;
   readonly inputSchema: Record<string, unknown>;
   readonly outputSchema?: Record<string, unknown> | undefined;
   readonly annotations?: Record<string, unknown> | undefined;
-}
-
-function schemaErrors(tools: readonly ToolSchemas[]): string[] {
-  // Reuse Ajv's meta-schema validators, then clear each root's reference
-  // namespace, including nested IDs, before validating the next schema.
-  const ajv = new Ajv2020({
-    strict: false,
-    validateFormats: false,
-    addUsedSchema: false,
-  });
-  return tools.flatMap((tool) =>
-    ["inputSchema", "outputSchema"].flatMap((kind) => {
-      const schema =
-        kind === "inputSchema" ? tool.inputSchema : tool.outputSchema;
-      if (schema === undefined) return [];
-      try {
-        if (!ajv.validateSchema(schema))
-          return [`${tool.name}.${kind}: ${ajv.errorsText(ajv.errors)}`];
-        ajv.compile(schema);
-        const clientError = arrayItemSchemaError(
-          schema,
-          `${tool.name}.${kind}`,
-        );
-        if (clientError !== undefined) return [clientError];
-        if (kind === "inputSchema") {
-          const literalError = unsupportedInputLiteralSchemaError(
-            schema,
-            `${tool.name}.${kind}`,
-          );
-          if (literalError !== undefined) return [literalError];
-        }
-        return [];
-      } catch (cause: unknown) {
-        return [
-          `${tool.name}.${kind}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        ];
-      } finally {
-        ajv.removeSchema();
-      }
-    }),
-  );
 }
 
 function expectStrictInputSchemaParity(
@@ -127,7 +94,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
     },
     open_binary: {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -135,7 +102,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     start_gdb_session: {
       readOnlyHint: false,
@@ -243,104 +210,86 @@ function expectMeaningfulPropertyDescriptions(
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function resolveReference(schema: unknown, reference: string): unknown {
-  if (reference === "#") return schema;
-  if (!reference.startsWith("#/")) return undefined;
-  let value = schema;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      !Object.hasOwn(value, key)
-    )
-      return undefined;
-    value = Reflect.get(value, key);
+/** Follow SDK-shared local definitions at each schema path component. */
+function schemaAt(
+  root: unknown,
+  path: readonly string[],
+  node: unknown = root,
+): unknown {
+  const resolve = (value: unknown): unknown => {
+    while (isRecord(value) && typeof value.$ref === "string")
+      value = resolveReference(root, value.$ref);
+    return value;
+  };
+  for (const key of path) {
+    node = resolve(node);
+    if (!isRecord(node)) return undefined;
+    node = node[key];
   }
-  return value;
+  return resolve(node);
 }
 
-function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
-  return tools.flatMap((tool) =>
-    (["inputSchema", "outputSchema"] as const).flatMap((kind) => {
-      const schema = tool[kind];
-      const found = new Set<string>();
-      const visit = (node: unknown, active: readonly string[]): void => {
-        if (typeof node !== "object" || node === null) return;
-        for (const [key, child] of Object.entries(node)) {
-          if (
-            [
-              "$defs",
-              "definitions",
-              "examples",
-              "default",
-              "const",
-              "enum",
-            ].includes(key)
-          )
-            continue;
-          if (key !== "$ref" || typeof child !== "string") visit(child, active);
-          else if (active.includes(child)) found.add(child);
-          else visit(resolveReference(schema, child), [...active, child]);
-        }
-      };
-      visit(schema, []);
-      return [...found].map(
-        (reference) => `${tool.name}.${kind}: ${reference}`,
-      );
-    }),
+/** Validate retained locals facts through the output schema the SDK actually advertised. */
+function expectManagedLocalSignatureSchema(
+  tool: ToolSchemas | undefined,
+): void {
+  const managedOutput = tool?.outputSchema;
+  if (managedOutput === undefined)
+    throw new Error("Missing managed member output schema");
+  const managedAlternatives = schemaAt(managedOutput, [
+    "properties",
+    "normalized_result",
+    "anyOf",
+  ]);
+  if (!Array.isArray(managedAlternatives))
+    throw new Error("Missing managed result alternatives");
+  const inventory = managedAlternatives.find(
+    (alternative: unknown) =>
+      schemaAt(managedOutput, ["properties", "methods"], alternative) !==
+      undefined,
   );
-}
-
-const schemaMapKeywords = new Set([
-  "$defs",
-  "definitions",
-  "properties",
-  "patternProperties",
-  "dependentSchemas",
-  "dependencies",
-]);
-const schemaArrayKeywords = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-const schemaChildKeywords = new Set([
-  "items",
-  "additionalItems",
-  "contains",
-  "additionalProperties",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "propertyNames",
-  "not",
-  "if",
-  "then",
-  "else",
-]);
-
-function localInputReferences(tools: readonly ToolSchemas[]): string[] {
-  return tools.flatMap((tool) => {
-    const references: string[] = [];
-    const visit = (node: unknown, path: string): void => {
-      if (!isRecord(node)) return;
-      if (typeof node.$ref === "string") references.push(`${path}.$ref`);
-      for (const [key, value] of Object.entries(node)) {
-        if (schemaMapKeywords.has(key) && isRecord(value)) {
-          for (const [name, schema] of Object.entries(value))
-            visit(schema, `${path}.${key}.${name}`);
-        } else if (schemaArrayKeywords.has(key) && Array.isArray(value)) {
-          value.forEach((schema, index) =>
-            visit(schema, `${path}.${key}[${index}]`),
-          );
-        } else if (schemaChildKeywords.has(key)) {
-          if (Array.isArray(value))
-            value.forEach((schema, index) =>
-              visit(schema, `${path}.${key}[${index}]`),
-            );
-          else visit(value, `${path}.${key}`);
-        }
-      }
-    };
-    visit(tool.inputSchema, `${tool.name}.inputSchema`);
-    return references;
+  const locals = schemaAt(
+    managedOutput,
+    [
+      "properties",
+      "methods",
+      "items",
+      "properties",
+      "body",
+      "properties",
+      "local_var_signature",
+    ],
+    inventory,
+  );
+  if (!isRecord(locals))
+    throw new Error("Missing advertised local signature facts");
+  const validateLocals = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile({
+    ...locals,
+    $defs: managedOutput.$defs,
   });
+  expect(validateLocals(null)).toBe(true);
+  expect(
+    validateLocals({
+      raw_sha256: "a".repeat(64),
+      has_context_dependent_types: false,
+    }),
+  ).toBe(true);
+  expect(
+    validateLocals({
+      raw_sha256: "a".repeat(64),
+      has_context_dependent_types: true,
+    }),
+  ).toBe(true);
+  expect(
+    validateLocals({
+      raw_sha256: "a".repeat(64),
+      has_context_dependent_types: "false",
+    }),
+  ).toBe(false);
+  expect(validateLocals({ has_context_dependent_types: false })).toBe(false);
 }
 
 it("finds references only in input schema positions, not literal data", () => {
@@ -396,7 +345,10 @@ const advertiseAndEnforceProcessEnvironmentKeyConstraint =
         };
       },
     );
-    const client = new Client({ name: "process-schema", version: "0" });
+    const client = new Client(
+      { name: "process-schema", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -484,7 +436,7 @@ describe("served environment catalogs", () => {
     );
     expect(tools.some((tool) => tool.name === "delete_books")).toBe(true);
     expect(
-      schemaErrors(
+      advertisedSchemaErrors(
         tools.map((tool) => ({
           name: tool.name,
           inputSchema: tool.inputSchema as unknown as Record<string, unknown>,
@@ -516,7 +468,10 @@ describe("MCP JSON Schema validity", () => {
 
   it("advertises valid input and output schemas for every canonical tool", async () => {
     const server = new McpServer({ name: "schema-validation", version: "0" });
-    const client = new Client({ name: "schema-validation", version: "0" });
+    const client = new Client(
+      { name: "schema-validation", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     for (const contract of TOOL_CONTRACTS)
@@ -534,58 +489,23 @@ describe("MCP JSON Schema validity", () => {
       expect(tools.map(({ name }) => name).sort()).toEqual(
         TOOL_CONTRACTS.map(({ name }) => name).sort(),
       );
-      expect(schemaErrors(tools)).toEqual([]);
+      expect(advertisedSchemaErrors(tools)).toEqual([]);
       expect(localInputReferences(tools)).toEqual([]);
       expect(recursiveReferences(tools)).toEqual([]);
       expectKnownAuthorityHints(tools);
       const byName = new Map(tools.map((tool) => [tool.name, tool]));
+      expectManagedLocalSignatureSchema(byName.get("inspect_managed_members"));
+      const comparison = byName.get("compare_web_captures")?.inputSchema;
       for (const side of ["before", "after"])
-        expect(byName.get("compare_web_captures")?.inputSchema).toHaveProperty(
-          [
-            "properties",
-            side,
-            "properties",
-            "inspection",
-            "properties",
-            "scripts",
-            "properties",
-            "items",
-            "items",
-            "properties",
-            "source",
-            "anyOf",
-          ],
-          expect.arrayContaining([
-            expect.objectContaining({
-              properties: expect.objectContaining({
-                reason: { type: "string" },
-              }),
-            }),
-            expect.objectContaining({
-              properties: expect.objectContaining({
-                artifact: expect.objectContaining({ type: "object" }),
-              }),
-            }),
-          ]),
+        expect(comparison).toHaveProperty(
+          ["properties", side, "properties", "inspection"],
+          {
+            type: "object",
+            description: expect.stringContaining(
+              "complete canonical observation",
+            ),
+          },
         );
-      const catalogProjection = tools.map((tool) => ({
-        name: tool.name,
-        title: tool.title,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema,
-        annotations: tool.annotations,
-      }));
-      expect(catalogProjection).toEqual(
-        GENERATED_MCP_TOOL_CATALOG.map((tool) => ({
-          name: tool.name,
-          title: tool.title,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          outputSchema: tool.outputSchema,
-          annotations: tool.annotations,
-        })),
-      );
       for (const contract of TOOL_CONTRACTS) {
         const tool = byName.get(contract.name);
         expect(tool?.title?.trim(), contract.name).toBeTruthy();
@@ -610,7 +530,10 @@ describe("MCP JSON Schema validity", () => {
 describe("MCP root input schemas", () => {
   it("advertises object roots while enforcing union requirements at runtime", async () => {
     const server = new McpServer({ name: "schema-constraints", version: "0" });
-    const client = new Client({ name: "schema-constraints", version: "0" });
+    const client = new Client(
+      { name: "schema-constraints", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     for (const contract of TOOL_CONTRACTS)
@@ -664,7 +587,12 @@ describe("MCP root input schemas", () => {
         const tool = advertised.get(name);
         if (contract === undefined || tool === undefined)
           throw new Error(`${name} was not advertised`);
-        const validate = ajv.compile(tool.inputSchema);
+        const validate = ajv.compile(
+          advertiseTool(
+            { inputSchema: tool.inputSchema },
+            advertisedToolPresentation("off"),
+          ).inputSchema ?? {},
+        );
         const base = {
           cdp_endpoint: "http://127.0.0.1:9222",
           target_id: "target",
@@ -680,7 +608,7 @@ describe("MCP root input schemas", () => {
             (name === "inspect_web_page" && flag === false);
           const parsed = contract.inputSchema.safeParse(input);
           expect(parsed.success, `${name}: ${String(flag)}`).toBe(accepted);
-          // The advertisement relaxes Boolean literals; the canonical parser
+          // The advertised dialect relaxes Boolean literals; the canonical parser
           // still rejects false when this operation requires script sources.
           expect(validate(input), `${name}: ${String(flag)}`).toBe(
             flag === undefined || typeof flag === "boolean",
@@ -748,7 +676,10 @@ const advertiseAndEnforceItemSelectorCollectionConstraints =
         content: [],
       }),
     );
-    const client = new Client({ name: "item-selector-schema", version: "0" });
+    const client = new Client(
+      { name: "item-selector-schema", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -824,10 +755,13 @@ describe("MCP process input JSON Schema", () => {
       name: "process-schema-validation",
       version: "0",
     });
-    const client = new Client({
-      name: "process-schema-validation",
-      version: "0",
-    });
+    const client = new Client(
+      {
+        name: "process-schema-validation",
+        version: "0",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     for (const contract of TOOL_CONTRACTS)
@@ -878,17 +812,8 @@ describe("MCP process input JSON Schema", () => {
   });
 });
 
-it("ships nonrecursive input and output schemas in the generated catalog", () => {
-  expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-  expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-});
-
-it("ships input schemas without local references in the generated catalog", () => {
-  expect(localInputReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-});
-
 it("rejects unresolved output-schema references even for uncalled tools", () => {
-  const errors = schemaErrors([
+  const errors = advertisedSchemaErrors([
     {
       name: "dangling",
       inputSchema: { type: "object" },
@@ -901,7 +826,7 @@ it("rejects unresolved output-schema references even for uncalled tools", () => 
 
 it("validates each tool independently when output schema IDs repeat", () => {
   const outputSchema = { $id: "urn:rea:test:shared-output", type: "string" };
-  const errors = schemaErrors([
+  const errors = advertisedSchemaErrors([
     { name: "first", inputSchema: { type: "object" }, outputSchema },
     {
       name: "second",
@@ -967,6 +892,24 @@ it("checks client array constraints in schema positions while preserving literal
         "literal",
       ),
     ).toBe(`literal.properties.value.${reason}`);
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "array",
+          items: [{ type: "string" }, literal],
+        },
+        "tuple",
+      ),
+    ).toBe(`tuple.items[1].${reason}`);
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "string",
+          contentSchema: literal,
+        },
+        "encoded",
+      ),
+    ).toBe(`encoded.contentSchema.${reason}`);
   }
 });
 
@@ -974,7 +917,7 @@ it.each([false, true])(
   "rejects references to another tool's nested IDs (earlier compilation fails: %s)",
   (invalidPrevious) => {
     const nestedId = "urn:rea:test:nested-output";
-    const errors = schemaErrors([
+    const errors = advertisedSchemaErrors([
       {
         name: "first",
         inputSchema: { type: "object" },

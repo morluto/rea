@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,11 +13,75 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { ANALYSIS_SNAPSHOT_TARGET } from "../../../src/domain/analysisSnapshot.fixture.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+it("exports and imports GameCube DOL Evidence without losing its subject identity", async () => {
+  const root = await createTestTempDirectory("rea-dol-bundle-mcp-");
+  const path = join(root, "bundle.json");
+  const record = createEvidence(
+    {
+      path: join(root, "game.dol"),
+      sha256: "d".repeat(64),
+      format: "gamecube-dol",
+      architecture: "powerpc",
+    },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "inspect_artifact",
+      parameters: {},
+      result: { observed: true },
+    },
+  );
+  const session = createTestBinarySession(() => {
+    throw new Error("bundle round trip must not run a provider");
+  });
+  expect(session.recordEvidence(record).ok).toBe(true);
+  const source = await connectEvidenceMcp("dol-source", session);
+  const importedSession = createTestBinarySession(() => {
+    throw new Error("bundle import must not run a provider");
+  });
+  const target = await connectEvidenceMcp("dol-target", importedSession);
+  try {
+    const inline = await source.client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(inline.isError).not.toBe(true);
+    expect(inline.structuredContent).toMatchObject({
+      result: {
+        artifacts: [{ format: "gamecube-dol", architecture: "powerpc" }],
+      },
+    });
+    const exported = await source.client.callTool({
+      name: "export_evidence_bundle",
+      arguments: { path },
+    });
+    expect(exported.isError).not.toBe(true);
+    const imported = await target.client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path },
+    });
+    expect(imported.isError).not.toBe(true);
+    const restored = await target.client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(restored.structuredContent).toEqual(inline.structuredContent);
+  } finally {
+    await Promise.allSettled([
+      source.client.close(),
+      source.server.close(),
+      session.close(),
+      target.client.close(),
+      target.server.close(),
+      importedSession.close(),
+    ]);
+  }
+});
 
 it("preserves BOM recovery through public bundle import", async () => {
   const root = await createTestTempDirectory("rea-bundle-bom-mcp-");
@@ -34,8 +99,14 @@ it("preserves BOM recovery through public bundle import", async () => {
     expect(parseMcpToolError(response)).toMatchObject({
       error: {
         code: "evidence_integrity_mismatch",
-        message: JSON_BYTE_ORDER_MARK_MESSAGE,
-        remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+        message: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+        remediation: {
+          action: expect.stringMatching(
+            /byte-order mark.*UTF-8 without a byte-order mark/iu,
+          ),
+        },
       },
     });
   } finally {
@@ -45,7 +116,7 @@ it("preserves BOM recovery through public bundle import", async () => {
 
 it("returns the complete session Evidence bundle in the tool result", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "observe", parameters: {}, result: { value: "seen" } },
   );
@@ -55,7 +126,10 @@ it("returns the complete session Evidence bundle in the tool result", async () =
   }));
   expect(session.recordEvidence(evidence).ok).toBe(true);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "inline-evidence-bundle", version: "1" });
+  const client = new Client(
+    { name: "inline-evidence-bundle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 
@@ -191,11 +265,11 @@ const createBundleSourceSession = () => {
       result: { completed: true },
       authority: "controlled-replay",
     }),
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
-      result: jsonValueSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE),
+      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
       confidence: "observed",
       authority: "controlled-replay",
     }),
@@ -248,8 +322,8 @@ const unsupportedBundleFields = (
   ["provider manifest", ["providers", 0, "future_field"]],
   ["record subject", ["records", evidenceIndex, "subject", "future_field"]],
   [
-    "subject digest",
-    ["records", evidenceIndex, "subject", "digest", "future_field"],
+    "subject identity",
+    ["records", evidenceIndex, "subject", "identity", "future_field"],
   ],
   ["artifact manifest", ["artifacts", 0, "future_field"]],
   [
@@ -280,7 +354,10 @@ const connectEvidenceMcp = async (
   session: ReturnType<typeof createTestBinarySession>,
 ) => {
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

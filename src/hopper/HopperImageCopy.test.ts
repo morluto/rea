@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { prepareHopperExecutableImage } from "./HopperImageCopy.js";
 
@@ -37,8 +37,8 @@ it("whole executable copying rejects pre-copy replacement and retains captured b
     );
     expect(captured).toEqual({ ok: true, value: capturedPath });
     await writeFile(source, replacement);
-    expect(await readFile(capturedPath)).toEqual(selected);
-    expect(await readFile(source)).toEqual(replacement);
+    expect(Buffer.compare(await readFile(capturedPath), selected)).toBe(0);
+    expect(Buffer.compare(await readFile(source), replacement)).toBe(0);
   } finally {
     await resources.close();
   }

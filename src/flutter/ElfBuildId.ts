@@ -1,9 +1,13 @@
+import { assertArtifactReadActive } from "../resources/index.js";
+import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
+import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
 import { MAX_FLUTTER_BUILD_ID_BYTES } from "../domain/flutter/flutterBuildAnalysis.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
   elfNoteAlignment,
   elfNoteLayout,
+  readElfNoteHeader,
 } from "../domain/native/elfNoteLayout.js";
 import {
   readElfHeader,
@@ -36,7 +40,7 @@ export const readElfBuildIds = async (
   });
   let examined = 0;
   const read = async (offset: number, size: number): Promise<Buffer | null> => {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     if (
       !Number.isSafeInteger(offset) ||
       !Number.isSafeInteger(size) ||
@@ -56,7 +60,7 @@ export const readElfBuildIds = async (
         size - copied,
         offset + copied,
       );
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       if (result.bytesRead === 0) return null;
       copied += result.bytesRead;
     }
@@ -94,35 +98,33 @@ export const readElfBuildIds = async (
     for (let index = 0; index < table.count; index += 1) {
       if (index % 4096 === 0) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
       }
       const base = index * table.width;
-      if (
-        bytes.readUInt32LE(base + (table.program ? 0 : 4)) !==
-        (table.program ? 4 : 7)
-      )
-        continue;
-      const offsetAt =
-        base + (table.program ? (h.is64 ? 8 : 4) : h.is64 ? 0x18 : 0x10);
-      const sizeAt =
-        base + (table.program ? (h.is64 ? 0x20 : 0x10) : h.is64 ? 0x20 : 0x14);
-      const offset = h.is64
-        ? Number(bytes.readBigUInt64LE(offsetAt))
-        : bytes.readUInt32LE(offsetAt);
-      const size = h.is64
-        ? Number(bytes.readBigUInt64LE(sizeAt))
-        : bytes.readUInt32LE(sizeAt);
+      const parsedRecord = table.program
+        ? readElfProgramHeader(
+            bytes.subarray(base, base + table.width),
+            h.is64 ? 64 : 32,
+            true,
+          )
+        : readElfSectionHeader(
+            bytes.subarray(base, base + table.width),
+            h.is64 ? 64 : 32,
+            true,
+          );
+      if (!parsedRecord.ok) return failure(parsedRecord.error.message);
+      const record = parsedRecord.value;
+      if (record.type !== (table.program ? 4 : 7)) continue;
+      const offset = Number(record.offset);
+      const size = Number("fileSize" in record ? record.fileSize : record.size);
       if (
         !Number.isSafeInteger(offset) ||
         !Number.isSafeInteger(size) ||
         size > totalBytes - offset
       )
         return failure("ELF note range is not file-backed");
-      if (!table.program) {
-        const flags = h.is64
-          ? bytes.readBigUInt64LE(base + 8)
-          : BigInt(bytes.readUInt32LE(base + 8));
-        if ((flags & 0x800n) !== 0n) {
+      if ("size" in record) {
+        if (record.compressed) {
           if (!compressedNotes) {
             failures.push({
               reason: "Compressed ELF note sections are unsupported",
@@ -133,13 +135,7 @@ export const readElfBuildIds = async (
         }
       }
       if (size === 0) continue;
-      const alignmentAt =
-        base + (table.program ? (h.is64 ? 48 : 28) : h.is64 ? 48 : 32);
-      const alignment = elfNoteAlignment(
-        h.is64
-          ? bytes.readBigUInt64LE(alignmentAt)
-          : bytes.readUInt32LE(alignmentAt),
-      );
+      const alignment = elfNoteAlignment(record.alignment);
       const key = `${offset}:${size}:${alignment}`;
       if (ranges.has(key)) continue;
       if (ranges.size === MAX_NOTE_RANGES) {
@@ -162,7 +158,7 @@ export const readElfBuildIds = async (
     for (let at = 0; at < notes.length;) {
       if (at - yieldedAt >= 64 * 1024) {
         await yieldToEventLoop();
-        signal?.throwIfAborted();
+        assertArtifactReadActive(signal);
         yieldedAt = at;
       }
       if (notes.length - at < 12) {
@@ -170,10 +166,12 @@ export const readElfBuildIds = async (
           return failure("ELF note header is truncated");
         break;
       }
-      const namesz = notes.readUInt32LE(at);
-      const descsz = notes.readUInt32LE(at + 4);
-      const type = notes.readUInt32LE(at + 8);
+      const parsedHeader = readElfNoteHeader(notes.subarray(at, at + 12), true);
+      if (!parsedHeader.ok) return failure(parsedHeader.error.message);
+      const { namesz, descsz, type } = parsedHeader.value;
       const layout = elfNoteLayout(namesz, descsz, range.alignment);
+      if (layout.next > notes.length - at)
+        return failure("ELF note entry exceeds its declared note range");
       const descriptor = at + layout.descriptor;
       const end = descriptor + descsz;
       if (end > notes.length)
@@ -197,6 +195,6 @@ export const readElfBuildIds = async (
       at += layout.next;
     }
   }
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   return { candidates: [...candidates], failures };
 };

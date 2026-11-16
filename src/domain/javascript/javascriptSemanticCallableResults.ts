@@ -10,15 +10,25 @@ export interface SemanticCallableResultExpression {
   readonly delegated: boolean;
 }
 
+// Syntax is immutable across the static and semantic passes. These are source
+// expressions, independent of changing binding, mutation or invocation facts.
+// Weak keys keep retained results within the lifetime of their parsed AST.
+const resultExpressions = new WeakMap<
+  t.Node,
+  readonly SemanticCallableResultExpression[]
+>();
+
 /** Collect direct result syntax without executing or evaluating a callable. */
 export const semanticCallableResultExpressions = (
   callable: t.Node,
 ): readonly SemanticCallableResultExpression[] => {
+  const cached = resultExpressions.get(callable);
+  if (cached !== undefined) return cached;
   if (
     t.isArrowFunctionExpression(callable) &&
     !t.isBlockStatement(callable.body)
-  )
-    return [
+  ) {
+    const result: readonly SemanticCallableResultExpression[] = [
       {
         node: callable.body,
         site: callable.body,
@@ -26,6 +36,9 @@ export const semanticCallableResultExpressions = (
         delegated: false,
       },
     ];
+    resultExpressions.set(callable, result);
+    return result;
+  }
   if (!t.isFunction(callable)) return [];
   const output: SemanticCallableResultExpression[] = [];
   const pending = childNodes(callable.body).reverse();
@@ -49,6 +62,7 @@ export const semanticCallableResultExpressions = (
       });
     for (const child of childNodes(node).reverse()) pending.push(child);
   }
+  resultExpressions.set(callable, output);
   return output;
 };
 

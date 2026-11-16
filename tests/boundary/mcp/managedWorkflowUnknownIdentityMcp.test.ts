@@ -1,3 +1,9 @@
+import {
+  fileIdentity,
+  fileSubjectTarget,
+  fileSubjectArchitecture,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import {
@@ -5,7 +11,7 @@ import {
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
 } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
@@ -18,23 +24,21 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 const emptyExportEvidence = () => {
   const original = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
-  if (original === undefined || original.subject === null)
+  if (original === undefined)
     throw new Error("Managed verification example is missing native Evidence");
   const result = inspectMachoSchema.parse(original.normalized_result);
   return createEvidence(
     {
       path: "/fixtures/empty-exports.dylib",
       sha256: "8".repeat(64),
-      format: original.subject.format,
-      ...(original.subject.architecture === null
-        ? {}
-        : { architecture: original.subject.architecture }),
+      format: fileIdentity(original.subject).format,
+      ...fileSubjectArchitecture(original.subject),
     },
     original.provider,
     {
       operation: "inspect_macho",
       parameters: original.parameters,
-      result: jsonValueSchema.parse({
+      result: {
         ...result,
         exports: {
           items: [],
@@ -42,7 +46,7 @@ const emptyExportEvidence = () => {
           exhaustive: true,
           limitations: [],
         },
-      }),
+      },
       rawResult: null,
       limitations: [],
     },
@@ -60,10 +64,10 @@ const secondDeclaration = () => {
   const pinvoke = pinvokes[0];
   if (pinvoke === undefined)
     throw new Error("Managed verification example has invalid P/Invoke data");
-  return createEvidence(undefined, original.provider, {
+  return createEvidence(unknownTarget("not-observed"), original.provider, {
     operation: "inspect_managed_native_boundaries",
     parameters: original.parameters,
-    result: jsonValueSchema.parse({
+    result: {
       ...result,
       pinvoke_imports: [
         {
@@ -74,7 +78,7 @@ const secondDeclaration = () => {
           import_name: "open_native_again",
         },
       ],
-    }),
+    },
     rawResult: null,
     limitations: original.limitations,
   });
@@ -128,7 +132,7 @@ const memberEvidence = (
     {
       operation: "inspect_managed_members",
       parameters: original.parameters,
-      result: jsonValueSchema.parse(normalized),
+      result: normalized,
       rawResult: null,
       limitations: normalized.limitations,
     },
@@ -146,16 +150,20 @@ it("records a residual question for partial verification with zero item counts",
   const report = managedNativeBoundaryInspectionSchema.parse(
     original.normalized_result,
   );
-  const managed = createEvidence(undefined, original.provider, {
-    operation: "inspect_managed_native_boundaries",
-    parameters: {},
-    result: {
-      ...report,
-      pinvoke_imports: [],
-      native_implementations: [],
-      coverage: { state: "partial", issues: [] },
+  const managed = createEvidence(
+    unknownTarget("not-observed"),
+    original.provider,
+    {
+      operation: "inspect_managed_native_boundaries",
+      parameters: {},
+      result: {
+        ...report,
+        pinvoke_imports: [],
+        native_implementations: [],
+        coverage: { state: "partial", issues: [] },
+      },
     },
-  });
+  );
   const response = await harness.client.callTool({
     name: "verify_managed_native_boundaries",
     arguments: {
@@ -173,6 +181,62 @@ it("records a residual question for partial verification with zero item counts",
     native_body_unresolved: 0,
   });
   expect(result.coverage.status).toBe("partial");
+  expect(harness.session.listUnknowns()).toHaveLength(1);
+});
+
+it("retains partial native export coverage after an observed match", async () => {
+  const harness = await createApplicationMcpHarness({
+    session: createTestBinarySession(() => {
+      throw new Error("No provider needed");
+    }),
+  });
+  onTestFinished(harness.close);
+  const original = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
+  if (original === undefined)
+    throw new Error("Managed verification example is missing native Evidence");
+  const report = inspectMachoSchema.parse(original.normalized_result);
+  const native = createEvidence(
+    {
+      ...fileSubjectTarget(original.subject),
+      path: original.subject.local_path!,
+    },
+    original.provider,
+    {
+      operation: "inspect_macho",
+      parameters: original.parameters,
+      result: {
+        ...report,
+        exports: {
+          ...report.exports,
+          exhaustive: false,
+          limitations: ["Export inventory may be incomplete."],
+        },
+      },
+      rawResult: null,
+    },
+  );
+  const response = await harness.client.callTool({
+    name: "verify_managed_native_boundaries",
+    arguments: {
+      managed_boundaries:
+        MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries,
+      native_observations: [native],
+    },
+  });
+  expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+  const evidence = parseEvidence(response.structuredContent);
+  const result = managedNativeVerificationResultSchema.parse(
+    evidence.normalized_result,
+  );
+  expect(result.summary).toMatchObject({
+    verified: 1,
+    unresolved: 0,
+    contradicted: 0,
+  });
+  expect(result.coverage.status).toBe("partial");
+  expect(result.limitations).toContainEqual(
+    expect.stringContaining("Export inventory may be incomplete."),
+  );
   expect(harness.session.listUnknowns()).toHaveLength(1);
 });
 

@@ -1,67 +1,42 @@
-import { createHash } from "node:crypto";
+import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
-  type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
-import {
-  parseMzHeaderEvidence,
-  type DosMzHeader,
-  type MzWindowsHeaderSignatureEvidence,
-} from "../domain/dosMz.js";
-import type { JsonValue } from "../domain/jsonValue.js";
+import type { DosMzHeader, MzHeaderEvidence } from "../domain/dosMz.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
+const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
+  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.";
 const limitations = [
-  "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Mapping ends are inclusive.",
+  GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION,
   "Appended overlay bytes are identified by file extent and included in FileBytes identity; they must not be mapped as initialized header/module memory. Uninitialized allocations are reported but their contents and DOS runtime behavior are not verified.",
   "The fixed load segment 0x1000 describes Ghidra's analysis image, not a running DOS process. Verified import does not establish original source ownership or recovered program behavior.",
   "A mismatching memory digest identifies the reported source range; it does not locate the first differing byte inside that range.",
 ];
 
-/** Record one attestation's checks, preserving compared values and source locations. */
-const createLoadImageChecks = () => {
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
-  return { checks, check };
-};
-
 export type GhidraDosImage = {
   readonly header: DosMzHeader;
   readonly loadSegment: number;
   readonly modified: Buffer;
-  readonly expectedRelocations: NativeLoadImageObservation["relocations"];
+  /** The independent DOS check does not attest Ghidra's symbol name. */
+  readonly expectedRelocations: readonly Omit<
+    NativeLoadImageObservation["relocations"][number],
+    "symbol"
+  >[];
 };
 
 /** Prepare initialized bytes and relocation facts without copying overlays. */
 export const prepareGhidraDosLoadImage = (
   bytes: Buffer,
-  fileBytes: number,
-  signatureAtOffset?: MzWindowsHeaderSignatureEvidence,
+  evidence: MzHeaderEvidence,
 ): Result<GhidraDosImage, string> => {
-  const evidence = parseMzHeaderEvidence(bytes, fileBytes, signatureAtOffset);
   if (evidence.windowsHeader.state === "candidate")
     return err("MZ Windows new-header candidate is unresolved");
   if (evidence.windowsHeader.state === "header-needed")
@@ -78,24 +53,32 @@ export const prepareGhidraDosLoadImage = (
   const loadSegment = 0x1000;
   const modified = Buffer.from(bytes.subarray(0, header.imageBytes));
   const applied = [];
-  for (let index = 0; index < header.relocationCount; index += 1) {
-    const table = header.relocationTableOffset + index * 4;
-    const offset = bytes.readUInt16LE(table);
-    const segment = bytes.readUInt16LE(table + 2);
-    const fileOffset = header.headerBytes + segment * 16 + offset;
+  for (const {
+    segment,
+    offset,
+    moduleOffset,
+    fileOffset,
+  } of header.relocations) {
     const original = modified
       .subarray(fileOffset, fileOffset + 2)
       .toString("hex");
     const relocated =
       (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
-    applied.push({ segment, offset, fileOffset, original, relocated });
+    applied.push({
+      segment,
+      offset,
+      moduleOffset,
+      fileOffset,
+      original,
+      relocated,
+    });
   }
   // Application records describe their own fixup; the bridge reads memory
   // once all fixups have completed, including later overlapping writes.
   const expectedRelocations = applied.map(
-    ({ segment, offset, fileOffset, original, relocated }) => ({
-      address: address(loadSegment * 16 + segment * 16 + offset),
+    ({ segment, offset, moduleOffset, fileOffset, original, relocated }) => ({
+      address: address(loadSegment * 16 + moduleOffset),
       segment: (loadSegment + segment) & 0xffff,
       offset,
       status: "APPLIED",
@@ -156,10 +139,16 @@ export const attestGhidraDosLoadImage = (
   );
   check("entry_points", [entryAddress], [...observations.entry_points].sort());
   // A multiset preserves duplicate relocations and aliases; iteration order is not semantic.
-  const rows = (values: NativeLoadImageObservation["relocations"]): string[] =>
+  const rows = (
+    values: readonly (GhidraDosImage["expectedRelocations"][number] & {
+      readonly symbol?: string | null;
+    })[],
+  ): string[] =>
     values
-      .map(({ segment: _segment, offset: _offset, ...value }) =>
-        JSON.stringify(value),
+      // The independent DOS check does not attest Ghidra's symbol name.
+      .map(
+        ({ segment: _segment, offset: _offset, symbol: _symbol, ...value }) =>
+          JSON.stringify(value),
       )
       .sort();
   check(
@@ -275,7 +264,7 @@ const checkMappings = (
     check(
       `${at}.memory_sha256`,
       start !== null && end !== null && end <= modified.length
-        ? sha256(modified.subarray(start, end))
+        ? sha256Hex(modified.subarray(start, end))
         : null,
       mapping.sha256,
       start,
@@ -287,17 +276,9 @@ const checkMappings = (
   check(
     "initialized_unbacked_mappings",
     [],
-    observations.mappings
-      .filter(
-        (mapping) => mapping.initialized && mapping.source_file_index === null,
-      )
-      // Unmeasured permissions serialize as null so the observed value stays JSON.
-      .map((mapping) => ({
-        ...mapping,
-        readable: mapping.readable ?? null,
-        writable: mapping.writable ?? null,
-        executable: mapping.executable ?? null,
-      })),
+    observations.mappings.filter(
+      (mapping) => mapping.initialized && mapping.source_file_index === null,
+    ),
   );
 };
 
@@ -307,7 +288,7 @@ export const attestGhidraDosComLoadImage = (
   targetSha256: string,
   observations: NativeLoadImageObservation,
 ): Result<NativeLoadImage, string> => {
-  if (sha256(bytes) !== targetSha256)
+  if (sha256Hex(bytes) !== targetSha256)
     return err("Ghidra COM snapshot digest does not match the admitted target");
   const length = validateDosComLength(bytes.length);
   if (!length.ok) return length;

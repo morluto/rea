@@ -62,13 +62,19 @@ describe("readEnvironmentExportInputs", () => {
     );
     if (!inputs.ok) throw inputs.error;
     expect(inputs.value.manifest.path).toBe(files.manifestPath);
-    expect(inputs.value.manifest.bytes).toEqual(
-      await readFile(files.manifestPath),
-    );
+    expect(
+      Buffer.compare(
+        inputs.value.manifest.bytes,
+        await readFile(files.manifestPath),
+      ),
+    ).toBe(0);
     expect(inputs.value.manifest.value).toEqual(fixture.manifest);
-    expect(inputs.value.evidence.bytes).toEqual(
-      await readFile(files.capturePath),
-    );
+    expect(
+      Buffer.compare(
+        inputs.value.evidence.bytes,
+        await readFile(files.capturePath),
+      ),
+    ).toBe(0);
     expect(inputs.value.evidence.value).toEqual(fixture.capture);
   });
 
@@ -114,6 +120,15 @@ describe("readEnvironmentExportInputs", () => {
   });
 });
 
+it("does not create parents for a rejected trailing dot-dot output selection", async () => {
+  const { root, input } = await prepare("rea-environment-export-invalid-root-");
+  const parent = join(root, "untouched");
+  const directory = `${join(parent, "a", "b", "c")}/..`;
+  const result = await exportEnvironmentBundle({ ...input, directory });
+  expect(result.ok).toBe(false);
+  await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 const registerBundlePublicationCases = () => {
   it("writes the bundle into an absent directory with the read bytes copied unchanged", async () => {
     const { root, files, input, directory } = await prepare(
@@ -151,11 +166,17 @@ const registerBundlePublicationCases = () => {
         (await readFile(join(directory, file.path))).length,
       );
     expect(
-      await readFile(join(directory, "envs/grafana-example/manifest.json")),
-    ).toEqual(await readFile(files.manifestPath));
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/manifest.json")),
+        await readFile(files.manifestPath),
+      ),
+    ).toBe(0);
     expect(
-      await readFile(join(directory, "envs/grafana-example/evidence.json")),
-    ).toEqual(input.evidence.bytes);
+      Buffer.compare(
+        await readFile(join(directory, "envs/grafana-example/evidence.json")),
+        input.evidence.bytes,
+      ),
+    ).toBe(0);
     expect(await listFiles(root)).toEqual(
       expect.arrayContaining(["capture.json", "manifest.json"]),
     );
@@ -183,8 +204,11 @@ const registerBundlePublicationCases = () => {
       bytes: 7,
     });
     expect(
-      await readFile(join(directory, "envs/replay-copy/rea-agents.tgz")),
-    ).toEqual(await readFile(tarball));
+      Buffer.compare(
+        await readFile(join(directory, "envs/replay-copy/rea-agents.tgz")),
+        await readFile(tarball),
+      ),
+    ).toBe(0);
     expect(
       await readFile(join(directory, "envs/replay-copy/Dockerfile"), "utf8"),
     ).toContain("COPY rea-agents.tgz /tmp/");

@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
+import { nativeSearchInput } from "./native/nativeSearch.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 
 /** Parsed `search_procedures`/`search_strings` query shared by providers that match in REA. */
-export const analysisSearchQuerySchema = z.object(analysisSearchInput);
+export const analysisSearchQuerySchema = z.object(nativeSearchInput);
 
 export type AnalysisSearchQuery = z.infer<typeof analysisSearchQuerySchema>;
 
@@ -42,4 +42,25 @@ export const analysisSearchPredicate = (
     return (value) => regex.test(value);
   }
   return literalSubstringPredicate(query.pattern, query.case_sensitive);
+};
+
+/**
+ * Match one procedure by its primary name and the secondary names its provider
+ * accepts for exact selection. A procedure remains one row whose value is its
+ * primary name; matched_aliases keeps each distinct matching secondary
+ * spelling in provider order, so an alias never becomes a procedure of its own.
+ */
+export const matchProcedureNames = <Row extends { readonly value: string }>(
+  row: Row,
+  aliases: readonly string[],
+  matches: (value: string) => boolean,
+): (Row & { readonly matched_aliases?: string[] }) | undefined => {
+  const matched =
+    aliases.length === 0
+      ? []
+      : [...new Set(aliases)].filter(
+          (alias) => alias !== row.value && matches(alias),
+        );
+  if (matched.length > 0) return { ...row, matched_aliases: matched };
+  return matches(row.value) ? row : undefined;
 };

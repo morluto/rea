@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import {
@@ -336,14 +337,16 @@ describe("CdpBrowserProvider: cancellation and session events", () => {
           url: `${browser.allowedOrigin}/reloaded?token=session-secret#spa-secret`,
         }),
         expect.objectContaining({
+          type: "redirect",
+          url: `${browser.allowedOrigin}/redirected?token=redirect-secret`,
+        }),
+        expect.objectContaining({
           type: "load_failed",
           detail: "net::ERR_CONNECTION_REFUSED",
         }),
       ]),
     );
     expect(result.value.completeness.status).toBe("attach_limited");
-    expect(JSON.stringify(result.value)).toContain("session-secret#spa-secret");
-    expect(JSON.stringify(result.value)).toContain("redirect-secret");
     expect(browser.commands.map(({ method }) => method)).toContain(
       "Target.detachFromTarget",
     );
@@ -372,8 +375,10 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       detail: "session_detached",
       timestamp: null,
     });
-    expect(result.value.limitations).toContain(
-      "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+      ),
     );
   });
 
@@ -447,6 +452,11 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       type: "redirect",
       url: null,
       destination_scope: "outside_policy",
+      redirect_response: {
+        url: `${browser.allowedOrigin}/reloaded?token=session-secret`,
+        status: 302,
+        scope: "approved",
+      },
     });
     expect(result.value.completeness).toMatchObject({
       status: "policy_filtered",
@@ -721,9 +731,10 @@ describe("CdpBrowserProvider: navigation commit and target identity", () => {
     const rejectedCapture = await new CdpBrowserProvider().inspectPage(
       input(crossOriginCapture),
     );
+    // The document changed, which is reported before the new document's scope.
     expect(rejectedCapture).toMatchObject({
       ok: false,
-      error: { _tag: "BrowserObservationError", reason: "target_not_allowed" },
+      error: { _tag: "BrowserObservationError", reason: "target_changed" },
     });
   });
 });
@@ -741,16 +752,13 @@ describe("CdpBrowserProvider: source-map cancellation", () => {
     trackBrowser(browser);
     const controller = new AbortController();
     const reason = new AnalysisInputError("caller_operation");
-    let markSourceMapRequested!: () => void;
-    const sourceMapRequested = new Promise<void>((resolve) => {
-      markSourceMapRequested = resolve;
-    });
+    const sourceMapRequest = phaseArrival();
     const originalFetch = globalThis.fetch;
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((resource, init) => {
         if (String(resource).includes("/app.js.map")) {
-          markSourceMapRequested();
+          sourceMapRequest.arrive();
           return new Promise<Response>((_resolve, reject) => {
             const signal = init?.signal;
             if (signal?.aborted === true) {
@@ -775,7 +783,7 @@ describe("CdpBrowserProvider: source-map cancellation", () => {
         }),
         { signal: controller.signal },
       );
-      await sourceMapRequested;
+      await sourceMapRequest.reached(pending, "source-map request");
       controller.abort(reason);
       const result = await pending;
       expect(result).toMatchObject({

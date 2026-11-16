@@ -82,14 +82,13 @@ export function* linkIl2cppBinarySteps(
   bytes: Buffer,
   metadata: Il2cppMetadataDecoded,
   facts: Il2cppMetadataLinkFacts,
-  architecture?: string,
   options: Il2cppBinaryReadOptions = {},
 ): Generator<void, Il2cppBinaryLink> {
   const version = metadata.metadata_version;
   // Refuse an undecoded version before any table is read.
   if (options.genericInstances === true) genericMethodLayouts(version);
   yield;
-  const image = yield* openImageSteps(bytes, architecture);
+  const image = yield* openImageSteps(bytes);
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);
@@ -268,24 +267,3 @@ function* referencedTypeCount(
 
 /** Rows between cooperative yields while linking. */
 const LINK_BATCH = 256;
-
-/** Synchronous linking for byte-level callers. */
-export const linkIl2cppBinary = (
-  bytes: Buffer,
-  metadata: Il2cppMetadataDecoded,
-  facts: Il2cppMetadataLinkFacts,
-  architecture?: string,
-  options: Il2cppBinaryReadOptions = {},
-): Il2cppBinaryLink => {
-  const steps = linkIl2cppBinarySteps(
-    bytes,
-    metadata,
-    facts,
-    architecture,
-    options,
-  );
-  for (;;) {
-    const step = steps.next();
-    if (step.done) return step.value;
-  }
-};

@@ -2,7 +2,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../../src/browser/CdpConnection.js";
-import { recordValue } from "../../../src/browser/CdpCaptureValues.js";
+import { cdpFrameEvent } from "../../../src/browser/protocol/CdpEvents.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import {
   startFakeCdpBrowser,
@@ -69,7 +69,7 @@ const clockResponseEvents: NonNullable<FakeOptions["commandEvents"]> = (
           timestamp: 21,
           type: "Document",
           frameId: "frame-main",
-          redirectResponse: { url: `${origin}/prior-hop-context` },
+          redirectResponse: { url: `${origin}/prior-hop-context`, status: 302 },
           request: { url: `${origin}/after-cutoff` },
         },
       },
@@ -199,6 +199,11 @@ it("buffers clock-response events while dropping lifecycle history before the cl
       request_id: "request-window-redirect",
       timestamp: 21,
       url: `${browser.allowedOrigin}/after-cutoff`,
+      redirect_response: {
+        url: `${browser.allowedOrigin}/prior-hop-context`,
+        status: 302,
+        scope: "approved",
+      },
     }),
   );
   expect(result.value.timeline).not.toContainEqual(
@@ -211,8 +216,10 @@ it("buffers clock-response events while dropping lifecycle history before the cl
       timestamp: 22,
     }),
   );
-  expect(result.value.limitations).toContain(
-    "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /unknown timing.*context only.*do not establish.*observation window/iu,
+    ),
   );
 });
 
@@ -385,11 +392,7 @@ it("keeps cancellation authoritative while an over-budget clock request is pendi
     .mockImplementation(function (this: CdpConnection, listener) {
       return onEvent.call(this, (event) => {
         listener(event);
-        if (
-          event.method === "Page.frameNavigated" &&
-          recordValue(recordValue(event.params)?.frame)?.loaderId ===
-            "oversized-before-clock"
-        )
+        if (cdpFrameEvent(event)?.facts.loaderId === "oversized-before-clock")
           // All subscribers finish synchronously before this microtask, including
           // the timeline owner that admits or rejects the received payload.
           queueMicrotask(() => {

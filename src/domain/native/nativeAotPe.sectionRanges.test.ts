@@ -27,7 +27,7 @@ it.each(["before-data", "after-data"] as const)(
     expect(
       result.readTypeDetail("0x140002280", NATIVE_AOT_MAX_REPORT_BYTES),
     ).toBeUndefined();
-    expect(bytes).toEqual(before);
+    expect(Buffer.compare(bytes, before)).toBe(0);
   },
 );
 
@@ -63,7 +63,7 @@ it.each([
     );
     expect(result.summary).toMatchObject({
       status: "not_applicable",
-      reason: "PE virtual section overlaps headers or another section",
+      reason: { code: "virtual_section_overlap" },
       coverage: { basis: "unsupported-layout" },
     });
   },
@@ -110,7 +110,7 @@ it("preserves source section order while admitting a unique unsorted mapping", (
     status: "complete",
     method_tables: 3,
   });
-  expect(bytes).toEqual(before);
+  expect(Buffer.compare(bytes, before)).toBe(0);
 });
 
 it("does not confuse raw alignment padding with virtual section ownership", () => {
@@ -138,7 +138,7 @@ it("rejects a PE header that reuses DOS header fields", () => {
   );
   expect(result.summary).toMatchObject({
     status: "not_applicable",
-    reason: "PE header overlaps the DOS header",
+    reason: { code: "pe_header_overlaps_dos" },
     coverage: { basis: "unsupported-layout" },
   });
 });
@@ -163,7 +163,7 @@ it.each([
     } else {
       expect(result.summary).toMatchObject({
         status: "not_applicable",
-        reason: "PE image exceeds the 64-bit address domain",
+        reason: { code: "address_domain" },
         coverage: { basis: "unsupported-layout" },
       });
     }

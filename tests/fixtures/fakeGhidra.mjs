@@ -1,6 +1,15 @@
 import { rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 
+import {
+  FAKE_GHIDRA_SHUTDOWN_ACK,
+  fakeGhidraAddressNameReply,
+  fakeGhidraFileOffsetReply,
+  fakeGhidraInventoryReply,
+  fakeGhidraSessionInfo,
+  fakeGhidraStringItem,
+} from "./fakeGhidraReplies.mjs";
+
 const configuration = JSON.parse(
   process.env.REA_GHIDRA_FIXTURE_CONFIG ?? "null",
 );
@@ -13,6 +22,7 @@ const {
   targetSha256,
   transport,
   mode = "success",
+  handshakeReports = {},
 } = configuration ?? {};
 
 if (
@@ -62,6 +72,12 @@ const cutIdentifierAtBudget = async () => {
 const writeThen = (stream, text, then) =>
   stream.write(text, () => setTimeout(then, 10));
 
+if (mode === "remote_error" || mode === "remote_startup_error")
+  await new Promise((resolve) =>
+    process.stdout.write("Fixture launcher startup output\n", resolve),
+  );
+
+let endpointPublication;
 if (mode === "exit") process.exit(73);
 if (mode === "flood_silent") {
   await floodStdout();
@@ -102,7 +118,14 @@ else {
   });
   if (transport === "unix-socket") server.listen(endpointPath);
   else {
-    server.listen(0, "127.0.0.1", async () => {
+    endpointPublication = (async () => {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
       const address = server.address();
       if (address === null || typeof address === "string") process.exit(65);
       const pending = `${endpointPath}.pending`;
@@ -115,7 +138,7 @@ else {
         { flag: "wx" },
       );
       await rename(pending, endpointPath);
-    });
+    })();
   }
 }
 
@@ -164,8 +187,59 @@ const handleOutputFailure = (socket, state) => {
 };
 
 const handleRequest = (socket, server, request, state) => {
+  if (state.mode.startsWith("checkpoint")) {
+    if (request.method === "set_address_name") {
+      state.checkpointDirty = true;
+      socket.write(
+        JSON.stringify({
+          id: request.id,
+          ok: true,
+          result: fakeGhidraAddressNameReply(request.params),
+        }) + "\n",
+      );
+      return;
+    }
+    if (request.method === "checkpoint_program") {
+      void handleCheckpoint(socket, request, state);
+      return;
+    }
+  }
   if (request.method === "ping") {
     handlePing(socket, request, state);
+    return;
+  }
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    ) &&
+    request.method !== "shutdown"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra imported identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (
+    state.mode === "late_identity_failure" &&
+    request.method === "list_strings"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "import_identity_mismatch",
+          message: "Unexpected later failure",
+        },
+      })}\n`,
+    );
     return;
   }
   if (
@@ -191,15 +265,20 @@ const handleRequest = (socket, server, request, state) => {
     return;
   }
   if (state.mode === "remote_error" && request.method === "list_procedures") {
-    socket.write(
-      `${JSON.stringify({
-        id: request.id,
-        ok: false,
-        error: {
-          code: "not_found",
-          message: "Unknown Ghidra procedure name",
-        },
-      })}\n`,
+    writeThen(
+      process.stdout,
+      "Fixture request rejected: missing procedure\n",
+      () =>
+        socket.write(
+          `${JSON.stringify({
+            id: request.id,
+            ok: false,
+            error: {
+              code: "not_found",
+              message: "Unknown Ghidra procedure name",
+            },
+          })}\n`,
+        ),
     );
     return;
   }
@@ -214,12 +293,140 @@ const handleRequest = (socket, server, request, state) => {
   if (request.method !== "shutdown" && handleOutputFailure(socket, state))
     return;
   if (state.mode === "hang_tools" && request.method !== "shutdown") return;
+  if (
+    state.mode === "unicode_search" &&
+    ["search_procedures", "search_strings"].includes(request.method)
+  ) {
+    const params = request.params;
+    const insensitiveLiteral =
+      params.mode === "literal" && params.case_sensitive === false;
+    // Fixed producer expectations deliberately do not reuse the host derivation.
+    const candidates = new Map([
+      ["source", "source"],
+      ["ſOURCE", "source"],
+      ["Σ", null],
+    ]);
+    const valid = insensitiveLiteral
+      ? candidates.has(params.pattern) &&
+        Object.hasOwn(params, "literal_ascii_candidate") &&
+        params.literal_ascii_candidate === candidates.get(params.pattern)
+      : !Object.hasOwn(params, "literal_ascii_candidate");
+    if (!valid) {
+      socket.write(
+        `${JSON.stringify({
+          id: request.id,
+          ok: false,
+          error: {
+            code: "invalid_request",
+            message: "Literal candidate wire fields drifted",
+          },
+        })}\n`,
+      );
+      return;
+    }
+  }
+  // The bridge's per-procedure deadline: only this request fails.
+  if (
+    state.mode === "decompile_timed_out" &&
+    request.method === "procedure_pseudo_code"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "decompile_timed_out",
+          message:
+            "Ghidra decompilation of 0x1000 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (request.method === "address_to_file_offset") {
+    socket.write(
+      `${JSON.stringify({ id: request.id, ...fakeGhidraFileOffsetReply(request.params.address) })}\n`,
+    );
+    return;
+  }
+  if (["valid_then_invalid", "valid_then_invalid_split"].includes(state.mode)) {
+    if (request.method === "list_procedures") return;
+    if (request.method === "list_strings") {
+      const valid = Buffer.from(
+        `${JSON.stringify({ id: request.id, ok: true, result: "completed" })}\n`,
+      );
+      const invalid = Buffer.concat([
+        Buffer.from(`{"id":${request.id + 1},"ok":true,"result":"`),
+        Buffer.from([0xff]),
+        Buffer.from('"}\n'),
+      ]);
+      if (state.mode === "valid_then_invalid")
+        socket.write(Buffer.concat([valid, invalid]));
+      else {
+        socket.write(valid);
+        setTimeout(() => socket.write(invalid), 5);
+      }
+      return;
+    }
+  }
+  if (request.method === "list_strings" && state.mode === "valid_utf8_end") {
+    socket.end(JSON.stringify({ id: request.id, ok: true, result: "�雪🦊" }));
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8_end") {
+    socket.end(
+      Buffer.concat([
+        Buffer.from(`{"id":${request.id},"ok":true,"result":"`),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    return;
+  }
+  if (
+    request.method === "list_strings" &&
+    state.mode === "invalid_utf8_split"
+  ) {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xe2]),
+      ]),
+    );
+    setTimeout(
+      () =>
+        socket.write(Buffer.from([0x28, 0xa1, 0x22, 0x7d, 0x5d, 0x7d, 0x0a])),
+      5,
+    );
+    return;
+  }
+  if (request.method === "list_strings" && state.mode === "invalid_utf8") {
+    socket.write(
+      Buffer.concat([
+        Buffer.from(
+          `{"id":${request.id},"ok":true,"result":[{"address":"0x2000","value":"`,
+        ),
+        Buffer.from([0xff]),
+        Buffer.from('"}]}\n'),
+      ]),
+    );
+    return;
+  }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
-      ? [stringItem("0x2000", "fixture 雪🦊")]
+      ? [fakeGhidraStringItem("0x2000", "fixture �雪🦊")]
       : request.method === "list_strings" && state.mode === "oversized_result"
-        ? [stringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
-        : inventoryResultFor(request.method, request.params);
+        ? [fakeGhidraStringItem("0x2000", "x".repeat(64 * 1024 * 1024 + 1))]
+        : state.mode === "unicode_search" &&
+            ["search_procedures", "search_strings"].includes(request.method)
+          ? [
+              { address: "0x1000", value: "ſource" },
+              { address: "0x1001", value: "SOURCE" },
+              { address: "0x1002", value: "İource" },
+              { address: "0x1003", value: "unrelated" },
+            ]
+          : fakeGhidraInventoryReply(request.method, request.params);
   if (inventory !== undefined) {
     const response = `${JSON.stringify({ id: request.id, ok: true, result: inventory })}\n`;
     if (state.mode === "fragmented") {
@@ -246,10 +453,10 @@ const handleRequest = (socket, server, request, state) => {
             }
           : {
               ok: true,
-              result: {
-                shutdown: state.mode !== "invalid_shutdown_ack",
-                project_ephemeral: true,
-              },
+              result:
+                state.mode === "invalid_shutdown_ack"
+                  ? { ...FAKE_GHIDRA_SHUTDOWN_ACK, shutdown: false }
+                  : FAKE_GHIDRA_SHUTDOWN_ACK,
             }),
       })}\n`,
     );
@@ -257,7 +464,94 @@ const handleRequest = (socket, server, request, state) => {
   }
 };
 
+async function handleCheckpoint(socket, request, state) {
+  const { path, force } = request.params;
+  if (!force && !state.checkpointDirty) {
+    socket.write(
+      JSON.stringify({ id: request.id, ok: true, result: { saved: false } }) +
+        "\n",
+    );
+    return;
+  }
+  if (
+    !force &&
+    state.mode === "checkpoint_fail_close" &&
+    !state.failedCheckpoint
+  ) {
+    state.failedCheckpoint = true;
+    await writeFile(path, "controlled incomplete packed Program");
+    socket.write(
+      JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "checkpoint_failed",
+          message: "Controlled checkpoint failure",
+        },
+      }) + "\n",
+    );
+    return;
+  }
+  await writeFile(
+    path,
+    `fixture checkpoint ${state.checkpointDirty ? "edited" : "initial"}`,
+  );
+  if (
+    (force && state.mode === "checkpoint_hold_startup") ||
+    (!force && state.mode === "checkpoint_hold_close")
+  ) {
+    await new Promise((resolve) => {
+      const release = (message) => {
+        if (message === "release_checkpoint") {
+          process.off("message", release);
+          resolve();
+        }
+      };
+      process.on("message", release);
+      process.send?.({ event: "checkpoint-held" });
+    });
+  }
+  state.checkpointDirty = false;
+  socket.write(
+    JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: { saved: true, path },
+    }) + "\n",
+  );
+}
+
 const handlePing = (socket, request, state) => {
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    )
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra project identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (state.mode === "remote_startup_error") {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "invalid_request",
+          message: "Fixture rejected startup handshake",
+        },
+      })}\n`,
+    );
+    return;
+  }
   state.pings.value += 1;
   if (state.mode === "diagnostic_output" && state.pings.value === 1) {
     const retainedTokenPrefixBytes = Math.floor(state.token.length / 2);
@@ -291,14 +585,18 @@ const handlePing = (socket, request, state) => {
     return;
   }
   if (state.mode === "hang_after_start" && state.pings.value > 1) return;
-  const result = sessionInfo({
-    runId: state.runId,
-    providerVersion:
-      state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
-    profileDigest: state.profileDigest,
-    targetSha256: state.targetSha256,
-    timedOut: state.mode === "analysis_timeout",
-  });
+  const result = {
+    ...fakeGhidraSessionInfo({
+      runId: state.runId,
+      transport,
+      providerVersion:
+        state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
+      profileDigest: state.profileDigest,
+      targetSha256: state.targetSha256,
+      timedOut: state.mode === "analysis_timeout",
+    }),
+    ...handshakeReports,
+  };
   const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
   if (state.mode === "fragmented") {
     const split = Math.floor(response.length / 2);
@@ -307,205 +605,4 @@ const handlePing = (socket, request, state) => {
   } else socket.write(response);
 };
 
-const sessionInfo = ({
-  runId: sessionRunId,
-  providerVersion: version,
-  profileDigest: digest,
-  targetSha256: sha256,
-  timedOut,
-}) => ({
-  name: "REA Ghidra bridge",
-  run_id: sessionRunId,
-  profile_digest: digest,
-  provider: { id: "ghidra", version },
-  read_only: transport !== "unix-socket",
-  analysis_complete: !timedOut,
-  analysis_timed_out: timedOut,
-  capabilities: [
-    "read_binary_inventory_summary",
-    "ping",
-    "shutdown",
-    "inspect_native_load_image",
-    "read_bytes",
-    "search_bytes",
-    "address_to_file_offset",
-    "address_name",
-    "list_documents",
-    "list_names",
-    "list_procedures",
-    "list_segments",
-    "list_strings",
-    "procedure_address",
-    "resolve_containing_procedure",
-    "search_procedures",
-    "search_strings",
-    "set_address_name",
-    "set_addresses_names",
-    "annotate_native_function",
-    "inspect_native_data_type",
-    "inspect_native_instruction",
-    "resolve_native_call_targets",
-    "analyze_function",
-    "procedure_assembly",
-    "procedure_callees",
-    "procedure_callers",
-    "procedure_info",
-    "procedure_pseudo_code",
-    "read_function_instructions",
-    "procedure_references",
-    "xrefs",
-  ].filter(
-    (value) =>
-      transport === "unix-socket" ||
-      ![
-        "annotate_native_function",
-        "set_address_name",
-        "set_addresses_names",
-      ].includes(value),
-  ),
-  target: {
-    name: "fixture",
-    language_id: "x86:LE:64:default",
-    compiler_spec_id: "gcc",
-    image_base: "0x1000",
-    default_address_space: "ram",
-    sha256,
-  },
-});
-
-const inventoryResultFor = (method, params) => {
-  switch (method) {
-    case "read_binary_inventory_summary":
-      return {
-        document: "fixture",
-        segments: inventoryResultFor("list_segments", {}),
-        procedure_count: inventoryResultFor("list_procedures", {}).length,
-        string_count: inventoryResultFor("list_strings", {}).length,
-      };
-    case "search_bytes": {
-      const continued = params.cursor === "fixture-second-page";
-      const paged = params.limit === 1 && !continued;
-      const addresses = continued
-        ? ["0x1005"]
-        : paged
-          ? ["0x1000"]
-          : ["0x1000", "0x1005"];
-      return {
-        matches: addresses.map((address) => ({
-          address,
-          segment: ".text",
-          file_offset: address === "0x1000" ? 0 : 5,
-          procedure: { address: "0x1000", name: "fixture_main" },
-        })),
-        searched: {
-          blocks: [
-            {
-              segment: ".text",
-              start: continued ? "0x1005" : "0x1000",
-              end: "0x1009",
-              bytes: continued ? 5 : 10,
-            },
-          ],
-          bytes: continued ? 5 : 10,
-          skipped_uninitialized: [
-            { segment: ".bss", start: "0x2000", end: "0x200f", bytes: 16 },
-          ],
-          skipped_not_loaded: [],
-        },
-        complete: !paged,
-        next_cursor: paged ? "fixture-second-page" : null,
-      };
-    }
-    case "address_name":
-      return "fixture_main";
-    case "list_documents":
-      return ["fixture"];
-    case "list_names":
-      return [nameItem()];
-    case "list_procedures":
-      return [procedureItem()];
-    case "list_segments":
-      return [segmentItem()];
-    case "list_strings":
-      return [stringItem("0x2000", "fixture value")];
-    case "procedure_address":
-      return "0x1000";
-    case "resolve_containing_procedure":
-      return containingProcedureResult();
-    case "search_procedures":
-      return [procedureSearchItem()];
-    case "search_strings":
-      return [stringSearchItem()];
-    default:
-      return undefined;
-  }
-};
-
-const nameItem = () => ({
-  address: "0x1000",
-  value: "fixture_main",
-  symbol: {
-    primary: true,
-    dynamic: false,
-    external: false,
-    type: "function",
-    source: "analysis",
-  },
-});
-
-const procedureItem = () => ({
-  address: "0x1000",
-  value: "fixture_main",
-  procedure: { external: false, thunk: false, thunk_target: null },
-});
-
-const segmentItem = () => ({
-  name: ".text",
-  start: "0x1000",
-  end: "0x1100",
-  readable: true,
-  writable: false,
-  executable: true,
-  permissions: { available: true, source: "ghidra-memory-block" },
-  provenance: "ghidra-memory-block",
-  address_space: "ram",
-  image_base: "0x1000",
-  initialized: true,
-  overlay: false,
-  sections: [],
-});
-
-const stringItem = (address, value) => ({
-  address,
-  value,
-  string: {
-    encoding: "UTF-8",
-    termination: "present_or_not_required",
-    byte_length: Buffer.byteLength(value, "utf8") + 1,
-  },
-});
-
-const containingProcedureResult = () => ({
-  query_address: "0x1001",
-  found: true,
-  procedure: {
-    address: "0x1000",
-    name: "fixture_main",
-    classification: {
-      external: false,
-      thunk: false,
-      thunk_target: null,
-      provenance: "ghidra-function-manager",
-    },
-  },
-});
-
-const procedureSearchItem = () => ({
-  address: "0x1000",
-  value: "fixture_main",
-});
-
-const stringSearchItem = () => ({
-  address: "0x2000",
-  value: "fixture value",
-});
+await endpointPublication;

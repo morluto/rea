@@ -113,7 +113,7 @@ it.skipIf(process.platform !== "linux" || process.getuid?.() === 0)(
       await fixture.close();
     }
     await assertFirmwareCleanup(fixture.launches);
-    expect(await readFile(fixture.path)).toEqual(sourceBytes);
+    expect(Buffer.compare(await readFile(fixture.path), sourceBytes)).toBe(0);
     for (const output of [fixture.output, join(fixture.root, "second-output")])
       expect(await readFile(join(output, "rootfs/config"), "utf8")).toBe(
         "firmware=true\n",

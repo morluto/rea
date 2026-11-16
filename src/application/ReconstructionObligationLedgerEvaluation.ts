@@ -80,6 +80,7 @@ export const evaluateReconstructionObligationLedger = ({
     generationLimitations,
     candidates.length,
     orphanManifestIds,
+    evidenceLinks.filter((id) => !records.has(id)).length,
   );
   const coverage = reconstructionObligationCoverage(limitations);
   const semantic = {
@@ -158,6 +159,7 @@ const ledgerLimitations = (
   generationLimitations: readonly string[],
   candidateCount: number,
   orphanManifestIds: readonly string[],
+  missingEvidenceCount: number,
 ): string[] =>
   [
     ...new Set([
@@ -172,6 +174,11 @@ const ledgerLimitations = (
             `Manifest entries reference unknown obligations: ${orphanManifestIds.join(", ")}.`,
           ]
         : []),
+      ...(missingEvidenceCount > 0
+        ? [
+            `The ledger retains ${String(missingEvidenceCount)} Evidence reference(s) absent from the input bundle; closure cannot be claimed.`,
+          ]
+        : []),
     ]),
   ].sort();
 
@@ -181,6 +188,7 @@ const evaluateObligation = (
 ): ReconstructionObligation => {
   const bindings = context.bindings.get(candidate.obligation_id) ?? [];
   const binding = bindings.length === 1 ? (bindings[0] ?? null) : null;
+  const originalCases = originalCasesFor(candidate, binding);
   const diagnostics: Diagnostic[] = [];
   if (candidate.definitionCount > 1)
     addDiagnostic(
@@ -203,9 +211,9 @@ const evaluateObligation = (
   if (binding !== null)
     evaluateBinding(candidate, binding, context, diagnostics);
   diagnostics.push(
-    ...originalCaseDiagnostics(candidate, binding, context.evidence),
+    ...originalCaseDiagnostics(candidate, originalCases, context.evidence),
   );
-  evaluateAuthority(candidate, binding, context, diagnostics);
+  evaluateAuthority(candidate, originalCases, context, diagnostics);
   evaluateDisposition(candidate, diagnostics);
   diagnostics.push(
     ...contradictionDiagnostics(
@@ -232,7 +240,7 @@ const evaluateObligation = (
     target: candidate.target,
     authority_references: candidate.authority_references,
     source_state: candidate.source_state,
-    observed_cases: originalCasesFor(candidate, binding),
+    observed_cases: originalCases,
     required: candidate.required,
     required_case_kinds: candidate.required_case_kinds,
     required_original_authority: candidate.required_original_authority,
@@ -303,7 +311,7 @@ const evaluateBinding = (
       }),
     }));
     if (
-      qualifications.some(
+      qualifications.every(
         ({ authoritySatisfied, proofs }) =>
           authoritySatisfied && proofs.every((proof) => proof.ok),
       )
@@ -407,7 +415,7 @@ const evaluateVerifier = (
 
 const evaluateAuthority = (
   candidate: ReconstructionObligationCandidate,
-  binding: Binding | null,
+  originalCases: ReconstructionObligation["observed_cases"],
   context: EvaluationContext,
   diagnostics: Diagnostic[],
 ): void => {
@@ -426,18 +434,16 @@ const evaluateAuthority = (
       );
     },
   );
-  const caseSatisfied = originalCasesFor(candidate, binding).some(
-    ({ evidence_id: evidenceId }) => {
-      const evidence = context.evidence.get(evidenceId);
-      return (
-        evidence !== undefined &&
-        evidenceSupportsOriginalAuthority(
-          evidence,
-          candidate.required_original_authority,
-        )
-      );
-    },
-  );
+  const caseSatisfied = originalCases.some(({ evidence_id: evidenceId }) => {
+    const evidence = context.evidence.get(evidenceId);
+    return (
+      evidence !== undefined &&
+      evidenceSupportsOriginalAuthority(
+        evidence,
+        candidate.required_original_authority,
+      )
+    );
+  });
   const satisfied = referenceSatisfied || caseSatisfied;
   if (!satisfied)
     addDiagnostic(

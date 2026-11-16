@@ -165,7 +165,7 @@ it.each([
               frameId: "frame-main",
               requestId: "redirect",
               type: "Document",
-              redirectResponse: { status: 302 },
+              redirectResponse: { url: `${origin}/prior`, status: 302 },
               request: {},
             },
           },
@@ -422,7 +422,8 @@ describe("CdpBrowserProvider navigation timeline", () => {
       }
     },
   );
-  it("returns every event beyond the former default collection cap", async () => {
+  // Event count has no ceiling; only a dropped event truncates the timeline.
+  it("returns every event of a long session timeline without truncating it", async () => {
     const additionalEvents = 2_001;
     const browser = await startFakeCdpBrowser({
       pageScopedVersionWebSocket: true,

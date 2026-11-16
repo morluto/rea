@@ -30,6 +30,7 @@ const makePull = (
   state: "open",
   draft: false,
   body: readyBody,
+  user: { id: 123456 },
   head: { sha: "a".repeat(40) },
   base: { ref: "main" },
   ...changes,
@@ -94,6 +95,30 @@ function fixture(changes: Partial<ReadinessPullRequest> = {}) {
 }
 
 describe("initial author declaration", () => {
+  it.each([76467478, 208281322, 161784452, 342580529])(
+    "exempts the configured author ID %s, but keeps drafts pending",
+    (id) => {
+      expect(
+        evaluateReadiness(makePull({ user: { id }, body: null }), template),
+      ).toMatchObject({
+        state: "success",
+        description: expect.stringContaining("exempt"),
+      });
+      expect(
+        evaluateReadiness(
+          makePull({ user: { id }, body: null, draft: true }),
+          template,
+        ).state,
+      ).toBe("pending");
+    },
+  );
+
+  it("does not exempt unknown or missing author identities", () => {
+    for (const user of [{ id: 123456 }, null])
+      expect(
+        evaluateReadiness(makePull({ user, body: null }), template).state,
+      ).toBe("failure");
+  });
   it("accepts the filled current template and uppercase checkmarks", () => {
     expect(evaluateReadiness(makePull(), template).state).toBe("success");
     expect(
@@ -180,6 +205,24 @@ describe("initial author declaration", () => {
     );
   });
 
+  it.each([
+    ["longer backticks", "````markdown", "`````", "success"],
+    ["longer tildes", "~~~~markdown", "~~~~~", "success"],
+    ["indented closer with whitespace", "```", "   ```` \t", "success"],
+    ["shorter backticks", "````", "```", "failure"],
+    ["shorter tildes", "~~~~", "~~~", "failure"],
+    ["different marker", "```", "~~~", "failure"],
+    ["mixed markers", "```", "``~", "failure"],
+    ["four-space indentation", "```", "    ```", "failure"],
+    ["text after the closer", "~~~", "~~~ text", "failure"],
+  ])(
+    "keeps declarations hidden until a valid closing fence: %s",
+    (_name, opening, closing, state) => {
+      const body = `${opening}\n${readyBody}\n${closing}\n${readyBody}`;
+      expect(evaluateReadiness(makePull({ body }), template).state).toBe(state);
+    },
+  );
+
   it("fails closed when the trusted template loses a declaration", () => {
     expect(() =>
       evaluateReadiness(
@@ -194,6 +237,35 @@ describe("initial author declaration", () => {
 });
 
 describe("GitHub status boundary", () => {
+  it.each([76467478, 208281322, 161784452, 342580529])(
+    "publishes a labeled exemption for author ID %s after checking the head",
+    async (id) => {
+      const input = fixture({ user: { id }, body: null });
+      expect(await runReadinessCheck(input)).toMatchObject({
+        state: "success",
+        description: expect.stringContaining("exempt"),
+      });
+      expect(input.paginate).toHaveBeenCalledOnce();
+      expect(input.createCommitStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ state: "success", sha: input.pull.head.sha }),
+      );
+    },
+  );
+  it("does not let an exempt author lend success to another PR sharing the head", async () => {
+    const input = fixture({ user: { id: 76467478 }, body: null });
+    input.paginate.mockResolvedValue([input.pull, makePull({ number: 43 })]);
+    expect((await runReadinessCheck(input))?.state).toBe("failure");
+  });
+
+  it("does not publish an exemption if the author changes during the check", async () => {
+    const input = fixture({ user: { id: 76467478 }, body: null });
+    input.get
+      .mockResolvedValueOnce({ data: input.pull })
+      .mockResolvedValueOnce({
+        data: makePull({ user: { id: 123456 }, body: null }),
+      });
+    expect((await runReadinessCheck(input))?.state).toBe("pending");
+  });
   it("publishes failure on the actual PR head when declarations are unchecked", async () => {
     const input = fixture({ body: readyBody.replaceAll("[x]", "[ ]") });
     expect((await runReadinessCheck(input))?.state).toBe("failure");

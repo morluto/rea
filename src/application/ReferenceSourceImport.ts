@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   createHistoricalSourceGraph,
@@ -10,7 +11,7 @@ import {
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { readReferenceSource } from "../reference/ReferenceSourceReader.js";
 import type {
@@ -39,13 +40,13 @@ const failure = (
 });
 
 const cancelled = (
+  signal: AbortSignal | undefined,
   partial?: ReferenceSourceRead,
 ): ReferenceSourceImportError => ({
   ...failure("cancelled", "Reference source import cancelled"),
+  ...(signal?.aborted === true ? { cause: signal.reason } : {}),
   ...(partial === undefined ? {} : { partial }),
 });
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 const deduplicateRelationships = (
   relationships: HistoricalSourceGraphInput["relationships"],
@@ -168,11 +169,11 @@ export const importReferenceSource = async (
   options: ReferenceSourceImportOptions,
   resources: ArtifactResourceScope,
 ): Promise<Result<HistoricalSourceGraph, ReferenceSourceImportError>> => {
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
   const prepared = await prepareReferenceSourceImport(options, resources);
   if (!prepared.ok) return prepared;
   const { ignored, root, secrets } = prepared.value;
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
 
   const exclusions: HistoricalSourceGraphInput["exclusions"] = [];
   const shouldExclude = createShouldExclude(exclusions, secrets, ignored);
@@ -201,19 +202,19 @@ export const importReferenceSource = async (
 
   const vcs = vcsResult.value;
 
-  if (isAborted(options.signal)) return err(cancelled(readResult.value));
+  if (isAborted(options.signal))
+    return err(cancelled(options.signal, readResult.value));
 
   const read = readResult.value;
-  const filePaths = new Set(
-    read.entries
-      .filter((entry) => entry.status === "read" && entry.kind === "file")
-      .map((entry) => entry.path),
-  );
-
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, filePaths, exclusions, options.signal);
+    parseReferenceSourceEntries(
+      read,
+      exclusions,
+      options.signal,
+      options.memberMutationAllowance,
+    );
 
-  if (isAborted(options.signal)) return err(cancelled(read));
+  if (isAborted(options.signal)) return err(cancelled(options.signal, read));
 
   const uniqueRelationships = deduplicateRelationships(relationships);
   const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);
@@ -266,30 +267,43 @@ export const importReferenceSource = async (
 };
 
 const combineReadFailures = (
-  primary: ReferenceSourceReaderError,
-  other: ReferenceSourceReaderError | undefined,
+  inventory: ReferenceSourceReaderError,
+  metadata: ReferenceSourceReaderError | undefined,
   partial: ReferenceSourceRead | undefined,
 ): ReferenceSourceImportError => {
-  const code =
-    primary.code === "cancelled" || other?.code === "cancelled"
-      ? "cancelled"
-      : primary.code;
+  const primary =
+    inventory.code === "cancelled" &&
+    metadata !== undefined &&
+    metadata.code !== "cancelled"
+      ? metadata
+      : inventory;
+  const other = primary === inventory ? metadata : inventory;
   const cleanup = mergeCleanup(primary.cleanup, other?.cleanup);
   const message =
-    other === undefined
+    other === undefined || other.code === "cancelled"
       ? primary.message
-      : `${primary.message}; additional reference metadata failure: ${other.message}`;
+      : `${primary.message}; additional reference failure: ${other.message}`;
   const cause =
-    other === undefined
+    other === undefined || other.code === "cancelled"
       ? primary.cause
       : new AggregateError(
           [primary, other],
           "Reference source inventory and metadata both failed",
           { cause: primary },
         );
+  const secondaryCancellation =
+    primary.secondaryCancellation ??
+    other?.secondaryCancellation ??
+    (other?.code === "cancelled" && primary.code !== "cancelled"
+      ? { cause: other.cause }
+      : undefined);
   return {
-    ...failure(code, message),
+    ...failure(primary.code, message),
+    ...(primary.remediationAction === undefined
+      ? {}
+      : { remediationAction: primary.remediationAction }),
     ...(cleanup === undefined ? {} : { cleanup }),
+    ...(secondaryCancellation === undefined ? {} : { secondaryCancellation }),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),
   };
