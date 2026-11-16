@@ -138,6 +138,23 @@ describe("the difficulty record", () => {
     expect(record.solves).toHaveLength(6);
   });
 
+  it("leaves the total cost unknown when a solve reported no cost", () => {
+    const record = difficultyRecord({
+      model: "m",
+      agent: "claude-code",
+      solves: [pass, solve("passed", { usd: null })],
+      budgetUsd: 8,
+      stopped: "cost_unknown",
+      taskSha256: "ab".repeat(32),
+      versions: { rea: "6.8.0", agentenv: null },
+      measuredAt: "2026-11-07T01:00:00.000Z",
+    });
+    expect(record.usd).toBeNull();
+    expect(difficultySection({ task: record })).toContain(
+      "passed 2 of 2, undecided, cost unknown.",
+    );
+  });
+
   it("counts failures of checks named like an object's own members as plain numbers", () => {
     const record = difficultyRecord({
       model: "m",

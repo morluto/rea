@@ -50,7 +50,9 @@ these files.
    page size. The config search inflates at most 16 candidates and at most
    four times `max_config_bytes` in total, charging a stream that fails
    partway through its full per-candidate allowance. Exhausting the search budget is
-   `incomplete` with `config_search_exhausted`. A member past
+   `incomplete` with `config_search_exhausted` and coverage `partial`; a
+   member cut by the searched bytes is also `partial`. A malformed framed
+   config, or a payload that could not be searched, has coverage `unknown`. A member past
    `max_config_bytes` fails the budget only when no later candidate is
    accepted.
 8. Cancellation is checked between candidates, between banner hits, while

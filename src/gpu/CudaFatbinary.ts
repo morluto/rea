@@ -1,5 +1,5 @@
 import type { GpuObject } from "../domain/gpu/gpuCodeObjects.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import {
   gpuCount,
   nextGpuContainerOffset,

@@ -10,12 +10,15 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
+import {
+  phaseGate,
+  type PhaseGate,
+} from "../../../support/lifecycleHarness.js";
 import { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 
 const injected = vi.hoisted(() => ({
   failNextClose: false,
@@ -42,9 +45,7 @@ const injected = vi.hoisted(() => ({
         abort: () => void;
       }
     | undefined,
-  commandHashClose: undefined as
-    | { entered: () => void; release: Promise<void> }
-    | undefined,
+  commandHashClose: undefined as PhaseGate | undefined,
   handles: [] as import("node:fs/promises").FileHandle[],
   nativeCloses: new Map<
     import("node:fs/promises").FileHandle,
@@ -176,8 +177,7 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
           injected.closeCalls += 1;
           if (commandHashMatched && commandHashClose !== undefined) {
             commandHashMatched = false;
-            commandHashClose.entered();
-            await commandHashClose.release;
+            await commandHashClose.hold();
           }
           if (abortCloseMatched) abortOnClose?.abort();
           if (
@@ -221,31 +221,24 @@ it.skipIf(process.platform === "win32").each([
     const fixture = await session("rea-kuna-draining-hash-close-");
     const client = fixture.open();
     await run(client, "health");
-    let entered!: () => void;
-    let release!: () => void;
-    const closeEntered = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const closeRelease = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const hashClose = phaseGate();
     const controller = new AbortController();
     const reason = { caller: "abandoned string scan" };
     injected.installationPath = fixture.kuna;
     injected.closeCalls = 0;
-    injected.commandHashClose = { entered, release: closeRelease };
+    injected.commandHashClose = hashClose;
     const first = client.execute(operation, input, {
       signal: controller.signal,
     });
     let second: ReturnType<typeof client.execute> | undefined;
     try {
-      await awaitAcknowledgement(closeEntered, first, "Kuna hash close");
+      await hashClose.reached(first, "Kuna hash close");
       injected.holdCloseFailures = true;
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
       second = client.execute(operation, input);
       await new Promise<void>((resolve) => setImmediate(resolve));
-      release();
+      hashClose.release();
       const firstResult = await first;
       const secondResult = await second;
       if (firstResult.ok || secondResult.ok)
@@ -278,7 +271,7 @@ it.skipIf(process.platform === "win32").each([
         ),
       ).toHaveLength(1);
     } finally {
-      release();
+      hashClose.release();
       controller.abort();
       injected.releaseCloseFailures = true;
       await Promise.allSettled([first, second]);

@@ -294,9 +294,19 @@ to parse that sentence to identify an editable setting.
 
 A deadline controlled by something other than a registered setting reports
 `details.limit` with `control_kind` instead of `setting`.
-`control_kind: "parameter"` names the per-call `parameter` and its `cli_flag`
+`control_kind: "parameter"` names the per-call contract field in `parameter`
 (`native_command_timeout_ms`, `native_ui_deadline_ms`,
-`pwntools_timeout_ms`) and applies on the next call.
+`pwntools_timeout_ms`) and applies on the next call. Services and their
+remediation text name only that field. A CLI command adds `cli_flag`, the
+option that sets the field on that command, from its own field-to-flag
+binding; MCP results do not carry it.
+A completed or partial result can record the same reference, for example a
+`limit` in a web bundle `unknowns` entry for a script that reached its
+`analysis_timeout_ms` deadline. That reference is part of the result and its
+Evidence identity, so the CLI never adds to it. Instead, the CLI renders the
+flags in its own `--full-output` envelope as `meta.cli_controls`, a map from
+each recorded contract field to the option that sets it on that command. The
+bare result is the record itself and gains no CLI field.
 `control_kind: "environment"` names the `environment` variable REA reads when
 it starts (`REA_SWIFTC_COMPILE_TIMEOUT_MS`): `applies_at` is `next_startup`,
 or `next_invocation` for a one-shot invocation. Both carry `effective_value`,

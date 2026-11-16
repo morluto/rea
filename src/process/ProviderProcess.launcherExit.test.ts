@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
   cleanupOwnedProcessGroup,
   type OwnedProcessGroup,
@@ -11,7 +12,6 @@ import {
 } from "./ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import { ProviderProcessSupervisor } from "./ProviderProcess.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 const JAVA = "/usr/lib/jvm/java-21-openjdk-amd64/bin/java";
 
@@ -168,18 +168,10 @@ it.each([
     const { supervisor, results } = supervise(launcher, host);
     // A mismatch is not exit proof: the stop stays pending through the
     // launcher's grace and reports incomplete only once it ends without exit.
-    let endGrace: (exited: boolean) => void = () => undefined;
-    let enterGrace!: () => void;
-    const graceEntered = new Promise<void>((resolve) => {
-      enterGrace = resolve;
-    });
-    const waited = vi.spyOn(supervisor, "waitForExit").mockImplementation(
-      () =>
-        new Promise<boolean>((resolve) => {
-          endGrace = resolve;
-          enterGrace();
-        }),
-    );
+    const grace = phaseGate<void, boolean>();
+    const waited = vi
+      .spyOn(supervisor, "waitForExit")
+      .mockImplementation(() => grace.hold());
     let settled = false;
     const stopping = supervisor.stop({ killGraceMs: 50 }).finally(() => {
       settled = true;
@@ -187,12 +179,12 @@ it.each([
     let settledDuringGrace = true;
     let stopped: Awaited<typeof stopping> | undefined;
     try {
-      await awaitAcknowledgement(graceEntered, stopping, "launcher grace");
+      await grace.reached(stopping, "launcher grace");
       await new Promise<void>((resolve) => setImmediate(resolve));
       settledDuringGrace = settled;
     } finally {
       // Release and join the stop before any assertion or mock restore.
-      endGrace(false);
+      grace.release(false);
       stopped = await stopping;
       supervisor.dispose();
     }

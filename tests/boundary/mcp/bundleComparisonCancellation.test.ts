@@ -1,7 +1,9 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -20,12 +22,12 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   const leftPath = join(root, "left.json");
   const rightPath = join(root, "right.json");
   const provider = { id: "fixture", name: "Fixture", version: "1" };
-  const left = createEvidence(undefined, provider, {
+  const left = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "observation",
     parameters: { side: "left" },
     result: { side: "left" },
   });
-  const right = createEvidence(undefined, provider, {
+  const right = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "observation",
     parameters: { side: "right" },
     result: { side: "right" },
@@ -45,7 +47,7 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   const session = createTestBinarySession(() => {
     throw new Error("Bundle comparison must not start a binary provider");
   });
-  const existing = createEvidence(undefined, provider, {
+  const existing = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "existing_observation",
     parameters: {},
     result: { retained: true },
@@ -76,16 +78,13 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   const reader = await holdFirstFileRead(leftPath);
   releaseRead = reader.release;
 
-  let resolveDispatched: (() => void) | undefined;
-  const dispatched = new Promise<void>((resolve) => {
-    resolveDispatched = resolve;
-  });
+  const dispatch = phaseArrival();
   const send = clientTransport.send.bind(clientTransport);
   vi.spyOn(clientTransport, "send").mockImplementation(
     async (message, ...args) => {
       await send(message, ...args);
       if ("method" in message && message.method === "tools/call")
-        resolveDispatched?.();
+        dispatch.arrive();
     },
   );
   let resolveCompleted: (() => void) | undefined;
@@ -124,8 +123,8 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
       () => "completed",
       (error: unknown) => error,
     );
-  await dispatched;
-  await reader.firstRead;
+  await dispatch.reached(cancellation, "compare_bundles dispatch");
+  await reader.reached(cancellation, "first file read");
   await client.ping();
   controller.abort(new Error("SDK bundle comparison cancellation"));
   reader.release();

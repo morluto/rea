@@ -6,8 +6,8 @@ import { buffer } from "node:stream/consumers";
 import { expect, it } from "vitest";
 
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
-import { ArtifactEntryContentUnavailable } from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactEntryContentUnavailable } from "../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   buildAndroidOtaPayload,

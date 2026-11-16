@@ -2,7 +2,7 @@ import type {
   FileMapping,
   ZeroFillMapping,
 } from "../../domain/virtualFileMapping.js";
-import { readBinaryContainer } from "./readBinaryContainer.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
@@ -13,7 +13,7 @@ import {
   mappedFileOffset,
   readMappedCString,
   type BinaryContainer,
-} from "./BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 
 it("preserves representable offsets for invalid file ranges", () => {
   const reader = new BinaryReader(Buffer.alloc(120), true, "elf");

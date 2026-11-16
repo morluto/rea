@@ -193,7 +193,7 @@ const parseSource = (
   if (cached !== undefined && cached.operation === parent.operation) {
     try {
       validateArtifactInventorySubject(
-        parent.subject ?? null,
+        parent.subject,
         cached.source.inventory.manifest,
       );
     } catch (cause: unknown) {
@@ -218,14 +218,14 @@ const parseSourceUncached = (
       return ok({
         inventory: parseArtifactInventoryResult(
           parent.normalizedResult,
-          parent.subject ?? null,
+          parent.subject,
         ),
         evidenceIds: [],
         inspection: null,
       });
     const parsed = parseArtifactInspectionInventoryResult(
       parent.normalizedResult,
-      parent.subject ?? null,
+      parent.subject,
     );
     return ok({
       inventory: parsed.inventory,

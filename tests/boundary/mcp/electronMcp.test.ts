@@ -16,8 +16,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { ElectronActiveObservationPort } from "../../../src/application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../../../src/application/javascript/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../../../src/ports/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../../../src/ports/javascript/ElectronObservationPort.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -831,6 +831,37 @@ it("reports every unresolved Electron path without starting a provider", async (
           reason: "invalid_value",
           message: expect.stringContaining("ENOENT"),
         })),
+      },
+    },
+  });
+  expect(capture).not.toHaveBeenCalled();
+  await client.ping();
+});
+
+it("refuses an Electron wait longer than Node can schedule", async () => {
+  const capture = vi.fn();
+  const client = await activePathAdmissionClient(capture);
+  // Playwright's waitForTimeout(2 ** 31) returns after 1 ms.
+  const result = await client.callTool({
+    name: "capture_electron_scenario",
+    arguments: {
+      executable_path: process.execPath,
+      application_path: process.execPath,
+      actions: [{ step_id: "settle", kind: "wait", duration_ms: 2 ** 31 }],
+    },
+  });
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["actions", 0, "duration_ms"],
+            reason: "out_of_range",
+            maximum: 2_147_483_647,
+          }),
+        ]),
       },
     },
   });

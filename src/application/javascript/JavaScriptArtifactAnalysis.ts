@@ -1,3 +1,4 @@
+import { boundedList } from "../../domain/boundedList.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
@@ -45,8 +46,10 @@ import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactRefe
 import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
+import {
+  ArtifactReaderFailure,
+  translateArtifactFailure,
+} from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
   AnalysisResourceConstraintError,
@@ -725,10 +728,13 @@ export const htmlInlineScriptLimitation = ({
   script_count: count,
   scripts,
 }: JavaScriptHtmlInlineScriptsObservation): string => {
-  const lines = scripts
-    .slice(0, HTML_INLINE_SCRIPT_LIMITATION_LINES)
-    .map(({ location }) => String(location.start.line));
-  const unnamed = count - lines.length;
+  const listed = boundedList(
+    scripts.map(({ location }) => String(location.start.line)),
+    HTML_INLINE_SCRIPT_LIMITATION_LINES,
+    count - scripts.length,
+  );
+  const lines = listed.items;
+  const unnamed = listed.omitted;
   const one = count === 1;
   return `${path} has ${String(count)} inline JavaScript ${one ? "body" : "bodies"} starting at line${one ? "" : "s"} ${lines.join(", ")}${unnamed > 0 ? ` and ${String(unnamed)} more` : ""} that ${one ? "was" : "were"} not analyzed; endpoints, storage, imports and other facts in ${one ? "it" : "them"} are absent from the evidence.`;
 };

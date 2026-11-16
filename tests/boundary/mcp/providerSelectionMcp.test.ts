@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -12,8 +15,7 @@ import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 
 import {
@@ -22,7 +24,7 @@ import {
   type AnalysisProviderInspectionOptions,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
@@ -666,15 +668,13 @@ const expectQueuedOpenReceipt = async (
   const call = (name: string, args: Record<string, unknown>) =>
     mcp.callTool({ name, arguments: args });
   const originalOpen = session.open.bind(session);
-  const failedSettled = createDeferred<void>();
-  const deliverFailure = createDeferred<void>();
+  const failedSnapshotOpen = phaseGate();
   const intercept = vi
     .spyOn(session, "open")
     .mockImplementation(async (path, options) => {
       const result = await originalOpen(path, options);
       if (path === second && options?.loadSnapshot !== undefined) {
-        failedSettled.resolve();
-        await deliverFailure.promise;
+        await failedSnapshotOpen.hold();
       }
       return result;
     });
@@ -685,11 +685,7 @@ const expectQueuedOpenReceipt = async (
     snapshot_path: snapshotPath,
   });
   try {
-    await awaitAcknowledgement(
-      failedSettled.promise,
-      failedSwitch,
-      "failed snapshot open",
-    );
+    await failedSnapshotOpen.reached(failedSwitch, "failed snapshot open");
     const nextReply = await call("open_binary", {
       path: second,
       provider_id: "beta",
@@ -700,13 +696,13 @@ const expectQueuedOpenReceipt = async (
     expect((await call("binary_session", {})).structuredContent).toMatchObject({
       result: { path: second, sha256: sha("second fixture") },
     });
-    deliverFailure.resolve();
+    failedSnapshotOpen.release();
     const failedReply = await failedSwitch;
     expect(
       parseMcpToolError(failedReply).error.details?.selection_at_failure,
     ).toEqual(expectedOpenSelection(first, sha("first fixture")));
   } finally {
-    deliverFailure.resolve();
+    failedSnapshotOpen.release();
     await failedSwitch.catch(() => undefined);
     intercept.mockRestore();
   }
@@ -1179,7 +1175,7 @@ it.each(["compact"] as const)(
       if (definition === undefined) throw new Error(`Missing tool ${name}`);
       return mcp.callTool(
         { name, arguments: args },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
     };
     expect(structured(await call("binary_session")).result).toMatchObject({
@@ -1224,16 +1220,14 @@ const checkQueuedSwitchReceipt = async (
 ): Promise<void> => {
   const other = join(directory, "other.hop");
   await writeFile(other, "other fixture");
-  const settled = createDeferred<void>();
-  const release = createDeferred<void>();
+  const failedOpenReceipt = phaseGate();
   const open = session.open.bind(session);
   const spy = vi
     .spyOn(session, "open")
     .mockImplementation(async (path, options) => {
       const result = await open(path, options);
       if (options?.providerId === "missing") {
-        settled.resolve();
-        await release.promise;
+        await failedOpenReceipt.hold();
       }
       return result;
     });
@@ -1242,7 +1236,7 @@ const checkQueuedSwitchReceipt = async (
     arguments: { path: target, provider_id: "missing" },
   });
   try {
-    await awaitAcknowledgement(settled.promise, pending, "failed-open receipt");
+    await failedOpenReceipt.reached(pending, "failed-open receipt");
     const switched = await mcp.callTool({
       name: "open_binary",
       arguments: { path: other, provider_id: "alpha" },
@@ -1251,7 +1245,7 @@ const checkQueuedSwitchReceipt = async (
     expect(session.activeTarget()?.sha256).toBe(
       createHash("sha256").update("other fixture").digest("hex"),
     );
-    release.resolve();
+    failedOpenReceipt.release();
     const queuedRefusal = await pending;
     for (const result of [structured(queuedRefusal), refusal])
       expect(result).toMatchObject({
@@ -1263,7 +1257,7 @@ const checkQueuedSwitchReceipt = async (
         },
       });
   } finally {
-    release.resolve();
+    failedOpenReceipt.release();
     await Promise.allSettled([pending]);
     spy.mockRestore();
   }
@@ -1433,15 +1427,8 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
   const starts: string[] = [];
   const base = candidate("alpha", starts);
   let hold = false;
-  let enter!: () => void;
-  let finish!: () => void;
   let finalized!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const candidateRefresh = phaseGate();
   const done = new Promise<void>((resolve) => {
     finalized = resolve;
   });
@@ -1454,8 +1441,7 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
         }: AnalysisProviderInspectionOptions = {}) => {
           const result = await base.inspectAvailability();
           if (!hold) return result;
-          enter();
-          await gate;
+          await candidateRefresh.hold();
           finalized();
           if (signal?.aborted)
             throw new AnalysisCancelledError("binary_session", {
@@ -1496,10 +1482,10 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
       { name: "binary_session", arguments: { refresh_candidates: true } },
       { signal: controller.signal },
     );
-    await awaitAcknowledgement(entered, refreshing, "candidate refresh");
+    await candidateRefresh.reached(refreshing, "candidate refresh");
     controller.abort();
     await expect(refreshing).rejects.toThrow();
-    finish();
+    candidateRefresh.release();
     await done;
     hold = false;
     expect(
@@ -1515,7 +1501,7 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
     expect(starts).toEqual(["alpha"]);
   } finally {
     hold = false;
-    finish();
+    candidateRefresh.release();
     await Promise.allSettled(refreshing === undefined ? [] : [refreshing]);
   }
 });
@@ -1529,14 +1515,7 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
   const starts: string[] = [];
   const alpha = candidate("alpha", starts);
   let hold = false;
-  let enter!: () => void;
-  let finish!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const candidateRefresh = phaseGate();
   const session = composeBinarySession(
     new AnalysisProviderRegistry([
       {
@@ -1544,8 +1523,7 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
         inspectAvailability: async () => {
           if (hold) {
             hold = false;
-            enter();
-            await gate;
+            await candidateRefresh.hold();
           }
           return alpha.inspectAvailability();
         },
@@ -1579,7 +1557,7 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
       name: "binary_session",
       arguments: { refresh_candidates: true },
     });
-    await awaitAcknowledgement(entered, refreshing, "candidate refresh");
+    await candidateRefresh.reached(refreshing, "candidate refresh");
     let switched = false;
     switching = mcp
       .callTool({
@@ -1592,7 +1570,7 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
       });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(switched).toBe(false);
-    finish();
+    candidateRefresh.release();
     const result = await refreshing;
     expect(result.isError).toBeFalsy();
     expect(structured(result).result).toMatchObject({
@@ -1606,7 +1584,7 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
       analysis_provider_binding: { provider: { id: "beta" } },
     });
   } finally {
-    finish();
+    candidateRefresh.release();
     await Promise.allSettled(
       [refreshing, switching].filter((operation) => operation !== undefined),
     );
@@ -1618,14 +1596,7 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const base = candidate("alpha", []);
-  let enter!: () => void;
-  let finish!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
+  const promptLookup = phaseGate();
   const session = composeBinarySession(
     new AnalysisProviderRegistry([
       {
@@ -1635,8 +1606,7 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
           return {
             ...client,
             executeIfReady: async (operation, args, options) => {
-              enter();
-              await gate;
+              await promptLookup.hold();
               if (options?.signal?.aborted)
                 throw new Error("Prompt lookup was cancelled");
               return client.execute(operation, args, options);
@@ -1670,7 +1640,7 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
       (await mcp.callTool({ name: "address_name", arguments: {} })).isError,
     ).toBeFalsy();
     lookup = session.executeIfProviderReady("address_name", {});
-    await awaitAcknowledgement(entered, lookup, "prompt lookup");
+    await promptLookup.reached(lookup, "prompt lookup");
     expect(
       (
         await mcp.callTool({
@@ -1679,10 +1649,10 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
         })
       ).isError,
     ).toBeFalsy();
-    finish();
+    promptLookup.release();
     expect((await lookup)?.ok).toBe(true);
   } finally {
-    finish();
+    promptLookup.release();
     await Promise.allSettled(lookup === undefined ? [] : [lookup]);
   }
 });
@@ -1853,14 +1823,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
   async (mode) => {
     const starts: string[] = [];
     const base = candidate("alpha", starts);
-    let enter!: () => void;
-    let finish!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
+    const providerReadiness = phaseGate();
     const session = composeBinarySession(
       new AnalysisProviderRegistry([
         {
@@ -1868,8 +1831,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
           inspectAvailability: async ({
             signal,
           }: AnalysisProviderInspectionOptions = {}) => {
-            enter();
-            await gate;
+            await providerReadiness.hold();
             if (mode === "physical")
               throw new ProviderAdapterError("alpha", "binary_session", {
                 diagnostics: {
@@ -1904,7 +1866,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
       });
     let closing: ReturnType<typeof session.close> | undefined;
     try {
-      await awaitAcknowledgement(entered, observing, "provider readiness");
+      await providerReadiness.reached(observing, "provider readiness");
       if (mode !== "ready") {
         closing = session.close();
         const during = structured(
@@ -1945,7 +1907,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
       }
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
-      finish();
+      providerReadiness.release();
       const result = await observing;
       if (mode === "ready") {
         expect(result.isError).not.toBe(true);
@@ -1975,7 +1937,7 @@ it.each(["ready", "cancelled", "physical"] as const)(
       }
       expect(starts).toEqual([]);
     } finally {
-      finish();
+      providerReadiness.release();
       try {
         await Promise.all([observing, closing]);
       } finally {

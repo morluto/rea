@@ -6,10 +6,9 @@ import type {
   AndroidOtaPartitionMetadata,
   AndroidOtaPayloadMetadata,
 } from "../domain/artifactFormatMetadata.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  assertArtifactReadActive,
   ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
@@ -17,8 +16,9 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import {

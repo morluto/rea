@@ -40,6 +40,7 @@ import {
   type RuntimeExhaustion,
 } from "./RuntimeExhaustion.js";
 import { isStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -889,9 +890,7 @@ export class ProviderProcessSupervisor {
       if (this.#inspectionCleanup.size > 0)
         return this.#inspectionStopFailure(
           [...this.#inspectionCleanup.values()]
-            .map(({ cause }) =>
-              cause instanceof Error ? cause.message : String(cause),
-            )
+            .map(({ cause }) => errorMessage(cause))
             .join("; "),
         );
       if (this.launch.cleanup !== undefined) {
@@ -1059,6 +1058,7 @@ export class ProviderProcessSupervisor {
 
 class ProcessOutputCapture {
   readonly #chunks: Buffer[] = [];
+  // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
   #bytes = 0;
   /** Observed bytes before the first retained one, which tail retention dropped. */
   #start = 0;

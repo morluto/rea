@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import type {
   InspectWindowsShortcutInput,
   WindowsShortcut,
@@ -13,6 +13,7 @@ import type {
 } from "../../domain/native/windowsShortcut.js";
 import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
 import { malformedInput } from "../../domain/parseFailure.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
@@ -230,7 +231,7 @@ const uuidV1 = (
     evidence_kind: "derived",
     version: 1,
     mac: [...bytes.subarray(offset + 10, offset + 16)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .map((byte) => byteToHex(byte))
       .join(":"),
     timestamp_iso8601: isoFromUnsigned100ns(timestamp, UUID_UNIX_EPOCH),
     timestamp_100ns: timestamp.toString(10),

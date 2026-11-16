@@ -7,8 +7,10 @@ import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../../resources/index.js";
 import {
   readElfFixedHeader,
   type ElfFixedHeader,
@@ -28,9 +30,9 @@ import {
   elfObjectTypeName,
   gnuNoteTypeName,
 } from "../../domain/native/elfNotes.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;

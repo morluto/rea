@@ -11,17 +11,17 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+  ArtifactResourceScope,
+  assertArtifactReadActive,
+  ArtifactFileSource,
+} from "../resources/index.js";
 import { ownAsyncArtifactStream } from "./OwnedAsyncArtifactStream.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import type {
   ArtifactFormatMetadata,
   WxapkgMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import {
   readWxapkgFileTable,
   readWxapkgHeader,

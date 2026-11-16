@@ -1,8 +1,8 @@
 import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
@@ -126,7 +126,6 @@ describe("enhanced MCP graph caveats", () => {
     });
     expect(graph.structuredContent).toMatchObject({
       limitations: [
-        expect.stringMatching(/artifact identity.*unavailable/iu),
         "Derived by an REA composed workflow.",
         `Fixture analysis provider (fixture 1) procedure_callees: ${caveat}`,
         `Fixture analysis provider (fixture 1) procedure_callees: ${leafCaveat}`,

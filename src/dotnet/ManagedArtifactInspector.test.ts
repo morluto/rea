@@ -9,8 +9,8 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 
 const metadataLayoutFor = (bytes: Buffer) => {
   const pe = readManagedPeLayout(bytes);

@@ -13,9 +13,9 @@ import { randomUUID } from "node:crypto";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
@@ -28,6 +28,7 @@ import { constants, accessSync, statSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Bound the Java version probe so a chatty or hostile JVM cannot force an
@@ -303,7 +304,7 @@ const observeGhidraJava = async (
           classifyLaunchFailureCode(code)?.kind === "missing"
             ? "runtime_missing"
             : "runtime_unavailable",
-        detail: `${command}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        detail: `${command}: ${errorMessage(cause)}`,
         ...(code === undefined ? {} : { processErrorCode: code }),
         ...(output === undefined ? {} : { output }),
       };
@@ -319,11 +320,11 @@ const observeGhidraJava = async (
       primary = probeFailureError(failed, cause);
     }
     for (const cleanup of cleanups)
-      primary = analysisErrorWithCleanupFailure(
+      primary = analysisErrorWithCleanupDependencies(
         primary,
         cleanup,
         "ghidra:java",
-      ).bindCleanupDependencies([primary, cleanup]);
+      );
     return err(
       bindProcessInspectionCancellations(cause, primary, "ghidra:java"),
     );

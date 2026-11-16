@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
@@ -17,7 +18,7 @@ type AuxiliaryProviderDeclaration = ConstructorParameters<
 /** Wire the three existing auxiliary AnalysisProvider implementations lazily. */
 export const auxiliaryAnalysisProviderDeclarations = (
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
   settings?: AnalysisSettingsReader,
 ): readonly AuxiliaryProviderDeclaration[] => {
   const environment = snapshotEnvironment(selectedEnvironment, platform);

@@ -53,6 +53,28 @@ export const javaScriptProgramStrictness = (
       : "unknown";
 };
 
+/** Runtime strictness of the code at `node`: classes, directives, then the program. */
+export const javaScriptStrictnessAt = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): "strict" | "sloppy" | "unknown" => {
+  for (
+    let current: t.Node | undefined = node;
+    current !== undefined;
+    current = parents.get(current)
+  ) {
+    if (t.isClass(current)) return "strict";
+    if (
+      t.isFunction(current) &&
+      t.isBlockStatement(current.body) &&
+      current.body.directives.some(({ value }) => value.value === "use strict")
+    )
+      return "strict";
+    if (t.isProgram(current)) return javaScriptProgramStrictness(current);
+  }
+  return "unknown";
+};
+
 const hasRuntimeModuleDeclaration = (program: t.Program): boolean =>
   program.body.some((node) => {
     if (t.isTSImportEqualsDeclaration(node))

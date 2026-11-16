@@ -1,5 +1,5 @@
 import * as buildEnvironment from "../../desktop/BuildComputerEnvironment.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { renderSmokeTask } from "../../domain/desktop/appExport.js";
 import { MEASURE_BUILD_TASK_CONTRACT } from "../../contracts/desktopBuildMeasureContract.js";
 import {
@@ -112,6 +112,36 @@ describe("measureBuildTask's record of a bundle", () => {
     );
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(3);
+  });
+
+  it("records an unknown total cost and still measures the bundle's next task", async () => {
+    const bundle = await bundleWith("add-eggs", "add-bread");
+    const signal = new AbortController().signal;
+    const unpriced: Solver = async () => ({ ...passed, usd: null });
+    const first = await measureBuildTask(
+      request(bundle, "add-eggs"),
+      unpriced,
+      signal,
+    );
+    expect(first).toMatchObject({
+      ok: true,
+      value: { usd: null, stopped: "cost_unknown" },
+    });
+    const recorded = JSON.parse(
+      await readFile(join(bundle, "difficulty.json"), "utf8"),
+    ) as { tasks: Record<string, { usd: unknown }> };
+    expect(recorded.tasks["add-eggs"]?.usd).toBeNull();
+
+    // The saved record with an unknown cost is read back, not refused.
+    const second = await measureBuildTask(
+      request(bundle, "add-bread"),
+      counting().solver,
+      signal,
+    );
+    expect(second.ok).toBe(true);
+    const readme = await readFile(join(bundle, "README.md"), "utf8");
+    expect(readme).toContain("cost unknown.");
+    expect(readme).toContain("$1.50 in all.");
   });
 
   it("keeps both records when two tasks of one bundle are measured at once", async () => {
