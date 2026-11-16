@@ -16,6 +16,7 @@ const punctuator =
 const expressionKeywords = new Set([
   "await",
   "case",
+  "default",
   "delete",
   "do",
   "else",
