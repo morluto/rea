@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "./commandCli.js";
 import pino from "pino";
 
 import { registerProcessCommands } from "../../../src/cli/processCommands.js";
@@ -13,7 +13,7 @@ export const compareProcessCaptureFiles = async (
   right: string,
   traceSpecification?: string,
 ): Promise<unknown> => {
-  const cli = Cli.create("rea", { sync: false });
+  const cli = createCommandCli();
   registerProcessCommands(cli, pino({ level: "silent" }), {});
   const { stdout } = await serveInProcessCli(cli, [
     "compare-process-captures",

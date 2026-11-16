@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 import { z } from "zod";
 
 import {
@@ -15,7 +15,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractCommand } from "./contractCommand.js";
 import { registerCliCommand } from "./commandRegistry.js";
-import type { CliInstance } from "./types.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
@@ -24,7 +23,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Register direct process capture and comparison commands. */
 export const registerProcessCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
