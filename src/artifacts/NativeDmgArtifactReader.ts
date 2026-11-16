@@ -293,15 +293,11 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     await Promise.allSettled(this.#activeDirectoryOperations);
     await this.#closeVerificationProbeHandle();
     await this.#closeMountedDirectory();
-    // An hdiutil whose cleanup failed may still change attachments.
-    try {
-      await this.host.close?.();
-    } catch (cause: unknown) {
-      throw ArtifactReaderFailure.withCleanup(
-        cause,
-        ArtifactReaderFailure.cleanupObservation(cause, "hdiutil process"),
-      );
-    }
+    // An hdiutil whose cleanup failed may still change attachments, so it is
+    // released before detaching.
+    const retained = await this.#releaseRetainedCommands();
+    if (retained !== undefined)
+      throw ArtifactReaderFailure.withCleanup(retained.cause, retained.cleanup);
     let detachFailure = await this.#detachOwnedDevices();
     if (
       this.#devices.length === 0 &&
@@ -323,6 +319,13 @@ export class NativeDmgArtifactReader implements ArtifactReader {
           "hdiutil attachment ownership remains unknown",
       );
     }
+    // Detach and inventory commands run during close can be retained too.
+    const retainedDuringClose = await this.#releaseRetainedCommands();
+    if (detachFailure === undefined && retainedDuringClose !== undefined)
+      throw ArtifactReaderFailure.withCleanup(
+        retainedDuringClose.cause,
+        retainedDuringClose.cleanup,
+      );
     if (detachFailure !== undefined)
       throw new ArtifactReaderFailure(
         "unavailable",
@@ -341,10 +344,35 @@ export class NativeDmgArtifactReader implements ArtifactReader {
               ...(this.#mountRoot === undefined
                 ? []
                 : [`DMG mount root ${this.#mountRoot}`]),
+              ...(retainedDuringClose?.cleanup.resources ?? []),
             ],
           },
         },
       );
+  }
+
+  /** Retry hdiutil processes whose cleanup failed; report any that remain. */
+  async #releaseRetainedCommands(): Promise<
+    | {
+        readonly cause: unknown;
+        readonly cleanup: ReturnType<
+          typeof ArtifactReaderFailure.cleanupObservation
+        >;
+      }
+    | undefined
+  > {
+    try {
+      await this.host.close?.();
+      return undefined;
+    } catch (cause: unknown) {
+      return {
+        cause,
+        cleanup: ArtifactReaderFailure.cleanupObservation(
+          cause,
+          "hdiutil process",
+        ),
+      };
+    }
   }
 
   async #closeVerificationProbeHandle(): Promise<void> {

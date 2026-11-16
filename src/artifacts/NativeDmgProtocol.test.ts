@@ -186,3 +186,39 @@ it("uses the typed command cancellation owner for injected hosts and preserves p
     }
   }
 });
+
+it("reports an hdiutil retained while the reader closes, after its own cleanup commands", async () => {
+  let closes = 0;
+  const retained = new ArtifactReaderFailure(
+    "unavailable",
+    "hdiutil cleanup withheld",
+    { cleanup: { reason: "withheld", resources: ["pid:4242"] } },
+  );
+  const host: NativeDmgHost = {
+    run: async () => ({
+      stdout: "",
+      stderr: "hdiutil: verify failed - image not recognized",
+      exitCode: 1,
+    }),
+    // Nothing is retained before close; a command run during close is.
+    close: async () => {
+      closes += 1;
+      if (closes === 2) throw retained;
+    },
+  };
+  const reader = new NativeDmgArtifactReader("/fixture/image.dmg", {}, host);
+  await expect(
+    (async () => {
+      for await (const _entry of reader.entries()) {
+        /* consume */
+      }
+    })(),
+  ).rejects.toMatchObject({ reason: "format" });
+  const refused = await reader.close().catch((cause: unknown) => cause);
+  expect(refused).toBeInstanceOf(ArtifactReaderFailure);
+  expect((refused as ArtifactReaderFailure).cleanup?.resources).toEqual([
+    "pid:4242",
+  ]);
+  await reader.close();
+  expect(closes).toBe(4);
+});
