@@ -146,6 +146,11 @@ const CASES: readonly ParityCase[] = [
   },
   { name: "help-update", arguments: fixed("update", "--help") },
   { name: "help-mcp", arguments: fixed("mcp", "--help") },
+  { name: "help-mcp-without-subcommand", arguments: fixed("mcp", "--json") },
+  {
+    name: "help-after-unknown-command",
+    arguments: fixed("no-such-command", "--help"),
+  },
   { name: "help-mcp-add", arguments: fixed("mcp", "add", "--help") },
   { name: "help-mcp-doctor", arguments: fixed("mcp", "doctor", "--help") },
   { name: "help-completions", arguments: fixed("completions", "--help") },
