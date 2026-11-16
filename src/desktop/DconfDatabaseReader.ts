@@ -14,11 +14,13 @@ import {
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 
 import {
   assertArtifactReadActive,
   withArtifactFileHandle,
   ArtifactReaderFailure,
+  ArtifactResourceScope,
 } from "../resources/index.js";
 
 import { programCandidates } from "./ProgramLookup.js";
@@ -31,6 +33,7 @@ const DCONF_MAX_BUFFER = 16 * 1024 * 1024;
 /** Retire a retained command family before its parent-owned database descriptor. */
 class DconfReadHandle extends OwnedFileHandle {
   retainedProcess: ProviderProcessSupervisor | undefined;
+  readonly inspections = new ArtifactResourceScope();
 
   constructor(
     file: FileHandle,
@@ -44,6 +47,7 @@ class DconfReadHandle extends OwnedFileHandle {
     return [
       this.path,
       ...(ownership === undefined ? [] : ownedCommandResources(ownership)),
+      ...this.inspections.cleanupResources,
     ];
   }
 
@@ -53,6 +57,7 @@ class DconfReadHandle extends OwnedFileHandle {
       if (stopped.status === "incomplete") throw new Error(stopped.reason);
       this.retainedProcess = undefined;
     }
+    await this.inspections.close();
     await super.close();
   }
 }
@@ -148,6 +153,13 @@ export const dumpDconfDatabase = async (
             );
             return { ok: true, text: output.stdout.text };
           } catch (cause: unknown) {
+            // Baseline identity inspection can fail before a supervisor exists.
+            // Adopt its exact owners before cancellation or diagnostic projection.
+            retainArtifactCommandCleanup(
+              cause,
+              owner.inspections,
+              "dconf dump",
+            );
             const failure = providerOutcomeOf(cause);
             // Only POSIX PATH-search spawn failures permit another candidate.
             // An actual child exit, cancellation or host capacity failure is final.

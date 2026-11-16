@@ -1,4 +1,11 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,12 +18,16 @@ import {
 import { dumpDconfDatabase } from "./DconfDatabaseReader.js";
 import { runningTestDeadline } from "../../tests/support/runningTestDeadline.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import * as providerProcess from "../process/ProviderProcess.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { ProcessOwnershipIdentityBatchFailure } from "../process/ProcessInspectionCancellation.js";
+import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 
 const closeFault = vi.hoisted(() => ({
   path: "",
   remaining: 0,
   missingDescriptorPath: false,
-  handles: [] as { close(): Promise<void> }[],
+  handles: [] as FileHandle[],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -50,11 +61,83 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   closeFault.remaining = 0;
   closeFault.missingDescriptorPath = false;
   closeFault.path = "";
   await Promise.all(closeFault.handles.splice(0).map((file) => file.close()));
 });
+
+it.skipIf(process.platform !== "linux").each([false, true])(
+  "retains preparation descriptors through partial cleanup retries (cancelled=%s)",
+  async (cancelled) => {
+    const root = await createTestTempDirectory("dconf-preparation-cleanup-");
+    const database = join(root, "user");
+    await writeFile(database, "GVariant");
+    const first = await failedInspectionDescriptor();
+    const second = await failedInspectionDescriptor();
+    const batch = new ProcessOwnershipIdentityBatchFailure(
+      [first, second].map(({ failure }, requestIndex) => ({
+        pid: process.pid,
+        requestIndex,
+        cause: failure,
+      })),
+      new Map(),
+    );
+    const reason = { source: "preparation cancellation" };
+    const cause = cancelled
+      ? new OwnedCommandFailure(
+          "cancelled",
+          "cancelled in preparation",
+          null,
+          null,
+          {
+            cancellation: { reason },
+            preparationFailure: batch,
+          },
+        )
+      : batch;
+    const launch = vi
+      .spyOn(providerProcess, "spawnOwnedProviderProcess")
+      .mockRejectedValueOnce(cause);
+    closeFault.path = database;
+    const failure: unknown = await dumpDconfDatabase(database, {
+      REA_DCONF_COMMAND: "/must-not-launch-after-inspection-failure",
+    }).catch((caught: unknown) => caught);
+    expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+    if (!(failure instanceof ArtifactFileCleanupFailure)) throw failure;
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(failure.cleanupLease.cleanupResources).toEqual(
+      expect.arrayContaining([database, first.path, second.path]),
+    );
+    if (cancelled) {
+      expect(failure.reason).toBe("cancelled");
+      expect(failure.cancellation?.reason).toBe(reason);
+    } else {
+      expect(failure.fileCleanupFailure.outcome).toMatchObject({
+        kind: "failed",
+        cause: batch,
+      });
+    }
+    const selected = closeFault.handles.at(-1);
+    if (selected === undefined) throw new Error("Missing database descriptor");
+    first.allow();
+    await expect(failure.cleanupLease.release()).rejects.toThrow();
+    expect(failure.cleanupLease.released).toBe(false);
+    await expect(first.handle.stat()).rejects.toMatchObject({ code: "EBADF" });
+    await expect(second.handle.stat()).resolves.toBeDefined();
+    await expect(selected.stat()).resolves.toBeDefined();
+    const closedFirst = first.closes();
+    second.allow();
+    await failure.cleanupLease.release();
+    expect(failure.cleanupLease.released).toBe(true);
+    expect(first.closes()).toBe(closedFirst);
+    await expect(second.handle.stat()).rejects.toMatchObject({ code: "EBADF" });
+    expect(closeFault.handles).toHaveLength(1);
+    // The aggregate owner closes the database only after all inspection owners.
+    await expect(selected.stat()).rejects.toMatchObject({ code: "EBADF" });
+  },
+);
 
 describe.skipIf(process.platform !== "linux")("dumpDconfDatabase", () => {
   it.each(["ordinary", "hash#stage", "line\nbreak"])(
