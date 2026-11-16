@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **cli:** rea <command> --mcp is removed. Start REA's MCP server with rea mcp or rea --mcp.
 * **mcp:** MCP calls to inspect_pcap_capture, start_rizin_debug_session and start_gdb_session with a relative path or inferior_tty are refused with invalid_request. Pass absolute paths.
 * **frida:** MCP `load_frida_script` and `instrument_with_frida` refuse a relative script `path` with `invalid_request`; send an absolute path. CLI `--script-file` still accepts a relative path, and Evidence `source_path` is now the resolved absolute path.
 * **android:** Android JNI Evidence whose library failure has kind "integrity" must name integrity_check. Records written before #11191 that lack it no longer parse; recreate them.
@@ -441,6 +442,7 @@
 * **cli:** derive contract-backed command options from the tool contract ([#10571](https://github.com/morluto/rea/issues/10571)) ([f3b697d](https://github.com/morluto/rea/commit/f3b697da5a698a5548afd3b19d044ec623bdda0b))
 * **cli:** import zod directly instead of through incur ([#11655](https://github.com/morluto/rea/issues/11655)) ([07c5a54](https://github.com/morluto/rea/commit/07c5a54feee8de5ed5079fdebbdd122fa70d108a))
 * **cli:** name a failure's per-call control flag at the CLI boundary ([#11413](https://github.com/morluto/rea/issues/11413)) ([49d4991](https://github.com/morluto/rea/commit/49d4991a18b6c6385aa4e993b3bf40249cee7dce))
+* **cli:** own builtin refusals and retire per-command MCP ([7d502dd](https://github.com/morluto/rea/commit/7d502ddb0d8d80d0e16a80b0edc813f704e3ac31))
 * **cli:** own shell completion behind new CLI parity goldens ([#11662](https://github.com/morluto/rea/issues/11662)) ([f39e5e8](https://github.com/morluto/rea/commit/f39e5e80db20568f92c3d8e6f40f7f61802be226))
 * **cli:** project core native commands with open_binary target options ([#10736](https://github.com/morluto/rea/issues/10736)) ([4eafd9d](https://github.com/morluto/rea/commit/4eafd9dee517d9a660705426adfda5b87295e78b))
 * **cli:** project Go, V8 and delivery inspectors from their contracts ([#10576](https://github.com/morluto/rea/issues/10576)) ([da53dce](https://github.com/morluto/rea/commit/da53dce1f729d33abe0d269061412af7662f2a09))
