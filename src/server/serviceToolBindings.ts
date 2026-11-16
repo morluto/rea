@@ -121,8 +121,10 @@ import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
 import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import {
+  GDB_SESSION_TOOLS,
   RIZIN_DEBUG_SESSION_TOOLS,
   unknownDebuggerSessionError,
 } from "../domain/debuggerSessionErrors.js";
@@ -213,6 +215,24 @@ export interface RizinDebugToolOptions {
   readonly manager: Pick<
     RizinDebugSessionManager,
     "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** GDB sessions a manager owns and the session their commands may change. */
+export interface GdbToolOptions {
+  readonly manager: Pick<
+    GdbSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** The Cutter bridge and the session its commands may change. */
+export interface CutterToolOptions {
+  readonly service: Pick<
+    CutterBridgeService,
+    "listSessions" | "execute" | "retryCleanup"
   >;
   readonly session: ExternalMutationAdmission | undefined;
 }
@@ -678,7 +698,9 @@ const SERVICE_TOOL_BINDINGS = {
         jsonValueResult(await readGuidanceSection(input, resources)),
     },
   })) satisfies Bind<ArtifactResourceScope>,
-  cutterSessions: ((service) => ({
+  // Cutter discovery reads only; an arbitrary command may change the bound
+  // artifact, so it runs under external-mutation admission.
+  cutter: (({ service, session }) => ({
     list_cutter_sessions: {
       admission: "sdk",
       value: async (_input, { signal }) => {
@@ -688,7 +710,16 @@ const SERVICE_TOOL_BINDINGS = {
           : listed;
       },
     },
-  })) satisfies Bind<CutterBridgeService>,
+    cutter_command: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        retryCleanup: () => service.retryCleanup(),
+        run: (input, signal) => service.execute(input, { signal }),
+      },
+    },
+  })) satisfies Bind<CutterToolOptions>,
   // Runtime settings remain usable without an active target or healthy
   // provider, so they run outside analysis admission.
   analysisSettings: (({ settings, delivery }) => ({
@@ -1266,6 +1297,61 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<RizinDebugToolOptions>,
+  // Starting GDB loads no target, so it runs outside admission; a console
+  // command may change the bound artifact and runs under external-mutation
+  // admission, keeping a failed cleanup owned for the next retry.
+  gdb: (({ manager, session }) => ({
+    start_gdb_session: {
+      admission: "sdk",
+      value: (input, { signal }) =>
+        manager.start(
+          signal,
+          input.inferior_tty === undefined
+            ? {}
+            : { inferiorTty: input.inferior_tty },
+        ),
+    },
+    gdb_console: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        detail: "delivery",
+        retryCleanup: () => manager.retryCleanupFailures(),
+        run: async (input, signal) => {
+          const executed = await manager.execute(
+            input.session_id,
+            input.command,
+            signal,
+          );
+          return executed.ok ? ok(executed.value.evidence) : executed;
+        },
+      },
+    },
+    gdb_session_status: {
+      admission: "sdk",
+      value: async (input) => {
+        const status = manager.status(input.session_id);
+        return status === undefined
+          ? err(
+              unknownDebuggerSessionError(
+                GDB_SESSION_TOOLS,
+                "gdb_session_status",
+              ),
+            )
+          : ok({ ...status, recent_mi_records: [...status.recent_mi_records] });
+      },
+    },
+    close_gdb_session: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "owned-cleanup",
+        resource: (input) => input.session_id,
+        run: (input) => manager.close(input.session_id),
+      },
+    },
+  })) satisfies Bind<GdbToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation: (({ browser, loadFailure }, retention) => {

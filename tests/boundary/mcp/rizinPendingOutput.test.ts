@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { rizinDebugMcpServer } from "../../fixtures/rizinDebugMcp.js";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { expect, it } from "vitest";
 
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";

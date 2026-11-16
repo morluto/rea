@@ -1,5 +1,5 @@
 import { execFileSync, type ChildProcess } from "node:child_process";
-import { rizinDebugMcpServer } from "../../fixtures/rizinDebugMcp.js";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { once } from "node:events";
 import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
