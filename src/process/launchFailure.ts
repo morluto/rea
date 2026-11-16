@@ -80,7 +80,7 @@ export const classifyLaunchErrno = (code: unknown): LaunchFailure => {
 };
 
 /** Classify a spawn errno; undefined when it is not a launch refusal. */
-export const classifyLaunchFailureCode = (
+const classifyLaunchFailureCode = (
   code: unknown,
 ): LaunchRefusal | undefined => {
   if (typeof code !== "string" || !Object.hasOwn(LAUNCH_REFUSALS, code))

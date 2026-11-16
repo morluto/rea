@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 
 import {
-  classifyLaunchFailureCode,
   classifyLaunchErrno,
   describeLaunchFailure,
   launcherFailureOf,
@@ -17,15 +16,22 @@ it.each([
   ["ENOEXEC", "not_executable"],
   ["EISDIR", "not_executable"],
 ])("classifies spawn %s as %s", (code, kind) => {
-  expect(classifyLaunchFailureCode(code)).toEqual({ kind, code });
+  expect(classifyLaunchErrno(code)).toEqual({ kind, code });
 });
 
-it.each([["EAGAIN"], ["EMFILE"], ["ETIMEDOUT"], [1], [null], ["toString"]])(
-  "leaves %j unclassified",
+it.each([["ETIMEDOUT"], ["toString"]])(
+  "leaves %j an unrecognised launch failure",
   (code) => {
-    expect(classifyLaunchFailureCode(code)).toBeUndefined();
+    expect(classifyLaunchErrno(code)).toEqual({ kind: "failed", code });
   },
 );
+
+it.each([[1], [null]])("drops a non-string launch code %j", (code) => {
+  expect(classifyLaunchErrno(code)).toEqual({
+    kind: "failed",
+    code: undefined,
+  });
+});
 
 it.each([
   ["EAGAIN", { kind: "host-exhausted", code: "EAGAIN", resource: "processes" }],
