@@ -5,6 +5,14 @@ Maintainer scope, provider ownership and artifact/subject identity decisions are
 pending. This specification does not authorize provider integration or imply
 production readiness; see [contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope).
 
+## Scope history
+
+This document describes the original explicit-layout increment. The subsequent
+[raw candidate discovery proposal](../raw-raster-discovery/spec.md) explicitly
+extends it; R5 and the original autodetection non-goal below apply to the original
+preview/export increment, not a permanent prohibition on discovery. PNG export
+remains experimental.
+
 ## Problem and outcome
 
 An analyst who knows the layout of headerless pixels should be able to inspect

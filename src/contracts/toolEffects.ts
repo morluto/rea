@@ -288,6 +288,8 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     idempotent: false,
   }),
   inspect_byte_entropy: evidence,
+  inspect_raw_raster_candidates: evidence,
+  inspect_structured_raster_candidates: evidence,
   inspect_pe_resources: evidence,
   inspect_pe_certificates: evidence,
   inspect_pe_imports: evidence,

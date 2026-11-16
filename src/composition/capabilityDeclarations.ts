@@ -28,6 +28,7 @@ import {
   ARTIFACT_GRAPH_PROVIDER,
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
+  REA_WORKFLOW_PROVIDER,
   DEVICETREE_PROVIDER,
   ELF_NOTES_PROVIDER,
   ELF_UNWIND_RANGES_PROVIDER,
@@ -217,6 +218,10 @@ export const CAPABILITY_DECLARATIONS = {
   byteEntropy: {
     providers: [
       providerBinding(BYTE_ENTROPY_PROVIDER, ["inspect_byte_entropy"]),
+      providerBinding(REA_WORKFLOW_PROVIDER, [
+        "inspect_raw_raster_candidates",
+        "inspect_structured_raster_candidates",
+      ]),
     ],
   },
   cutter: {

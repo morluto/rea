@@ -14,6 +14,8 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
 > = {
   ...UNKNOWN_CONTRACT_EXAMPLES,
   ...INVESTIGATION_EXAMPLES,
+  inspect_structured_raster_candidates: { path: "/artifacts/firmware.bin" },
+  inspect_raw_raster_candidates: { path: "/artifacts/firmware.bin" },
   inspect_byte_entropy: { path: "/artifacts/firmware.bin" },
   goto_address: { address: "0x1000" },
   procedure_address: { procedure: "main" },

@@ -60,3 +60,5 @@ jobs:
       # All inputs are synthetic temporary files, never private firmware.
       - name: Verify decoder and file-to-PNG workflow
         run: npm run test:raw-raster
+      - name: Verify raster discovery through public CLI and MCP
+        run: npm run test:focused -- tests/acceptance/rawRasterDiscoveryCli.test.ts tests/acceptance/structuredRasterDiscoveryCli.test.ts tests/boundary/mcp/rawRasterDiscoveryMcp.test.ts tests/boundary/mcp/structuredRasterDiscoveryMcp.test.ts

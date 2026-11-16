@@ -1,3 +1,5 @@
+import { registerStructuredRasterCommands } from "./structuredRasterCommands.js";
+import { inspectRawRasterCandidatesInputSchema } from "../domain/native/rawRasterCandidates.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
@@ -9,6 +11,7 @@ import { producerLimitsOption } from "./producerLimitsOption.js";
 import { pwntoolsProducerLimitsSchema } from "../domain/native/pwntoolsResourceLimits.js";
 import {
   createByteEntropyService,
+  createRawRasterDiscoveryService,
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
@@ -441,6 +444,71 @@ export const registerBinaryDiagnosticsCommands = (
             ).then(projectCliAnalysisResult),
         );
       }),
+  });
+  registerStructuredRasterCommands(cli, logger);
+  const rasterInput = inspectRawRasterCandidatesInputSchema.shape;
+  cli.command(CLI_COMMANDS.inspectRawRasterCandidates, {
+    description:
+      "Rank raw raster hypotheses, not verified images, in a bounded file range",
+    args: z.object({ path: localPathStringSchema.describe("Local file") }),
+    options: z.object({
+      offset: cliDecimalField(rasterInput.offset),
+      length: cliDecimalField(rasterInput.length),
+      widths: z
+        .array(cliDecimalField(z.number().int().min(8).max(4096)))
+        .max(32)
+        .optional(),
+      heights: z
+        .array(cliDecimalField(z.number().int().min(8).max(4096)))
+        .max(32)
+        .optional(),
+      formats: z.array(z.enum(["gray8", "rgb888", "rgba8888"])).optional(),
+      offsetStep: cliDecimalField(rasterInput.offset_step),
+      minScore: z
+        .string()
+        .regex(/^(?:0(?:\.[0-9]+)?|1(?:\.0+)?)$/u)
+        .optional()
+        .describe(
+          "Minimum heuristic score from 0 to 1, e.g. 0.5; not a probability",
+        ),
+      maxHypotheses: cliDecimalField(rasterInput.max_hypotheses),
+      maxCandidates: cliDecimalField(rasterInput.max_candidates),
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectRawRasterCandidates,
+          async () => {
+            const service = createRawRasterDiscoveryService();
+            return await finishCliEvidenceCommand(
+              args.path,
+              () =>
+                service.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    offset: options.offset,
+                    length: options.length,
+                    widths: options.widths,
+                    heights: options.heights,
+                    formats: options.formats,
+                    offset_step: options.offsetStep,
+                    ...(options.minScore === undefined
+                      ? {}
+                      : { min_score: Number(options.minScore) }),
+                    max_hypotheses: options.maxHypotheses,
+                    max_candidates: options.maxCandidates,
+                  },
+                  { signal },
+                ),
+              service,
+              "rea-workflow",
+              "inspect_raw_raster_candidates",
+              signal,
+            ).then(projectCliAnalysisResult);
+          },
+        ),
+      ),
   });
   const entropy = createByteEntropyService();
   cli.command(CLI_COMMANDS.inspectByteEntropy, {

@@ -17,7 +17,13 @@ import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
+import { registerStructuredRasterDiscoveryTool } from "./registerStructuredRasterDiscoveryTool.js";
+import { registerRawRasterDiscoveryTool } from "./registerRawRasterDiscoveryTool.js";
+import {
+  createStructuredRasterDiscoveryService,
+  createRawRasterDiscoveryService,
+  createByteEntropyService,
+} from "../composition/binaryDiagnostics.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerNativeInitializersTool } from "./registerNativeInitializersTool.js";
 import { registerElfUnwindRangesTool } from "./registerElfUnwindRangesTool.js";
@@ -467,6 +473,20 @@ export const createServer = (
         delivery,
         recordSessionEvidence,
         session,
+      );
+      registerStructuredRasterDiscoveryTool(
+        server,
+        createStructuredRasterDiscoveryService(artifactResources),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerRawRasterDiscoveryTool(
+        server,
+        createRawRasterDiscoveryService(artifactResources),
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
       );
       registerBinaryDiagnosticsTools(
         server,
