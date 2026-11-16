@@ -771,4 +771,32 @@ describe("absolute dependency lookup reuse", () => {
       "/native/second.so",
     ]);
   });
+  it("selects a successful retry when its filesystem spelling stays unchanged", async () => {
+    const reads = host({
+      "/native/parent.so": elf(["/native/shared.so"]),
+      "/native/shared.so": elf(["/native/child.so"]),
+      "/native/child.so": elf([]),
+    });
+    let attempts = 0;
+    const result = await libraryClosure(
+      app(elf(["/native/parent.so", "/native/shared.so"])),
+      [],
+      {
+        ...reads,
+        resolvePath: async (path) => {
+          if (path === "/native/shared.so" && ++attempts === 1)
+            return undefined;
+          return reads.resolvePath(path);
+        },
+      },
+      8,
+    );
+    expect(result.libraries.map((row) => row.path)).toEqual([
+      "/native/parent.so",
+      "/native/shared.so",
+      "/native/child.so",
+    ]);
+    expect(result.unreadable).toHaveLength(1);
+    expect(result.unreadable[0]?.path).toBe("/native/shared.so");
+  });
 });

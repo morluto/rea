@@ -258,17 +258,19 @@ export const libraryClosure = async (
           : undefined;
       const request = directPath?.path ?? expandedRequest;
       // An unresolved declaration cannot claim a known literal lookup's identity.
-      const key = unsupported
-        ? compositeKey(["unresolved", object.path, soname])
-        : compositeKey([
-            "lookup",
-            request,
-            directPath?.ownershipPath ?? request,
-            ...(directPath?.requiredAliases.flatMap((alias) => [
-              alias.path,
-              alias.ownershipPath,
-            ]) ?? []),
-          ]);
+      const key =
+        unsupported ||
+        (expandedRequest.startsWith("/") && directPath === undefined)
+          ? compositeKey(["unresolved", object.path, soname])
+          : compositeKey([
+              "lookup",
+              request,
+              directPath?.ownershipPath ?? request,
+              ...(directPath?.requiredAliases.flatMap((alias) => [
+                alias.path,
+                alias.ownershipPath,
+              ]) ?? []),
+            ]);
       if (seen.has(key)) continue;
       if (seen.size >= limit) return { ...closure, truncated: true };
       seen.add(key);

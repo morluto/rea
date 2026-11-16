@@ -296,7 +296,9 @@ supplies its own `$ORIGIN`. Link targets retain every ownership-qualified
 spelling even when another route reaches the same physical link. Within one
 inventory, repeated exact absolute lookup spellings reuse successful path
 observations; unresolved probes remain retryable and later inventories observe
-the filesystem afresh. Intermediate file and directory symlink entries
+the filesystem afresh. Cancellation is checked between lookup metadata reads
+and link-target traversals. An in-flight operating-system request is awaited. A rejected lookup read keeps
+its original error rather than replacing it with cancellation. Intermediate file and directory symlink entries
 needed to reach a library are retained separately from the physical object, including directory links reached through file-link
 targets and when the object is inside the application's folder. The exact
 usr-merge links supplied by the Ubuntu 24.04 computer base (`/bin`, `/sbin`,

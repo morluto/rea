@@ -26,6 +26,7 @@ import {
   parseDpkgOwners,
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { abortIfNeeded } from "../resources/index.js";
 import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
@@ -61,15 +62,32 @@ const suppliedByComputerBase = (
     (machine === 62 && path === "/lib64")) &&
   (target === `usr${path}` || target === `/usr${path}`);
 
+/** Do not enqueue another lookup read after cancellation; keep failed I/O primary. */
+const lookupRead = async <T>(
+  signal: AbortSignal | undefined,
+  read: () => Promise<T>,
+): Promise<T> => {
+  abortIfNeeded(signal);
+  const value = await read();
+  abortIfNeeded(signal);
+  return value;
+};
+
 /** Remove dot traversal only after the filesystem resolves every preceding link. */
-const ownershipSpelling = async (path: string): Promise<string> => {
+const ownershipSpelling = async (
+  path: string,
+  signal?: AbortSignal,
+): Promise<string> => {
   let traversed = "";
   let spelling = "/";
   for (const part of path.split("/")) {
+    abortIfNeeded(signal);
     if (part === "" || part === ".") continue;
     traversed += `/${part}`;
     spelling =
-      part === ".." ? await realpath(traversed) : posix.join(spelling, part);
+      part === ".."
+        ? await lookupRead(signal, () => realpath(traversed))
+        : posix.join(spelling, part);
   }
   return spelling;
 };
@@ -78,6 +96,7 @@ const ownershipSpelling = async (path: string): Promise<string> => {
 const requiredAliases = async (
   path: string,
   machine: number,
+  signal?: AbortSignal,
 ): Promise<LibraryLookupAlias[]> => {
   const aliases = new Map<string, LibraryLookupAlias>();
   const visitedTargets = new Set<string>();
@@ -87,6 +106,7 @@ const requiredAliases = async (
     directoryLeaf: boolean,
     fileLeaf = false,
   ): Promise<void> => {
+    abortIfNeeded(signal);
     const ends: number[] = [];
     for (
       let end = lookup.indexOf("/", lookup.startsWith("/") ? 1 : 0);
@@ -97,14 +117,15 @@ const requiredAliases = async (
     ends.push(lookup.length);
     for (const end of ends) {
       const prefix = lookup.slice(0, end);
-      if (!(await lstat(prefix)).isSymbolicLink()) continue;
+      if (!(await lookupRead(signal, () => lstat(prefix))).isSymbolicLink())
+        continue;
       // Canonical parents identify the link entry, not its target. Keep ../
       // in the target spelling until the kernel resolves preceding links.
       const alias = posix.join(
-        await realpath(posix.dirname(prefix)),
+        await lookupRead(signal, () => realpath(posix.dirname(prefix))),
         posix.basename(prefix),
       );
-      const target = await readlink(prefix);
+      const target = await lookupRead(signal, () => readlink(prefix));
       const directory = end !== lookup.length || directoryLeaf;
       if (
         (directory || fileLeaf) &&
@@ -112,7 +133,7 @@ const requiredAliases = async (
       )
         aliases.set(prefix, {
           path: alias,
-          ownershipPath: await ownershipSpelling(prefix),
+          ownershipPath: await ownershipSpelling(prefix, signal),
         });
       const targetLookup = posix.isAbsolute(target)
         ? target
@@ -129,6 +150,7 @@ const requiredAliases = async (
       try {
         // Selected leaves retain the existing DSO-owner fallback. Recursively
         // reached links need independent ownership, including their leaf.
+        abortIfNeeded(signal);
         await visit(targetLookup, directory, true);
       } finally {
         activeLinks.delete(alias);
@@ -136,6 +158,7 @@ const requiredAliases = async (
     }
   };
   await visit(path, false);
+  abortIfNeeded(signal);
   return [...aliases.values()];
 };
 
@@ -318,18 +341,26 @@ export const inspectLibraryPackages = async (
         try {
           // Admit the full lookup before deriving its ownership leaf: splitting
           // a regular file's trailing slash or dot component would erase ENOTDIR.
-          const probe = await probeHostFile(path);
+          const probe = await lookupRead(signal, () => probeHostFile(path));
           if (probe.kind !== "file" || !probe.isFile) return undefined;
-          const resolvedPath = await realpath(path);
-          const directory = await realpath(posix.dirname(path));
+          const resolvedPath = await lookupRead(signal, () => realpath(path));
+          const directory = await lookupRead(signal, () =>
+            realpath(posix.dirname(path)),
+          );
           const selected = posix.join(directory, posix.basename(path));
-          const identity = await stat(resolvedPath, { bigint: true });
+          const identity = await lookupRead(signal, () =>
+            stat(resolvedPath, { bigint: true }),
+          );
           return {
             path: selected,
-            ownershipPath: await ownershipSpelling(path),
+            ownershipPath: await ownershipSpelling(path, signal),
             resolvedPath,
             fileIdentity: `${identity.dev}:${identity.ino}`,
-            requiredAliases: await requiredAliases(path, root.value.machine),
+            requiredAliases: await requiredAliases(
+              path,
+              root.value.machine,
+              signal,
+            ),
           };
         } catch (cause) {
           if (isRefusedRead(cause)) return undefined;
