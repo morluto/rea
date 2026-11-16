@@ -56,7 +56,7 @@ const PARTIAL = [top, middle, leaf, unrelated];
 
 const connect = async (
   options: {
-    readonly profile?: "compact";
+    readonly profile?: "off" | "compact";
     readonly records?: readonly ReturnType<typeof record>[];
     readonly maximumResponseBytes?: number;
   } = {},
@@ -71,7 +71,7 @@ const connect = async (
     serverOptions: {
       environment: {
         ...process.env,
-        REA_MCP_INPUT_SCHEMA_PROFILE: options.profile ?? "compact",
+        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
         REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "compact",
       },
       ...(options.maximumResponseBytes === undefined
@@ -98,6 +98,14 @@ const connect = async (
   const validation = schemaValidation.assertions;
   expect(validation.validateSchema(inputSchema)).toBe(true);
   expect(validation.validateSchema(outputSchema)).toBe(true);
+  if (advertised.outputSchema !== undefined)
+    expect(validation.validateSchema(advertised.outputSchema)).toBe(true);
+  expect(
+    validation.validate(inputSchema, {
+      detail: "links",
+      linked_evidence_id: "not-an-evidence-id",
+    }),
+  ).toBe(false);
   const resultOf = async (args: Record<string, unknown>) => {
     expect(
       validation.validate(inputSchema, args),
@@ -105,6 +113,11 @@ const connect = async (
     ).toBe(true);
     const result = await reply(args);
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    if (advertised.outputSchema !== undefined)
+      expect(
+        validation.validate(advertised.outputSchema, result.structuredContent),
+        JSON.stringify(validation.errors),
+      ).toBe(true);
     return z.object({ result: z.unknown() }).parse(result.structuredContent)
       .result;
   };
@@ -352,12 +365,151 @@ it("reports the source a composed workflow refuses, and clears it on import", as
   );
 });
 
+it.each(["off", "compact"] as const)(
+  "finds direct referrers without changing source selection or closure (%s)",
+  async (profile) => {
+    const second = record("find_strings", [leaf.evidence_id, leaf.evidence_id]);
+    const indirect = record("trace_impact", [top.evidence_id]);
+    const records = [...PARTIAL, second, indirect];
+    const { links, session } = await connect({ profile, records });
+    const target = { linked_evidence_id: leaf.evidence_id };
+    const rows = [top, second]
+      .sort((left, right) => (left.evidence_id < right.evidence_id ? -1 : 1))
+      .map(({ evidence_id }) => ({
+        evidence_id,
+        linked_evidence_id: leaf.evidence_id,
+        status: "retained",
+      }));
+    expect(await links(target)).toMatchObject({
+      ...target,
+      traversal: "direct",
+      link_status: "all",
+      matching_records: records.length,
+      examined_records: records.length,
+      links: { total: 2, retained: 2, missing: 0 },
+      retained_closure: null,
+      matching_links: 2,
+      next_offset: null,
+      rows,
+    });
+    const first = await links({ ...target, limit: 1 });
+    expect(first.rows).toEqual(rows.slice(0, 1));
+    expect(first.next_offset).toBe(1);
+    const last = await links({ ...target, limit: 1, offset: 1 });
+    expect(last.rows).toEqual(rows.slice(1));
+    expect(last.next_offset).toBeNull();
+    expect(last.links).toEqual(first.links);
+
+    // Existing filters still describe source records, not the cited target.
+    expect(await links({ ...target, ...exactly(top) })).toMatchObject({
+      matching_records: 1,
+      examined_records: 1,
+      rows: [expect.objectContaining({ evidence_id: top.evidence_id })],
+    });
+    expect(await links({ ...target, ...exactly(leaf) })).toMatchObject({
+      matching_records: 1,
+      links: { total: 0 },
+      rows: [],
+    });
+    expect(await links({ ...target, link_status: "missing" })).toMatchObject({
+      links: { total: 2, retained: 2, missing: 0 },
+      matching_links: 0,
+      rows: [],
+    });
+    expect(
+      await links({ linked_evidence_id: source.evidence_id }),
+    ).toMatchObject({
+      links: { total: 1, retained: 0, missing: 1 },
+      rows: [
+        {
+          evidence_id: middle.evidence_id,
+          linked_evidence_id: source.evidence_id,
+          status: "missing",
+        },
+      ],
+    });
+    expect(
+      await links({ linked_evidence_id: unrelated.evidence_id }),
+    ).toMatchObject({ matching_links: 0, rows: [] });
+
+    // The hidden missing source still prevents an outgoing closure claim.
+    expect(
+      await links({
+        ...target,
+        ...exactly(top),
+        traversal: "retained-closure",
+      }),
+    ).toMatchObject({
+      matching_records: 1,
+      examined_records: 3,
+      links: { total: 1, retained: 1, missing: 0 },
+      retained_closure: "incomplete",
+      rows: [expect.objectContaining({ evidence_id: top.evidence_id })],
+    });
+    expect(session.exportEvidenceBundle()).toEqual(
+      createEvidenceBundle(records),
+    );
+  },
+);
+
+it("updates referrer membership after atomic import and leaves no rows after reset", async () => {
+  const { client, links } = await connect({ records: [middle] });
+  const target = { linked_evidence_id: source.evidence_id };
+  expect(await links(target)).toMatchObject({
+    links: { total: 1, retained: 0, missing: 1 },
+    rows: [expect.objectContaining({ status: "missing" })],
+  });
+  const root = await createTestTempDirectory("rea-evidence-referrers-");
+  const path = join(root, "sources.json");
+  const relocated = createEvidence(
+    { ...TARGET, path: "/moved/a.macho" },
+    GHIDRA,
+    {
+      operation: middle.operation,
+      parameters: middle.parameters,
+      result: middle.normalized_result,
+      evidenceLinks: middle.evidence_links,
+    },
+  );
+  expect(relocated.evidence_id).toBe(middle.evidence_id);
+  for (const retained of [middle, middle, relocated]) {
+    await writeFile(
+      path,
+      JSON.stringify(createEvidenceBundle([source, retained])),
+    );
+    const imported = await client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path },
+    });
+    expect(imported.isError, JSON.stringify(imported)).not.toBe(true);
+    expect(await links(target)).toMatchObject({
+      total_retained_records: 2,
+      links: { total: 1, retained: 1, missing: 0 },
+      rows: [expect.objectContaining({ status: "retained" })],
+    });
+  }
+  const reset = await client.callTool({
+    name: "reset_investigation",
+    arguments: {},
+  });
+  expect(reset.isError, JSON.stringify(reset)).not.toBe(true);
+  expect(await links(target)).toMatchObject({
+    total_retained_records: 0,
+    matching_records: 0,
+    links: { total: 0, retained: 0, missing: 0 },
+    rows: [],
+  });
+});
+
 it("refuses link selections outside link delivery and names a smaller page", async () => {
   const { reply } = await connect();
   for (const [detail, field, value, expected] of [
     ["summary", "traversal", "direct", "detail: links"],
     ["records", "link_status", "all", "detail: links"],
     ["complete", "traversal", "retained-closure", "detail: links"],
+    ["summary", "linked_evidence_id", source.evidence_id, "detail: links"],
+    ["records", "linked_evidence_id", source.evidence_id, "detail: links"],
+    ["complete", "linked_evidence_id", source.evidence_id, "detail: links"],
     ["summary", "offset", 1, "detail: records or detail: links"],
     ["summary", "limit", 1, "detail: records or detail: links"],
   ] as const)

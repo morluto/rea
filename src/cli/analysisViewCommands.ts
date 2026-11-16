@@ -36,10 +36,10 @@ export const registerAnalysisViewCommands = (
 ): void => {
   registerCliCommand(cli, CLI_COMMANDS.inspectEvidenceBundle, {
     description:
-      "Inspect a local Evidence bundle completely, as discovery metadata, as a page of selected complete records, or as direct-link and retained-closure membership.",
+      "Inspect a local Evidence bundle completely, as discovery metadata, as selected complete records, or as link membership and direct referrers.",
     args: z.object({
       inputJson: jsonInputArgument(
-        "JSON or JSON file with absolute path, detail, optional record filters, records or links offset/limit, and links traversal/link_status",
+        "JSON or JSON file with absolute path, detail, optional source-record filters, records or links offset/limit, and links traversal/linked_evidence_id/link_status (default all with a linked ID, otherwise missing)",
         inspectEvidenceBundleCliInputSchema,
       ),
     }),

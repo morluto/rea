@@ -18,6 +18,7 @@ const DELIVERY_FIELDS = [
   ["offset", ["records", "links"]],
   ["limit", ["records", "links"]],
   ["traversal", ["links"]],
+  ["linked_evidence_id", ["links"]],
   ["link_status", ["links"]],
 ] as const;
 
@@ -30,6 +31,7 @@ export const inspectEvidenceBundle = (
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
     readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly linked_evidence_id?: string | undefined;
     readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
 ): Result<
@@ -85,6 +87,7 @@ export const inspectEvidenceBundle = (
     return ok(
       inspectEvidenceLinks(bundle, options.filters, {
         traversal: options.traversal,
+        linkedEvidenceId: options.linked_evidence_id,
         linkStatus: options.link_status,
         offset: options.offset,
         limit: options.limit,
