@@ -96,6 +96,14 @@ describe("CLI canonical tool coverage", () => {
     expect(coverageViolations(withoutBinding, TOOL_CONTRACTS)).toEqual([
       "command inspect-plist does not bind primary operation inspect_plist",
     ]);
+    const withoutRoutedBinding = entries.map((entry) =>
+      entry.name === "compare-web-captures"
+        ? { ...entry, operations: [] }
+        : entry,
+    );
+    expect(coverageViolations(withoutRoutedBinding, TOOL_CONTRACTS)).toEqual([
+      "command compare-web-captures does not bind primary operation compare_web_captures",
+    ]);
     const badFlag = entries.map((entry) =>
       entry.name === "guidance"
         ? {

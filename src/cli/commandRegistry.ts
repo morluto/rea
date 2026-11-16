@@ -181,13 +181,12 @@ export const commandOwnOperations = (
       ({ name }) => name !== opening && name !== targetSource,
     );
   }
-  if (source.kind === "routed")
-    return distinctOperations(
-      source.descriptions.map((description) => ({
-        name: description.contract.name,
-        flags: description.inputBinding.flags,
-      })),
+  if (source.kind === "routed") {
+    const own = new Set<string>(
+      source.descriptions.map((description) => description.contract.name),
     );
+    return operations.filter(({ name }) => own.has(name));
+  }
   if (source.kind === "document") {
     const opening = source.description.sessionTarget?.opening;
     return operations.filter(({ name }) => name !== opening);
