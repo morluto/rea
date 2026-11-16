@@ -136,7 +136,7 @@ const node = (
     evidenceContexts,
   );
 
-it("accepts a semantic module path of 600 segments", () => {
+it("accepts a semantic module path of more than 600 segments", () => {
   const modulePath = `${"segment/".repeat(600)}entry.js`;
   const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
   expect(

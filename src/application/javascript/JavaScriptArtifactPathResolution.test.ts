@@ -1467,7 +1467,7 @@ describe("contextual JavaScript artifact path resolution", () => {
     ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
   });
 
-  it("resolves an inventoried path of 5,000 characters", () => {
+  it("resolves an inventoried path of more than 5,000 characters", () => {
     const declaredPath = `./${"a".repeat(5_000)}.js`;
     const expectedPath = `app/${declaredPath.slice(2)}`;
     const files = fileMap([
