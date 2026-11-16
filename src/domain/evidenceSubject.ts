@@ -28,6 +28,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "godot-pck",
   "unityfs",
   "wxapkg",
+  "axml",
   "uimage",
   "dmg",
   "pkg",
