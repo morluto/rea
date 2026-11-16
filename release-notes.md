@@ -432,6 +432,7 @@
 * **catalog:** break the catalogIdentity-recordedCatalogDigests import cycle ([#11339](https://github.com/morluto/rea/issues/11339)) ([bd9f2cc](https://github.com/morluto/rea/commit/bd9f2cca45cb99c7460ab678f4fe6a3b12d6ba3a))
 * **catalog:** let the recorded digests own their shape ([bd9f2cc](https://github.com/morluto/rea/commit/bd9f2cca45cb99c7460ab678f4fe6a3b12d6ba3a))
 * **ci:** plan change scopes through an injectable Git owner ([#10804](https://github.com/morluto/rea/issues/10804)) ([e97b6c5](https://github.com/morluto/rea/commit/e97b6c5282a5f809db31c1ccf6891c974f3deff4))
+* **cli:** bind command argv with REA's own parser ([#11681](https://github.com/morluto/rea/issues/11681)) ([dbdbda3](https://github.com/morluto/rea/commit/dbdbda3d07ef736cda1a2ea63c286dddf31d107d))
 * **cli:** bind web capture caller paths through the CLI delivery owner ([#11322](https://github.com/morluto/rea/issues/11322)) ([5c5c87d](https://github.com/morluto/rea/commit/5c5c87d0fecd83ea181d6992fa4c33829f55fa0f))
 * **cli:** declare CLI schema facts through the typed constraint helpers ([#11205](https://github.com/morluto/rea/issues/11205)) ([6cbfb9f](https://github.com/morluto/rea/commit/6cbfb9f6dcaf03381686cee6d9fe3fc8e8ba3935))
 * **cli:** derive contract-backed command options from the tool contract ([#10571](https://github.com/morluto/rea/issues/10571)) ([f3b697d](https://github.com/morluto/rea/commit/f3b697da5a698a5548afd3b19d044ec623bdda0b))
