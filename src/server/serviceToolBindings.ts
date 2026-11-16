@@ -117,6 +117,14 @@ import {
 import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import {
+  fridaDeviceSelection,
+  fridaRemoteConnection,
+  instrumentWithFrida,
+  loadFridaScript,
+  startFridaSession,
+} from "../application/frida/fridaContractRequests.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
@@ -1038,6 +1046,69 @@ const SERVICE_TOOL_BINDINGS = {
         executeSessionFunctionAnalysis(input, analysis, session, request),
     },
   })) satisfies Bind<{ readonly session: WorkflowSession | undefined }>,
+  // Frida sessions instrument a live process the caller selects, not the
+  // session's target; compose them without analysis admission.
+  frida: ((service, retention) => ({
+    list_frida_devices: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          await service.listDevices(fridaRemoteConnection(input.remote)),
+        ),
+    },
+    list_frida_processes: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          await service.listProcesses(fridaDeviceSelection(input)),
+        ),
+    },
+    start_frida_session: {
+      admission: "sdk",
+      value: async (input, { signal }) =>
+        jsonValueResult(await startFridaSession(service, input, signal)),
+    },
+    load_frida_script: {
+      admission: "sdk",
+      run: (input, { signal }) => loadFridaScript(service, input, signal),
+    },
+    resume_frida_session: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const resumed = await service.resumeSession(input.session_id, signal);
+        return resumed.ok ? ok({ state: "running" }) : resumed;
+      },
+    },
+    unload_frida_script: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const unloaded = await service.unloadScript(
+          input.session_id,
+          input.script_id,
+          signal,
+        );
+        return unloaded.ok ? ok({ unloaded: true }) : unloaded;
+      },
+    },
+    frida_session_status: {
+      admission: "sdk",
+      run: async (input) => service.inspectStatus(input, retention),
+    },
+    close_frida_session: {
+      admission: "sdk",
+      value: async (input) => {
+        const closed = await service.closeSession(input.session_id);
+        return closed.ok ? ok({ target_state: "unknown" }) : closed;
+      },
+    },
+    instrument_with_frida: {
+      admission: "sdk",
+      run: async (input, { signal }) => {
+        const instrumented = await instrumentWithFrida(service, input, signal);
+        return instrumented.ok ? ok(instrumented.value.evidence) : instrumented;
+      },
+    },
+  })) satisfies Bind<FridaInstrumentationService>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",

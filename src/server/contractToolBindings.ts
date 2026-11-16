@@ -408,6 +408,7 @@ export const registerContractTools = (
               binding.value,
               logger,
               binding.admitted === true ? withAdmittedAnalysis : undefined,
+              recordEvidence,
             )(contract)
           : binding.workflow !== undefined
             ? createApplicationToolHandler(
