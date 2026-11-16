@@ -30,33 +30,6 @@ export type ReaderFileBytes =
   | { readonly kind: "error"; readonly error: string }
   | { readonly kind: "bytes"; readonly bytes: Buffer };
 
-/**
- * Each reader's view of its file by reader id, read by REA's reader runner;
- * an absent file has none. `pathOf` names bytes to read in place of the
- * home's file. A runner that does not answer throws.
- */
-export const readTaskReaderViews = async (
-  readers: readonly DesktopTaskReader[],
-  run: ReaderCommandRun,
-  pathOf: (reader: DesktopTaskReader) => string | undefined = () => undefined,
-  work?: string,
-): Promise<ReadonlyMap<string, TaskFileView>> => {
-  const views = new Map<string, TaskFileView>();
-  for (const reader of readers) {
-    const result = await run(
-      readerCommand(reader, pathOf(reader), work),
-      readerTimeout(reader) + READER_RUNNER_SLACK_S,
-    );
-    if (result.exit_code !== 0 || result.timed_out)
-      throw new Error(
-        `REA's reader runner for ${reader.id} ${result.timed_out ? "timed out" : `exited ${String(result.exit_code)}`}: ${result.stderr.slice(-1024) || result.stdout.slice(-1024)}`,
-      );
-    const view = readerAnswerView(result.stdout);
-    if (view !== undefined) views.set(reader.id, view);
-  }
-  return views;
-};
-
 /** Recover only a complete, valid answer emitted before later finalization failed. */
 const completedReaderAnswer = (
   cause: unknown,
@@ -112,9 +85,17 @@ export const readerViewsOfBytes = async (
       const path = join(folder, reader.file.split("/").at(-1) ?? "file");
       await writeFile(path, file.bytes);
       // The runner works inside this folder, so removing it cleans up after a runner that was killed.
-      const read = await readTaskReaderViews([reader], run, () => path, folder);
-      for (const [id, view] of read) views.set(id, view);
-      if (!read.has(reader.id)) absent.push(reader.id);
+      const result = await run(
+        readerCommand(reader, path, folder),
+        readerTimeout(reader) + READER_RUNNER_SLACK_S,
+      );
+      if (result.exit_code !== 0 || result.timed_out)
+        throw new Error(
+          `REA's reader runner for ${reader.id} ${result.timed_out ? "timed out" : `exited ${String(result.exit_code)}`}: ${result.stderr.slice(-1024) || result.stdout.slice(-1024)}`,
+        );
+      const view = readerAnswerView(result.stdout);
+      if (view === undefined) absent.push(reader.id);
+      else views.set(reader.id, view);
     } catch (cause: unknown) {
       failure = { cause };
       const completed = completedReaderAnswer(cause);

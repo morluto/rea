@@ -39,7 +39,9 @@ describe("WorkBuddy configuration paths", () => {
 
   it("resolves the personal skills directory under the home root", () => {
     expect(
-      skillDestinations("/home/a", ["workbuddy"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["workbuddy"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".workbuddy", "skills", "reverse-engineer-anything"),
     ]);

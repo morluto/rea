@@ -111,13 +111,10 @@ const sliceEncryptionFields = {
 };
 
 const validateMalformedKind = (
-  slice: { status: string; malformed_kind?: string | null | undefined },
+  slice: { status: string; malformed_kind: string | null },
   context: z.RefinementCtx,
 ): void => {
-  if (
-    slice.malformed_kind !== undefined &&
-    (slice.status === "malformed") !== (slice.malformed_kind !== null)
-  )
+  if ((slice.status === "malformed") !== (slice.malformed_kind !== null))
     context.addIssue({
       code: "custom",
       path: ["malformed_kind"],
@@ -130,35 +127,10 @@ export const machoSliceEncryptionSchema = z
   .object(sliceEncryptionFields)
   .superRefine(validateMalformedKind);
 
-/** View rows also report when a historical malformed cause was not recorded. */
+/** View rows carry exactly the producer's slice fields. */
 export const machoSliceEncryptionViewSchema = z
-  .strictObject({
-    ...sliceEncryptionFields,
-    malformed_kind: z
-      .enum([...malformedKinds, "unrecorded"])
-      .nullable()
-      .describe(
-        "Structural cause or duplicate-command ambiguity. Unrecorded means the historical inspection did not classify the cause. Null for other statuses.",
-      ),
-  })
+  .strictObject(sliceEncryptionFields)
   .superRefine(validateMalformedKind);
-
-/** Interpret earlier slice records without inferring a cause from their command count. */
-export const retainedMachoSliceEncryptionSchema = z
-  .object({
-    ...sliceEncryptionFields,
-    malformed_kind: malformedKind.exactOptional(),
-  })
-  .superRefine(validateMalformedKind)
-  .transform((slice): z.output<typeof machoSliceEncryptionViewSchema> => ({
-    ...slice,
-    malformed_kind:
-      slice.malformed_kind === undefined
-        ? slice.status === "malformed"
-          ? "unrecorded"
-          : null
-        : slice.malformed_kind,
-  }));
 
 export type MachoEncryptionCommand = z.infer<
   typeof machoEncryptionCommandSchema

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -87,21 +88,28 @@ it("recovers a missing retained closure by importing the originating bundle", as
   expect(parseEvidence(retained.structuredContent)).toEqual(aggregate);
 });
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "aggregates retained observations within the %s input profile budget",
   async (profile) => {
     // Distinct authenticated observations may have identical derived contents.
     const comparisons = Array.from({ length: 12 }, (_, observation) =>
-      createEvidence(undefined, FUNCTION_COMPARISON_EVIDENCE.provider, {
-        operation: "compare_functions",
-        predicateType: "rea.function-comparison",
-        parameters: { ...FUNCTION_COMPARISON_EVIDENCE.parameters, observation },
-        result: FUNCTION_COMPARISON_EVIDENCE.normalized_result,
-        confidence: "derived",
-        authority: "analyst-inference",
-        limitations: FUNCTION_COMPARISON_EVIDENCE.limitations,
-        evidenceLinks: FUNCTION_COMPARISON_EVIDENCE.evidence_links,
-      }),
+      createEvidence(
+        unknownTarget("derived-from-linked-evidence"),
+        FUNCTION_COMPARISON_EVIDENCE.provider,
+        {
+          operation: "compare_functions",
+          predicateType: "rea.function-comparison",
+          parameters: {
+            ...FUNCTION_COMPARISON_EVIDENCE.parameters,
+            observation,
+          },
+          result: FUNCTION_COMPARISON_EVIDENCE.normalized_result,
+          confidence: "derived",
+          authority: "analyst-inference",
+          limitations: FUNCTION_COMPARISON_EVIDENCE.limitations,
+          evidenceLinks: FUNCTION_COMPARISON_EVIDENCE.evidence_links,
+        },
+      ),
     );
     const directory = await createTestTempDirectory(
       "rea-retained-comparisons-",

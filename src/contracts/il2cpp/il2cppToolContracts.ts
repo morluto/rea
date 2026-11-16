@@ -1,18 +1,20 @@
 import { z } from "zod";
-import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import { il2cppMetadataSummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import {
   il2cppMetadataSchema,
   inspectIl2cppMetadataInputSchema,
 } from "../../domain/il2cpp/il2cppMetadata.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Static IL2CPP metadata is independent of native-analysis providers and Unity installations. */
 export const IL2CPP_TOOL_CONTRACTS = [
   {
     name: "inspect_il2cpp_metadata",
-    ...toolContractMetadata("inspect_il2cpp_metadata"),
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_il2cpp_metadata", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

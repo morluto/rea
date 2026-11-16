@@ -79,3 +79,29 @@ it("still reads independent system policy when the user file was absent", async 
     error: { kind: "malformed", path: systemPath },
   });
 });
+
+it("accepts a system registration whose Windows environment names differ only in case", async () => {
+  const { client, systemPath } = await fixture();
+  const settings = client.geminiSettings;
+  if (settings === undefined) throw new Error("Gemini settings are missing");
+  const windows: SetupClient = {
+    ...client,
+    geminiSettings: { ...settings, platform: "win32" },
+  };
+  const entry = (env: Record<string, string>) => ({
+    command: "node",
+    args: ["cli.js", "mcp"],
+    env,
+  });
+  await writeFile(
+    systemPath,
+    JSON.stringify({ mcpServers: { rea: entry({ Path: "C:\\bin" }) } }),
+  );
+  expect(
+    await readClientPolicyBlock(windows, undefined, entry({ PATH: "C:\\bin" })),
+  ).toEqual({ ok: true, value: undefined });
+  // POSIX names are case-sensitive, so the system entry still differs.
+  expect(
+    await readClientPolicyBlock(client, undefined, entry({ PATH: "C:\\bin" })),
+  ).toMatchObject({ ok: true, value: expect.stringContaining("overrides") });
+});

@@ -1,14 +1,17 @@
 import { gzipSync } from "node:zlib";
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   IL2CPP_UNRECOGNIZED_BINARY,
   hasPointerArrayCoverage,
   openImageSteps,
   readPointer,
   readUInt32,
+  requireIl2cppBinaryImage,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { expect, it } from "vitest";
 import { WASM_MODULE_LIMITS } from "../../../src/wasm/WasmModuleImage.js";
 import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
@@ -58,8 +61,39 @@ const expectedAddress = (value: bigint | "no-body" | "unknown") =>
       }
     : { state: value, address: null, rva: null };
 const expectedAddresses = FIXTURE_METHOD_ADDRESSES.map(expectedAddress);
-const link = (bytes: Buffer, architecture?: string) =>
-  linkIl2cppBinary(bytes, metadata, facts, architecture);
+
+// The provider selects a universal slice before linking, as here.
+const link = (bytes: Buffer, architecture?: Il2cppBinaryArchitecture) =>
+  linkIl2cppBinary(
+    requireIl2cppBinaryImage(
+      "inspect_il2cpp_metadata",
+      "/GameAssembly.dylib",
+      bytes,
+      architecture,
+    ).bytes,
+    metadata,
+    facts,
+  );
+it.each([183, 62])(
+  "links past unrelated ABS64 and GLOB_DAT records on ELF machine %d",
+  (machine) => {
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      symbolDefinition: { value: FIXTURE_BINARY_BASE + 0xe00n },
+      unresolvedRelocations: [
+        ...[0xe00, 0xe08, 0xe10].map((offset) => ({
+          offset,
+          kind: machine === 183 ? 257 : 1,
+        })),
+        ...[0xe20, 0xe28, 0xe30].map((offset) => ({
+          offset,
+          kind: machine === 183 ? 1025 : 6,
+        })),
+      ],
+    });
+    expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+  },
+);
 // A type-table fallback needs the metadata to reference most of the table, as
 // real builds do; referencing type 3 requires all four fixture entries.
 const wholeTable = {
@@ -68,9 +102,9 @@ const wholeTable = {
 };
 const linkWholeTable = (bytes: Buffer) =>
   linkIl2cppBinary(bytes, metadata, wholeTable);
-const failure = (bytes: Buffer, architecture?: string) => {
+const failure = (bytes: Buffer) => {
   try {
-    link(bytes, architecture);
+    link(bytes);
   } catch (cause) {
     if (cause instanceof Il2cppBinaryFormatFailure)
       return { reason: cause.reason, kind: cause.kind };
@@ -88,6 +122,19 @@ const refusal = (run: () => unknown) => {
     throw cause;
   }
   throw new Error("expected a link refusal");
+};
+/** The input a slice selection asks the caller to correct, and why. */
+const selectionIssue = (
+  bytes: Buffer,
+  architecture?: Il2cppBinaryArchitecture,
+) => {
+  try {
+    link(bytes, architecture);
+  } catch (cause) {
+    if (cause instanceof AnalysisInputError) return cause.issues[0];
+    throw cause;
+  }
+  throw new Error("expected a selection failure");
 };
 const addElfLoadAlias = (
   bytes: Buffer,
@@ -231,7 +278,14 @@ it("does not infer universal Mach-O identity from a FAT-shaped non-Mach-O table"
     reason: "unsupported-container",
     kind: "unsupported",
   });
-  expect(failure(bytes, "arm64").reason).toBe("slice-not-found");
+  // The message names IL2CPP's field and value, never the shared spelling.
+  const issue = selectionIssue(bytes, "arm64");
+  expect(issue).toMatchObject({
+    path: ["binary_architecture"],
+    reason: "invalid_value",
+  });
+  expect(issue?.message).toContain("binary_architecture arm64");
+  expect(issue?.message).not.toMatch(/(?<!binary_)architecture arm64/u);
 });
 
 it("requires an explicit slice of a universal Mach-O and reads only that slice", () => {
@@ -240,13 +294,57 @@ it("requires an explicit slice of a universal Mach-O and reads only that slice",
     { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
     { cpu: 0x0100000c, bytes: thin },
   ]);
-  expect(failure(universal)).toEqual({
-    reason: "slice-selection-required",
-    kind: "unsupported",
+  expect(selectionIssue(universal)).toMatchObject({
+    path: ["binary_architecture"],
+    reason: "invalid_value",
+    message: expect.stringContaining("select one architecture"),
   });
   expect(link(universal, "arm64").method_addresses).toEqual(expectedAddresses);
-  expect(failure(universal, "ppc64").reason).toBe("slice-not-found");
-  expect(failure(thin, "arm64").reason).toBe("slice-not-found");
+  expect(selectionIssue(thin, "arm64")).toMatchObject({
+    path: ["binary_architecture"],
+  });
+});
+
+it("selects an exact arm64 subtype beside arm64e and names only IL2CPP selectors", () => {
+  const arm64 = createIl2cppBinaryFixture();
+  const arm64e = createIl2cppBinaryFixture();
+  arm64e.writeUInt32LE(2, 8);
+  const universal = createUniversalFixture([
+    { cpu: 0x0100000c, bytes: arm64e },
+    { cpu: 0x0100000c, bytes: arm64 },
+  ]);
+  // Match each FAT declaration to the CPU subtype in its slice header.
+  universal.writeUInt32BE(2, 8 + 4);
+  expect(link(universal, "arm64").method_addresses).toEqual(expectedAddresses);
+  // arm64e is not an IL2CPP value, so no selector is offered for that slice.
+  expect(
+    requireIl2cppBinaryImage(
+      "inspect_il2cpp_metadata",
+      "/GameAssembly.dylib",
+      universal,
+      "arm64",
+    ).limitations,
+  ).toEqual([
+    expect.stringContaining(
+      "arm64 (subtype 0x2) at file offset 4096 (no binary_architecture value selects it)",
+    ),
+  ]);
+});
+
+it("rejects a universal Mach-O whose slices overlap before selecting one", () => {
+  const universal = createUniversalFixture([
+    { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
+    { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
+  ]);
+  expect(link(universal, "arm64").method_addresses).toEqual(expectedAddresses);
+  // Stretch the first slice into the second one.
+  const first = universal.readUInt32BE(8 + 8);
+  const second = universal.readUInt32BE(8 + 20 + 8);
+  universal.writeUInt32BE(second - first + 16, 8 + 12);
+  expect(selectionIssue(universal, "arm64")).toMatchObject({
+    path: ["binary_path"],
+    reason: "invalid_format",
+  });
 });
 
 it.each(["thin", "universal"] as const)(
@@ -388,10 +486,16 @@ it("refuses an image name repeated past the search bound", () => {
   // The Mach-O segment covers the original size; widen it to the new tail.
   flooded.writeBigUInt64LE(BigInt(flooded.length), 64);
   flooded.writeBigUInt64LE(BigInt(flooded.length), 80);
-  expect(failure(flooded)).toEqual({
-    reason: "native-index-capacity",
-    kind: "capacity",
-  });
+  expect(() => link(flooded)).toThrow(
+    expect.objectContaining({
+      reason: "native-index-capacity",
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "il2cpp-binary",
+        limit: { name: "native-index-capacity", maximum: 65536 },
+      }),
+    }),
+  );
 });
 
 it.each([
@@ -1120,17 +1224,11 @@ it("guards a shared generic expansion before concatenating unchecked text", () =
   }
   bytes.writeBigUInt64LE(prior, 0x900);
   const stopped = new Error("type text admission");
-  const steps = linkIl2cppBinarySteps(
-    bytes,
-    expanded.metadata,
-    expanded.link,
-    undefined,
-    {
-      beforeText: (size) => {
-        if (size > 1024) throw stopped;
-      },
+  const steps = linkIl2cppBinarySteps(bytes, expanded.metadata, expanded.link, {
+    beforeText: (size) => {
+      if (size > 1024) throw stopped;
     },
-  );
+  });
   expect(() => {
     for (;;) {
       if (steps.next().done) break;
@@ -1196,10 +1294,7 @@ it.each([
 ] as const)(
   "uses the four-byte count span for a dyld bind at %s",
   (slot, raw, expected) => {
-    const steps = openImageSteps(
-      createIl2cppDyldBindFixture(raw, slot),
-      undefined,
-    );
+    const steps = openImageSteps(createIl2cppDyldBindFixture(raw, slot));
     let step = steps.next();
     while (!step.done) step = steps.next();
     expect(readUInt32(step.value, FIXTURE_BINARY_BASE + 0x600n)).toBe(expected);
@@ -1307,13 +1402,19 @@ it("refuses an ambiguous architecture instead of choosing the first FAT slice", 
     { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
     { cpu: 0x0100000c, bytes: createIl2cppBinaryFixture() },
   ]);
-  expect(failure(bytes, "arm64").reason).toBe("ambiguous-slice-selection");
+  expect(selectionIssue(bytes, "arm64")).toMatchObject({
+    path: ["binary_architecture"],
+    message: expect.stringContaining("no slice was selected"),
+  });
 });
 it("checks the observed slice header against the caller-selected FAT architecture", () => {
   const bytes = createUniversalFixture([
     { cpu: 0x01000007, bytes: createIl2cppBinaryFixture() },
   ]);
-  expect(failure(bytes, "amd64").reason).toBe("malformed-container");
+  expect(selectionIssue(bytes, "amd64")).toMatchObject({
+    path: ["binary_path"],
+    reason: "invalid_format",
+  });
 });
 it.each([1, 0x80000000])(
   "checks the complete FAT CPU subtype including capability bits (%i)",
@@ -1321,7 +1422,10 @@ it.each([1, 0x80000000])(
     const thin = createIl2cppBinaryFixture();
     thin.writeUInt32LE(subtype, 8);
     const bytes = createUniversalFixture([{ cpu: 0x0100000c, bytes: thin }]);
-    expect(failure(bytes, "arm64").reason).toBe("malformed-container");
+    expect(selectionIssue(bytes, "arm64")).toMatchObject({
+      path: ["binary_path"],
+      reason: "invalid_format",
+    });
     bytes.writeUInt32BE(subtype, 12);
     expect(link(bytes, "arm64").method_addresses).toEqual(expectedAddresses);
   },
@@ -1383,7 +1487,7 @@ const linkGeneric = (
   bytes = createIl2cppBinaryFixture({ genericMethods: options }),
 ) => {
   const decoded = genericFacts(version);
-  return linkIl2cppBinary(bytes, decoded.metadata, decoded.link, undefined, {
+  return linkIl2cppBinary(bytes, decoded.metadata, decoded.link, {
     genericInstances: true,
   });
 };
@@ -1439,7 +1543,6 @@ it("admits every generic row and issue before retention", () => {
     createIl2cppBinaryFixture({ genericMethods: { firstSpecMethod: 9 } }),
     decoded.metadata,
     decoded.link,
-    undefined,
     {
       genericInstances: true,
       onRow: (row) => rows.push(row),
@@ -1463,7 +1566,6 @@ it("admits every generic row and issue before retention", () => {
       createIl2cppBinaryFixture({ genericMethods: {} }),
       decoded.metadata,
       decoded.link,
-      undefined,
       {
         genericInstances: true,
         onRow: (row) => refused.push(row),
@@ -1599,7 +1701,6 @@ it("refuses generic linking when the type table was inferred", () => {
         ...decoded.link,
         returnTypes: Int32Array.from(decoded.link.returnTypes, () => 3),
       },
-      undefined,
       { genericInstances: true },
     ),
   ).toThrow(
@@ -1728,7 +1829,6 @@ it("keeps a method spec unnamed when its owner's container is out of range", () 
     createIl2cppBinaryFixture({ genericMethods: {} }),
     decoded.metadata,
     link,
-    undefined,
     { genericInstances: true },
   ).generic_methods!;
   expect(generic.instances).toEqual([
@@ -1828,7 +1928,7 @@ const linkLowBase = (
   const decoded = genericFacts(31);
   return drain(
     linkGenericMethodsSteps(
-      drain(openImageSteps(fixture.bytes, undefined)),
+      drain(openImageSteps(fixture.bytes)),
       decoded.metadata,
       decoded.link,
       fixture.modulesField,
@@ -1908,7 +2008,6 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
         createIl2cppBinaryFixture({ genericMethods: {} }),
         decoded.metadata,
         decoded.link,
-        undefined,
         {
           genericInstances: true,
           beforeText: (bytes) => {
@@ -1916,6 +2015,8 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
               throw new Il2cppBinaryFormatFailure(
                 "native-type-text-capacity",
                 "budget",
+                1,
+                "bytes",
               );
             tableChecked = bytes === 3 * minimumGenericRow;
           },
@@ -1928,7 +2029,10 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
   })();
   expect(tableChecked).toBe(true);
   expect(failure).toBeInstanceOf(Il2cppBinaryFormatFailure);
-  expect((failure as Il2cppBinaryFormatFailure).kind).toBe("capacity");
+  expect((failure as Il2cppBinaryFormatFailure).failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "native-type-text-capacity", maximum: 1 },
+  });
 });
 
 it.each([0, 8, 16])(
@@ -2037,17 +2141,16 @@ it("refuses a wasm method pointer whose table slot no element segment fills", ()
 });
 
 it("refuses a CPU architecture, generic instances and gzip for a wasm module", () => {
-  expect(failure(createWasmFixture(), "arm64").reason).toBe("slice-not-found");
+  expect(selectionIssue(createWasmFixture(), "arm64")).toMatchObject({
+    path: ["binary_architecture"],
+    reason: "invalid_value",
+  });
   const generic = genericFacts(31);
   expect(
     refusal(() =>
-      linkIl2cppBinary(
-        createWasmFixture(),
-        generic.metadata,
-        generic.link,
-        undefined,
-        { genericInstances: true },
-      ),
+      linkIl2cppBinary(createWasmFixture(), generic.metadata, generic.link, {
+        genericInstances: true,
+      }),
     ),
   ).toEqual({ reason: "generic-methods-unsupported", kind: "unsupported" });
   expect(failure(gzipSync(createWasmFixture())).reason).toBe(
@@ -2116,7 +2219,7 @@ const wasmMemoryModule = (
 
 it("reads a wasm pointer whose zero high bytes lie past the last data segment", () => {
   // A trimmed segment stores 0x0102 and leaves the pointer's high bytes zero.
-  const image = drain(openImageSteps(wasmMemoryModule(1, [2, 1]), undefined));
+  const image = drain(openImageSteps(wasmMemoryModule(1, [2, 1])));
   expect(readPointer(image, 16n)).toBe(0x0102n);
 });
 
@@ -2124,7 +2227,7 @@ it("reports wasm data spread over more than the reconstruction allowance as capa
   // Two one-byte segments 1 GiB apart in a 1 GiB + 64 KiB memory.
   expect(failure(wasmMemoryModule(16385, [1], [0x40000010, [1]]))).toEqual({
     reason: "wasm-memory-capacity",
-    kind: "capacity",
+    kind: "limit",
   });
 });
 
@@ -2151,7 +2254,7 @@ it("reports a wasm module past a parser count cap as wasm module capacity", () =
   const count = WASM_MODULE_LIMITS.dataSegments + 1;
   expect(failure(wasmDataCountModule(count, count))).toEqual({
     reason: "wasm-module-capacity",
-    kind: "capacity",
+    kind: "limit",
   });
 });
 
@@ -2358,10 +2461,7 @@ it("refuses an imported table as unsupported rather than measuring its span", ()
 it("covers a wasm pointer array that runs from the last segment into zero fill", () => {
   // The only segment ends at 0x201 (16 + 497 bytes); 20 slots from 0x200 reach 0x250.
   const image = drain(
-    openImageSteps(
-      wasmMemoryModule(1, Array<number>(0x1f1).fill(1)),
-      undefined,
-    ),
+    openImageSteps(wasmMemoryModule(1, Array<number>(0x1f1).fill(1))),
   );
   expect(hasPointerArrayCoverage(image, 0x200n, 20)).toBe(true);
 });
@@ -2387,7 +2487,7 @@ it("refuses generic instances for a wasm module before opening it", () => {
   ]);
   expect(
     refusal(() =>
-      linkIl2cppBinary(bytes, generic.metadata, generic.link, undefined, {
+      linkIl2cppBinary(bytes, generic.metadata, generic.link, {
         genericInstances: true,
       }),
     ),

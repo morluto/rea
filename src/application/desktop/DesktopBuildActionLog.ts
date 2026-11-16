@@ -1,6 +1,7 @@
+import { boundedList } from "../../domain/boundedList.js";
 import type { ComputerAction } from "../../domain/desktop/computerActions.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { boundedUtf8Text } from "../../process/boundedUtf8Text.js";
+import { utf8HeadExcerpt } from "../../domain/utf8HeadExcerpt.js";
 
 /** Bytes the log keeps of each string in an action's arguments, such as type's text. */
 export const LOGGED_TEXT_BYTES = 1024;
@@ -35,19 +36,18 @@ const bounded = (
   redact: Redact,
 ): { readonly value: JsonValue; readonly cut: boolean } => {
   if (typeof value === "string") {
-    const { text, truncated } = boundedUtf8Text(
+    const { text, truncated } = utf8HeadExcerpt(
       redact(value),
       LOGGED_TEXT_BYTES,
     );
     return { value: text, cut: truncated };
   }
   if (Array.isArray(value)) {
-    const items = value
-      .slice(0, LOGGED_LIST_ITEMS)
-      .map((item) => bounded(item, redact));
+    const kept = boundedList(value, LOGGED_LIST_ITEMS);
+    const items = kept.items.map((item) => bounded(item, redact));
     return {
       value: items.map((item) => item.value),
-      cut: value.length > items.length || items.some((item) => item.cut),
+      cut: kept.omitted > 0 || items.some((item) => item.cut),
     };
   }
   if (value === null || typeof value !== "object") return { value, cut: false };

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
@@ -9,10 +8,7 @@ import {
   type RecordedMcpCatalog,
 } from "../recordedMcpCatalog.js";
 import type { AppConfig } from "../config/types.js";
-import {
-  resolveMcpInputSchemaProfile,
-  type McpInputSchemaProfile,
-} from "../config/mcpInputSchemaProfile.js";
+import { RECORDED_CATALOG_DIGEST_PROFILES } from "../contracts/catalog/recordedCatalogDigests.js";
 import { DeferredEvidenceMcpServer } from "../server/DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
@@ -21,19 +17,14 @@ import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { SERVER_START_FAILED } from "./messages.js";
 import { reportMcpTransportError } from "./reportMcpTransportError.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
-const readCatalog = (profile: McpInputSchemaProfile): RecordedMcpCatalog => {
-  const bytes = readFileSync(
-    new URL(
-      profile === "full" ? "../mcp-catalog-full.json" : "../mcp-catalog.json",
-      import.meta.url,
-    ),
-  );
-  if (
-    createHash("sha256").update(bytes).digest("hex") !==
-    RECORDED_MCP_CATALOG_SHA256?.[profile]
-  )
+const readCatalog = (): RecordedMcpCatalog => {
+  const bytes = readFileSync(new URL("../mcp-catalog.json", import.meta.url));
+  if (sha256Hex(bytes) !== RECORDED_MCP_CATALOG_SHA256)
     throw new Error(SERVER_START_FAILED);
   // The digest binds these bytes to the same compiled producer and SDK converter.
   const catalog: unknown = JSON.parse(bytes.toString("utf8"));
@@ -135,8 +126,9 @@ export const runDeferred = async (
   const serverLogger = createLogger("mcp", config.logLevel).child({
     layer: "server",
   });
-  const profile = resolveMcpInputSchemaProfile(config.mcpInputSchemaProfile);
-  let firstCatalog: RecordedMcpCatalog | undefined = readCatalog(profile);
+  // `main.ts` defers only the default output profile, which omits output
+  // schemas from listings; the recorded catalog keeps them for validation.
+  let firstCatalog: RecordedMcpCatalog | undefined = readCatalog();
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
   let attempt: Promise<void> | undefined;
@@ -196,7 +188,7 @@ export const runDeferred = async (
       handle = await dependencies.serve(
         (context) => {
           const server = servers.create(() => {
-            const catalog = firstCatalog ?? readCatalog(profile);
+            const catalog = firstCatalog ?? readCatalog();
             firstCatalog = undefined;
             const startedAt = new Date().toISOString();
             const server = new DeferredEvidenceMcpServer(
@@ -215,7 +207,16 @@ export const runDeferred = async (
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
-              config.mcpMaxInputElements,
+              {
+                maximumInputElements: config.mcpMaxInputElements,
+                compactPresentation: COMPACT_INPUT_SCHEMA_PRESENTATION,
+                identity: {
+                  ...catalog.identity,
+                  digests:
+                    RECORDED_CATALOG_DIGEST_PROFILES?.off ??
+                    catalog.identity.digests,
+                },
+              },
             );
             if (config.mcpToolCatalogProfile === "hot-cold")
               server.enableProgressiveCatalog();
@@ -242,10 +243,7 @@ export const runDeferred = async (
     }
   } catch (cause) {
     finishServing();
-    serverLogger.error(
-      { error: cause instanceof Error ? cause.message : String(cause) },
-      SERVER_START_FAILED,
-    );
+    serverLogger.error({ error: errorMessage(cause) }, SERVER_START_FAILED);
     try {
       await close();
     } catch (cleanupCause) {

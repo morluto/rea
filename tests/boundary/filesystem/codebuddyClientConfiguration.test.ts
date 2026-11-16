@@ -47,7 +47,9 @@ describe("CodeBuddy configuration paths", () => {
 
   it("resolves the personal skills directory under the home root", () => {
     expect(
-      skillDestinations("/home/a", ["codebuddy"]).map(({ path }) => path),
+      skillDestinations("/home/a", ["codebuddy"], {}, process.platform).map(
+        ({ path }) => path,
+      ),
     ).toEqual([
       join("/home/a", ".codebuddy", "skills", "reverse-engineer-anything"),
     ]);

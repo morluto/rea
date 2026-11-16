@@ -9,6 +9,11 @@ export class WasmModuleFailure extends Error {
   constructor(
     readonly kind: "unsupported" | "malformed" | "capacity",
     message: string,
+    /** The exceeded maximum and what it counts; set only for capacity. */
+    readonly limit?: {
+      readonly maximum: number;
+      readonly unit: "entries" | "bytes";
+    },
   ) {
     super(message);
     this.name = "WasmModuleFailure";
@@ -195,6 +200,7 @@ export function* readWasmModuleImageSteps(
     throw new WasmModuleFailure(
       "capacity",
       `module has ${bytes.length} bytes, above ${WASM_MODULE_LIMITS.inputBytes}`,
+      { maximum: WASM_MODULE_LIMITS.inputBytes, unit: "bytes" },
     );
   if (bytes.length < 8 || !bytes.subarray(0, 4).equals(WASM_MAGIC))
     throw malformed("not a WebAssembly module");
@@ -286,6 +292,7 @@ export function* readWasmModuleImageSteps(
         throw new WasmModuleFailure(
           "capacity",
           `module has ${count} element segments, above ${WASM_MODULE_LIMITS.elementSegments}`,
+          { maximum: WASM_MODULE_LIMITS.elementSegments, unit: "entries" },
         );
       for (let index = 0; index < count; index++) {
         if (tick()) yield;
@@ -304,6 +311,7 @@ export function* readWasmModuleImageSteps(
           throw new WasmModuleFailure(
             "capacity",
             `element segments fill more than ${WASM_MODULE_LIMITS.tableSlots} slots`,
+            { maximum: WASM_MODULE_LIMITS.tableSlots, unit: "entries" },
           );
         // Typed storage keeps a retained slot at four bytes.
         const functions = new Uint32Array(length);
@@ -331,6 +339,7 @@ export function* readWasmModuleImageSteps(
         throw new WasmModuleFailure(
           "capacity",
           `module has ${count} data segments, above ${WASM_MODULE_LIMITS.dataSegments}`,
+          { maximum: WASM_MODULE_LIMITS.dataSegments, unit: "entries" },
         );
       for (let index = 0; index < count; index++) {
         if (tick()) yield;
@@ -383,6 +392,7 @@ export function* readWasmModuleImageSteps(
     throw new WasmModuleFailure(
       "capacity",
       `element segments span ${high - low} table slots, above ${WASM_MODULE_LIMITS.tableSlots}`,
+      { maximum: WASM_MODULE_LIMITS.tableSlots, unit: "entries" },
     );
   const words = new Uint32Array(high > low ? high - low : 0).fill(EMPTY_SLOT);
   for (const { base, functions } of elements) {
@@ -467,6 +477,7 @@ export function* readInitialLinearMemorySteps(
     throw new WasmModuleFailure(
       "capacity",
       `data segments span ${high - low} bytes beside a ${sourceBytes}-byte module, above ${WASM_MODULE_LIMITS.linearMemoryBytes} together`,
+      { maximum: WASM_MODULE_LIMITS.linearMemoryBytes, unit: "bytes" },
     );
   // Sparse segments would make a small file allocate (and searches walk) a
   // large zero span, so the zero bytes the view adds are bounded too.
@@ -483,6 +494,7 @@ export function* readInitialLinearMemorySteps(
     throw new WasmModuleFailure(
       "capacity",
       `data segments leave ${high - low - stored} zero bytes in their span, above ${WASM_MODULE_LIMITS.linearMemoryGapBytes}`,
+      { maximum: WASM_MODULE_LIMITS.linearMemoryGapBytes, unit: "bytes" },
     );
   // Zero the view in bounded chunks too, so allocation does not block cancellation.
   const memory = Buffer.allocUnsafe(high - low);

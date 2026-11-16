@@ -15,16 +15,16 @@ import { setImmediate } from "node:timers";
 
 import { expect, it, vi } from "vitest";
 
-import * as artifactPaths from "./ArtifactPaths.js";
+import * as artifactPaths from "../resources/ArtifactPaths.js";
 
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { artifactFormatDescriptor } from "./artifactFormats.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
-import { NODE_SEA_MAGIC } from "./nodeSea/NodeSeaBlob.js";
 import {
   NODE_SEA_FUSE_HASH,
+  NODE_SEA_FIXTURE_MAGIC,
   buildNodeSeaBlob,
   nodeSeaElf,
   nodeSeaMachO,
@@ -32,7 +32,7 @@ import {
   nodeSeaUniversal,
 } from "./nodeSea/NodeSea.fixture.js";
 import { elfNote, elfNoteFixture } from "../native/elf/ElfNotes.fixture.js";
-import { peResourceFixture } from "../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
@@ -206,7 +206,7 @@ it.each([
   expect(root).toMatchObject({ artifact_kind: "container" });
   expect(root?.format_metadata).toMatchObject({
     kind: "node-sea",
-    magic: NODE_SEA_MAGIC,
+    magic: NODE_SEA_FIXTURE_MAGIC,
     carrier,
     code_path: "app/main.js",
     disable_experimental_sea_warning: true,
@@ -503,7 +503,7 @@ it("fails closed when the located blob is truncated, has a bad magic, or unknown
     message: expect.stringMatching(/magic.*not.*0x143da20/iu),
   });
   const unknown = Buffer.alloc(9);
-  unknown.writeUInt32LE(NODE_SEA_MAGIC, 0);
+  unknown.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   unknown.writeUInt32LE(1 << 5, 4);
   unknown[8] = 1;
   await expect(
@@ -860,12 +860,20 @@ it("leaves Mach-O carriers with unreadable command framing unrecognized", async 
 it("rejects missing Mach-O load commands after a confirmed SEA section", async () => {
   const bytes = nodeSeaMachO();
   bytes.writeUInt32LE(2, 16);
-  await expect(
-    scanCanonicalArtifactInventory(await writeCarrier("commands", bytes)),
-  ).rejects.toMatchObject({
-    reason: "format",
-    message: expect.stringMatching(/Mach-O.*load commands.*truncated/iu),
-  });
+  const path = await writeCarrier("commands", bytes);
+  // Inventory admits Mach-O only when its command framing decodes, as
+  // target resolution does, so it does not route these bytes to the SEA reader.
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(inventory.manifest.root_format).toBe("unknown");
+  const handle = await open(path, "r");
+  try {
+    await expect(locateNodeSea(handle, bytes.length)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(/Mach-O.*load commands.*truncated/iu),
+    });
+  } finally {
+    await handle.close();
+  }
 });
 
 it("rejects forged entries and changed carrier identity, then closes idempotently", async () => {
@@ -1075,13 +1083,14 @@ it("retains SEA admission for a complete segment with a nonaligned command size"
 });
 
 it.each([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe])(
-  "classifies four-byte thin magic %i without admitting a truncated SEA carrier",
+  "does not admit four-byte thin magic %i as Mach-O or a SEA carrier",
   async (magic) => {
     const bytes = Buffer.alloc(4);
     bytes.writeUInt32BE(magic);
     const path = await writeCarrier("thin-prefix", bytes);
     const inventory = await scanCanonicalArtifactInventory(path);
-    expect(inventory.manifest.root_format).toBe("mach-o");
+    // The magic alone does not decode a header; target resolution refuses it too.
+    expect(inventory.manifest.root_format).toBe("unknown");
     const handle = await open(path, "r");
     try {
       expect(await locateNodeSea(handle, bytes.length)).toBeUndefined();

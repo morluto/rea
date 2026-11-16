@@ -106,6 +106,8 @@ const createTypeRenderer = (
       throw new Il2cppBinaryFormatFailure(
         "native-type-text-capacity",
         `rendered type text workspace exceeds ${TYPE_TEXT_BYTES} UTF-8 bytes`,
+        TYPE_TEXT_BYTES,
+        "bytes",
       );
     beforeText?.(bytes);
   };
@@ -132,6 +134,8 @@ const createTypeRenderer = (
       throw new Il2cppBinaryFormatFailure(
         "type-nesting-capacity",
         `type rendering exceeds ${TYPE_DEPTH} nested frames`,
+        TYPE_DEPTH,
+        "frames",
       );
     active.add(address);
     try {

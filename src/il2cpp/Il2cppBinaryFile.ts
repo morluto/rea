@@ -93,7 +93,6 @@ export function* linkIl2cppBinarySteps(
   bytes: Buffer,
   metadata: Il2cppMetadataDecoded,
   facts: Il2cppMetadataLinkFacts,
-  architecture?: string,
   options: Il2cppBinaryReadOptions = {},
 ): Generator<void, Il2cppBinaryLink> {
   const version = metadata.metadata_version;
@@ -106,7 +105,7 @@ export function* linkIl2cppBinarySteps(
       "generic method instances are not decoded for wasm32 modules",
     );
   yield;
-  const image = yield* openImageSteps(bytes, architecture);
+  const image = yield* openImageSteps(bytes);
   const modules = yield* findModules(image, metadata);
   const registration_ = yield* findCodeRegistration(image, modules);
   const methodImage = new Int32Array(metadata.methods.length).fill(-1);

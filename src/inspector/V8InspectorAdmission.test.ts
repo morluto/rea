@@ -1,21 +1,14 @@
 import { expect, it } from "vitest";
 
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { V8InspectorAdmission } from "./V8InspectorProvider.js";
-
-const gate = (): { promise: Promise<void>; release: () => void } => {
-  let release = (): void => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-};
 
 it("does not make one inspector admission wait on another", async () => {
   const first = new V8InspectorAdmission();
   const second = new V8InspectorAdmission();
-  const held = gate();
-  const running = first.run("observe_javascript_runtime", () => held.promise);
+  const held = phaseGate();
+  const running = first.run("observe_javascript_runtime", () => held.hold());
   const closing = first.close();
   try {
     let secondRan = false;
@@ -37,10 +30,9 @@ it("does not make one inspector admission wait on another", async () => {
 
 it("holds a later operation until the same admission finishes closing", async () => {
   const admission = new V8InspectorAdmission();
-  const held = gate();
-  const running = admission.run(
-    "observe_javascript_runtime",
-    () => held.promise,
+  const held = phaseGate();
+  const running = admission.run("observe_javascript_runtime", () =>
+    held.hold(),
   );
   const closing = admission.close();
   let proceeded = false;
@@ -61,23 +53,18 @@ it("holds a later operation until the same admission finishes closing", async ()
 it("closes one inspector file scope without waiting for another", async () => {
   const first = new V8InspectorAdmission();
   const second = new V8InspectorAdmission();
-  const held = gate();
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const held = phaseGate();
   const scope = first.files;
   const original = scope.retryCleanup;
   scope.retryCleanup = function (this: typeof scope) {
-    entered();
-    return held.promise.then(() => original.call(this));
+    return held.hold().then(() => original.call(this));
   };
   const closingFirst = first.close();
   const closingSecond = second.close();
   try {
-    await awaitAcknowledgement(started, closingFirst, "first file cleanup");
+    await held.reached(closingFirst, "first file cleanup");
     await awaitAcknowledgement(
-      closingSecond.then(() => undefined),
+      closingSecond,
       closingFirst,
       "second file cleanup",
     );
