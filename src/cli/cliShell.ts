@@ -30,6 +30,7 @@ import { excludeDeclaredSensitiveArguments } from "./explicitSensitiveArguments.
 import {
   CLI_CUSTOM_GLOBAL_OPTIONS,
   CLI_DESCRIPTION,
+  CLI_UPDATE_REFUSAL,
   serveDiscovery,
 } from "./discovery.js";
 import { reportUnknownMcpSubcommand } from "./mcpBuiltinCommands.js";
@@ -107,12 +108,10 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
     },
     sync: false,
     update: {
-      // Incur's update:false only suppresses notices. Reject its explicit
-      // installer so ambiguous flags cannot bypass REA's verified workflow.
+      // Incur still supplies ordinary-command notices. Keep its installer
+      // disabled while REA owns the update refusal and verified update command.
       install: () => {
-        throw new Error(
-          "Use 'rea update' to update the identified installation. The '--update' alias accepts only global output flags.",
-        );
+        throw new Error(CLI_UPDATE_REFUSAL.message);
       },
     },
   });

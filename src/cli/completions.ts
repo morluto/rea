@@ -176,11 +176,7 @@ export const createCliCompletions = (
     const selected = CLI_COMPLETION_SHELLS.find(
       (value) => value === command[offset + 1],
     );
-    if (
-      command[offset] !== "completions" ||
-      selected === undefined ||
-      command.length !== offset + 2
-    )
+    if (command[offset] !== "completions" || selected === undefined)
       return false;
     // Help/manifests/schema/version and server controls keep framework precedence.
     const values = new Set(global.outputValues.map(({ index }) => index));
