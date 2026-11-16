@@ -1,4 +1,5 @@
-import { Parser, z } from "incur";
+import { Parser } from "incur";
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";

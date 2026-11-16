@@ -2,7 +2,8 @@ import { withCommandCancellation } from "./cli/commandCancellation.js";
 import { parseCliJsonInput } from "./cli/cliJsonInput.js";
 import { analysisInputErrorFromIssues } from "./domain/inputIssueProjection.js";
 import { bundleComparisonInputSchema } from "./domain/bundleComparison.js";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 
 import {
   compareEvidenceBundlesCommand,

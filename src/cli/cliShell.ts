@@ -1,4 +1,5 @@
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";

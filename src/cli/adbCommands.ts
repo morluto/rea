@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";

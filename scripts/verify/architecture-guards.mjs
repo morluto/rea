@@ -891,6 +891,17 @@ checkCounted(
   [],
 );
 
+// Schemas import zod directly. incur's `z` is a re-export of the same package;
+// importing it through the CLI framework ties schemas to a dependency REA is
+// removing (#11654).
+checkCounted(
+  'zod imported through incur (import { z } from "zod")',
+  "incur-zod-reexport",
+  [...files, ...testFiles],
+  /import\s+(?:type\s+)?\{[^}]*\bz\b[^}]*\}\s+from\s+["']incur["']/gu,
+  [],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
