@@ -1701,6 +1701,7 @@ const SERVICE_TOOL_BINDINGS = {
   processCapture: ((options) => ({
     capture_process_scenario: {
       admission: "sdk",
+      completionProgress: "workflow",
       analyze: (input, _analysis, request) =>
         captureSessionProcessScenario(options, input, request),
     },
