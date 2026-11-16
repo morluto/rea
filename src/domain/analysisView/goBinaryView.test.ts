@@ -1,12 +1,14 @@
 import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
+import {
+  changedEvidenceSubject,
+  fileIdentity,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
 import type { GoBinary } from "../go/goBinary.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 
 const report: GoBinary = {
   artifact: { path: "/artifacts/program", sha256: "a".repeat(64), bytes: 512 },
@@ -76,11 +78,12 @@ it.each(["digest", "format"] as const)(
   "rejects a Go parent whose authenticated %s conflicts with its report",
   (field) => {
     const input = parent();
-    if (input.subject == null) throw new Error("Expected artifact subject");
-    const subject = {
-      ...input.subject,
-      ...(field === "digest" ? { digest: { sha256: "b".repeat(64) } } : {}),
-    };
+    if (input.subject === undefined || input.subject.identity.kind !== "file")
+      throw new Error("Expected artifact subject");
+    const subject = changedEvidenceSubject(
+      input.subject,
+      field === "digest" ? { sha256: "b".repeat(64) } : {},
+    );
     const result = projectAnalysisView(
       {
         ...input,
@@ -110,12 +113,14 @@ it.each([
   "checks report architecture %j against subject %j for every Go view",
   (architecture, subjectArchitecture, accepted) => {
     const input = parent();
-    if (input.subject?.format !== "elf")
+    if (
+      input.subject === undefined ||
+      fileIdentity(input.subject).format !== "elf"
+    )
       throw new Error("Expected ELF subject");
-    const subject = {
-      ...input.subject,
+    const subject = changedEvidenceSubject(input.subject, {
       architecture: subjectArchitecture,
-    };
+    });
     const normalizedResult = { ...report, architecture };
     for (const view of [
       { kind: "summary" },
@@ -138,12 +143,15 @@ it("revalidates the parent subject after immutable Go report facts have been cac
     sealedResult: true,
   };
   expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
-  if (input.subject == null) throw new Error("Expected artifact subject");
+  if (input.subject === undefined || input.subject.identity.kind !== "file")
+    throw new Error("Expected artifact subject");
   expect(
     projectAnalysisView(
       {
         ...input,
-        subject: { ...input.subject, digest: { sha256: "b".repeat(64) } },
+        subject: changedEvidenceSubject(input.subject, {
+          sha256: "b".repeat(64),
+        }),
       },
       { kind: "summary" },
     ).ok,
@@ -238,3 +246,53 @@ it("refuses string_literals view when unrequested and projects filtered/truncate
     ],
   });
 });
+
+it.each(["dependencies", "settings"] as const)(
+  "distinguishes unavailable Go %s from decoded empty records",
+  (collection) => {
+    for (const available of [false, true]) {
+      const input = parent();
+      const result = projectAnalysisView(
+        {
+          ...input,
+          normalizedResult: {
+            ...report,
+            build_info: available
+              ? {
+                  header_offset: 0,
+                  encoding: "inline",
+                  go_version: null,
+                  go_version_bytes_base64: "",
+                  module_text: null,
+                  module_bytes_base64: "",
+                  version_location: { offset: 32, bytes: 0 },
+                  module_location: { offset: 32, bytes: 0 },
+                  module: {
+                    path: null,
+                    main: null,
+                    dependencies: [],
+                    settings: [],
+                    unparsed_lines: [],
+                    unparsed_line_bytes_base64: [],
+                    complete: true,
+                  },
+                }
+              : null,
+          },
+        },
+        { kind: "go", collection, offset: 3, limit: 1 },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toEqual({
+        status: available ? "empty" : "unavailable",
+        examined: 0,
+        total: available ? 0 : null,
+        next_offset: null,
+        exhausted: available,
+      });
+      expect(result.value).toMatchObject({
+        source_coverage: { build_info_available: available },
+      });
+    }
+  },
+);

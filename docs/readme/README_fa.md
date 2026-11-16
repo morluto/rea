@@ -1,7 +1,7 @@
 <div align="center" dir="rtl">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · **فارسی** · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: مهندسی معکوس هر چیزی
 
@@ -74,7 +74,11 @@ npx rea-agents setup
 
 راه‌اندازی از Claude Code، Codex، Cursor، Gemini CLI، Grok Build و [ایجنت‌های دیگر](../getting-started/installation.md#supported-agents) پشتیبانی می‌کند. برای پیکربندی ارائه‌دهنده و ثبت دستی MCP، [نصب و راه‌اندازی](../getting-started/installation.md) را ببینید.
 
-MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاده می‌کند. برای راهنمای کامل فیلدها و اعتبارسنجی تو‌در‌تو، در ثبت MCP مقدار `REA_MCP_INPUT_SCHEMA_PROFILE=full` را تنظیم کنید. هر دو حالت همهٔ ابزارها و اعتبارسنجی استاندارد یکسان سرور را نگه می‌دارند؛ راهنمای قراردادهای MCP را ببینید.
+MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاده می‌کند. راهنمایی‌هایی که schema فشرده حذف می‌کند پس از توضیح ابزار می‌آیند. همهٔ ابزارها و اعتبارسنجی استاندارد سرور بدون تغییر می‌مانند؛ راهنمای قراردادهای MCP را ببینید.
+
+راه‌اندازی، محیط اجرای انتخاب‌شده و اسکریپت ورودی REA را مستقیماً ثبت می‌کند. اگر از اجراکنندهٔ بسته استفاده می‌کنید، ورودی حافظهٔ پنهان و محیط اجرا را حفظ کنید؛ بسته را از پوشه‌ای قابل اعتماد خارج از پروژهٔ هدف دریافت کنید. راهنمای نصب را ببینید.
+
+طرح‌های خروجی به‌طور پیش‌فرض از `tools/list` حذف می‌شوند: هیچ API مدلی آن‌ها را نمی‌خواند و REA خودش هر نتیجه را اعتبارسنجی می‌کند. در ثبت MCP مقدار `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` را برای اعلام هر طرح خروجی در سقف 4096 بایت تنظیم کنید. در همهٔ تنظیمات، اعتبارسنجی سرور و نتایج ساخت‌یافته کامل می‌مانند. بخش «Output schemas» در راهنمای قراردادهای MCP را ببینید.
 
 ### از ایجنت خود بپرسید
 
@@ -172,7 +176,7 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 | برنامه‌های فلاتر         | هش اسنپ‌شات دارت، هش کتابخانه‌ها به تفکیک ABI و اصالت بیلد موتور                      | هیچ (تحلیل ایستا APK)؛ [راهنمای فلاتر](../guides/android/flutter-analysis.md)                                                                               |
 | Firmware               | ناحیه‌ها، نتایج استخراج و تحویل به ابزارهای تحلیل بومی                               | Binwalk / Unblob در لینوکس؛ [راهنمای Firmware](../guides/firmware/firmware-analysis.md)                                                                    |
 | بسته‌های ضبط‌شده         | فیلدهای منتخب، مقادیر تکراری، فیلترها و قواعد رمزگشایی                              | Linux: TShark 4.x + prlimit; [راهنمای ضبط بسته](../guides/data/packet-captures.md)                                                                         |
-| ضبط بسته‌ها             | نقاط پایانی، DNS، TLS SNI، توزیع پروتکل و درخواست‌های HTTP                           | tshark و capinfos تأمین‌شده توسط فراخوان‌کننده؛ [راهنمای pcap](../guides/data/pcap-analysis.md)                                                              |
+| ضبط بسته‌ها             | نقاط پایانی، DNS، TLS SNI، توزیع پروتکل و درخواست‌های HTTP                           | tshark و capinfos تأمین‌شده توسط فراخوان‌کننده (در Linux تأیید شده)؛ [راهنمای pcap](../guides/data/pcap-analysis.md)                                         |
 | سیگنال‌های منطقی ضبط‌شده | توضیحات رمزگشا، بازه‌های نمونه و اطلاعات عیب‌یابی                                      | Linux: sigrok-cli 0.7.2 + prlimit; [راهنمای سیگنال‌ها](../guides/signals/signal-recordings.md)                                                              |
 | بسته‌ها و منابع         | فهرست فایل‌ها، digestها، فایل‌های plist، ساختار bundle اپل و منابع استخراج‌شده         | [راهنمای آرتیفکت و JavaScript](../guides/javascript/javascript-artifact-reconstruction.md)، [برنامه‌های اپل](../guides/apple/apple-application-analysis.md) |
 | رفتار فرایند           | خروجی ترمینال، تعاملات، وضعیت خروج، مشاهدات سیستم فایل و مقایسهٔ اجراها               | Linux/macOS با PTY بومی؛ [ضبط فرایند](../guides/runtime/process-capture.md)                                                                                |
@@ -266,6 +270,12 @@ REA محیطی آمادهٔ اجرا همراه با یک آزمون ساده ب
 [راهنمای ساخت محیط](https://rea.tools/guides/rl-environments/) ·
 [مرجع محیط‌ها](../agent-environments.md) ·
 [نمایش را در X ببینید](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### محیط‌های برنامه‌های دسکتاپ
+
+REA می‌تواند برای یک برنامهٔ دسکتاپ Linux هم محیط بسازد که عامل با تصویر صفحه، ماوس و صفحه‌کلید از آن استفاده می‌کند. از یک درخواست یک‌خطی، مثل «یک محیط Gnote برایم بساز که در آن عامل روغن زیتون را به یادداشت فهرست خرید اضافه کند»، عامل شما برنامه را روی یک رایانهٔ ساخت محلی نصب می‌کند، کار را می‌نویسد، محیط را صادر می‌کند و کار را روی یک رایانهٔ تازه بررسی می‌کند. دستگاهی که آن را می‌سازد به Linux روی amd64 یا arm64، Docker و نسخه‌ای از چارچوب agentenv که راهنما تعیین کرده نیاز دارد.
+
+[راه‌اندازی محیط‌های برنامه‌های دسکتاپ](../desktop-build-computer.md)
 
 ## پرسش‌های متداول
 

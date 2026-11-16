@@ -40,6 +40,15 @@ export interface ElfUnwindFixtureOptions {
   readonly symbolSource?: "symtab" | "dynsym" | "none";
   /** First CIE uses version 3 and a ULEB return-address register. */
   readonly version3?: boolean;
+  /** Raw LEB128 operands for boundary tests; omitted operands keep their normal encoding. */
+  readonly leb128?: {
+    readonly dataAlignment?: readonly number[];
+    readonly pointers?: {
+      readonly signed: boolean;
+      readonly start: readonly number[];
+      readonly size: readonly number[];
+    };
+  };
   /** Cut the second FDE after its length word. */
   readonly truncate?: boolean;
   /** Non-zero byte after a real terminator, still inside .eh_frame. */
@@ -71,8 +80,18 @@ export interface ElfUnwindFixtureOptions {
    * no search table.
    */
   readonly headerCount?: number | bigint | "omit";
-  /** Declare a second, ignored section with this name. */
-  readonly duplicate?: ".eh_frame" | ".eh_frame_hdr";
+  /** Declare a second section with this name, at another address. */
+  readonly duplicate?: ".eh_frame" | ".eh_frame_hdr" | ".dynamic" | ".got.plt";
+  /**
+   * Declare this many PT_DYNAMIC program headers, each naming the `.dynamic`
+   * section's bytes (with `datarel: "dynamic"`).
+   */
+  readonly dynamicPrograms?: number;
+  /**
+   * When false, `.dynamic` is SHT_PROGBITS, so only PT_DYNAMIC headers
+   * declare the dynamic table.
+   */
+  readonly dynamicSection?: boolean;
   /** `.symtab` and `.dynsym` each under 65536 entries, together over it. */
   readonly symbolCap?: boolean;
   /** Second FDE stores a raw zero pcrel LSDA pointer (no LSDA). */
@@ -267,10 +286,13 @@ interface BuiltFrame {
 
 /** The first CIE's `R` encoding for the selected frame options. */
 const firstPointerEncoding = (options: {
+  readonly leb128?: ElfUnwindFixtureOptions["leb128"];
   readonly datarelBase?: number;
   readonly indirectStart?: boolean;
   readonly unsignedPcrel?: { readonly bits: 32 | 64 };
 }): number => {
+  if (options.leb128?.pointers !== undefined)
+    return options.leb128.pointers.signed ? 0x09 : 0x01;
   if (options.unsignedPcrel !== undefined)
     return options.unsignedPcrel.bits === 64 ? 0x14 : 0x13;
   if (options.datarelBase !== undefined) return 0x3b;
@@ -282,6 +304,7 @@ const buildUnwindFrame = (
   ehVa: number,
   little: boolean,
   options: {
+    readonly leb128?: ElfUnwindFixtureOptions["leb128"];
     readonly version3: boolean;
     readonly functions: 1 | 2;
     readonly truncate: boolean;
@@ -333,7 +356,8 @@ const buildUnwindFrame = (
     `${unknown ? "zXR" : "zR"}${options.signalFrame ? "S" : ""}${"S".repeat(options.longAugmentation ?? 0)}\0`,
   );
   w.uleb(1);
-  w.sleb(-4);
+  if (options.leb128?.dataAlignment === undefined) w.sleb(-4);
+  else w.bytes(Buffer.from(options.leb128.dataAlignment));
   if (options.version3) w.uleb(128);
   else w.u8(16);
   w.uleb(unknown ? 2 : 1);
@@ -345,7 +369,10 @@ const buildUnwindFrame = (
   const fde0 = begin(wide);
   fdeOffsets.push(fde0);
   w.u32(w.length - cie0);
-  if (unsigned !== undefined) {
+  if (options.leb128?.pointers !== undefined) {
+    w.bytes(Buffer.from(options.leb128.pointers.start));
+    w.bytes(Buffer.from(options.leb128.pointers.size));
+  } else if (unsigned !== undefined) {
     const distance = BigInt(UNWIND_FN_A - (ehVa + w.length));
     if (unsigned.bits === 64) {
       w.u64Big(BigInt.asUintN(64, distance));
@@ -692,7 +719,7 @@ const addOptionalSections = (
     writeWord(dynamic, width / 2, UNWIND_GOT_VA, bits, little);
     sections.push({
       name: ".dynamic",
-      type: 6,
+      type: options.dynamicSection === false ? 1 : 6,
       flags: 3,
       address: UNWIND_GOT_VA - 0x100,
       bytes: dynamic,
@@ -766,6 +793,7 @@ export const elfUnwindFixture = (
   const unwind = options.unwind !== false;
   const frame = unwind
     ? buildUnwindFrame(UNWIND_EH_VA, little, {
+        leb128: options.leb128,
         version3: options.version3 ?? false,
         functions: 2,
         truncate: options.truncate ?? false,
@@ -897,6 +925,7 @@ export const elfUnwindFixture = (
     little,
     type: options.type ?? 3,
     machine: options.machine ?? (bits === 64 ? 62 : 20),
+    dynamicPrograms: options.dynamicPrograms ?? 0,
   });
 };
 
@@ -908,11 +937,14 @@ const writeSectionedElf = (
     little,
     type,
     machine,
+    dynamicPrograms = 0,
   }: {
     readonly bits: 32 | 64;
     readonly little: boolean;
     readonly type: number;
     readonly machine: number;
+    /** PT_DYNAMIC headers naming the first `.dynamic` section, after the section table. */
+    readonly dynamicPrograms?: number;
   },
 ): Buffer => {
   let shstr = "\0";
@@ -937,7 +969,9 @@ const writeSectionedElf = (
     cursor += section.bytes.length;
   }
   const shoff = alignTo(cursor, 8);
-  const bytes = Buffer.alloc(shoff + shnum * shentsize);
+  const phoff = shoff + shnum * shentsize;
+  const phentsize = bits === 64 ? 56 : 32;
+  const bytes = Buffer.alloc(phoff + dynamicPrograms * phentsize);
   bytes.writeUInt32LE(0x464c457f, 0);
   bytes[4] = bits === 64 ? 2 : 1;
   bytes[5] = little ? 1 : 2;
@@ -951,6 +985,25 @@ const writeSectionedElf = (
   write16(bytes, bits === 64 ? 58 : 46, shentsize, little);
   write16(bytes, bits === 64 ? 60 : 48, shnum, little);
   write16(bytes, bits === 64 ? 62 : 50, shnum - 1, little);
+  if (dynamicPrograms > 0) {
+    const index = sections.findIndex(({ name }) => name === ".dynamic");
+    const dynamic = sections[index]!;
+    writeWord(bytes, bits === 64 ? 32 : 28, phoff, bits, little);
+    write16(bytes, bits === 64 ? 56 : 44, dynamicPrograms, little);
+    // Elf64_Phdr: type, flags, offset, vaddr, paddr, filesz, memsz;
+    // Elf32_Phdr: type, offset, vaddr, paddr, filesz, memsz, flags.
+    const word = bits === 64 ? 8 : 4;
+    for (let program = 0; program < dynamicPrograms; program += 1) {
+      const at = phoff + program * phentsize;
+      const offset = bits === 64 ? at + 8 : at + 4;
+      write32(bytes, at, 2, little);
+      write32(bytes, bits === 64 ? at + 4 : at + 24, 6, little);
+      writeWord(bytes, offset, fileOffsets[index]!, bits, little);
+      writeWord(bytes, offset + word, dynamic.address, bits, little);
+      writeWord(bytes, offset + 3 * word, dynamic.bytes.length, bits, little);
+      writeWord(bytes, offset + 4 * word, dynamic.bytes.length, bits, little);
+    }
+  }
   sections.forEach((section, index) => {
     const fileOffset = fileOffsets[index]!;
     section.bytes.copy(bytes, fileOffset);

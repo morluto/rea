@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readJsonFile } from "../../../src/application/JsonFiles.js";
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 describe("JSON file UTF-8 byte integrity", () => {
   it("rejects invalid UTF-8 through both file input boundaries", async () => {

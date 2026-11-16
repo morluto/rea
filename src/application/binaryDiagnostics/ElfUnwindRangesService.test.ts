@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import { ElfUnwindRangesService } from "./ElfUnwindRangesService.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
@@ -26,57 +27,6 @@ const undecodableHeaderPointer = (): Buffer => {
   bytes[Number(bytes.readBigUInt64LE(64 + 56 + 8)) + 1] = 0x0f;
   return bytes;
 };
-const report: ElfUnwindRanges = {
-  artifact: {
-    path: "/artifacts/app",
-    sha256: "a".repeat(64),
-    bytes: 512,
-  },
-  format: "elf64",
-  byte_order: "little",
-  machine: 62,
-  type: 3,
-  type_name: "shared",
-  eh_frame: { status: "absent", source: null, location: null },
-  eh_frame_hdr: {
-    status: "absent",
-    location: null,
-    version: null,
-    eh_frame_pointer_encoding: null,
-    fde_count_encoding: null,
-    table_encoding: null,
-    eh_frame_pointer: null,
-    fde_count: null,
-    table_entries: 0,
-  },
-  debug_frame: { status: "absent", location: null },
-  cies: [],
-  ranges: [],
-  page: {
-    offset: 0,
-    limit: 256,
-    returned: 0,
-    total: 0,
-    next_offset: null,
-  },
-  coverage: {
-    status: "complete",
-    total_ranges: 0,
-    total_cies: 0,
-    ranges_with_symbols: 0,
-    ranges_without_symbols: 0,
-    eh_frame_hdr_agreement: "unavailable",
-    examined_records: 0,
-  },
-  limitations: [
-    "No .eh_frame section or PT_GNU_EH_FRAME segment was declared.",
-    "No .eh_frame_hdr section or PT_GNU_EH_FRAME segment was declared.",
-    "CFA instructions are counted but not evaluated.",
-    ".debug_frame is absent; only .eh_frame was examined.",
-    "Symbol names, section names, and augmentation strings are target-derived and untrusted.",
-  ],
-};
-
 const parsed = (
   bytes: Buffer,
   raw: Readonly<Record<string, unknown>> = {},
@@ -95,6 +45,8 @@ const parsed = (
     input,
   );
 };
+
+const report = parsed(elfUnwindAbsentFixture());
 
 const accept = async (
   value: ElfUnwindRanges,
@@ -137,7 +89,7 @@ it("records an absent unwind table for the selected ELF", async () => {
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
   });
   expect(result.value.locations).toEqual([
@@ -372,7 +324,7 @@ it("reports a header capped by max_ranges as an incomplete Result", async () => 
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toMatchObject({
     eh_frame_hdr: { status: "incomplete", fde_count: 3, table_entries: 2 },
-    coverage: { status: "incomplete", eh_frame_hdr_agreement: "unavailable" },
+    coverage: { status: "partial", eh_frame_hdr_agreement: "unavailable" },
   });
 });
 
@@ -406,12 +358,13 @@ it("rejects a report that fails the output schema", async () => {
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late ElfUnwindRanges cancellation" };
   const service = new ElfUnwindRangesService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
@@ -419,6 +372,11 @@ it("discards an observation if the caller cancels while the provider completes",
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_elf_unwind_ranges",
+    normalized_result: report,
+  });
 });

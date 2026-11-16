@@ -1,3 +1,5 @@
+import { boundedList } from "../../domain/boundedList.js";
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { z } from "zod";
 import { basename } from "node:path";
 import { isIP } from "node:net";
@@ -82,9 +84,6 @@ export const credentialNamed = (name: string): boolean => {
 const SCAN_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 /** Pointers the report lists; the count covers every match. */
 const REPORTED_POINTERS = 20;
-
-const pointerToken = (name: string): string =>
-  name.replaceAll("~", "~0").replaceAll("/", "~1");
 
 /** A held value: a non-empty string, or an array holding one. */
 const holdsValue = (value: unknown): boolean =>
@@ -198,7 +197,7 @@ const credentialTally = () => {
       const entries = Object.entries(value);
       for (let index = entries.length - 1; index >= 0; index--) {
         const [name, child] = entries[index]!;
-        const path = `${pointer}/${pointerToken(name)}`;
+        const path = `${pointer}/${escapeJsonPointerToken(name)}`;
         field(`${label} ${path}`, name, child);
         stack.push([child, path]);
       }
@@ -209,7 +208,7 @@ const credentialTally = () => {
     else if (scanned?.kind === "json") walk(scanned.value, label);
     else if (scanned?.kind === "form")
       for (const [name, value] of scanned.fields)
-        field(`${label} /${pointerToken(name)}`, name, value);
+        field(`${label} /${escapeJsonPointerToken(name)}`, name, value);
   };
   return {
     field,
@@ -373,13 +372,14 @@ export const savedCredentialWarnings = (
     unmarked(action.save, "save");
     unmarked(action.save_response?.save, "save_response/save");
   });
+  const reported = boundedList(pointers, REPORTED_POINTERS);
   return pointers.length === 0
     ? []
     : [
         {
           code: "credential-named-saved-values",
           message: `${String(pointers.length)} saved values have credential-like names but are not marked secret, so the capture records them unredacted; mark them \`secret: true\` and record again before sharing.`,
-          pointers: pointers.slice(0, REPORTED_POINTERS),
+          pointers: [...reported.items],
         },
       ];
 };

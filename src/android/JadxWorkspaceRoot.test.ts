@@ -31,11 +31,6 @@ afterEach(() => {
 });
 
 it("decodes a Windows guardian path across split UTF-8 stdout writes", async () => {
-  const previousPlatform = process.platform;
-  Object.defineProperty(process, "platform", {
-    configurable: true,
-    value: "win32",
-  });
   const parent = "C:\\Users\\研究者\\AppData\\Local\\Temp";
   const path = win32.join(parent, `rea-android-${"a".repeat(32)}`);
   const child = Object.assign(new EventEmitter(), {
@@ -65,25 +60,18 @@ it("decodes a Windows guardian path across split UTF-8 stdout writes", async () 
   );
   const split = ready.indexOf(Buffer.from("研")) + 1;
 
-  try {
-    const start = createJadxWorkspaceRoot();
-    setImmediate(() => {
-      child.stdout.write(ready.subarray(0, split), () => {
-        setImmediate(() => child.stdout.write(ready.subarray(split)));
-      });
+  const start = createJadxWorkspaceRoot("win32");
+  setImmediate(() => {
+    child.stdout.write(ready.subarray(0, split), () => {
+      setImmediate(() => child.stdout.write(ready.subarray(split)));
     });
+  });
 
-    const root = await start;
-    try {
-      expect(root.path).toBe(path);
-    } finally {
-      await expect(root.close()).resolves.toBeUndefined();
-    }
-    expect(lstatMock).toHaveBeenCalledWith(path);
+  const root = await start;
+  try {
+    expect(root.path).toBe(path);
   } finally {
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: previousPlatform,
-    });
+    await expect(root.close()).resolves.toBeUndefined();
   }
+  expect(lstatMock).toHaveBeenCalledWith(path);
 });

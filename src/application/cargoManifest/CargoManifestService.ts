@@ -1,17 +1,17 @@
 import { isAbsolute } from "node:path";
 import { constants } from "node:buffer";
 import { parse as parseToml } from "smol-toml";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
+} from "../../resources/ArtifactFileOperation.js";
+import { readStableArtifact } from "../../resources/readStableArtifact.js";
 import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+} from "../../resources/StableArtifactFailure.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,

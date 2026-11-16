@@ -17,6 +17,7 @@
  * conflated with malformed input.
  */
 import { type Result, err, ok } from "../result.js";
+import { keyedBy, uniqueKeyed } from "../keyedCollection.js";
 import { decodeAsn1Oid } from "../asn1Oid.js";
 import { Asn1BerFailure, Asn1BerReader, type Asn1BerNode } from "../asn1Ber.js";
 
@@ -27,18 +28,21 @@ export type ApkV1BlockError =
       readonly resource:
         | "v1-block-certificates"
         | "v1-signer-infos"
-        | "asn1-elements";
+        | "asn1-elements"
+        | "asn1-depth"
+        | "oid-bytes"
+        | "oid-arc-bytes";
       readonly limit: number;
     };
 
 /** Certificates in one block: a signer leaf plus a short chain is the norm. */
-export const MAX_V1_BLOCK_CERTIFICATES = 32;
+const MAX_V1_BLOCK_CERTIFICATES = 32;
 /** SignerInfos in one block; apksig verifies one, more is pathological. */
-export const MAX_V1_SIGNER_INFOS = 32;
+const MAX_V1_SIGNER_INFOS = 32;
 /** Nesting depth; SignedData → X.509 extensions is under 12 levels deep. */
 const MAX_ASN1_DEPTH = 32;
 /** Elements read while decoding one block; bounds work for any byte length. */
-export const MAX_ASN1_ELEMENTS = 65_536;
+const MAX_ASN1_ELEMENTS = 65_536;
 
 export interface ApkV1SignerInfo {
   readonly identifiedBy: "issuer-and-serial" | "subject-key-identifier";
@@ -98,11 +102,14 @@ class ApkBerReader {
       return this.#reader.read(at, limit, depth);
     } catch (cause: unknown) {
       if (!(cause instanceof Asn1BerFailure)) throw cause;
-      if (cause.kind === "budget-exceeded")
+      if (cause.constraint !== null)
         throw new BlockFailure({
           kind: "budget-exceeded",
-          resource: "asn1-elements",
-          limit: MAX_ASN1_ELEMENTS,
+          resource:
+            cause.constraint.resource === "nodes"
+              ? "asn1-elements"
+              : "asn1-depth",
+          limit: cause.constraint.limit,
         });
       throw malformed(cause.message);
     }
@@ -155,6 +162,13 @@ const expectOctetString = (
 const oidText = (content: Uint8Array): string => {
   const decoded = decodeAsn1Oid(content, { bytes: 64, arcBytes: 64 });
   if (decoded.ok) return decoded.value;
+  if (decoded.error.kind === "byte-limit" || decoded.error.kind === "arc-limit")
+    throw new BlockFailure({
+      kind: "budget-exceeded",
+      resource:
+        decoded.error.kind === "byte-limit" ? "oid-bytes" : "oid-arc-bytes",
+      limit: decoded.error.limit,
+    });
   if (decoded.error.kind === "truncated")
     throw malformed("object identifier is truncated");
   throw malformed(`object identifier of ${String(content.length)} bytes`);
@@ -187,6 +201,13 @@ const integerIdentityContents = (bytes: Uint8Array): Uint8Array => {
   }
   return start === 0 ? bytes : bytes.subarray(start);
 };
+
+/** Optional identity interpretation may remain unknown while raw certificate identity survives. */
+const unavailableIdentityInterpretation = (cause: unknown): boolean =>
+  cause instanceof BlockFailure &&
+  (cause.error.kind === "malformed-pkcs7" ||
+    cause.error.resource === "oid-bytes" ||
+    cause.error.resource === "oid-arc-bytes");
 
 /**
  * RFC 5280 §7.1: RDN order matters; attributes in one SET do not. This
@@ -237,8 +258,7 @@ const directoryNameKey = (name: Asn1BerNode): string | null => {
     }
     return JSON.stringify(rdns);
   } catch (cause) {
-    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
-      return null;
+    if (unavailableIdentityInterpretation(cause)) return null;
     throw cause;
   }
 };
@@ -271,7 +291,16 @@ const certificateIdentity = (
     const serial = expectTag(fields[offset], TAG.integer, "serialNumber");
     const issuer = expectTag(fields[offset + 2], TAG.sequence, "issuer");
     let subjectKeyIdentifier: Uint8Array | null = null;
-    const extensions = fields.find((field) => field.tag === TAG.context3);
+    // RFC 5280 §4.1: TBSCertificate is a SEQUENCE with at most one
+    // `extensions [3]`, and §4.2 allows each extension at most once. A repeat
+    // is not a TBSCertificate, so the certificate names no SignerInfo.
+    const extensionFields = uniqueKeyed(
+      keyedBy(fields, (field) => String(field.tag)),
+      String(TAG.context3),
+    );
+    if (!extensionFields.ok)
+      throw malformed("tbsCertificate declares extensions more than once");
+    const extensions = extensionFields.value;
     if (extensions !== undefined) {
       const list = expectTag(
         extensions.children[0],
@@ -282,6 +311,10 @@ const certificateIdentity = (
         const parts = extension.children;
         const id = expectTag(parts[0], TAG.oid, "extension id");
         if (oidText(id.content) !== OID_SUBJECT_KEY_IDENTIFIER) continue;
+        if (subjectKeyIdentifier !== null)
+          throw malformed(
+            "tbsCertificate declares subjectKeyIdentifier more than once",
+          );
         const value = expectTag(parts.at(-1), TAG.octetString, "extnValue");
         const inner = reader.read(value.contentStart, value.contentEnd, 0);
         subjectKeyIdentifier = expectTag(
@@ -298,8 +331,7 @@ const certificateIdentity = (
       subjectKeyIdentifier,
     };
   } catch (cause: unknown) {
-    if (cause instanceof BlockFailure && cause.error.kind === "malformed-pkcs7")
-      return null;
+    if (unavailableIdentityInterpretation(cause)) return null;
     throw cause;
   }
 };

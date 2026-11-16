@@ -1,5 +1,9 @@
 # Windows Shell Link shortcut inspection
 
+This specification records an implementation increment and its original problem
+statement. For current behavior and limitations, see the
+[current guide](../../../guides/native/windows-shortcut.md).
+
 ## Problem and outcome
 
 REA has no Shell Link reader. An analyst holding a local `.lnk` file cannot ask

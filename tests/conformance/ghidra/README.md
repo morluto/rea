@@ -21,6 +21,12 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   Clang/LLD/LLVM readelf/LLVM objdump; `REA_RISCV_CLANG`, `REA_RISCV_LLD`,
   `REA_RISCV_READELF` and `REA_RISCV_OBJDUMP` select existing tool commands.
 
+- `ReaInstructionContextProbe.java` inspects source-owned ARM, Thumb, MIPS32
+  and MIPS16 instructions through the production bridge in an ephemeral,
+  read-only Ghidra project. It checks exact decoder-context register names,
+  values and provenance; the ARM lane also injects an unavailable provider
+  value. The `ghidra-bridge-sources` CI job runs both processor families. The
+  input bytes are never executed.
 - `ReaDecodeProbe.java` decodes source-owned instruction bytes from a
   language's default context and checks each mnemonic, length and optional
   complete operand. The `ghidra-bridge-sources` CI job runs it for `ARM:LE:32:Cortex`,
@@ -84,6 +90,19 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   budgets 1 MiB for generated C source and derives the maximum branch count
   from the worst-case line size before allocating the source. Larger or
   invalid counts are rejected before installation inspection or compilation.
+
+- `loader-relocation.c`, `loader-relocation-provider.c` and
+  `ReaLoaderRelocationProbe.java` exercise the production `ReaGhidraBridge`
+  against a real imported Linux full-RELRO PIE ELF and a small shared library.
+  The fixture's `.data.rel.ro` pointer is populated by an importer-created
+  relocation. The probe proves that the `ET_DYN` program is marked relocatable
+  by Ghidra but is still protected, checks the relocation byte range and
+  read/write reference handling, and compares baseline/protected pseudocode.
+  It also checks that a `-fno-plt` GOT caller retains identical pseudocode when
+  its relocation blocks become volatile. Source `FileBytes` and block
+  permissions must remain unchanged. `npm run
+  verify:ghidra:loader-relocation` requires Linux, BYO Ghidra/JDK with its
+  native decompiler, and a C compiler; the fixture is never executed.
 
 `scripts/verify-real-ghidra.mjs` uses `cc`, `clang`, and `lld-link` by default;
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The

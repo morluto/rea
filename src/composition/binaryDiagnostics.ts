@@ -1,3 +1,4 @@
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
 import { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
@@ -7,7 +8,6 @@ import { RecordedCrashService } from "../application/binaryDiagnostics/RecordedC
 import { PwntoolsRecordedCrashProvider } from "../native/pwntools/PwntoolsRecordedCrashProvider.js";
 import { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { PwntoolsLayoutProvider } from "../native/pwntools/PwntoolsLayoutProvider.js";
-import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 import { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import { PeResourcesProvider } from "../native/pe/PeResourcesProvider.js";
 import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
@@ -18,6 +18,8 @@ import { WindowsShortcutService } from "../application/binaryDiagnostics/Windows
 import { WindowsShortcutProvider } from "../native/windows/WindowsShortcutProvider.js";
 import { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import { ElfNotesProvider } from "../native/elf/ElfNotesProvider.js";
+import { NativeInitializersService } from "../application/binaryDiagnostics/NativeInitializersService.js";
+import { NativeInitializersProvider } from "../native/initializers/NativeInitializersProvider.js";
 import { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import { ElfUnwindRangesProvider } from "../native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsService.js";
@@ -26,7 +28,7 @@ import { KernelModuleService } from "../application/binaryDiagnostics/KernelModu
 import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
 import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
 
@@ -34,8 +36,6 @@ import { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeSe
 import { DevicetreeProvider } from "../firmware/devicetree/DevicetreeProvider.js";
 export const createDevicetreeService = (): DevicetreeService =>
   new DevicetreeService(new DevicetreeProvider());
-
-export { pwntoolsHostSupported };
 
 /** Portable PE inspection with no engine, installation or target acquisition. */
 export const createPeResourcesService = (): PeResourcesService =>
@@ -60,6 +60,9 @@ export const createNativeExportsService = (): NativeExportsService =>
 export const createElfNotesService = (): ElfNotesService =>
   new ElfNotesService(new ElfNotesProvider());
 
+/** Portable ELF and Mach-O initializer and finalizer listing with no engine. */
+export const createNativeInitializersService = (): NativeInitializersService =>
+  new NativeInitializersService(new NativeInitializersProvider());
 /** Portable ELF unwind-range inspection with no engine or disassembler. */
 export const createElfUnwindRangesService = (): ElfUnwindRangesService =>
   new ElfUnwindRangesService(new ElfUnwindRangesProvider());
@@ -77,14 +80,20 @@ export const createKernelBuildConfigService = (): KernelBuildConfigService =>
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  host: HostPlatform = HOST_PLATFORM,
 ): BinaryLayoutService =>
-  new BinaryLayoutService(new PwntoolsLayoutProvider(environment));
+  new BinaryLayoutService(
+    new PwntoolsLayoutProvider(environment, undefined, undefined, host),
+  );
 
 /** Compose recorded-core inspection without acquiring a debugger or toolchain. */
 export const createRecordedCrashService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  host: HostPlatform = HOST_PLATFORM,
 ): RecordedCrashService =>
-  new RecordedCrashService(new PwntoolsRecordedCrashProvider(environment));
+  new RecordedCrashService(
+    new PwntoolsRecordedCrashProvider(environment, undefined, undefined, host),
+  );
 
 /** Provider-free local byte analysis. */
 export const createByteEntropyService = (

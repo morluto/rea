@@ -17,7 +17,7 @@ import {
   withPassiveDroppedEvents,
 } from "../../fixtures/passiveNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 type Capture = {
   inspection: CompareWebCapturesInput["before"]["inspection"];
@@ -516,9 +516,10 @@ cliTest.for(cases.filter(({ name }) => cliCaseNames.has(name)))(
       arguments: ["compare-web-captures", ...paths, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
     };
-    const response = await (scenario.name === "heterogeneous HTTP omission 0"
-      ? cli.run(invocation)
-      : runFileCli(cli, invocation));
+    const response = await cli.run({
+      ...invocation,
+      freshProcess: scenario.name === "heterogeneous HTTP omission 0",
+    });
     expect(response.exitCode, response.stderr).toBe(0);
     expectComparison(response.json, scenario);
   },

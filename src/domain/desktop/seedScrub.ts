@@ -16,6 +16,8 @@ import {
   isTextualFormat,
   textSyntaxFormat,
 } from "./stateFormats.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -291,11 +293,6 @@ const scrubGVariant = (
   return { text: scrubbed, decoded: [scrubbed, ...strings].join("\n") };
 };
 
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /**
  * A dconf view's groups as the key file the computer compiles, each value's
  * strings scrubbed, and whether it still holds the identity, strings decoded.
@@ -380,13 +377,12 @@ const seedText = (bytes: Buffer, { home, format }: Seed) => {
       : { ...utf16, format: textSyntaxFormat(home, utf16.text) };
   }
   try {
+    const text = strictUtf8Decoder("preserve").decode(bytes);
     return {
       // The byte-order mark is kept, as Python's utf-8 codec keeps it.
-      text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        bytes,
-      ),
+      text,
       encode: (scrubbed: string) => Buffer.from(scrubbed, "utf8"),
-      format,
+      format: format === "text" ? textSyntaxFormat(home, text) : format,
     };
   } catch {
     return undefined;
@@ -439,9 +435,9 @@ const scrubDocument = (
 };
 
 /**
- * Scrub a seed as `scrubDocument` does; a gzip file's document is scrubbed as
- * the format the state view read it as, then compressed again alike on every
- * host whether or not it changed, so no file name, comment or time in the
+ * Scrub a seed as `scrubDocument` does; a gzip file's document uses its
+ * captured format, or the format detected from decoded bytes when unknown,
+ * then is compressed again alike on every host whether or not it changed, so no file name, comment or time in the
  * captured header ships. One already so ships as captured, as do one that
  * does not decompress within the size decoded and one whose document needs no
  * edit but a member of which has an extra field, where BGZF and dictzip index

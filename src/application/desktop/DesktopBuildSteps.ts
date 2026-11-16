@@ -1,11 +1,11 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import type { StoppedCapture } from "./DesktopBuildSummary.js";
 import type {
   BuildComputerSteps,
@@ -71,11 +71,7 @@ export class DesktopBuildSteps {
         .catch(() => undefined);
       if (turn.aborted) {
         steps.capture.abandon();
-        return err(
-          new AnalysisCancelledError("start_build_capture", {
-            cause: turn.reason,
-          }),
-        );
+        return err(cancelledBy("start_build_capture", turn));
       }
       return ok({
         value: {
@@ -125,6 +121,18 @@ export class DesktopBuildSteps {
     const { computer_id: id, ...request } = input;
     return this.#on(id, "export_build_environment", signal, (steps, turn) =>
       steps.capture.export(request, turn),
+    );
+  }
+
+  recordConsent(
+    input: Parameters<BuildComputerSteps["capture"]["recordConsent"]>[0] & {
+      readonly computer_id: string;
+    },
+    signal: AbortSignal,
+  ) {
+    const { computer_id: id, ...consent } = input;
+    return this.#on(id, "record_build_consent", signal, (steps) =>
+      Promise.resolve(ok(steps.capture.recordConsent(consent))),
     );
   }
 

@@ -1,4 +1,8 @@
-import { createHash } from "node:crypto";
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+import {
+  hashArtifactRange,
+  readArtifactRange as readExact,
+} from "../ArtifactCarrierRange.js";
 import type { FileHandle } from "node:fs/promises";
 
 import {
@@ -34,14 +38,15 @@ import {
   readMachoContainer,
   readSliceCommandTable,
   type ReadAt,
-} from "../apple/MachoLoadCommandReader.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { locatePeResourcePayloads } from "../../native/pe/PeResourceLayout.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
+import {
+  abortIfNeeded,
+  ArtifactReaderFailure,
+  artifactParseFailure,
+} from "../../resources/index.js";
+import { locatePeResourcePayloads } from "../../domain/pe/peResourceLayout.js";
 import { DENO_SECTION_MAGIC } from "./DenoSectionLayout.js";
 
-const LC_SEGMENT = 0x1;
-const LC_SEGMENT_64 = 0x19;
 const CPU_TYPE_ARM64 = 0x0100000c;
 const PT_NOTE = 4;
 const PN_XNUM = 0xffff;
@@ -50,7 +55,6 @@ const ELF32_PROGRAM_HEADER_BYTES = 32;
 const ELF64_SECTION_HEADER_BYTES = 64;
 const ELF32_SECTION_HEADER_BYTES = 40;
 const SHT_NOTE = 7;
-const SHF_COMPRESSED = 0x800n;
 const RT_RCDATA = 10;
 const RESOURCE_NAME = "D3N0L4ND";
 const SECTION_NAME = "d3n0l4nd";
@@ -62,7 +66,7 @@ const ELF_NOTE_TYPE = 0x53554901;
 const PE_HEADER_PROBE_BYTES = 64 * 1024;
 const INTEL_CHUNK_BYTES = 1024 * 1024;
 /** Trailer candidates examined before the search stops. */
-export const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
+const MAX_DENO_INTEL_TRAILER_SENTINELS = 64;
 const INTEL_SENTINEL = Buffer.concat([
   Buffer.from("<~sui-data~>", "latin1"),
   Buffer.from([0xef, 0xbe, 0xad, 0xde]),
@@ -250,9 +254,9 @@ const locateMachOSlice = async (
   // until that name is confirmed and otherwise leaves the slice unread.
   let damage: string | undefined;
   const framed = frameLoadCommands(table, (command) => {
-    if (command.command !== LC_SEGMENT && command.command !== LC_SEGMENT_64)
+    if (command.command !== LC.SEGMENT && command.command !== LC.SEGMENT_64)
       return;
-    const segment64 = command.command === LC_SEGMENT_64;
+    const segment64 = command.command === LC.SEGMENT_64;
     const parsedSegment = readMachoSegmentHeader(command.body, segment64, true);
     if (!parsedSegment.ok) {
       // An unparsed segment may be __SUI, so the slice is not fully examined.
@@ -653,7 +657,7 @@ const locateElfNotes = async (carrier: Carrier): Promise<SectionRange[]> => {
         continue;
       }
       if (parsed.value.type !== SHT_NOTE) continue;
-      if ((parsed.value.flags & SHF_COMPRESSED) !== 0n) {
+      if (parsed.value.compressed) {
         damaged("compressed ELF note sections are unsupported");
         continue;
       }
@@ -849,14 +853,19 @@ const locatePeResources = async (carrier: Carrier): Promise<SectionRange[]> => {
     Math.min(carrier.fileSize, PE_HEADER_PROBE_BYTES),
   );
   if (headers === undefined) return [];
-  const payloads = await locatePeResourcePayloads(
-    headers,
-    carrier.fileSize,
-    (offset, length) => readExact(carrier, offset, length),
-    RT_RCDATA,
-    RESOURCE_NAME,
-    MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-  );
+  let payloads: Awaited<ReturnType<typeof locatePeResourcePayloads>>;
+  try {
+    payloads = await locatePeResourcePayloads(
+      headers,
+      carrier.fileSize,
+      (offset, length) => readExact(carrier, offset, length),
+      RT_RCDATA,
+      RESOURCE_NAME,
+      MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+    );
+  } catch (cause) {
+    throw artifactParseFailure(cause, carrier.signal);
+  }
   return payloads.map(({ offset, bytes }) => {
     if (bytes > MAX_INSPECT_PE_FILE_BYTES) throw denoPeLimit();
     return { offset, length: bytes, embedding: "pe-resource" };
@@ -896,7 +905,9 @@ const collapseRanges = async (
           "capacity",
         );
       remainingBytes -= range.length;
-      const hash = await digestRange(carrier, range.offset, range.length);
+      const hash = await hashArtifactRange(carrier, range.offset, range.length);
+      if (hash === undefined)
+        throw denoCarrierFailure("Deno compile section is truncated");
       if (chosenHash === undefined) chosenHash = hash;
       else if (hash !== chosenHash) throw conflict();
     }
@@ -907,59 +918,6 @@ const collapseRanges = async (
     offset: chosen.offset,
     length: chosen.length,
   };
-};
-
-const digestRange = async (
-  carrier: Carrier,
-  offset: number,
-  length: number,
-): Promise<string> => {
-  const hash = createHash("sha256");
-  let remaining = length;
-  let position = offset;
-  while (remaining > 0) {
-    const chunkLength = Math.min(64 * 1024, remaining);
-    const chunk = await readExact(carrier, position, chunkLength);
-    if (chunk === undefined)
-      throw denoCarrierFailure("Deno compile section is truncated");
-    hash.update(chunk);
-    position += chunkLength;
-    remaining -= chunkLength;
-  }
-  return hash.digest("hex");
-};
-
-const readExact = async (
-  carrier: Carrier,
-  offset: number,
-  length: number,
-): Promise<Buffer | undefined> => {
-  abortIfNeeded(carrier.signal);
-  if (
-    !Number.isSafeInteger(offset) ||
-    !Number.isSafeInteger(length) ||
-    offset < 0 ||
-    length < 0 ||
-    offset > carrier.fileSize ||
-    length > carrier.fileSize - offset
-  )
-    return undefined;
-  if (length === 0) return Buffer.alloc(0);
-  const bytes = Buffer.alloc(length);
-  let filled = 0;
-  while (filled < length) {
-    abortIfNeeded(carrier.signal);
-    const read = await carrier.handle.read(
-      bytes,
-      filled,
-      length - filled,
-      offset + filled,
-    );
-    abortIfNeeded(carrier.signal);
-    if (read.bytesRead === 0) return undefined;
-    filled += read.bytesRead;
-  }
-  return bytes;
 };
 
 const fixedCString = (bytes: Uint8Array): string => {

@@ -414,7 +414,7 @@ export function matchesSymbol(value, expected) {
   return tail === expected || tail === `_${expected}`;
 }
 
-export function symbolTail(value) {
+function symbolTail(value) {
   if (typeof value !== "string") return undefined;
   return value.split("::").at(-1);
 }

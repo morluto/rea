@@ -1,7 +1,7 @@
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { parseCliJsonInput } from "../../src/cliJsonInput.js";
+import { parseCliJsonInput } from "../../src/cli/cliJsonInput.js";
 import { logCliCommand } from "../../src/cliLogging.js";
 
 const originalExitCode = process.exitCode;

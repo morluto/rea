@@ -80,6 +80,13 @@ export const KERNEL_MODULE_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free ELF and Mach-O initializer and finalizer tables. */
+export const NATIVE_INITIALIZERS_PROVIDER = Object.freeze({
+  id: "rea-native-initializers",
+  name: "REA ELF and Mach-O initializer parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free Linux kernel banner and IKCONFIG decoding. */
 export const KERNEL_BUILD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-kernel-build-config",
@@ -202,6 +209,13 @@ export const RECONSTRUCTION_PROVIDER = {
 export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   id: "rea-pe-load-config",
   name: "REA PE TLS/load-config parser",
+  version: "1",
+} as const);
+
+/** Provider identity for the read-only release exposure audit. */
+export const RELEASE_EXPOSURE_PROVIDER = Object.freeze({
+  id: "rea-release-exposure",
+  name: "REA release exposure audit",
   version: "1",
 } as const);
 

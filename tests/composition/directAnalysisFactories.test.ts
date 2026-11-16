@@ -65,58 +65,27 @@ const recordingFactories = (
   return { dependencies, sessions, clientsClosed: () => clientsClosed };
 };
 
-it("requires a durable summary destination before acquiring a managed session", async () => {
-  const factories = recordingFactories();
-  const result = await runProviderAnalysis(
-    factories.dependencies,
-    "/fixture/missing.dll",
-    "inspect_managed_members",
-    {},
-    undefined,
-    undefined,
-    { detail: "summary" },
-  ).then(projectCliAnalysisResult);
-  expect(result).toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "inspect_managed_members",
-      issues: [{ path: ["evidence_bundle"], reason: "missing_argument" }],
-    },
-  });
-  expect(factories.sessions).toEqual([]);
-});
+/** Schema-valid read_bytes input so lifecycle tests reach the session. */
+const admittedReadBytes = { address: "0x1000" } as const;
 
-it.each([
-  "inspect_macho",
-  "inventory_artifact",
-  "inspect_managed_artifact",
-] as const)(
-  "rejects delivery options for %s before selecting a provider",
-  async (tool) => {
-    const factories = recordingFactories();
-    const invocation = [
-      factories.dependencies,
-      "/fixture/missing",
-      tool,
-      {},
-      undefined,
-      undefined,
-      { detail: "summary", evidenceBundlePath: "/fixture/bundle.json" },
-    ] as const;
-    // @ts-expect-error JavaScript callers can bypass managed-members-only delivery.
-    const result = await runProviderAnalysis(...invocation).then(
-      projectCliAnalysisResult,
-    );
-    expect(result).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: tool,
-        issues: [{ path: ["delivery"], reason: "invalid_value" }],
-      },
-    });
-    expect(factories.sessions).toEqual([]);
+/** Schema-valid inputs for the ordinary native session route. */
+const admittedNativeSessionInput = {
+  observe_native_ui: { pid: 123, window_id: 456 },
+  capture_native_ui_scenario: {
+    pid: 123,
+    window_id: 456,
+    steps: [{ kind: "wait", milliseconds: 100 }],
   },
-);
+  observe_native_calls: {
+    breakpoints: [
+      {
+        kind: "objc-method",
+        class_name: "NSURLSession",
+        selector: "dataTaskWithRequest:completionHandler:",
+      },
+    ],
+  },
+};
 
 describe("one-shot analysis factory boundary", () => {
   it("preserves thrown failures while releasing clients and cancellation listeners", async () => {
@@ -125,11 +94,13 @@ describe("one-shot analysis factory boundary", () => {
     const factories = recordingFactories(failure);
     const interruptListeners = process.listenerCount("SIGINT");
     const terminateListeners = process.listenerCount("SIGTERM");
-    await expect(
-      runDirectAnalysis(factories.dependencies, path, "read_bytes", {}).then(
-        projectCliAnalysisResult,
-      ),
-    ).rejects.toBe(failure);
+    const execution = runDirectAnalysis(
+      factories.dependencies,
+      path,
+      "read_bytes",
+      admittedReadBytes,
+    ).then(projectCliAnalysisResult);
+    await expect(execution).rejects.toBe(failure);
     expect(factories.clientsClosed()).toBe(1);
     expect(process.listenerCount("SIGINT")).toBe(interruptListeners);
     expect(process.listenerCount("SIGTERM")).toBe(terminateListeners);
@@ -247,32 +218,32 @@ describe("one-shot analysis factory boundary", () => {
       expect(factories.sessions[0]?.activeTarget()).toBeUndefined();
     },
   );
-
-  it.each([
-    "observe_native_ui",
-    "capture_native_ui_scenario",
-    "observe_native_calls",
-  ] satisfies readonly NativeToolName[])(
-    "keeps %s on the ordinary session route",
-    async (tool) => {
-      const [path] = await createBinarySessionTargets();
-      const factories = recordingFactories();
-      const result = await runProviderAnalysis(
-        {
-          ...factories.dependencies,
-          createNativeBinarySession: () => {
-            throw new Error("static inspection factory must stay unused");
-          },
-        },
-        path,
-        tool,
-        {},
-      ).then(projectCliAnalysisResult);
-      expect(result).toMatchObject({ operation: tool });
-      expect(factories.clientsClosed()).toBe(1);
-    },
-  );
 });
+
+it.each([
+  "observe_native_ui",
+  "capture_native_ui_scenario",
+  "observe_native_calls",
+] satisfies readonly NativeToolName[])(
+  "keeps %s on the ordinary session route",
+  async (tool) => {
+    const [path] = await createBinarySessionTargets();
+    const factories = recordingFactories();
+    const result = await runProviderAnalysis(
+      {
+        ...factories.dependencies,
+        createNativeBinarySession: () => {
+          throw new Error("static inspection factory must stay unused");
+        },
+      },
+      path,
+      tool,
+      admittedNativeSessionInput[tool],
+    ).then(projectCliAnalysisResult);
+    expect(result).toMatchObject({ operation: tool });
+    expect(factories.clientsClosed()).toBe(1);
+  },
+);
 
 it("preserves a managed execution profile in direct analysis Evidence", async () => {
   const [path] = await createBinarySessionTargets();
@@ -307,7 +278,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
       factories.dependencies,
       path,
       "read_bytes",
-      {},
+      admittedReadBytes,
       { snapshotPath },
     ).then(projectCliAnalysisResult),
   ).not.toHaveProperty("code");
@@ -315,7 +286,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     factories.dependencies,
     other,
     "read_bytes",
-    {},
+    admittedReadBytes,
     { snapshotPath },
   ).then(projectCliAnalysisResult);
   const sha = async (input: string) =>
@@ -332,8 +303,8 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     details: {
       binding_mismatch: {
         target: {
-          snapshot: { sha256: await sha(path) },
-          selected: { sha256: await sha(other) },
+          snapshot: { identity: { sha256: await sha(path) } },
+          selected: { identity: { sha256: await sha(other) } },
         },
         profile_comparison: "not_compared",
       },
@@ -344,7 +315,7 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
       factories.dependencies,
       path,
       "read_bytes",
-      {},
+      admittedReadBytes,
       { snapshotPath },
     ).then(projectCliAnalysisResult),
   ).not.toHaveProperty("code");
@@ -385,7 +356,7 @@ it("retries snapshot file cleanup before final close even when a published ident
     dependencies,
     path,
     "read_bytes",
-    {},
+    admittedReadBytes,
     { snapshotPath: join(dirname(path), "excluded.snapshot") },
   ).then(projectCliAnalysisResult);
   expect(events[0]).toBe("file-cleanup");

@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { retryPublishedCleanup } from "./DesktopBuildWitness.js";
 
@@ -21,20 +21,17 @@ const manifest: RecordingManifest = {
 };
 
 const witness = async (): Promise<EndedWitness> => {
-  const parsed = parseDesktopTask(
-    {
-      name: "add-eggs",
-      prompt: "Add eggs.",
-      checks: [
-        {
-          kind: "lines_present",
-          file: "Documents/today.txt",
-          lines: ["eggs"],
-        },
-      ],
-    },
-    (name) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name),
-  );
+  const parsed = parseDesktopTask({
+    name: "add-eggs",
+    prompt: "Add eggs.",
+    checks: [
+      {
+        kind: "lines_present",
+        file: "Documents/today.txt",
+        lines: ["eggs"],
+      },
+    ],
+  });
   if (!parsed.ok) throw new Error(parsed.error);
   return {
     task: parsed.value,
@@ -83,7 +80,7 @@ describe("writeWitnessRecord", () => {
     const computer = { endRecording, recordingSegments };
     const signal = new AbortController().signal;
 
-    const first = await writeWitnessRecord(computer, ended, log, signal);
+    const first = await writeWitnessRecord(computer, ended, log, { signal });
     expect(first.kind).toBe("retry");
     if (first.kind !== "retry") return;
     expect(first.manifest).toBeUndefined();
@@ -92,7 +89,7 @@ describe("writeWitnessRecord", () => {
       access(join(ended.directory, "witness.json")),
     ).rejects.toThrow();
 
-    const second = await writeWitnessRecord(computer, ended, log, signal);
+    const second = await writeWitnessRecord(computer, ended, log, { signal });
     expect(second.kind).toBe("saved");
     expect(endRecording).toHaveBeenCalledTimes(2);
     await expect(
@@ -110,7 +107,7 @@ describe("writeWitnessRecord", () => {
     const computer = { endRecording, recordingSegments };
     const signal = new AbortController().signal;
 
-    const first = await writeWitnessRecord(computer, ended, log, signal);
+    const first = await writeWitnessRecord(computer, ended, log, { signal });
     expect(first.kind).toBe("retry");
     if (first.kind !== "retry") return;
     expect(first.manifest).toEqual(manifest);
@@ -118,13 +115,10 @@ describe("writeWitnessRecord", () => {
       access(join(ended.directory, "witness.json")),
     ).rejects.toThrow();
 
-    const second = await writeWitnessRecord(
-      computer,
-      ended,
-      log,
+    const second = await writeWitnessRecord(computer, ended, log, {
       signal,
-      first.manifest,
-    );
+      pendingManifest: first.manifest,
+    });
     expect(second.kind).toBe("saved");
     expect(endRecording).toHaveBeenCalledTimes(1);
     expect(recordingSegments).toHaveBeenCalledTimes(2);

@@ -170,3 +170,47 @@ it("declares the temporary private operand write in inspect_macho provider capab
     )?.effects,
   ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
 });
+
+it.each(["before command", "during command"] as const)(
+  "rejects architecture facts when the admitted target changes %s",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-lipo-target-identity-");
+    const path = join(root, "fixture.macho");
+    const original = inspectionImage();
+    await writeFile(path, original);
+    const target = await nativeMachoTargetForFile(path);
+    const runner = new NativeFixtureRunner({
+      lipo: `Non-fat file: ${path} is architecture: arm64\n`,
+    });
+    const run = runner.run.bind(runner);
+    const capture = vi
+      .spyOn(runner, "run")
+      .mockImplementation(async (...args) => {
+        if (phase === "during command")
+          await writeFile(
+            path,
+            Buffer.concat([original, Buffer.from("changed")]),
+          );
+        return run(...args);
+      });
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+      target,
+    );
+    try {
+      if (phase === "before command")
+        await writeFile(
+          path,
+          Buffer.concat([original, Buffer.from("changed")]),
+        );
+      const result = await client.execute("list_architectures", {});
+      if (result.ok) throw new Error("Expected target identity refusal");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisArtifactChangedError",
+        operation: "list_architectures",
+      });
+      expect(capture).toHaveBeenCalledTimes(phase === "before command" ? 0 : 1);
+    } finally {
+      await client.close();
+    }
+  },
+);

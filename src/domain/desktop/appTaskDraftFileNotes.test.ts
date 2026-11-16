@@ -2,11 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { draftOf, statePath, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import { readAsTextNotes } from "./appTaskDraftFileNotes.js";
+
+it("explains when an XML name is unsupported by the exported reader", () => {
+  expect(readAsTextNotes("Documents/map.dat", ["<Ϳ/>"])).toEqual([
+    expect.objectContaining({
+      code: "read_as_text",
+      message: expect.stringContaining("XML names are not supported"),
+    }),
+  ]);
+});
 
 describe("draftTaskFiles notes on thin files", () => {
   it("says which elements only position names when no check can name a change", () => {
     const table = (last: string) =>
-      `<doc><row><cell>1</cell><cell>2</cell></row><row><cell>3</cell><cell>${last}</cell></row></doc>`;
+      `<doc><row><cell>1</cell><cell>2</cell></row><row><cell>1</cell><cell>${last}</cell></row></doc>`;
 
     const file = xmlDraft(table("4"), table("5"));
 
@@ -54,5 +64,15 @@ describe("draftTaskFiles notes on thin files", () => {
       ["Documents/a.gnumeric", ["unreadable_view"]],
       ["Documents/b.xml", ["cut_view"]],
     ]);
+  });
+
+  it("points a binary file at a reader, the app's own headless mode, as the way to check inside it", () => {
+    const [binary] = draftOf({
+      "Documents/poster.xcf": statePath("document", "binary", {}, {}),
+    });
+
+    const message = binary?.notes[0]?.message ?? "";
+    expect(message).toContain("readers");
+    expect(message).toContain("headless");
   });
 });

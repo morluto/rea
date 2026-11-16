@@ -1,3 +1,4 @@
+import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { getEventListeners, once } from "node:events";
 import { readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,9 +6,8 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { FitArtifactReader } from "./FitArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as fitStructure from "./fit/FitStructure.js";
 import * as fileChunks from "../filesystem/readFileHandleChunks.js";
@@ -21,10 +21,11 @@ import {
 import {
   cells,
   devicetreeFixture,
-} from "../firmware/devicetree/Devicetree.fixture.js";
+} from "../domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const MIB = 1024 * 1024;
 
@@ -179,6 +180,7 @@ it.each(["crc32", "md5", "sha1", "sha256", "sha384", "sha512"])(
       scanCanonicalArtifactInventory(await writeFit("bad.itb", bytes)),
     ).rejects.toMatchObject({
       reason: "integrity",
+      integrityCheck: "declared-digest",
       message: expect.stringMatching(
         new RegExp(
           `^FIT image kernel hash-1 ${algo} does not match: declared [0-9a-f]+, computed [0-9a-f]+$`,
@@ -404,6 +406,38 @@ it("keeps the cancellation reason before admission", async () => {
   }
 });
 
+it("does not publish FIT entries when final source verification fails", async () => {
+  const path = await writeFit("partial-publication.itb", FIT_EMBEDDED);
+  const control = new FitArtifactReader(path);
+  const reader = new FitArtifactReader(path);
+  const expected = await firstEntry(control);
+  const nativeRead = ArtifactFileSource.prototype.read;
+  const physical = Object.assign(
+    new Error("final source verification failed"),
+    { code: "EIO" },
+  );
+  let calls = 0;
+  const read = vi
+    .spyOn(ArtifactFileSource.prototype, "read")
+    .mockImplementation(function (this: ArtifactFileSource, ...args) {
+      calls += 1;
+      if (calls === 4) return Promise.reject(physical);
+      return nativeRead.apply(this, args);
+    });
+  try {
+    await expect(firstEntry(reader)).rejects.toBe(physical);
+    await expect(reader.open(expected)).rejects.toMatchObject({
+      reason: "integrity",
+    });
+    read.mockRestore();
+    expect((await firstEntry(reader)).path).toBe(expected.path);
+  } finally {
+    read.mockRestore();
+    await reader.close();
+    await control.close();
+  }
+});
+
 it("keeps the cancellation reason during hash verification", async () => {
   const reader = new FitArtifactReader(
     await writeFit("hashing.itb", LARGE_FIT),
@@ -430,6 +464,8 @@ it("keeps the cancellation reason during hash verification", async () => {
       reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
     ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
     expect(observer).toHaveBeenCalledWith("sha256");
+    observer.mockRestore();
+    expect((await firstEntry(reader)).kind).toBe("file");
   } finally {
     observer.mockRestore();
     await reader.close();
@@ -508,15 +544,10 @@ it("preserves a final validation failure when cancellation overlaps it", async (
     await writeFit("final-validation.itb", FIT_EXTERNAL),
   );
   const controller = new AbortController();
-  let acknowledge = (): void => undefined;
-  let resume = (): void => undefined;
-  const entered = new Promise<void>((resolve) => {
-    acknowledge = resolve;
+  const finalValidation = phaseGate();
+  const failure = new ArtifactReaderFailure("integrity", "carrier changed", {
+    integrityCheck: "container-identity",
   });
-  const released = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
-  const failure = new ArtifactReaderFailure("integrity", "carrier changed");
   const read = ArtifactFileSource.prototype.read;
   const readChunks = fileChunks.readFileHandleChunks;
   let owner: ArtifactFileSource | undefined;
@@ -532,8 +563,7 @@ it("preserves a final validation failure when cancellation overlaps it", async (
         // Only this reader's open/validation receives this caller signal.
         if (signal === controller.signal) owner ??= this;
         if (this === owner && imageEnded) {
-          acknowledge();
-          await released;
+          await finalValidation.hold();
           throw failure;
         }
         return read.call(this, signal);
@@ -554,18 +584,23 @@ it("preserves a final validation failure when cancellation overlaps it", async (
         /* drain */
       }
     })();
-    await awaitAcknowledgement(entered, consumed, "FIT final validation");
+    await finalValidation.reached(consumed, "FIT final validation");
     controller.abort({ stage: "final validation" });
-    resume();
+    finalValidation.release();
     await expect(consumed).rejects.toBe(failure);
     await reader.close();
     expect(stream.closed).toBe(true);
     expect(getEventListeners(controller.signal, "abort")).toEqual([]);
   } finally {
-    resume();
+    finalValidation.release();
     await consumed?.catch(() => undefined);
     chunksObserver?.mockRestore();
     observer?.mockRestore();
     await reader.close();
   }
+});
+
+artifactPreparationRecoveryCases({
+  image: () => FIT_EMBEDDED,
+  createReader: (path, admitted) => new FitArtifactReader(path, admitted),
 });

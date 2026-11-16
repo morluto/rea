@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · **Italiano**
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -82,7 +82,11 @@ Scegli i tuoi agenti, rivedi le modifiche proposte e approvale. La configurazion
 
 La configurazione supporta Claude Code, Codex, Cursor, Gemini CLI, Grok Build e [altri agenti](../getting-started/installation.md#supported-agents). Vedi [installazione e configurazione](../getting-started/installation.md) per la configurazione dei provider e la registrazione manuale MCP.
 
-MCP usa schemi di input compatti per impostazione predefinita. Per tutte le indicazioni sui campi e la validazione annidata, imposta `REA_MCP_INPUT_SCHEMA_PROFILE=full` nella registrazione MCP. Entrambi i profili mantengono tutti gli strumenti e la stessa validazione canonica del server; vedi la guida ai contratti MCP.
+MCP usa schemi di input compatti per impostazione predefinita. Le indicazioni omesse da uno schema compatto seguono la descrizione dello strumento. Tutti gli strumenti e la validazione canonica del server restano invariati; vedi la guida ai contratti MCP.
+
+La configurazione registra direttamente il runtime scelto e lo script di avvio di REA. Se usi un package runner, conserva la sua voce nella cache e il runtime; scarica il pacchetto da una directory attendibile fuori dal progetto di destinazione. Consulta la guida di installazione.
+
+Gli schemi di output sono omessi da `tools/list` per impostazione predefinita: nessuna API di modelli li legge e REA valida ogni risultato da sé. Imposta `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` nella registrazione MCP per dichiarare ogni schema di output entro 4096 byte. In ogni caso la validazione del server e i risultati strutturati restano completi. Consulta «Output schemas» nella guida ai contratti MCP.
 
 ### Chiedi al tuo agente
 
@@ -170,7 +174,7 @@ REA richiede Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), oltre
 | JavaScript / Electron        | Moduli, import, source map, route, IPC e relazioni con add-on nativi                                    | Node.js e npm; [analisi delle applicazioni](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                      |
 | Siti web                     | Struttura della pagina, script, osservazioni di rete e screenshot richiesti                             | Un browser della famiglia Chrome; [analisi browser](../guides/web/browser-observation.md)                                                                      |
 | Acquisizioni di rete salvate | Richieste, risposte, payload esposti e posizioni sorgente                                               | HAR / Fiddler Everywhere SAZ; mitmdump su Linux per acquisizioni mitmproxy native; [guida alle acquisizioni](../guides/web/web-network-captures.md)            |
-| Captured di pacchetti        | Endpoint, DNS, TLS SNI, distribuzione dei protocolli e richieste HTTP                                   | tshark e capinfos forniti dal chiamante; [guida pcap](../guides/data/pcap-analysis.md)                                                                         |
+| Captured di pacchetti        | Endpoint, DNS, TLS SNI, distribuzione dei protocolli e richieste HTTP                                   | tshark e capinfos forniti dal chiamante (verificati su Linux); [guida pcap](../guides/data/pcap-analysis.md)                                                   |
 | Assembly .NET                | Metadati, istruzioni CIL, dipendenze native dichiarate e confronti di build                             | Nessuno (solo statico); [guida managed-code](../guides/managed/managed-code-analysis.md)                                                                       |
 | PyInstaller                  | CArchive, PYZ, Python bytecode                                                                          | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                          |
 | Deno compile binaries        | Virtual files, entry point, recorded options, npm snapshot length                                       | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                           |
@@ -271,6 +275,12 @@ REA esporta un ambiente eseguibile con un test di base che ne verifica l’avvio
 [Guida alla creazione di un ambiente](https://rea.tools/guides/rl-environments/) ·
 [Riferimento degli ambienti](../agent-environments.md) ·
 [Guarda la demo su X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Ambienti di app desktop
+
+REA può creare anche un ambiente per un’app desktop Linux, che un agente usa tramite screenshot, mouse e tastiera. Da una richiesta di una riga, come «Creami un ambiente Gnote in cui l’agente aggiunge l’olio d’oliva alla nota della lista della spesa», il tuo agente installa l’app su un computer di build locale, scrive l’attività, esporta l’ambiente e verifica l’attività su un computer nuovo. La macchina che lo crea richiede Linux su amd64 o arm64, Docker e la versione del framework agentenv indicata dalla guida.
+
+[Configurare gli ambienti di app desktop](../desktop-build-computer.md)
 
 ## FAQ
 

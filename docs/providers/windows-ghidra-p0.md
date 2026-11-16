@@ -13,7 +13,7 @@ additional permission flag or degraded mode is required.
 
 ## Supported boundary
 
-- Windows 10+ x64 with fixed local NTFS target and temporary volumes;
+- Windows 10+ x64 with fixed local NTFS/ReFS target and temporary volumes;
 - Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+;
 - an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
@@ -91,7 +91,7 @@ mean Windows x64 itself is unsupported. Provider diagnostics retain the failure
 stage under `windows_native_failure`; the availability's `remediation` carries
 the corresponding repair.
 Self-test failures preserve the native operation and OS error text. Check the
-process's writable local NTFS temporary directory and the reported filesystem,
+process's writable local NTFS/ReFS temporary directory and the reported filesystem,
 DACL, Job Object or cleanup constraint, then rerun doctor after resolving it.
 Ghidra or Java reinstallation cannot resolve a native self-test failure. The
 provider remains unavailable until all native controls are proven; a later query
@@ -192,7 +192,7 @@ unchanged; these observations do not establish a speedup. Configured processor
 selection is covered by profile tests, not these real-provider runs.
 
 Admission opens and checks every path component without following a reparse
-point. It retains handles, verifies local NTFS semantics, and observes volume
+point. It retains handles, verifies local NTFS/ReFS semantics, and observes volume
 serial, 128-bit file ID, final handle path, requested path, and size. Reparse
 paths, alternate streams, ambiguous coordinates, UNC paths, and other
 filesystems are rejected with the actual constraint.
@@ -251,6 +251,12 @@ passing result does not test writes by Ghidra's child JVM, so a host that
 restricts only child processes can still pass doctor and fail at startup with
 the message above.
 The startup-output match is limited to the English `Access is denied` text.
+
+Windows cannot open an existing Ghidra project. When the client's registration
+sets `REA_GHIDRA_PROJECT_PATH`, `rea doctor` reports a failed
+`existing_project` check and the Ghidra provider as unavailable, the same
+refusal REA returns at runtime. Unset the setting to import targets into an
+ephemeral project.
 
 Process creation assigns a suspended child atomically to an owned Job Object.
 Membership and kill-on-owner-close policy are verified before resume.

@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { EspFlashImageArtifactReader } from "./EspFlashImageArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type {
   ArtifactEntry,
   ArtifactReaderTraversal,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as regionReads from "./EspFlashRegionReads.js";
@@ -172,6 +172,52 @@ describe("ESP flash layout inventory", () => {
     expect(snapshot.limitations).toContainEqual(
       expect.stringMatching(/0xa000.*0x1000.*MD5.*does not record/iu),
     );
+  });
+});
+
+it("inventories a zero-byte partition without reporting missing bytes", async () => {
+  const dump = espFlashDump({
+    bootloader: { at: 0, bytes: BOOTLOADER },
+    table: partitionTable([
+      ...TWO_OTA_PARTITIONS,
+      { label: "empty", type: 1, subtype: 0x82, offset: 0xa000, size: 0 },
+    ]),
+  });
+  const snapshot = await scanCanonicalArtifactInventory(await writeDump(dump));
+  expect(snapshot.coverage.status).toBe("complete");
+  expect(
+    snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "partitions/empty.bin",
+    ),
+  ).toMatchObject({
+    declared_size: 0,
+    limitations: ["partitions/empty.bin declares zero bytes."],
+    format_metadata: { flash_address: 0xa000, size: 0 },
+  });
+});
+
+it("keeps a zero-byte partition before the flash origin at a nonnegative offset", async () => {
+  const esp32 = espImage({
+    segments: ESP32C3_BOOTLOADER_SEGMENTS,
+    chipId: 0x0000,
+  });
+  const whole = espFlashDump({
+    bootloader: { at: 0x1000, bytes: esp32 },
+    table: partitionTable([
+      { label: "empty", type: 1, subtype: 0x82, offset: 0, size: 0 },
+      ...TWO_OTA_PARTITIONS,
+    ]),
+  });
+  const snapshot = await scanCanonicalArtifactInventory(
+    await writeDump(whole.subarray(0x1000)),
+    { espFlashSelection: { flashOffset: 0x1000 } },
+  );
+  const empty = snapshot.occurrences.find(
+    ({ logical_path }) => logical_path === "partitions/empty.bin",
+  );
+  expect(empty).toMatchObject({
+    declared_size: 0,
+    source_location: { offset: 0, length: 0 },
   });
 });
 
