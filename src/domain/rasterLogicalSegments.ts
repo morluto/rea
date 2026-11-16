@@ -1,3 +1,8 @@
+import { BinaryReader } from "./binaryContainer.js";
+
+/** Maximum retained record/coverage spans in the bounded logical image. */
+export const MAX_RASTER_LOGICAL_SEGMENTS = 500000;
+
 /** Explicit logical/file mappings. Logical offsets are not runtime addresses. */
 export interface RasterLogicalSegment {
   logicalOffset: number;
@@ -24,7 +29,7 @@ export function materializeRasterSegments(
     !Number.isSafeInteger(sourceOffset + source.length) ||
     source.length > LIMIT ||
     segments.length < 1 ||
-    segments.length > 500000
+    segments.length > MAX_RASTER_LOGICAL_SEGMENTS
   )
     throw new RangeError("Invalid source or segment budget");
   const ordered = segments
@@ -102,18 +107,17 @@ export function parseFgsRasterSegments(
     throw new RangeError(
       "FGS records require a complete file of 16 bytes..16 MiB",
     );
-  const view = new DataView(
-      source.buffer,
-      source.byteOffset,
-      source.byteLength,
+  const reader = new BinaryReader(
+      Buffer.from(source.buffer, source.byteOffset, source.byteLength),
+      true,
+      "fgs-records",
     ),
     footer = source.length - 16;
   const magic = [0xce, 0xde, 0xad, 0xce, 0x31, 0x21, 0x52, 0x31];
   if (
     magic.some((v, i) => source[footer + i] !== v) ||
-    view.getUint32(footer + 8, true) !== source.length ||
-    view.getUint32(footer + 12, true) !==
-      crc32(source.subarray(0, source.length - 4))
+    reader.u32(footer + 8) !== source.length ||
+    reader.u32(footer + 12) !== crc32(source.subarray(0, source.length - 4))
   )
     throw new RangeError("FGS footer, declared size or CRC32 mismatch");
   const segments: RasterLogicalSegment[] = [];
@@ -127,8 +131,8 @@ export function parseFgsRasterSegments(
     )
       continue;
     if (at + 12 > footer) throw new RangeError("Truncated FGS record header");
-    const length = view.getUint32(at + 4, true),
-      logicalOffset = view.getUint32(at + 8, true);
+    const length = reader.u32(at + 4),
+      logicalOffset = reader.u32(at + 8);
     if (
       length === 0 ||
       length > 44 ||
@@ -138,7 +142,7 @@ export function parseFgsRasterSegments(
       logicalOffset < logicalEnd
     )
       throw new RangeError("Invalid, overlapping or nonmonotone FGS records");
-    if (segments.length >= 500000)
+    if (segments.length >= MAX_RASTER_LOGICAL_SEGMENTS)
       throw new RangeError("FGS record budget exceeded");
     segments.push({ logicalOffset, fileOffset: at + 12, length });
     logicalEnd = logicalOffset + length;

@@ -1,3 +1,6 @@
+import { BinaryReader } from "./binaryContainer.js";
+import { MAX_RASTER_LOGICAL_SEGMENTS } from "./rasterLogicalSegments.js";
+
 /** Explicit grammar hypotheses, not inference of arbitrary descriptor ABIs. */
 export interface StructuredRasterField {
   offset: number;
@@ -198,7 +201,7 @@ export function discoverStructuredRasters(
     "offsetUnits",
   );
   const ranges = options.coverage ?? [{ offset: 0, length: bytes.length }];
-  integer(ranges.length, "coverage count", 0, 65536);
+  integer(ranges.length, "coverage count", 0, MAX_RASTER_LOGICAL_SEGMENTS);
   const sorted = ranges
     .map((r) => {
       integer(r.offset, "coverage.offset", 0, bytes.length);
@@ -272,14 +275,17 @@ export function discoverStructuredRasters(
     result.coverage.reason = reason;
     result.coverage.nextOffset = offset;
   };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-    little = grammar.endianness === "little";
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    grammar.endianness === "little",
+    "structured-raster",
+  );
   const readField = (at: number, f: StructuredRasterField) =>
     f.byteWidth === 1
-      ? view.getUint8(at + f.offset)
+      ? reader.range(at + f.offset, 1, "descriptor field")[0]!
       : f.byteWidth === 2
-        ? view.getUint16(at + f.offset, little)
-        : view.getUint32(at + f.offset, little);
+        ? reader.u16(at + f.offset)
+        : reader.u32(at + f.offset);
   type RecordValue = {
     descriptorOffset: number;
     format: number;

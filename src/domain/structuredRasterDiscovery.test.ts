@@ -240,3 +240,26 @@ it("does not let uncorroborated tables consume the retained table limit", () => 
   expect(result.coverage.rejectedUncorroboratedTables).toBeGreaterThan(0);
   expect(result.tables[0]?.offset).toBe(secondOffset);
 });
+
+it("accepts every covered range admitted by the logical segment owner", async () => {
+  const { materializeRasterSegments } =
+    await import("./rasterLogicalSegments.js");
+  const count = 65537;
+  const source = new Uint8Array(count * 4);
+  const image = materializeRasterSegments(
+    source,
+    Array.from({ length: count }, (_, i) => ({
+      logicalOffset: i * 8,
+      fileOffset: i * 4,
+      length: 4,
+    })),
+  );
+  expect(image.coverage).toHaveLength(count);
+  const result = discoverStructuredRasters(image.bytes, {
+    coverage: image.coverage,
+    maxWork: 1,
+  });
+  expect(result.tables).toEqual([]);
+  expect(result.coverage.complete).toBe(false);
+  expect(result.coverage.reason).toBe("work-limit");
+});
