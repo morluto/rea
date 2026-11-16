@@ -16,6 +16,7 @@ import {
 } from "../config/mcpToolsListPageBudget.js";
 import { createToolResultDelivery } from "./toolResult.js";
 import { paginateToolsList } from "./toolListPagination.js";
+import { createMcpSchemaValidation } from "../../tests/fixtures/mcpSchemaValidation.js";
 
 /**
  * The compact presentation strips field descriptions before advertising, so
@@ -91,10 +92,14 @@ const isToolsListReply = (message: JSONRPCMessage): message is ToolsListReply =>
   Array.isArray((message.result as { tools?: unknown }).tools);
 
 const connect = async (server: EvidenceMcpServer) => {
-  const client = new Client({
-    name: "tools-list-pagination-client",
-    version: "1",
-  });
+  const validation = createMcpSchemaValidation();
+  const client = new Client(
+    {
+      name: "tools-list-pagination-client",
+      version: "1",
+    },
+    { jsonSchemaValidator: validation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const replies: JSONRPCMessage[] = [];
@@ -112,6 +117,7 @@ const connect = async (server: EvidenceMcpServer) => {
       close: async () => {
         await client.close();
         await serving.close();
+        validation.clear();
       },
     };
   } catch (cause) {

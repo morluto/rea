@@ -4,9 +4,9 @@ import {
   type JSONRPCResultResponse,
 } from "@modelcontextprotocol/server";
 
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { canonicalJson } from "../domain/comparisonSemantics.js";
+import { toolsListPageBudgetConstraint } from "../domain/parseFailureAnalysisError.js";
 import { isRecord } from "../kernel/isRecord.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
@@ -84,25 +84,10 @@ const toolsListPageBudgetError = (
   budget: McpToolsListPageBudget,
   toolName: string,
 ): JSONRPCMessage => {
-  const reason = `Advertised tool ${toolName} is larger than the tools/list page budget.`;
-  const error = new AnalysisResourceConstraintError(
-    "tools/list",
-    "transport",
-    reason,
-    {
-      setting: budget.setting,
-      effective_bytes: budget.bytes,
-      source: budget.source,
-      default_bytes: budget.defaultBytes,
-      floor_bytes: budget.floorBytes,
-      maximum_bytes: budget.maximumBytes,
-      tool_name: toolName,
-    },
-    {
-      remediationAction: mcpToolsListPageBudgetRecovery(budget),
-      retryable: false,
-    },
-  );
+  const error = toolsListPageBudgetConstraint(budget, toolName, {
+    remediationAction: mcpToolsListPageBudgetRecovery(budget),
+    retryable: false,
+  });
   return {
     jsonrpc: "2.0",
     id: message.id,
