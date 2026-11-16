@@ -480,6 +480,7 @@ it.each([
       new ArtifactReaderFailure(
         "integrity",
         "Extracted content disagrees with inventory",
+        { integrityCheck: "container-identity" },
       ),
   },
 ] as const)(

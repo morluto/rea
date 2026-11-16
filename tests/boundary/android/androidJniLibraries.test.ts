@@ -3,6 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 import {
   readAndroidJniLibraries,
   ANDROID_JNI_LIBRARY_LIMITS,
@@ -24,7 +26,12 @@ import {
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { jniElfFixture } from "../../fixtures/android/jniElf.js";
-import { ZipArtifactReader } from "../../../src/resources/index.js";
+import {
+  ArtifactReaderFailure,
+  ZipArtifactReader,
+} from "../../../src/resources/index.js";
+import { InternalInvariantError } from "../../../src/domain/internalInvariant.js";
+import type { ArtifactReaderFailureReason } from "../../../src/resources/ArtifactReader.js";
 
 const OPERATION = "inspect_android_jni_bindings";
 const LIBRARY = "lib/arm64-v8a/libfixture.so";
@@ -264,8 +271,63 @@ it("names the reader check when a selected library fails an integrity check", as
         inventory: result.inventory,
       }).libraries[0]?.failure,
     ).toEqual(failure);
+    // An integrity failure without its check, or a check on another kind, is
+    // refused by the runtime schema and by its JSON Schema conversion.
+    const library = result.libraries[0];
+    const checkpoint = (failure: unknown) => ({
+      scan_state: "completed",
+      libraries: [{ ...library, failure }],
+      inventory: result.inventory,
+    });
+    const advertised = new Ajv2020({ strict: false }).compile(
+      z.toJSONSchema(androidJniLibraryCheckpointSchema, { io: "output" }),
+    );
+    expect(advertised(checkpoint(failure))).toBe(true);
+    for (const malformed of [
+      { kind: "integrity", message: "x" },
+      { kind: "io", message: "x", integrity_check: "entry-metadata" },
+    ]) {
+      expect(
+        androidJniLibraryCheckpointSchema.safeParse(checkpoint(malformed))
+          .success,
+      ).toBe(false);
+      expect(advertised(checkpoint(malformed))).toBe(false);
+    }
   } finally {
     entries.mockRestore();
+  }
+});
+
+it("refuses an integrity read failure that names no check and releases the reader", async () => {
+  const source = await fixture();
+  // Only the non-literal rebuild constructor can carry an explicit undefined check.
+  const reason: ArtifactReaderFailureReason = "integrity";
+  const open = vi.spyOn(ZipArtifactReader.prototype, "open").mockRejectedValue(
+    new ArtifactReaderFailure(reason, "unnamed check", {
+      integrityCheck: undefined,
+    }),
+  );
+  const close = vi.spyOn(ZipArtifactReader.prototype, "close");
+  const observations: AndroidJniLibraryCheckpoint[] = [];
+  try {
+    const failure = await read(source, {}, undefined, undefined, (checkpoint) =>
+      observations.push(checkpoint),
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(Error);
+    expect(
+      failure instanceof Error &&
+        [failure, failure.cause].some(
+          (error) => error instanceof InternalInvariantError,
+        ),
+    ).toBe(true);
+    expect(close).toHaveBeenCalled();
+    for (const checkpoint of observations)
+      expect(
+        androidJniLibraryCheckpointSchema.safeParse(checkpoint).success,
+      ).toBe(true);
+  } finally {
+    open.mockRestore();
+    close.mockRestore();
   }
 });
 

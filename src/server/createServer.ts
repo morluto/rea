@@ -15,7 +15,7 @@ import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
-import { registerFridaTools } from "./registerFridaTools.js";
+import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
@@ -34,10 +34,8 @@ import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
-import { registerBrowserTools } from "./registerBrowserTools.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
-import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
@@ -56,9 +54,6 @@ import {
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
 import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
-import { registerCutterTools } from "./registerCutterTools.js";
-import { registerGdbTools } from "./registerGdbTools.js";
-import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -304,14 +299,6 @@ export const createServer = (
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
-  const recordSessionEvidence =
-    session === undefined
-      ? undefined
-      : (
-          evidence: Parameters<
-            NonNullable<typeof session>["recordEvidence"]
-          >[0],
-        ) => session.recordEvidence(evidence);
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
@@ -335,16 +322,10 @@ export const createServer = (
     if (failures.length > 1)
       throw new AggregateError(failures, "REA server cleanup failed");
   };
-  const recordUnknown =
-    session === undefined
-      ? undefined
-      : (input: Parameters<NonNullable<typeof session>["recordUnknown"]>[0]) =>
-          session.recordUnknown(input);
   const analysisOptions = {
     logger: toolLogger,
     activeTarget,
     recordEvidence,
-    recordUnknown,
     evidenceById,
     withAdmittedAnalysis: analysisAdmission,
     ...(session === undefined
@@ -375,28 +356,11 @@ export const createServer = (
   registerToolFamilies({
     direct: () => registerOfficialTools(server, analysisOptions),
     enhanced: () =>
-      registerEnhancedTools(server, {
-        ...analysisOptions,
-        ...(session === undefined
-          ? {}
-          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
-        ...(session === undefined
-          ? {}
-          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
-        analysisProfile:
-          session === undefined
-            ? undefined
-            : (operation) =>
-                session.analysisProfile() ?? session.analysisProfile(operation),
-        allowsSnapshotReplay:
-          session === undefined
-            ? undefined
-            : (operation) => session.allowsSnapshotReplay(operation),
-        recordWorkflowSnapshot:
-          session === undefined
-            ? undefined
-            : (input) => session.recordWorkflowSnapshot(input),
-      }),
+      registerServiceTools(
+        server,
+        { enhancedWorkflows: { session } },
+        contractTools,
+      ),
     native: () => {
       registerNativeTools(server, { ...evidenceOptions, evidenceById });
       registerReverseEngineeringTools(
@@ -404,7 +368,7 @@ export const createServer = (
         reverseEngineering,
         toolLogger,
         delivery,
-        recordSessionEvidence,
+        recordEvidence,
         analysisAdmission,
         session === undefined
           ? undefined
@@ -420,30 +384,14 @@ export const createServer = (
               ),
         evidenceById,
       );
-      registerCutterTools(
+      registerServiceTools(
         server,
-        cutter,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-      );
-      registerGdbTools(
-        server,
-        gdbSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-        evidenceById,
-      );
-      registerRizinDebugTools(
-        server,
-        rizinDebugSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
+        {
+          cutter: { service: cutter, session },
+          gdb: { manager: gdbSessions, session },
+          rizinDebug: { manager: rizinDebugSessions, session },
+        },
+        { logger: toolLogger, recordEvidence, evidenceById },
       );
       registerBinaryDiagnosticsTools(
         server,
@@ -456,7 +404,6 @@ export const createServer = (
       registerServiceTools(
         server,
         {
-          cutterSessions: cutter,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
@@ -536,13 +483,12 @@ export const createServer = (
       );
     },
     frida: () =>
-      registerFridaTools(
+      // Frida instruments a live process the caller selects, outside
+      // analysis admission.
+      registerServiceTools(
         server,
-        fridaInstrumentation,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        evidenceById,
+        { frida: new FridaInstrumentationService(fridaInstrumentation) },
+        { logger: toolLogger, recordEvidence, evidenceById },
       ),
     apktool: () =>
       registerServiceTools(
@@ -563,12 +509,17 @@ export const createServer = (
         contractTools,
       ),
     browser: () => {
-      registerBrowserTools(server, {
-        ...common,
-        evidenceById,
-        browser: options.browserObservation,
-        loadFailure: options.optionalProviderLoadFailures?.browserObservation,
-      });
+      registerServiceTools(
+        server,
+        {
+          browserObservation: {
+            browser: options.browserObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.browserObservation,
+          },
+        },
+        contractTools,
+      );
       registerBrowserScenarioTool(server, {
         ...common,
         evidenceById,

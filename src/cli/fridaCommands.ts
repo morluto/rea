@@ -142,6 +142,9 @@ export const registerFridaCommands = (
       },
       cliPositionals: ["target"],
       handlerFields: ["pid", "program", "source_kind"],
+      // The CLI resolves a relative script file against the caller's
+      // directory; the contract admits only absolute paths.
+      callerPaths: ["path"],
       fields: {
         mode: { description: "Attach to a PID or spawn a program" },
         device_id: { description: "Frida device identifier" },

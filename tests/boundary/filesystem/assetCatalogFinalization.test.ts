@@ -164,6 +164,7 @@ it.each(["decode_interface_builder", "inspect_keyed_archive"] as const)(
               throw new ArtifactReaderFailure(
                 "integrity",
                 "controlled Interface Builder source change",
+                { integrityCheck: "container-identity" },
               );
             })
         : undefined;
