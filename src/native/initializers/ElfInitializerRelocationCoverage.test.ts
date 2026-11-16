@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { sectionRelocations } from "./ElfInitializerSymbols.js";
 import { InitializerNotes } from "./initializerNotes.js";
-import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
+import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 
 const section = (changes: Partial<NativeSection> = {}): NativeSection => ({
   index: 0,

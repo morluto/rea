@@ -5,7 +5,7 @@ import { ok } from "../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { resolveXrefsName } from "./XrefsAddressResolution.js";
 
 const names = (rows: JsonValue): AnalysisOperationPort => ({

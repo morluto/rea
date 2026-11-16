@@ -12,10 +12,9 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import {
@@ -23,6 +22,8 @@ import {
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -34,10 +35,13 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -117,10 +121,13 @@ it("advertises the complete currently available inventory with a session", async
       }) satisfies AnalysisClient,
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

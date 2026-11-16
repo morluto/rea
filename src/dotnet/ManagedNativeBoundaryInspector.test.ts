@@ -1,8 +1,8 @@
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { describe, expect, it } from "vitest";
 
 import { createHash } from "node:crypto";

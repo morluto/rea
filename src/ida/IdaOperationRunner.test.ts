@@ -6,12 +6,17 @@ import {
 } from "../../tests/fixtures/idaMcp.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 
-it.each(["legacy", "modern", "native"] as const)(
+/** The fixture serves the native protocol attached and the supervisor headless. */
+const producerFor = (target: BinaryTarget, protocol: "modern" | "native") =>
+  new RecordingIdaMcp(target, protocol === "native" ? "attached" : "headless");
+
+it.each(["modern", "native"] as const)(
   "%s validates string address selectors independently of inventory contents",
   async (protocol) => {
     const { root, target } = await createIdaTarget();
-    const producer = new RecordingIdaMcp(target);
+    const producer = producerFor(target, protocol);
     const runner = new IdaOperationRunner(producer, protocol);
     try {
       for (const populated of [false, true]) {
@@ -22,8 +27,6 @@ it.each(["legacy", "modern", "native"] as const)(
             ]
           : [];
         producer.overrideCall = (tool) => {
-          if (tool === "list_strings")
-            return { data: strings, next_offset: null };
           if (tool === "find_regex")
             return {
               matches: strings.map(({ address, string }) => ({
@@ -50,14 +53,11 @@ it.each(["legacy", "modern", "native"] as const)(
   },
 );
 
-it.each(["legacy", "modern", "native"] as const)(
+it.each(["modern", "native"] as const)(
   "%s procedure resolution rejects file coordinates before any symbol lookup",
   async (protocol) => {
     const { root, target } = await createIdaTarget();
-    const producer = new RecordingIdaMcp(
-      target,
-      protocol === "legacy" ? "attached" : "headless",
-    );
+    const producer = producerFor(target, protocol);
     const runner = new IdaOperationRunner(producer, protocol);
     try {
       await expect(
@@ -81,11 +81,11 @@ it.each(["legacy", "modern", "native"] as const)(
   },
 );
 
-it.each(["legacy", "modern", "native"] as const)(
+it.each(["modern", "native"] as const)(
   "%s retains function identities independently of unused source spans",
   async (protocol) => {
     const { root, target } = await createIdaTarget();
-    const producer = new RecordingIdaMcp(target);
+    const producer = producerFor(target, protocol);
     const runner = new IdaOperationRunner(producer, protocol);
     try {
       // Cover omitted, malformed and normal source spans at the connection seam.
@@ -96,20 +96,13 @@ it.each(["legacy", "modern", "native"] as const)(
         { size: "0x20" },
       ];
       for (const span of spans) {
-        const fn = { address: "0x1000", name: "main", ...span };
-        const modernFn = { addr: fn.address, name: fn.name, ...span };
+        const modernFn = { addr: "0x1000", name: "main", ...span };
         producer.overrideCall = (tool) => {
           switch (tool) {
-            case "list_functions":
-              return { data: [fn], next_offset: null };
             case "list_funcs":
               return [{ data: [modernFn], next_offset: null }];
-            case "get_function_by_name":
-              return fn;
             case "lookup_funcs":
               return [{ query: "main", fn: modernFn, error: null }];
-            case "get_xrefs_to":
-              return [{ address: "0x1004", type: "code", function: fn }];
             case "xrefs_to":
               return [
                 {
@@ -117,17 +110,6 @@ it.each(["legacy", "modern", "native"] as const)(
                   more: false,
                 },
               ];
-            case "disasm":
-              if (protocol === "native")
-                return {
-                  asm: {
-                    name: "main",
-                    start_ea: "0x1000",
-                    lines: "main (.text @ 0x1000):\n1000  ret",
-                  },
-                  cursor: { done: true },
-                };
-              return undefined;
             default:
               return undefined;
           }
@@ -159,14 +141,10 @@ it.each(["legacy", "modern", "native"] as const)(
             },
           },
         });
-        const source = protocol === "legacy" ? fn : modernFn;
         expect(runner.raw).toContainEqual(
           expect.objectContaining({
-            tool: protocol === "legacy" ? "list_functions" : "list_funcs",
-            result:
-              protocol === "legacy"
-                ? { data: [source], next_offset: null }
-                : [{ data: [source], next_offset: null }],
+            tool: "list_funcs",
+            result: [{ data: [modernFn], next_offset: null }],
           }),
         );
       }
@@ -175,7 +153,6 @@ it.each(["legacy", "modern", "native"] as const)(
         { address: "0x1000", name: "" },
       ]) {
         producer.overrideCall = (tool): JsonValue | undefined => {
-          if (tool === "get_function_by_name") return malformed;
           if (tool === "lookup_funcs")
             return [{ query: "main", fn: malformed, error: null }];
           return undefined;
@@ -190,35 +167,24 @@ it.each(["legacy", "modern", "native"] as const)(
 );
 
 it.each([
-  ["legacy", "functions"],
   ["modern", "functions"],
   ["native", "functions"],
-  ["legacy", "strings"],
   ["modern", "strings"],
   ["native", "strings"],
 ] as const)(
   "%s %s inventory rejects a repeated or backward offset before another request",
   async (protocol, inventory) => {
     const { root, target } = await createIdaTarget();
-    const producer = new RecordingIdaMcp(target);
+    const producer = producerFor(target, protocol);
     try {
       for (const next of [2, 1]) {
         let pages = 0;
         producer.overrideCall = (tool) => {
-          if (
-            ![
-              "list_functions",
-              "list_funcs",
-              "list_strings",
-              "find_regex",
-            ].includes(tool)
-          )
-            return undefined;
+          if (!["list_funcs", "find_regex"].includes(tool)) return undefined;
           const nextOffset = pages++ === 0 ? 2 : next;
           if (tool === "find_regex")
             return { matches: [], cursor: { next: nextOffset } };
-          const page = { data: [], next_offset: nextOffset };
-          return tool === "list_funcs" ? [page] : page;
+          return [{ data: [], next_offset: nextOffset }];
         };
         const runner = new IdaOperationRunner(producer, protocol);
         await expect(runner[inventory]()).rejects.toMatchObject({

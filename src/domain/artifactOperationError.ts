@@ -7,6 +7,7 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
+import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
@@ -35,23 +36,25 @@ export interface ArtifactAdmissionLimit {
  * output tree used after commit or whose cleanup could not be verified,
  * or a verification traversal that did not reproduce every inventoried entry.
  */
-export type ArtifactIntegrityCheck =
-  | "foreign-entry"
-  | "entry-metadata"
-  | "container-identity"
-  | "unpacked-entry-identity"
-  | "member-identity"
-  | "image-checksum"
-  | "read-coverage"
-  | "declared-size"
-  | "reader-ownership"
-  | "declared-digest"
-  | "layout-consistency"
-  | "reconstruction"
-  | "inventory-node"
-  | "output-readback"
-  | "output-lifecycle"
-  | "traversal-coverage";
+export const ARTIFACT_INTEGRITY_CHECKS = [
+  "foreign-entry",
+  "entry-metadata",
+  "container-identity",
+  "unpacked-entry-identity",
+  "member-identity",
+  "image-checksum",
+  "read-coverage",
+  "declared-size",
+  "reader-ownership",
+  "declared-digest",
+  "layout-consistency",
+  "reconstruction",
+  "inventory-node",
+  "output-readback",
+  "output-lifecycle",
+  "traversal-coverage",
+] as const;
+export type ArtifactIntegrityCheck = (typeof ARTIFACT_INTEGRITY_CHECKS)[number];
 
 /** Artifact inventory or extraction failed a typed safety boundary. */
 export class ArtifactOperationError extends AnalysisError {
@@ -61,6 +64,8 @@ export class ArtifactOperationError extends AnalysisError {
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly boundary: ArtifactLimitBoundary | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  /** For a `limit` reason, the release-fixed allowance that refused the input. */
+  readonly fixedAllowance: FixedAllowance | undefined;
   /** For an `integrity` reason, the check the producing reader named. */
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
@@ -107,6 +112,7 @@ export class ArtifactOperationError extends AnalysisError {
       readonly admission?: ArtifactAdmissionLimit;
       readonly boundary?: ArtifactLimitBoundary;
       readonly readerLimit?: ArtifactReaderLimitFact;
+      readonly fixedAllowance?: FixedAllowance;
       readonly integrityCheck?: ArtifactIntegrityCheck;
     },
   ) {
@@ -119,6 +125,7 @@ export class ArtifactOperationError extends AnalysisError {
     this.admission = options?.admission;
     this.boundary = options?.boundary;
     this.readerLimit = options?.readerLimit;
+    this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
     this.remediationAction = options?.remediationAction;
     this.userMessage =
