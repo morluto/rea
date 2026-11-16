@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "./javascriptRuntimeReconciliationExample.js";
 
@@ -5,7 +6,7 @@ import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "./javascriptRuntimeReco
 export const STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE = {
   application: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE,
   capture: createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "rea-example-har", name: "Example HAR", version: "1" },
     {
       operation: "inspect_web_network_capture",

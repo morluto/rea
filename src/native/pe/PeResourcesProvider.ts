@@ -1,4 +1,4 @@
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -6,20 +6,17 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeResourcesPort } from "../../application/binaryDiagnostics/PeResourcesPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+  artifactParseFailure,
+} from "../../resources/index.js";
+import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
+import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
   AnalysisInputError,
@@ -35,8 +32,9 @@ import { err, ok } from "../../domain/result.js";
 import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeResources,
+  peResourceLimitBoundary,
   PE_RESOURCE_METADATA_BYTES,
-} from "./PeResourceParser.js";
+} from "../../domain/pe/peResourceInventory.js";
 
 /** Portable parser over one bounded, identity-checked regular file. */
 export class PeResourcesProvider implements PeResourcesPort {
@@ -66,18 +64,23 @@ export class PeResourcesProvider implements PeResourcesPort {
           undefined,
           this.#resources,
         );
-        return ok(
-          await parsePeResources(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
+        const { bytes, sha256 } = snapshot;
+        try {
+          return ok(
+            await parsePeResources(
+              bytes,
+              { path: input.path, sha256, bytes: bytes.length },
+              input,
+              options?.signal,
+            ),
+          );
+        } catch (cause) {
+          throw artifactParseFailure(
+            cause,
             options?.signal,
-          ),
-        );
+            peResourceLimitBoundary,
+          );
+        }
       });
     } catch (cause) {
       return err(peResourcesFailure(cause, input, snapshot));
@@ -150,7 +153,8 @@ const peResourcesFailurePrimary = (
               ? fixedNativeAllowance(
                   "The PE resource metadata allowance",
                   "parser",
-                  `${String(PE_RESOURCE_METADATA_BYTES)} bytes (8 MiB)`,
+                  PE_RESOURCE_METADATA_BYTES,
+                  "bytes",
                 )
               : {
                   retryable: false as const,

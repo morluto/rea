@@ -1,3 +1,4 @@
+import { isRecord } from "../kernel/isRecord.js";
 export const schemaMaps = new Set([
   "$defs",
   "definitions",
@@ -28,12 +29,7 @@ export const schemaSubschemas = (
   options: { readonly includeDefinitions: boolean },
 ): unknown[] =>
   Object.entries(schema).flatMap(([key, value]) => {
-    if (
-      schemaMaps.has(key) &&
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value)
-    )
+    if (schemaMaps.has(key) && isRecord(value))
       return !options.includeDefinitions &&
         (key === "$defs" || key === "definitions")
         ? []

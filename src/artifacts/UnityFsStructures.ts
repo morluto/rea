@@ -1,13 +1,15 @@
 import { Budget } from "../domain/budget.js";
 import type { FileHandle } from "node:fs/promises";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { decodeLz4Block } from "../gpu/Lz4Block.js";
+import { decodeLz4Block } from "../compression/Lz4Block.js";
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+} from "../domain/binaryContainer.js";
 import { setImmediate } from "node:timers/promises";
 import {
   readUnityFsHeaderFacts,
@@ -229,7 +231,12 @@ export const decodeUnityFsLz4 = async (
   signal?: AbortSignal,
 ): Promise<Buffer> => {
   try {
-    return await decodeLz4Block(encoded, expected, signal);
+    return await decodeLz4Block(
+      encoded,
+      expected,
+      MAX_BLOCK_UNCOMPRESSED_BYTES,
+      signal,
+    );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof BinaryResourceFailure)

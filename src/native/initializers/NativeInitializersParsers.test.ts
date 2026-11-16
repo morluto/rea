@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { deflateSync } from "node:zlib";
 import { readNativeInitializers } from "./NativeInitializersProvider.js";
 
@@ -6,10 +6,11 @@ import { readNativeInitializers } from "./NativeInitializersProvider.js";
 const mapping = vi.hoisted(() => ({
   scans: vi.fn(),
   indexes: vi.fn(),
+  lookups: { count: 0 },
 }));
-vi.mock("../metadata/BinaryContainer.js", async (importOriginal) => {
+vi.mock("../../domain/binaryContainer.js", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("../metadata/BinaryContainer.js")>();
+    await importOriginal<typeof import("../../domain/binaryContainer.js")>();
   return {
     ...actual,
     mappedFileOffset: (
@@ -22,10 +23,51 @@ vi.mock("../metadata/BinaryContainer.js", async (importOriginal) => {
       ...args: Parameters<typeof actual.createFileMappingIndex>
     ) => {
       mapping.indexes(...args);
-      return actual.createFileMappingIndex(...args);
+      const index = actual.createFileMappingIndex(...args);
+      return {
+        ...index,
+        offset: (...lookup: Parameters<typeof index.offset>) => {
+          mapping.lookups.count++;
+          return index.offset(...lookup);
+        },
+      };
     },
   };
 });
+/** Element reads of every parsed ELF section table, so tests can count section walks. */
+const sectionReads = vi.hoisted(() => ({ count: 0, budget: Infinity }));
+vi.mock(
+  "../../domain/native/nativeSectionDirectory.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../domain/native/nativeSectionDirectory.js")
+      >();
+    return {
+      ...actual,
+      readElfDirectoryFromBuffer: (
+        ...args: Parameters<typeof actual.readElfDirectoryFromBuffer>
+      ) => {
+        const directory = actual.readElfDirectoryFromBuffer(...args);
+        return {
+          ...directory,
+          sections: new Proxy(directory.sections, {
+            get(target, key, receiver) {
+              // Past the budget a walk fails at once instead of finishing.
+              if (
+                typeof key === "string" &&
+                /^\d+$/u.test(key) &&
+                ++sectionReads.count > sectionReads.budget
+              )
+                throw new Error("Section table read budget exceeded");
+              return Reflect.get(target, key, receiver) as unknown;
+            },
+          }),
+        };
+      },
+    };
+  },
+);
 import {
   elf32RelativeInitializers,
   elf64PieInitializers,
@@ -48,8 +90,8 @@ import {
 } from "../../domain/native/nativeInitializers.js";
 import { buildAddressRangeIndex } from "./addressRangeIndex.js";
 import { InitializerNotes } from "./initializerNotes.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 
 const artifact = (bytes: Buffer) => ({
   path: "/artifacts/image",
@@ -403,10 +445,10 @@ describe("ELF slot semantics", () => {
     expect(report.limitations.join("\n")).not.toContain("DT_SYMTAB");
   });
 
-  it("marks coverage incomplete when a relocation needs the missing DT_SYMTAB", async () => {
+  it("leaves coverage unknown when a relocation needs the missing DT_SYMTAB", async () => {
     const report = await read(sectionlessElf(false));
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "unknown",
       total_entries: null,
     });
     expect(report.limitations).toContain(
@@ -538,12 +580,16 @@ describe("ELF incomplete inputs", () => {
     const bytes = elf64PieInitializers();
     // DT_INIT_ARRAYSZ is the fourth dynamic entry; 2^50 slots is still a safe integer.
     bytes.writeBigUInt64LE(8n << 50n, 0x300 + 3 * 16 + 8);
-    const started = performance.now();
+    mapping.lookups.count = 0;
     const report = await read(bytes);
-    expect(performance.now() - started).toBeLessThan(10_000);
+    // Each admitted slot is located once; the rest of the image adds a few
+    // hundred lookups (66194 here). An unclamped slot loop locates every slot.
+    expect(mapping.lookups.count).toBeLessThan(
+      MAX_NATIVE_INITIALIZER_ENTRIES + 1024,
+    );
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "partial",
       total_entries: null,
     });
     expect(report.coverage.examined_entries).toBeLessThanOrEqual(
@@ -564,7 +610,7 @@ describe("ELF incomplete inputs", () => {
     const report = await read(bytes);
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "partial",
       examined_entries: MAX_NATIVE_INITIALIZER_ENTRIES,
       total_entries: null,
     });
@@ -617,7 +663,7 @@ describe("ELF incomplete inputs", () => {
     const beyond = await read(bytes, { offset: 100 });
     expect(beyond.entries).toHaveLength(0);
     expect(beyond.status).toBe("incomplete");
-    expect(beyond.coverage.status).toBe("incomplete");
+    expect(beyond.coverage.status).toBe("partial");
     expect(
       beyond.limitations.some((line) =>
         line.includes("exceeded the 1024-byte name budget"),
@@ -770,7 +816,7 @@ describe("Mach-O", () => {
     });
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "unknown",
       total_entries: null,
     });
     expect(report.limitations).toEqual(
@@ -950,10 +996,15 @@ describe("ELF section lookups", () => {
       bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
       bytes.writeBigUInt64LE(BigInt(base.length), 0x300 + 2 * 16 + 8);
       bytes.writeBigUInt64LE(BigInt(slots * 8), 0x300 + 3 * 16 + 8);
-      const started = performance.now();
+      // Each consumer walks the table once (about 6 x 65535 reads); a
+      // per-lookup walk would read it once per slot.
+      sectionReads.count = 0;
+      sectionReads.budget = 12 * 65535;
+      onTestFinished(() => {
+        sectionReads.budget = Infinity;
+      });
       const report = await read(bytes);
-      // A per-lookup header walk is about 4e9 comparisons here; the index is a few hundred ms.
-      expect(performance.now() - started).toBeLessThan(10_000);
+      expect(sectionReads.count).toBeLessThanOrEqual(sectionReads.budget);
       expect(report.coverage.examined_entries).toBe(slots);
       const slot = report.entries.find((entry) => entry.kind === "init_array");
       expect(slot).toMatchObject({
@@ -1622,6 +1673,32 @@ describe("Mach-O fixup sources", () => {
   });
 });
 
+it("reports an object-file import name over the name budget as partial coverage", async () => {
+  const fixture = machoX8664ObjectInitializers();
+  // `_startup` (nlist 2) becomes an undefined external with a 1101-byte name.
+  const strings = Buffer.from(`\0_before\0_${"s".repeat(1100)}\0`, "utf8");
+  const image = Buffer.alloc(0x270 + strings.length);
+  fixture.copy(image, 0, 0, 0x270);
+  strings.copy(image, 0x270);
+  image.writeUInt32LE(strings.length, 284);
+  image.writeUInt8(0x01, 0x260 + 4);
+  image.writeUInt8(0, 0x260 + 5);
+  const report = await read(image);
+  expect(report.entries[0]).toMatchObject({
+    resolution: "unresolved_import",
+    symbol: null,
+  });
+  expect(report.status).toBe("incomplete");
+  // The withheld name is this entry's own: a known gap, not unknown coverage.
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    total_entries: null,
+  });
+  expect(report.limitations).toContain(
+    "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
+  );
+});
+
 describe("Initializer target semantics", () => {
   it("keeps an absolute relocation against an IFUNC symbol unresolved", async () => {
     const bytes = elfRelocatableCtors();
@@ -1898,7 +1975,7 @@ describe("Initializer address mapping", () => {
     expect(many.indexes).toBeGreaterThan(0);
   });
 
-  it("reports a Mach-O bind name over the name budget as incomplete", async () => {
+  it("reports a Mach-O bind name over the name budget as partial coverage", async () => {
     const bytes = machoArm64Initializers();
     const name = `_${"b".repeat(1100)}`;
     // Rebuild the chained-fixups payload with one DYLD_CHAINED_IMPORT bound by flat lookup.
@@ -1927,6 +2004,11 @@ describe("Initializer address mapping", () => {
       symbol: null,
     });
     expect(report.status).toBe("incomplete");
+    // The withheld import name is a known gap, not undetermined coverage.
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      total_entries: null,
+    });
     expect(report.limitations).toContain(
       "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
     );
@@ -1942,7 +2024,7 @@ it("keeps a slot touched by an overrun section relocation unresolved", async () 
     offset: 0,
     limit: 64,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(
     report.entries.find((entry) => entry.kind === "init_array"),
   ).toMatchObject({ resolution: "unresolved", value_va: null });
@@ -1970,7 +2052,7 @@ it("retains unknown coverage when sparse bind lookups exhaust their allowance", 
     offset: 0,
     limit: 1,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(report.entries[0]).toMatchObject({
     resolution: "unresolved",
     value_va: null,
@@ -2007,7 +2089,7 @@ it("keeps a linked section-fallback slot unresolved when its load mapping disagr
     offset: 0,
     limit: 64,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("unknown");
   expect(
     report.entries.find((entry) => entry.kind === "init_array"),
   ).toMatchObject({

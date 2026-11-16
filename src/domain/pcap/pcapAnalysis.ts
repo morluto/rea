@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
 /** Summary capture admission and discovery share this native-bound host profile. */
@@ -18,8 +22,8 @@ export const PCAP_CAPTURE_HOST_REMEDIATION =
 export const pcapInputSchemas = {
   inspect_pcap_client: z.strictObject({}),
   inspect_pcap_capture: z.strictObject({
-    path: localPathStringSchema.describe(
-      "Local pcap or pcapng capture file to inspect",
+    path: absoluteLocalPathStringSchema.describe(
+      "Absolute local pcap or pcapng capture file to inspect",
     ),
   }),
 } as const;
@@ -123,7 +127,7 @@ export const pcapResultSchemas = {
     unattributed_dns_addresses: z.array(z.string().min(1)),
     unattributed_dns_address_count: z.int().nonnegative(),
     unattributed_dns_packet_count: z.int().nonnegative(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
     diagnostics: z
       .strictObject({ capinfos_stderr: z.string(), tshark_stderr: z.string() })
       .optional(),

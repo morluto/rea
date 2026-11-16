@@ -19,10 +19,13 @@ vi.mock("../../domain/propertyListKeys.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   parseXmlPropertyList: stackOverflow,
 }));
-vi.mock("./BinaryPlistMaterializer.js", async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  decodeBinaryPropertyList: stackOverflow,
-}));
+vi.mock(
+  "../../domain/apple/binaryPlistMaterializer.js",
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    decodeBinaryPropertyList: stackOverflow,
+  }),
+);
 
 it.each([
   ["XML", Buffer.from('<?xml version="1.0"?><plist><dict/></plist>')],

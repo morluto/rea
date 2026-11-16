@@ -11,12 +11,13 @@ import {
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
 } from "../domain/windowsNativeArtifact.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** A native resource remains opaque until the addon validates its object tag. */
-export const windowsHandleSchema = z.custom<object>(
-  (value): value is object =>
-    typeof value === "object" && value !== null && !Array.isArray(value),
+export const windowsHandleSchema = z.custom<object>((value): value is object =>
+  isRecord(value),
 );
 
 /** Observed identity of an opened local NTFS or ReFS object. */
@@ -182,7 +183,7 @@ export const loadWindowsNativeAuthority = (
       return {
         available: false,
         failureStage: "load",
-        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${cause instanceof Error ? cause.message : String(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
+        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${errorMessage(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
       };
     }
     const binding = bindingSchema.parse(loadedModule);
@@ -194,7 +195,7 @@ export const loadWindowsNativeAuthority = (
         available: false,
         failureStage: "self-test",
         retryable: true,
-        reason: `REA Windows native self-test failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `REA Windows native self-test failed: ${errorMessage(cause)}`,
       };
     }
     const parsed = inspectionSchema.safeParse(observed);
@@ -210,7 +211,7 @@ export const loadWindowsNativeAuthority = (
     return {
       available: false,
       failureStage: "artifact",
-      reason: `REA Windows native controls are unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      reason: `REA Windows native controls are unavailable: ${errorMessage(cause)}`,
     };
   }
 };

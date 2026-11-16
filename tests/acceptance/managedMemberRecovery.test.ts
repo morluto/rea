@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
@@ -18,6 +19,7 @@ import {
 import { buildManagedMemberCapacityFixture } from "../fixtures/managedMemberCapacity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const createTransport = () =>
   new StdioClientTransport({
@@ -48,7 +50,10 @@ cliTest(
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const transport = createTransport();
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({ name: "managed-type-recovery", version: "1" });
+    const client = new Client(
+      { name: "managed-type-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(
@@ -80,8 +85,8 @@ cliTest(
       expect(mcpEvidence.normalized_result).toEqual(
         cliEvidence.normalized_result,
       );
-      expect(mcpEvidence.subject?.digest.sha256).toBe(sha256);
-      expect(cliEvidence.subject?.digest.sha256).toBe(sha256);
+      expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
+      expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
       const report = managedMemberInspectionSchema.parse(
         mcpEvidence.normalized_result,
       );

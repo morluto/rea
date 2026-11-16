@@ -51,8 +51,10 @@ it("retains completed fuse Evidence when the provider completes after abort", as
       provider: identity,
       subject: {
         local_path: report.artifact.resolved_path,
-        digest: { sha256: report.artifact.sha256 },
-        format: report.artifact.format,
+        identity: {
+          sha256: report.artifact.sha256,
+          format: report.artifact.format,
+        },
       },
       parameters: { path: report.artifact.selected_path },
       confidence: "observed",
