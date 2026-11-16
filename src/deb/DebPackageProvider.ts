@@ -7,7 +7,7 @@ import {
   readStableArtifact,
   type StableArtifactSnapshot,
 } from "../resources/index.js";
-import type { DebPackagePort } from "../application/deb/DebPackagePort.js";
+import type { DebPackagePort } from "../ports/deb/DebPackagePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {

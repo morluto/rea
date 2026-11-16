@@ -1,7 +1,7 @@
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../../ports/AnalysisProvider.js";
+} from "../AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type {
   DebPackage,
