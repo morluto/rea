@@ -10,6 +10,23 @@ import {
   type CliCommandRegistrationId,
 } from "../../../src/cli/cliCommandRegistrations.js";
 import { selectCliRegistrations } from "../../../src/cli/cliLoader.js";
+import {
+  cliCompletionShell,
+  parseCliGlobalArguments,
+} from "../../../src/cliBuiltinArguments.js";
+
+/** Select registrars as the executable does: completion has no global arguments. */
+const selectFor = (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  recorded: Readonly<Record<string, string>> | undefined,
+) =>
+  selectCliRegistrations(
+    cliCompletionShell(environment) === undefined
+      ? parseCliGlobalArguments(arguments_)
+      : undefined,
+    recorded,
+  );
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
@@ -102,7 +119,7 @@ describe("lazy CLI registration", () => {
       arguments_: readonly string[],
       environment: NodeJS.ProcessEnv = {},
       record: Readonly<Record<string, string>> | null = recorded,
-    ) => selectCliRegistrations(arguments_, environment, record ?? undefined);
+    ) => selectFor(arguments_, environment, record ?? undefined);
 
     expect(select(["inspect-go-binary", "a.out"])).toEqual(["go"]);
     expect(select(["inspect-go-binary", "a.out", "--json"])).toEqual(["go"]);
@@ -120,7 +137,10 @@ describe("lazy CLI registration", () => {
     // Help, schemas, LLM manifests and builtins describe the whole catalog.
     for (const flag of ["--help", "-h", "--schema", "--llms", "--llms-full"])
       expect(select(["inspect-go-binary", flag]), flag).toBeUndefined();
-    expect(select(["inspect-go-binary", "--mcp"])).toBeUndefined();
+    // A retired mode is refused without constructing command analysis.
+    expect(select(["inspect-go-binary", "--mcp"])).toEqual([]);
+    expect(select(["unknown", "--mcp"], {}, null)).toEqual([]);
+    expect(select(["--mcp"])).toBeUndefined();
     expect(select([])).toBeUndefined();
     expect(select(["skills", "add"])).toBeUndefined();
     // An unknown name needs every command for "did you mean".
@@ -133,7 +153,9 @@ describe("lazy CLI registration", () => {
       select(["inspect-go-binary"], {}, { "inspect-go-binary": "removed" }),
     ).toBeUndefined();
   });
+});
 
+describe("lazy CLI execution", () => {
   processTest(
     "runs a recorded command without loading the complete CLI",
     async ({ processes }) => {
@@ -161,6 +183,14 @@ registerHooks({ resolve(specifier, context, next) {
       expect(version.exitCode, version.stderr).toBe(0);
       expect(version.stdout).toBe(`${PRODUCT_IDENTITY.packageVersion}\n`);
       expect(version.stderr).not.toContain(marker);
+      const retired = await run(["doctor", "--mcp", "--json", "--full-output"]);
+      expect(retired.exitCode, retired.stderr).toBe(1);
+      expect(JSON.parse(retired.stdout)).toMatchObject({
+        ok: false,
+        error: { code: "MCP_MODE_REMOVED" },
+        meta: { command: "doctor" },
+      });
+      expect(retired.stderr).not.toContain(marker);
       const complete = await run(["list-cutter-sessions", "--help"]);
       expect(complete.exitCode, complete.stderr).toBe(0);
       expect(complete.stderr).toContain(marker);

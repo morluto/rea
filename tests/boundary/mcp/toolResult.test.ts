@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -13,10 +14,14 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
+import {
+  annotationsFromEffects,
+  toolEffects,
+} from "../../../src/contracts/toolEffects.js";
 import { err } from "../../../src/domain/result.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
+import { HopperProcessError } from "../../../src/hopper/HopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -32,6 +37,7 @@ import type {
   IncompleteProcessCaptureObservations,
   ProcessCaptureCleanupReport,
 } from "../../../src/domain/process/processCapture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
@@ -56,24 +62,9 @@ const contract: ToolContract = {
   kind: "enhanced",
   inputSchema: z.object({}),
   outputSchema: z.object({ value: z.string() }),
-  effects: {
-    mutatesTarget: false,
-    mutatesSession: false,
-    writesFilesystem: false,
-    launchesProcess: false,
-    accessesNetwork: false,
-    changesUiState: false,
-    mayDiscardData: false,
-    executesForeignCode: false,
-    mutatesDevice: false,
-    idempotent: true,
-  },
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  effects: toolEffects(),
+  sessionEffects: toolEffects(),
+  annotations: annotationsFromEffects(toolEffects()),
   returnsTargetContent: false,
   examples: [{ title: "Example fixture request", input: {} }],
 };
@@ -162,10 +153,13 @@ describe("completed partial process capture MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-error-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-error-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -302,10 +296,13 @@ describe("incomplete partial process observations MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-observations-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-observations-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -414,7 +411,7 @@ describe("tool result projection", () => {
   });
   it("returns one complete Evidence record with its typed normalized result", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "fixture",
@@ -449,7 +446,7 @@ describe("tool result projection", () => {
     "preserves a complete reusable Evidence record for JSON result %j",
     (value) => {
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "fixture", parameters: {}, result: value },
       );
@@ -503,7 +500,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Partial observation fixture", version: "1" },
       { operation: "fixture", parameters: {}, result: { observed: true } },
     );
@@ -543,7 +540,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("preserves cleanup details when an unretained partial exceeds the response budget", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "get_call_graph",

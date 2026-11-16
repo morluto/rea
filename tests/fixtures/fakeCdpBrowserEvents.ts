@@ -112,7 +112,7 @@ const emitMainWebMcpTools = (
       ...(options.webMcpFrameCount !== undefined && options.webMcpFrameCount > 0
         ? [
             {
-              name: "beyond_frame_limit_tool",
+              name: "last_frame_tool",
               description: "Registered in an in-scope frame after index 999",
               frameId: `webmcp-frame-${String(options.webMcpFrameCount - 1)}`,
             },

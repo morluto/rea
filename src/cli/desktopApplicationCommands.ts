@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "../contracts/desktopApplicationToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -23,7 +22,6 @@ export const registerDesktopApplicationCommands = (
       "inspect_desktop_application",
     ),
     {
-      command: CLI_COMMANDS.inspectDesktopApplication,
       description:
         "Identify desktop runtime candidates from bounded directory and header observations",
       positionals: ["path"],

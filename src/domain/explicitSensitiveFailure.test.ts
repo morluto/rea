@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
 import {
   AnalysisAccessDeniedError,
@@ -56,7 +57,7 @@ it.each([
   new ProviderAdapterError("provider", "inspect", context),
 ])("preserves sanitized common context for $._tag", (error) => {
   const observation = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Owner facts", version: "1" },
     {
       operation: "inspect",

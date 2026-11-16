@@ -33,7 +33,7 @@ structure, recorded as `mips_abi_basis` in the profile and stated as a
 limitation in Evidence, never a declared fact; floating-point ABI semantics
 stay unverified. Ghidra's own header auto-selection picks a 64-bit language
 for exactly these files, so the lane pins `-processor MIPS:<LE|BE>:32:default`
-through a `provider-pinned-v1` profile selection and checks the
+through a `provider-pinned` profile selection and checks the
 bridge-reported `language_id` after import. A caller-selected
 `REA_GHIDRA_LANGUAGE_ID`/`REA_GHIDRA_COMPILER_SPEC_ID` still wins over the
 pin; combining the pinned profile with an environment override is a typed

@@ -333,8 +333,7 @@ cliTest(
       result.json,
     );
     expect(evidence.subject).toMatchObject({
-      format: "mach-o",
-      architecture: "arm64_32",
+      identity: { format: "mach-o", architecture: "arm64_32" },
     });
     expect(rustBinarySchema.parse(evidence.normalized_result)).toMatchObject({
       architecture: "arm64_32",
@@ -715,6 +714,33 @@ cliTest(
     expect(report.rustc_commit?.hashes).toHaveLength(65);
     expect(report.rustc_commit).not.toHaveProperty("coverage");
     expect(report.auditable_metadata?.packages).toHaveLength(2);
+  },
+);
+
+cliTest(
+  "names the option of the recorded compiler-path control in the full-output envelope",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-controls-");
+    const path = join(root, "overflow.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--full-output", "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const envelope = result.json as {
+      data: unknown;
+      meta: { cli_controls?: unknown };
+    };
+    const report = rustBinarySchema.parse(
+      toolContract("inspect_rust_binary").outputSchema.parse(envelope.data)
+        .normalized_result,
+    );
+    expect(report.rustc_commit?.coverage?.limit).toMatchObject({
+      parameter: "max_rustc_hashes",
+    });
+    expect(envelope.meta.cli_controls).toEqual({
+      max_rustc_hashes: "--max-rustc-hashes",
+    });
   },
 );
 

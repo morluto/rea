@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -13,7 +14,7 @@ cliTest(
   "inline reconstruction distinguishes an authenticated record from a corrupt bundle",
   async ({ cli }) => {
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",

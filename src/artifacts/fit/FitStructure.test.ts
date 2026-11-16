@@ -5,7 +5,7 @@ import {
   devicetreeFixture,
   dtString,
   type FixtureNode,
-} from "../../firmware/devicetree/Devicetree.fixture.js";
+} from "../../domain/firmware/devicetree.fixture.js";
 import {
   FIT_EMBEDDED,
   FIT_KERNEL,

@@ -318,6 +318,29 @@ it("refuses dense JSON before its expanded graph exceeds the decoding budget", a
     parseTsharkJsonOutput(`[${"{},".repeat(600_000)}{}]`),
   ).rejects.toMatchObject({
     _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: {
+      name: "The tshark JSON expansion allowance",
+      limit: 128 * 1024 ** 2,
+      unit: "bytes",
+    },
+  });
+});
+
+it("refuses packet facts above the retained-fact budget with its value", async () => {
+  // Each distinct endpoint charges 192 bytes plus twice its length, so 80,000
+  // short endpoints (about 2 MiB of JSON) exceed the 16 MiB budget.
+  const sources = Array.from({ length: 80_000 }, (_, index) =>
+    String(index).padStart(16, "0"),
+  );
+  await expect(
+    parseTsharkJsonOutput(capture([{ "ip.src": sources }])),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: {
+      name: "The packet-inventory retained-fact allowance",
+      limit: 16 * 1024 ** 2,
+      unit: "bytes",
+    },
   });
 });
 
@@ -428,6 +451,7 @@ it("shares the decoded-graph allowance across base and DNS acquisitions", async 
     parseTsharkJsonOutput(base, undefined, dns),
   ).rejects.toMatchObject({
     _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: { limit: 128 * 1024 ** 2, unit: "bytes" },
   });
 });
 

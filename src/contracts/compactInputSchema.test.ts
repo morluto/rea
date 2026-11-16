@@ -227,9 +227,13 @@ describe("compact advertised input schema", () => {
 });
 
 it("keeps pattern-admitted property names open in reduced schemas", () => {
+  // Nesting past the dialect's depth limit forces the reduced form.
+  let deep: Record<string, unknown> = { type: "string" };
+  for (let level = 0; level < 12; level++)
+    deep = { type: "object", properties: { next: deep } };
   const canonical = {
     type: "object",
-    properties: { a: { type: "string", pattern: "x" } },
+    properties: { a: deep },
     patternProperties: { "^b$": { type: "string" } },
     additionalProperties: false,
   };

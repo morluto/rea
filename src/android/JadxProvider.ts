@@ -1,18 +1,20 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import type {
   RetainedResourceScope,
   ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { throwIfJadxInterrupted } from "./JadxInterruption.js";
 import { chmod, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
@@ -65,6 +67,7 @@ import {
   jadxBridgeIdentity,
   type JadxBridgeIdentity,
 } from "./JadxRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const BRIDGE_SOURCE = fileURLToPath(JADX_BRIDGE_SOURCE_URL);
 type Outcome = Awaited<ReturnType<AndroidAnalysisPort["execute"]>>;
@@ -256,13 +259,9 @@ const cleanup = async (
       cleanupResources(resources),
       {
         reason: cleanupCauses
-          .map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          )
+          .map((failure) => errorMessage(failure))
           .join("; "),
-        cleanup_causes: cleanupCauses.map((failure) =>
-          failure instanceof Error ? failure.message : String(failure),
-        ),
+        cleanup_causes: cleanupCauses.map((failure) => errorMessage(failure)),
         provider_cleanup: cleanupCauses.map((failure) =>
           failure instanceof ProviderCleanupError
             ? (failure.diagnostics ?? null)
@@ -289,7 +288,7 @@ const cleanup = async (
       "jadx",
       cleanupResources(resources),
       {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
       { operation: resources.operation, cause },
     );
