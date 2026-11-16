@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
@@ -6,12 +6,11 @@ import {
 import {
   compareApplicationVersionsRequestSchema,
   compareJavaScriptExportShapesRequestSchema,
-  compareSourceToBundleCliInputSchema,
   compareSourceToBundleRequestSchema,
   traceApplicationFeatureRequestSchema,
 } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
 import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { ResolvedSourceToBundleReference } from "./SourceToBundleReference.js";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -36,6 +35,7 @@ import { compareSourceToBundle } from "../../domain/javascript/sourceToBundleCom
 import type { SourceToBundleComparisonResult } from "../../domain/javascript/sourceToBundleComparisonSchemas.js";
 import {
   applicationGraphEvidenceInputError,
+  applicationGraphSubjectTarget,
   parseApplicationGraphEvidence,
   parseNativeApplicationEvidence,
   type ApplicationGraphEvidenceSource,
@@ -132,6 +132,7 @@ export const traceApplicationFeatureEvidence = (
     direction: input.direction,
   });
   const evidence = createApplicationFeatureTraceEvidence(
+    applicationGraphSubjectTarget(source),
     {
       application_evidence_id: source.evidence.evidence_id,
       native_evidence_ids: nativeEvidence.map(({ evidence_id: id }) => id),
@@ -233,12 +234,12 @@ export const compareApplicationVersionsEvidence = (
 /** Select the application record and historical graph through their shared owners. */
 export const executeSourceToBundleComparison = async (
   rawInput: unknown,
-  schema:
-    | typeof compareSourceToBundleCliInputSchema
-    | typeof compareSourceToBundleRequestSchema,
   lookup: EvidenceLookup | undefined,
   resources: ArtifactResourceScope,
-  options: Pick<ExecutionOptions, "signal"> = {},
+  options: Pick<ExecutionOptions, "signal"> & {
+    /** The reference file path as the caller spelled it. */
+    readonly requestedReferencePath?: string;
+  } = {},
 ): Promise<
   Result<
     ApplicationWorkflowExecution<SourceToBundleComparisonResult>,
@@ -248,7 +249,7 @@ export const executeSourceToBundleComparison = async (
   const selected = resolveEvidenceRequest(
     "compare_source_to_bundle",
     rawInput,
-    schema,
+    compareSourceToBundleRequestSchema,
     lookup,
     options,
   );
@@ -259,6 +260,7 @@ export const executeSourceToBundleComparison = async (
     selected.value.input.reference,
     options.signal,
     resources,
+    options.requestedReferencePath,
   );
   return reference.ok
     ? compareSourceToBundleEvidence({

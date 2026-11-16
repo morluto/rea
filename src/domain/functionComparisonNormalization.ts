@@ -49,13 +49,21 @@ export const functionMatch = (
             left_name: leftName,
             right_name: rightName,
           };
+  }
+  if (left.evidence.evidence_id === right.evidence.evidence_id)
+    return {
+      status: "matched",
+      method: "same-evidence",
+      left_name: leftName,
+      right_name: rightName,
+    };
+  if (coordinateContext === "common")
     return {
       status: "ambiguous",
       method: "explicit",
       left_name: leftName,
       right_name: rightName,
     };
-  }
   const stableNames =
     hasStableNativeSymbol(leftName, left.dossier.procedure.symbol) &&
     hasStableNativeSymbol(rightName, right.dossier.procedure.symbol);
@@ -173,7 +181,8 @@ export const nameAndSwiftProjection = (
       }),
     ),
     ...(includeSwiftLiterals
-      ? (snapshot.dossier.swift_string_literals ?? [])
+      ? // optional-fact-default: swiftLiteralCoverage reports an absent inventory.
+        (snapshot.dossier.swift_string_literals ?? [])
       : []
     ).map(
       ({
@@ -234,6 +243,7 @@ export const swiftLiteralSitesConflict = (
 export const swiftLiteralCoverage = (
   snapshot: FunctionSnapshot,
 ): "absent" | "complete" | "partial" =>
+  // optional-fact-default: absent omissions with present literals is complete.
   (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
     ? "partial"
     : snapshot.dossier.swift_string_literals === undefined
@@ -248,6 +258,7 @@ const swiftLiteralSites = (snapshot: FunctionSnapshot) => {
   };
   // Keep the same literal facts the full strings_names projection compares.
   const values = new Map<string, string[]>();
+  // optional-fact-default: swiftLiteralCoverage reports an absent inventory.
   for (const literal of snapshot.dossier.swift_string_literals ?? []) {
     const key = site(literal.source_address, literal.registers);
     if (key === null) continue;

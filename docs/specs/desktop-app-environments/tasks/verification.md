@@ -127,5 +127,6 @@ end to end, not how hard a task can be.
 
 - SQLite and dconf readers were not exercised on the host captures, which
   hold text files; SQLite checks are covered by synthetic views.
-- The XML namespace refusal and the CDATA difference the export guide lists
-  are covered by code review only.
+- Namespaced XML and CDATA, which the export once refused or read
+  differently, are covered by the document views' parity tests on real
+  Inkscape and LibreOffice saves, not by a host capture.

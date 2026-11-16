@@ -57,14 +57,6 @@ export const evaluateProcessTraceComparison = (
   };
 };
 
-/** Compare two captures against an explicit finite trace language. */
-export const compareProcessTraces = (
-  left: ProcessCapture,
-  right: ProcessCapture,
-  specification: ProcessTraceSpecification,
-): ProcessTraceComparisonResult =>
-  evaluateProcessTraceComparison(left, right, specification).result;
-
 /** Whether trace conformance or raw declared order differs across captures. */
 export const processTraceOutcomesDiffer = (
   comparison: Pick<ProcessTraceComparisonResult, "left" | "right">,

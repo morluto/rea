@@ -109,6 +109,8 @@ describe("projected private getter receivers", () => {
 
 describe("private receiver field ownership", () => {
   it("bounds growing receiver projections under cyclic class inheritance", () => {
+    // Unbounded projection growth never returns: the synchronous analysis
+    // runs until it exhausts the heap, so returning is the oracle.
     const ir = analyzeJavaScriptSemantics(`export function result() {
       const shared = { x: 1 };
       class A extends B {
@@ -124,7 +126,7 @@ describe("private receiver field ownership", () => {
       status: "literal",
       value: 1,
     });
-  }, 1000);
+  });
 
   it.each([
     [

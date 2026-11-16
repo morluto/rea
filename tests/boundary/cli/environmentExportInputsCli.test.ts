@@ -46,7 +46,6 @@ for (const role of ["manifest", "evidence"] as const) {
           REA_TEST_EXPORT_READ_MARKER: marker,
           REA_TEST_EXPORT_READ_ACTION: "append",
         },
-        timeoutMs: 30_000,
       });
       expect(await readFile(marker, "utf8")).toBe("read");
       expect(
@@ -122,7 +121,6 @@ cliTest(
           REA_TEST_EXPORT_READ_MARKER: marker,
           REA_TEST_EXPORT_READ_ACTION: "record",
         },
-        timeoutMs: 30_000,
       });
       expect(result.exitCode, result.stderr).toBe(1);
       const limits = heapRefusalSchema.parse(result.json).details
@@ -178,7 +176,6 @@ cliTest(
         REA_TEST_EXPORT_READ_MARKER: marker,
         REA_TEST_EXPORT_READ_ACTION: "fail-copy",
       },
-      timeoutMs: 30_000,
     });
     expect(await readFile(marker, "utf8")).toBe("copy");
     expect(await readFile(tarball, "utf8")).toBe("admitted package");

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import type {
   JavaScriptRuntimeObservation,
   JavaScriptRuntimeTargetLocation,
@@ -14,6 +12,7 @@ import {
 } from "./JavaScriptRuntimeScope.js";
 import type { CaptureState, ScriptDraft } from "./V8InspectorProvider.js";
 import type { AuthorizedV8InspectorTarget } from "./V8InspectorEndpoint.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type ExclusionReason = "unsupported_location";
 
@@ -158,6 +157,7 @@ export const finalizeInspectorCapture = async ({
   const contexts = [...state.contexts.values()]
     .map((context) => ({
       context_key: context.contextKey,
+      execution_context_id: context.executionContextId,
       state: context.state,
       name: context.name,
       origin: context.origin,
@@ -251,15 +251,17 @@ const scriptFromDraft = (
     location,
     ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
+    execution_context_id: draft.executionContextId,
     cdp_hash: draft.cdpHash,
     length: draft.length,
     is_module: draft.isModule,
   });
   return {
-    script_key: `v8_script_${createHash("sha256").update(stable).digest("hex")}`,
+    script_key: `v8_script_${sha256Hex(stable)}`,
     location,
     ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
+    execution_context_id: draft.executionContextId,
     cdp_hash: draft.cdpHash,
     length: draft.length,
     is_module: draft.isModule,

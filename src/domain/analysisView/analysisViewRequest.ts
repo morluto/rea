@@ -1,3 +1,8 @@
+import { webSourceLocationViewRequestSchema } from "./webSourceLocationView.js";
+import { nativeProcedureReferencesViewRequestSchema } from "./nativeProcedureReferencesView.js";
+import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
+import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
+import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
 import {
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
@@ -11,6 +16,7 @@ import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
+import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
 import { nativeFeatureTraceViewRequestSchema } from "./nativeFeatureTraceView.js";
 import { batchDecompileViewRequestSchema } from "./batchDecompileView.js";
@@ -34,7 +40,7 @@ import { javascriptModuleReferencesRequestSchema } from "./javascriptModuleRefer
 import { javascriptFactsViewRequestSchema } from "./javascriptFactsView.js";
 import { evidenceSchema } from "../evidence.js";
 import { declareEvidenceReferenceAlternative } from "../evidenceInputContract.js";
-import { apiSurfaceViewSchema } from "./webNetworkApiSurfaceView.js";
+import { apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import { evmViewRequestSchema } from "./evmInterfaceView.js";
 import { artifactInventoryViewRequestSchema } from "./artifactInventoryView.js";
 import { managedViewRequestSchema } from "./managedArtifactView.js";
@@ -48,7 +54,7 @@ import { environmentStateViewRequestSchema } from "./environmentStateView.js";
 import { environmentCoverageViewRequestSchema } from "./environmentCoverageView.js";
 import { pcapViewRequestSchema } from "./pcapCaptureView.js";
 import { qlogViewRequestSchema } from "./qlogCaptureView.js";
-import { androidViewRequestSchema } from "./androidPackageView.js";
+import { androidViewRequestSchema } from "../android/androidPackageQuery.js";
 import { androidJniViewRequestSchema } from "../android/androidJniQuery.js";
 import { dartAotViewRequestSchema } from "./dartAotView.js";
 import { il2cppMetadataViewRequestSchema } from "./il2cppMetadataView.js";
@@ -59,11 +65,23 @@ import {
   pageViewSchema,
   summaryViewSchema,
 } from "./analysisViewShape.js";
+export const recordedArrayViewSchema = z.strictObject({
+  kind: z.literal("recorded-array"),
+  path: z
+    .array(z.string())
+    .describe(
+      "Exact object-member path from the parent Evidence raw_result to the recorded array. The provider defines the values and their coverage.",
+    ),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
+});
+
 /** Caller-selected projection of already completed analysis Evidence. */
 export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeInstructionReferencesRequestSchema,
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
+  recordedArrayViewSchema,
   devicetreeViewRequestSchema,
   erlangBeamViewRequestSchema,
   pythonPycViewRequestSchema,
@@ -72,10 +90,15 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   webBundleViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
+  endpointComparisonViewRequestSchema,
+  apiContractViewRequestSchema,
+  graphqlContractViewRequestSchema,
+  playwrightTraceViewRequestSchema,
   featureTraceViewRequestSchema,
   nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,
   summaryViewSchema,
+  webSourceLocationViewRequestSchema,
   goBinaryViewRequestSchema,
   rustBinaryViewRequestSchema,
   desktopViewRequestSchema,
@@ -86,6 +109,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   javascriptFactsViewRequestSchema,
   nativeViewSchema,
   nativeInventoryViewRequestSchema,
+  nativeProcedureReferencesViewRequestSchema,
   nativeLoadImageViewRequestSchema,
   artifactInventoryViewRequestSchema,
   wasmViewRequestSchema,

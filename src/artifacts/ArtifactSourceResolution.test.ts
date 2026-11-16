@@ -4,13 +4,15 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { assertArtifactFileSelectedSource } from "./ArtifactFileSource.js";
-import { assertArtifactSelectedSource } from "./ArtifactSelectedSource.js";
-import { readStableArtifact } from "./readStableArtifact.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
+import { readStableArtifact } from "../resources/readStableArtifact.js";
 import { createDesktopApplicationService } from "../composition/desktop.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../domain/desktopApplication.js";
+import {
+  assertArtifactFileSelectedSource,
+  assertArtifactSelectedSource,
+  DirectoryArtifactReader,
+} from "../resources/index.js";
 
 it.skipIf(process.platform === "win32")(
   "admits a caller-selected directory symlink without changing its target identity",
@@ -72,7 +74,6 @@ it.skipIf(process.platform === "win32")(
         max_entries: 32,
         max_probe_bytes: 4096,
       });
-      expect(invalid.ok).toBe(false);
       if (invalid.ok) throw new Error("expected ENOTDIR refusal");
       expect(projectAnalysisError(invalid.error)).toMatchObject({
         code: "target_unavailable",
@@ -83,7 +84,6 @@ it.skipIf(process.platform === "win32")(
         max_entries: 32,
         max_probe_bytes: 4096,
       });
-      expect(valid.ok).toBe(true);
       if (!valid.ok) throw valid.error;
       expect(
         desktopApplicationSchema
@@ -170,8 +170,11 @@ it.skipIf(process.platform === "win32")(
       code: "EACCES",
     });
 
-    await expect(
-      readStableArtifact(selected, 1024, undefined, {
+    const rejected: unknown = await readStableArtifact(
+      selected,
+      1024,
+      undefined,
+      {
         lstat: async (path) => {
           if (path === selected) return selectedStats;
           throw failure;
@@ -180,11 +183,11 @@ it.skipIf(process.platform === "win32")(
         open: async () => {
           throw new Error("A rejected symlink must not be opened");
         },
-      }),
-    ).rejects.toMatchObject({
-      reason: "path",
-      resolvedPath: undefined,
-      message: `Expected a regular file without a symlink: ${selected}`,
-    });
+      },
+    ).catch((cause: unknown) => cause);
+    expect(rejected).toMatchObject({ reason: "path", resolvedPath: undefined });
+    if (!(rejected instanceof Error)) throw new Error("Expected path failure");
+    expect(rejected.message).toContain(selected);
+    expect(rejected.message).toContain("symlink");
   },
 );

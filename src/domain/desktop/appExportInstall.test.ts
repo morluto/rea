@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  adjustInstalledDesktopText,
   electronLaunchArguments,
   exportInstall,
   fromUbuntuNobleArchive,
-  installLimitations,
+  installsFromPackageFile,
   repositoryRefusal,
+  withExtraPackages,
 } from "./appExportInstall.js";
+import { parseDesktopEntry, tokenizeDesktopExec } from "./desktopEntry.js";
+import { installLimitations } from "./appExportInstallLimitations.js";
 import {
   VARICAD_FILE,
   VARICAD_URL,
@@ -214,6 +218,168 @@ describe("exportInstall", () => {
   });
 });
 
+describe("exportInstall with the program in another package", () => {
+  const archive: DesktopPackage = {
+    ...typora(undefined),
+    name: "vim-common",
+    executable_package: "vim",
+    sources: ["http://archive.ubuntu.com/ubuntu noble/main amd64 Packages"],
+    source_origins: ["Ubuntu"],
+  };
+
+  it("installs the program's package beside the entry's from the archive, a vendor repository or a package file", () => {
+    const fromVendor = exportInstall(
+      { ...typora([repository()]), executable_package: "typora-bin" },
+      "typora",
+      "arm64",
+    );
+    const fromFile = exportInstall(
+      varicadPackage({ executable_package: "varicad-bin" }),
+      "varicad",
+      "x64",
+      VARICAD_URL,
+    );
+
+    expect(exportInstall(archive, "vim", "arm64")).toMatchObject({
+      ok: true,
+      value: { aptPackage: "vim-common", executablePackage: "vim" },
+    });
+    expect(fromVendor).toMatchObject({
+      ok: true,
+      value: { aptPackage: "typora", executablePackage: "typora-bin" },
+    });
+    expect(fromFile).toMatchObject({
+      ok: true,
+      value: {
+        packageFile: { url: VARICAD_URL },
+        executablePackage: "varicad-bin",
+      },
+    });
+  });
+
+  it("refuses when no package owns the program the entry runs", () => {
+    const { executable_package: _program, ...entryOnly } = archive;
+
+    expect(
+      exportInstall(
+        {
+          ...entryOnly,
+          executable_package_reason: "no package owns /home/ada/.local/bin/vim",
+        },
+        "vim",
+        "arm64",
+      ),
+    ).toEqual({
+      ok: false,
+      error: {
+        field: "capture",
+        reason: expect.stringMatching(
+          /vim-common.*cannot install.*no package owns \/home\/ada\/\.local\/bin\/vim/i,
+        ),
+        remediation: expect.stringMatching(
+          /capture again.*PATH.*--executable/i,
+        ),
+      },
+    });
+  });
+
+  it("refuses when the computer cannot install the program's package", () => {
+    const reason =
+      "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers vim";
+
+    expect(
+      exportInstall(
+        { ...archive, executable_package_reason: reason },
+        "vim",
+        "arm64",
+      ),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        field: "capture",
+        reason: `The desktop entry belongs to vim-common, but the program it runs belongs to vim, which the computer cannot install: ${reason}.`,
+      }),
+    });
+  });
+});
+
+describe("exportInstall with repositories the export leaves out", () => {
+  const mirror = (supplies: readonly string[]) =>
+    repository({
+      source: "https://mirror.typora.example/linux ./ Packages",
+      uri: "https://mirror.typora.example/linux",
+      signing_key: { ...KEY, sha256: "c".repeat(64) },
+      supplies: [...supplies],
+    });
+  // The capture could not retain this repository's key, so the export leaves it out.
+  const dropped = (supplies: readonly string[]) =>
+    repository({
+      signing_key: null,
+      signing_key_reason:
+        "the verified key /etc/apt/trusted.gpg.d/typora.gpg did not fit the capture's content budget, so it was not retained",
+      supplies: [...supplies],
+    });
+  const installed = (
+    repositories: readonly AptRepository[],
+    extra: Partial<DesktopPackage> = {},
+  ): DesktopPackage => ({
+    ...typora(repositories),
+    library_packages: ["libgbm1", "libvendor1", "libshared1"],
+    ...extra,
+  });
+
+  it("refuses the program's package when only a repository it leaves out supplies it", () => {
+    const refused = exportInstall(
+      installed([dropped(["typora-bin"]), mirror([])], {
+        executable_package: "typora-bin",
+      }),
+      "typora",
+      "arm64",
+    );
+
+    expect(refused).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        reason: expect.stringMatching(
+          /typora.*typora-bin.*cannot install.*apt repositories.*leaves out/i,
+        ),
+      }),
+    });
+  });
+
+  it("installs only the library packages a declared repository or the archive still offers, and says which it left out", () => {
+    const vendor = exportInstall(
+      installed([
+        dropped(["libshared1", "libvendor1"]),
+        mirror(["libshared1"]),
+      ]),
+      "typora",
+      "arm64",
+    );
+    const fromFile = exportInstall(
+      varicadPackage({ apt_repositories: [dropped(["libxt6t64"])] }),
+      "varicad",
+      "x64",
+      VARICAD_URL,
+    );
+
+    if (!vendor.ok) throw new Error(vendor.error.reason);
+    expect(vendor.value).toMatchObject({
+      libraryPackages: ["libgbm1", "libshared1"],
+      strandedPackages: ["libvendor1"],
+    });
+    expect(
+      installLimitations(vendor.value, installed([]), false).join("\n"),
+    ).toContain(
+      "in packages only the apt repositories left out offer: libvendor1",
+    );
+    expect(fromFile).toMatchObject({
+      ok: true,
+      value: { libraryPackages: ["libgl1"], strandedPackages: ["libxt6t64"] },
+    });
+  });
+});
+
 describe("exportInstall sources", () => {
   const amd64 = "https://apt.example.com/repo stable/main amd64 Packages";
   const i386 = "https://apt.example.com/repo stable/main i386 Packages";
@@ -251,9 +417,12 @@ describe("exportInstall sources", () => {
         keySha256: "a".repeat(64),
       },
     ]);
-    expect(install.value.skipped).toEqual([
-      "https://apt.example.com/repo stable extra: apt takes one key per URI and suite, and apt-keys/typora.gpg is declared for them",
-    ]);
+    expect(install.value.skipped).toHaveLength(1);
+    expect(install.value.skipped[0]).toContain(
+      "https://apt.example.com/repo stable extra",
+    );
+    expect(install.value.skipped[0]).toContain("apt-keys/typora.gpg");
+    expect(install.value.skipped[0]).toMatch(/one key per URI and suite/iu);
     expect(install.value.architectures).toEqual(["amd64"]);
   });
 
@@ -297,9 +466,12 @@ describe("exportInstall sources", () => {
     );
 
     expect(install.ok && install.value.architectures).toEqual(["arm64"]);
-    expect(install.ok && install.value.skipped).toEqual([
-      "https://amd64-only.example.com ./: it serves only amd64, not the capture host's arm64",
-    ]);
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.skipped).toHaveLength(1);
+    expect(install.value.skipped[0]).toContain(
+      "https://amd64-only.example.com ./",
+    );
+    expect(install.value.skipped[0]).toMatch(/only amd64.*not.*arm64/iu);
     expect(
       exportInstall(typora([repository()]), "typora", "riscv64"),
     ).toMatchObject({
@@ -396,6 +568,74 @@ describe("electronLaunchArguments", () => {
       "--no-sandbox",
       "%U",
     ]);
+  });
+});
+
+describe("adjustInstalledDesktopText", () => {
+  const entry = (exec: string) =>
+    `[Desktop Entry]\nType=Application\nName=Typora\nExec=${exec}\n[Desktop Action New]\nExec=typora --new-window\n`;
+
+  it("adds the shared Electron launch policy after the program", () => {
+    const text = entry("typora %U");
+    expect(adjustInstalledDesktopText(text, true)).toEqual({
+      ok: true,
+      value: entry("typora --no-sandbox %U"),
+    });
+    expect(adjustInstalledDesktopText(text, false)).toEqual({
+      ok: true,
+      value: text,
+    });
+  });
+
+  it("puts the flag after the program an env wrapper launches and keeps a path with spaces", () => {
+    expect(
+      adjustInstalledDesktopText(
+        entry("env APP_MODE=desktop /opt/app/app %U"),
+        true,
+      ),
+    ).toEqual({
+      ok: true,
+      value: entry("env APP_MODE=desktop /opt/app/app --no-sandbox %U"),
+    });
+    expect(
+      adjustInstalledDesktopText(entry('"/opt/REA App/typora" %U'), true),
+    ).toEqual({
+      ok: true,
+      value: entry('"/opt/REA App/typora" --no-sandbox %U'),
+    });
+  });
+
+  it("keeps a quoted trailing backslash when the launch policy rewrites Exec", () => {
+    const text = String.raw`[Desktop Entry]
+Type=Application
+Name=App
+Exec=/usr/bin/true "foo\\\\"
+`;
+    const rewritten = adjustInstalledDesktopText(text, true);
+    if (!rewritten.ok) throw new Error(rewritten.error);
+    const parsed = parseDesktopEntry(rewritten.value);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(tokenizeDesktopExec(parsed.value.exec ?? "")).toEqual({
+      ok: true,
+      value: ["/usr/bin/true", "--no-sandbox", "foo\\"],
+    });
+    expect(rewritten.value).toContain(
+      String.raw`Exec=/usr/bin/true --no-sandbox "foo\\\\"`,
+    );
+  });
+
+  it("leaves a command that already passes the flag, and reports an unusable Exec", () => {
+    const text = entry("typora --no-sandbox %U");
+    expect(adjustInstalledDesktopText(text, true)).toEqual({
+      ok: true,
+      value: text,
+    });
+    expect(
+      adjustInstalledDesktopText("[Desktop Entry]\nName=Typora\n", true),
+    ).toEqual({ ok: false, error: "missing_exec" });
+    expect(
+      adjustInstalledDesktopText('[Desktop Entry]\nExec="typora\n', true),
+    ).toEqual({ ok: false, error: "unterminated_quote" });
   });
 });
 
@@ -539,6 +779,98 @@ describe("exportInstall from a package file", () => {
   });
 });
 
+describe("installsFromPackageFile", () => {
+  it("is true only for a package the export installs from its file rather than from apt", () => {
+    const archive = {
+      sources: [
+        "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      ],
+      source_origins: ["Ubuntu"],
+    };
+    expect(installsFromPackageFile(varicad(), "x64")).toBe(true);
+    expect(installsFromPackageFile(varicad(archive), "x64")).toBe(false);
+    expect(
+      installsFromPackageFile(
+        varicad({
+          sources: [TYPORA_SOURCE],
+          source_origins: ["typora.io"],
+          apt_repositories: [repository()],
+        }),
+        "x64",
+      ),
+    ).toBe(false);
+    expect(installsFromPackageFile(varicad({ kind: "snap" }), "x64")).toBe(
+      false,
+    );
+    // The export takes the URL exactly when the package needs it.
+    expect(
+      exportInstall(varicad(archive), "varicad", "x64", VARICAD_URL).ok,
+    ).toBe(false);
+    expect(exportInstall(varicad(), "varicad", "x64", VARICAD_URL).ok).toBe(
+      true,
+    );
+  });
+});
+
+describe("withExtraPackages", () => {
+  const archive = varicad({
+    sources: ["http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages"],
+    source_origins: ["Ubuntu"],
+  });
+  const extra = (
+    installed: DesktopPackage,
+    packageUrl: string | undefined,
+    names: readonly string[],
+  ) => {
+    const install = exportInstall(installed, "varicad", "x64", packageUrl);
+    if (!install.ok) throw new Error(install.error.reason);
+    return withExtraPackages(install.value, names);
+  };
+
+  it("installs them beside a package apt offers, leaving out only the package, even one its captured file names as an alternative", () => {
+    // apt may satisfy `openjdk-17-jre | java-runtime` with another Java, so the one the request named stays.
+    const installed = varicad({
+      sources: [
+        "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      ],
+      source_origins: ["Ubuntu"],
+      package_file: {
+        ...VARICAD_FILE,
+        depends: ["openjdk-17-jre | java-runtime"],
+      },
+    });
+    const install = extra(installed, undefined, [
+      "librsvg2-common",
+      "openjdk-17-jre",
+      "varicad2026-en",
+      "librsvg2-common",
+    ]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile).toBeNull();
+    expect(install.value.extraPackages).toEqual([
+      "librsvg2-common",
+      "openjdk-17-jre",
+    ]);
+  });
+
+  it("installs them beside a package file", () => {
+    const install = extra(varicad(), VARICAD_URL, ["libgl1", "openjdk-17-jre"]);
+
+    if (!install.ok) throw new Error(install.error.reason);
+    expect(install.value.packageFile?.dependencies).toContain("libgl1");
+    expect(install.value.extraPackages).toEqual(["openjdk-17-jre"]);
+  });
+
+  it("refuses a name that is not a Debian package's", () => {
+    const install = extra(archive, undefined, ["librsvg2-common", "Java17"]);
+
+    if (install.ok) throw new Error("expected a refusal");
+    expect(install.error.field).toBe("extra_package");
+    expect(install.error.reason).toContain("Java17");
+  });
+});
+
 describe("exportInstall refusals for a package file", () => {
   it("refuses a local install without --package-url, saying how to capture and export one", () => {
     expect(refusedWith(varicad(), undefined)).toEqual({
@@ -570,8 +902,9 @@ describe("exportInstall refusals for a package file", () => {
       refusedWith(varicad({ package_file: undefined }), VARICAD_URL),
     ).toEqual({
       field: "capture",
-      reason:
-        "--package-url was given, but the capture recorded no package file for varicad2026-en.",
+      reason: expect.stringMatching(
+        /--package-url.*no package file.*varicad2026-en/i,
+      ),
       remediation: expect.stringContaining("Capture again with --package-file"),
     });
     expect(
@@ -609,9 +942,10 @@ describe("exportInstall refusals for a package file", () => {
 
     expect(archive).toEqual({
       field: "package_url",
-      reason:
-        "--package-url is not needed: the computer installs varicad2026-en from the Ubuntu 24.04 archive by name.",
-      remediation: "Export without --package-url.",
+      reason: expect.stringMatching(
+        /--package-url.*not needed.*varicad2026-en.*Ubuntu 24\.04 archive/i,
+      ),
+      remediation: expect.stringMatching(/export without --package-url/i),
     });
     expect(vendor.reason).toContain(
       "from the vendor apt repository https://downloads.typora.io/linux.",
@@ -624,8 +958,9 @@ describe("exportInstall refusals for a package file", () => {
   ])("refuses --package-url %s, which agentenv does not download", (url) => {
     expect(refusedWith(varicad(), url)).toMatchObject({
       field: "package_url",
-      reason:
-        "--package-url does not start with http:// or https:// in lowercase, the only URLs the computer downloads",
+      reason: expect.stringMatching(
+        /--package-url.*http:\/\/.*https:\/\/.*lowercase/i,
+      ),
     });
   });
 

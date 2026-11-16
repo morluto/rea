@@ -7,7 +7,7 @@ import {
   machoImage,
   readerOf,
 } from "./MachoImage.fixture.js";
-import { readMachoImage } from "./MachoLoadCommandReader.js";
+import { readMachoImage } from "../../domain/apple/machoLoadCommandReader.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 import { classifyArtifactBytes } from "../inventory/ArtifactGraphConstruction.js";
 import { createArtifactClassificationProbe } from "../ArtifactClassificationProbe.js";

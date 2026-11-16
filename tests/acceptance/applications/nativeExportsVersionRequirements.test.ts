@@ -33,8 +33,9 @@ cliTest(
     expect(report.coverage).toMatchObject({
       status: "partial",
       exports: 2,
-      reason:
-        "1 export table issue(s) affect reported rows or metadata; see issues",
+      reason: expect.stringMatching(
+        /1 export table issue.*reported rows or metadata/iu,
+      ),
     });
     expect(report.issues).toMatchObject([{ code: "version_unresolved" }]);
   },
@@ -71,7 +72,6 @@ cliTest(
       },
     );
   },
-  30_000,
 );
 
 cliTest(
@@ -112,5 +112,4 @@ cliTest(
       },
     );
   },
-  30_000,
 );

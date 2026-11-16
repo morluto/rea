@@ -1,13 +1,20 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { readClientConfigurationFiles } from "../../../src/application/ClientConfigurationFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 it("attributes case-folded Windows overrides without disclosing values", async () => {
   const root = await createTestTempDirectory("rea-config-override-origin-");
   const configPath = join(root, "client.json");
-  const client = { name: "cursor", format: "json", configPath } as const;
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    format: "json",
+    configPath,
+  } as const;
   const result = await readClientConfigurationFiles(
     client,
     undefined,
@@ -41,11 +48,16 @@ it("keeps a malformed stored environment attributed to its file", async () => {
       },
     }),
   );
-  const result = await readClientConfigurationFiles({
-    name: "cursor",
-    format: "json",
-    configPath,
-  });
+  const result = await readClientConfigurationFiles(
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    },
+    undefined,
+    HOST_PLATFORM.platform,
+  );
   expect(result).toMatchObject({
     ok: false,
     error: { detail: expect.stringContaining(`Configuration ${configPath}`) },
@@ -76,7 +88,12 @@ it.each([
       }),
     );
     const result = await readClientConfigurationFiles(
-      { name: "cursor", format: "json", configPath },
+      {
+        name: "cursor",
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        format: "json",
+        configPath,
+      },
       undefined,
       process.platform,
       overrides,

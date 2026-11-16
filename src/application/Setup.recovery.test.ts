@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
@@ -15,12 +16,21 @@ import {
 import type { SetupProgressEvent } from "./SetupTypes.js";
 import { setupCleanupError, SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err, ok } from "../domain/result.js";
+import { SetupSkillInstallError } from "./SetupSkill.js";
+import { supportedClientRegistrationProfile } from "./SupportedClients.js";
 
 describe("setup workflow", () => {
   it("rejects Node 25 before applying setup actions", async () => {
     const host = new FakeSetupHost();
     host.nodeVersion = "25.1.0";
-    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/codex.toml",
+      },
+    ];
 
     const result = await runSetup(
       { ...options(true, true), installSkill: true, clientIds: ["codex"] },
@@ -38,9 +48,24 @@ describe("setup workflow", () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
     host.clients = [
-      { name: "first", configPath: "/first.json" },
-      { name: "second", configPath: "/second.json" },
-      { name: "third", configPath: "/third.json" },
+      {
+        name: "first",
+        // Source-only recovery actors model Cursor JSON registration.
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/first.json",
+      },
+      {
+        name: "second",
+        // Source-only recovery actor models Cursor JSON registration.
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/second.json",
+      },
+      {
+        name: "third",
+        // Source-only recovery actor models Cursor JSON registration.
+        registrationProfile: supportedClientRegistrationProfile("cursor"),
+        configPath: "/third.json",
+      },
     ];
     host.clientResults.set("first", { status: "failed", reason: "write" });
     host.clientResults.set("second", { status: "configured" });
@@ -69,7 +94,13 @@ describe("setup workflow", () => {
   it("reports a failed config rollback with its destination and recovery backup", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
-    host.clients = [{ name: "codex", configPath: "/fixture/codex.json" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/fixture/codex.json",
+      },
+    ];
     host.clientResults.set("codex", {
       status: "failed",
       reason: "rollback",
@@ -99,7 +130,9 @@ describe("setup workflow", () => {
     expect(result.remediation).toContain("permission denied");
     expect(result.remediation).toContain("/fixture/codex.json.rea.backup");
   });
+});
 
+describe("setup recovery and readiness guidance", () => {
   it("explains skill installation recovery", async () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
@@ -148,7 +181,13 @@ describe("setup workflow", () => {
     host.hopper = "/Applications/Hopper";
     host.doctorHealthy = false;
     host.scopedDoctorHealthy = true;
-    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/codex.toml",
+      },
+    ];
     const readinessScope = {
       clients: ["codex"],
       providers: [] as string[],
@@ -196,7 +235,13 @@ describe("setup failure cleanup projection", () => {
         });
     }
     const host = new SetupHostWithCleanupFailure();
-    host.clients = [{ name: "codex", configPath }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath,
+      },
+    ];
     host.inspectClientConfiguration = async () => {
       throw primary;
     };
@@ -277,7 +322,13 @@ describe("setup failure cleanup projection", () => {
         };
       }
       const host = new HostWithRetainedResource();
-      host.clients = [{ name: "codex", configPath }];
+      host.clients = [
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath,
+        },
+      ];
       host.inspectClientConfiguration = async () => {
         throw primary;
       };
@@ -420,7 +471,13 @@ describe("setup scoped readiness", () => {
     const platformHost = new FakeSetupHost("win32");
     platformHost.hopper = "/Applications/Hopper";
     platformHost.skill = "unchanged";
-    platformHost.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    platformHost.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/codex.toml",
+      },
+    ];
     const windowsAgent = await runSetup(
       { ...options(true), clientIds: ["codex"] },
       platformHost,
@@ -446,11 +503,18 @@ describe("setup scoped readiness", () => {
     const host = new FakeSetupHost();
     host.hopper = "/Applications/Hopper";
     host.skill = "unchanged";
-    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/codex.toml",
+      },
+    ];
     host.productRegistrations = [
       {
         client: "codex",
         config_path: "/codex.toml",
+        command_identity: "owned",
         command: ["rea", "mcp"],
         state: "aligned",
         remediation: null,
@@ -475,7 +539,13 @@ describe("setup scoped readiness", () => {
     const host = new FakeSetupHost("win32");
     host.hopper = "C:\\Hopper\\Hopper.exe";
     host.unsupportedHopperVersion = true;
-    host.clients = [{ name: "codex", configPath: "C:\\codex.toml" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "C:\\codex.toml",
+      },
+    ];
     host.scopedDoctorHealthy = true;
 
     const result = await runSetup(
@@ -519,7 +589,13 @@ describe("setup scoped readiness", () => {
     host.javaHome = "/usr/lib/jvm/jdk-21";
     host.doctorHealthy = true;
     host.skill = "unchanged";
-    host.clients = [{ name: "codex", configPath: "/codex.toml" }];
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/codex.toml",
+      },
+    ];
 
     const result = await runSetup(
       { ...options(true), clientIds: ["codex"] },
@@ -563,6 +639,7 @@ const unhealthyManualClientHost = (
   host.clients = [
     {
       name: "grok_bot",
+      registrationProfile: supportedClientRegistrationProfile("grok_bot"),
       displayName: "Grok Bot",
       configPath: "/fixture/home/.grokbot",
       format: "unsupported",
@@ -814,3 +891,277 @@ it.each(["return", "throw"] as const)(
     expect(failure.hasCleanupOwner).toBe(false);
   },
 );
+
+describe("setup cancellation", () => {
+  it.each([
+    { status: "configured", backupPath: "/fixture/codex.bak" },
+    {
+      status: "failed",
+      reason: "rollback",
+      backupPath: "/fixture/codex.bak",
+      failure: {
+        kind: "restore",
+        path: "/fixture/codex.toml",
+        detail: "denied",
+      },
+    },
+  ] as const)(
+    "preserves completed client results after cancellation: $status",
+    async (completed) => {
+      const host = new FakeSetupHost();
+      host.hopper = "/Applications/Hopper";
+      host.clients = [
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath: "/fixture/codex.toml",
+        },
+      ];
+      const controller = new AbortController();
+      const reason = new Error("cancel after client write");
+      host.configureClient = async () => {
+        controller.abort(reason);
+        return completed;
+      };
+      const failure = await runSetup(
+        {
+          ...options(true),
+          installSkill: false,
+          clientIds: ["codex"],
+          signal: controller.signal,
+        },
+        host,
+      ).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      expect(
+        projectAnalysisError(failure as AnalysisCancelledError),
+      ).toMatchObject({
+        code: "cancelled",
+        details: {
+          diagnostics: { setup_progress: { clients: { codex: completed } } },
+        },
+      });
+      if (completed.status === "configured")
+        expect((failure as AnalysisCancelledError).diagnostics).toMatchObject({
+          setup_progress: { appliedActions: ["configured_codex"] },
+        });
+    },
+  );
+
+  it.each([true, false])(
+    "preserves a completed skill result when cancellation arrives: success %s",
+    async (success) => {
+      const host = new FakeSetupHost();
+      host.hopper = "/Applications/Hopper";
+      const controller = new AbortController();
+      const reason = new Error("cancel after skill write");
+      const skillFailure = new SetupSkillInstallError({
+        path: "/fixture/skill",
+        stage: "write",
+        reason: "denied",
+        rollbackFailures: [
+          { path: "/fixture/skill", reason: "restore failed" },
+        ],
+        recoveryBackupPaths: ["/fixture/skill.backup"],
+        cause: new Error("denied"),
+      });
+      host.installSkill = async () => {
+        controller.abort(reason);
+        return success ? ok("installed") : err(skillFailure);
+      };
+      const failure = await runSetup(
+        {
+          ...options(true),
+          installSkill: true,
+          clientIds: [],
+          signal: controller.signal,
+        },
+        host,
+      ).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      expect((failure as AnalysisCancelledError).diagnostics).toMatchObject({
+        setup_progress: success
+          ? {
+              appliedActions: ["installed_skill"],
+              skill: { status: "installed" },
+            }
+          : {
+              skill: {
+                status: "failed",
+                path: "/fixture/skill",
+                reason: "denied",
+                rollbackFailures: [{ reason: "restore failed" }],
+                recoveryBackupPaths: ["/fixture/skill.backup"],
+              },
+            },
+      });
+    },
+  );
+});
+
+describe("setup cancellation during installation and cleanup", () => {
+  it("carries the caller's cancellation into the Hopper install", async () => {
+    const host = new FakeSetupHost("darwin");
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/codex.toml",
+      },
+    ];
+    const controller = new AbortController();
+    const reason = new Error("stop setup");
+    let received: AbortSignal | undefined;
+    host.installHopper = (_replaceExisting, signal?: AbortSignal) => {
+      received = signal;
+      controller.abort(reason);
+      return Promise.resolve({
+        status: "failed",
+        code: "setup_cancelled",
+        remediation: "Setup was cancelled.",
+      });
+    };
+
+    const failure: unknown = await runSetup(
+      {
+        ...options(true, true),
+        clientIds: ["codex"],
+        signal: controller.signal,
+      },
+      host,
+    ).catch((cause: unknown) => cause);
+
+    expect(received).toBe(controller.signal);
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({ cause: reason });
+    expect((failure as AnalysisCancelledError).diagnostics).toMatchObject({
+      setup_progress: {
+        hopperOutcome: { status: "failed", code: "setup_cancelled" },
+      },
+    });
+    expect(host.configurations).toBe(0);
+  });
+});
+
+describe("setup cancellation during final cleanup", () => {
+  it("reports cancellation during final cleanup with the completed setup result", async () => {
+    const clients = {
+      codex: { status: "configured", backupPath: "/fixture/codex.toml.bak" },
+      cursor: { status: "configured", backupPath: "/fixture/cursor.json.bak" },
+    } as const;
+    const input = {
+      ...options(true),
+      installSkill: false,
+      proposeHopper: false,
+      clientIds: Object.keys(clients),
+    };
+    const prepared = () => {
+      const host = new FakeSetupHost();
+      host.hopper = "/Applications/Hopper";
+      host.clients = [
+        {
+          name: "codex",
+          registrationProfile: supportedClientRegistrationProfile("codex"),
+          configPath: "/fixture/codex.toml",
+        },
+        {
+          name: "cursor",
+          registrationProfile: supportedClientRegistrationProfile("cursor"),
+          configPath: "/fixture/cursor.json",
+        },
+      ];
+      for (const [name, result] of Object.entries(clients))
+        host.clientResults.set(name, result);
+      return host;
+    };
+    const control = await runSetup(input, prepared());
+    expect(control).toMatchObject({
+      status: "ready",
+      appliedActions: ["configured_codex", "configured_cursor"],
+      clients,
+      doctor: { healthy: true, scope: { clients: ["codex", "cursor"] } },
+    });
+    const controller = new AbortController();
+    const reason = new Error("stop setup");
+    const host = Object.assign(prepared(), {
+      close: () => {
+        controller.abort(reason);
+        return Promise.resolve(undefined);
+      },
+    });
+
+    const failure: unknown = await runSetup(
+      { ...input, signal: controller.signal },
+      host,
+    ).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError))
+      throw new Error("Expected setup to report its cancellation");
+    expect(failure).toMatchObject({
+      cause: reason,
+      diagnostics: { setup_result: control },
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: { setup_result: { clients, doctor: control.doctor } },
+      },
+    });
+  });
+
+  it("retains the completed result and cancellation when final cleanup also fails", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel during final cleanup");
+    const host = new FakeSetupHost();
+    host.hopper = "/Applications/Hopper";
+    host.clients = [
+      {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        configPath: "/fixture/codex.toml",
+      },
+    ];
+    host.clientResults.set("codex", {
+      status: "configured",
+      backupPath: "/fixture/codex.bak",
+    });
+    Object.assign(host, {
+      close: async () => {
+        controller.abort(reason);
+        return setupCleanupError(undefined, {
+          reason: "close failed",
+          resources: ["/fixture/handle"],
+        });
+      },
+    });
+    const failure = await runSetup(
+      {
+        ...options(true),
+        installSkill: false,
+        clientIds: ["codex"],
+        signal: controller.signal,
+      },
+      host,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisError);
+    expect(projectAnalysisError(failure as AnalysisError)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: ["/fixture/handle"],
+        diagnostics: {
+          primary_error: {
+            code: "cancelled",
+            details: {
+              diagnostics: {
+                setup_result: {
+                  clients: { codex: { backupPath: "/fixture/codex.bak" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+});

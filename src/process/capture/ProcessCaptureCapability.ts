@@ -1,4 +1,5 @@
 import { tmpdir } from "node:os";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { prepareProcessOwnershipInspection } from "../ProcessOwnershipObservation.js";
 
 export type ProcessCaptureCapability =
@@ -25,7 +26,7 @@ export interface ProcessCaptureProbeOptions {
 }
 
 /** Probe the native PTY seam and explain loader failures at their source. */
-export const processCaptureProbeFailureReason = (cause: unknown): string => {
+const processCaptureProbeFailureReason = (cause: unknown): string => {
   const error = cause instanceof Error ? cause : new Error(String(cause));
   const code = "code" in error ? String(error.code) : "";
   const diagnostic = error.message;
@@ -50,7 +51,7 @@ export const processCaptureProbeFailureReason = (cause: unknown): string => {
 export const probeProcessCaptureCapability = async (
   options: ProcessCaptureProbeOptions = {},
 ): Promise<ProcessCaptureCapability> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const ownershipReason = processCaptureOwnershipUnavailableReason(platform);
   if (ownershipReason !== undefined)
     return {

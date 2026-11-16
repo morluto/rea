@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { access, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -15,12 +14,16 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../dist/domain/harmony/harmonyApplication.js";
 import fixture from "../../fixtures/harmony/pipeline.json" with { type: "json" };
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const hap = process.env.REA_HARMONY_TEST_HAP;
 if (hap === undefined)
   throw new Error(
-    "verify:harmony requires REA_HARMONY_TEST_HAP. Run npm run fixtures:harmony and set it to the downloaded file; see docs/harmony-analysis.md.",
+    "verify:harmony requires REA_HARMONY_TEST_HAP. Run npm run fixtures:harmony and set it to the downloaded file; see docs/guides/harmony/harmony-analysis.md.",
   );
 await access(hap);
 const hashFile = async (path) => {
@@ -37,9 +40,12 @@ const entrypoint =
   process.env.REA_HARMONY_ENTRYPOINT ?? resolve(repository, "scripts/rea.mjs");
 const execute = promisify(execFile);
 const path = resolve(hap);
-const workspace = await mkdtemp(join(tmpdir(), "rea-harmony-verify-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-harmony-verify-",
+});
+const workspace = workspaceFixture.path;
 
-try {
+await withVerifierFixture(workspaceFixture, async () => {
   const inspectResponse = await execute(
     process.execPath,
     [entrypoint, "inspect-artifact", path, "--format", "json"],
@@ -47,8 +53,8 @@ try {
   );
   const inspection = parseEvidence(JSON.parse(inspectResponse.stdout));
   assert.equal(inspection.operation, "inspect_artifact");
-  assert.equal(inspection.subject?.format, "hap");
-  assert.equal(inspection.subject?.digest.sha256, fixture.sha256);
+  assert.equal(inspection.subject?.identity.format, "hap");
+  assert.equal(inspection.subject?.identity.sha256, fixture.sha256);
   console.log("PASS CLI inspect_artifact");
 
   const projectionInput = JSON.stringify({
@@ -221,6 +227,4 @@ try {
   } finally {
     await client.close();
   }
-} finally {
-  await rm(workspace, { recursive: true, force: true });
-}
+});

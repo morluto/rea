@@ -1,5 +1,6 @@
-import { lstat, readdir, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
+import { lstat, realpath, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
 import {
@@ -15,58 +16,36 @@ import {
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   RegularFileCapacityError,
   readStableFileBytes,
   readStableFilePrefix,
 } from "../filesystem/readStableFileBytes.js";
+import { stateDirectories, stateNames } from "./ApplicationStateDirectories.js";
 import { APT_LOCATIONS } from "./AptRepositoryInventory.js";
+import { xdgBase } from "./XdgBase.js";
 import { inspectPackageFile } from "./DebianPackageFile.js";
 import {
   debianPackage,
   type DebianPackageHost,
   type InventoryContext,
 } from "./DebianPackageInventory.js";
-import { isRefusedRead } from "./HostFileRead.js";
+import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
 import { runHostQuery } from "./HostQuery.js";
 import { resolveProgram } from "./ProgramLookup.js";
+import type {
+  LinuxApplicationFacts,
+  LinuxApplicationRefusal,
+  LinuxApplicationRequest,
+} from "../ports/DesktopApplicationSession.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
-
-/** Which application to launch, as the caller named it. */
-export interface LinuxApplicationRequest {
-  readonly desktopEntry: string | undefined;
-  readonly executable: string | undefined;
-  readonly arguments: readonly string[];
-  readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly home: string;
-  /** Where a relative executable is found and an executable launch runs. */
-  readonly callerDirectory: string;
-  /** The absolute path of the `.deb` file the application was installed from, whose facts are recorded. */
-  readonly packageFile?: string | undefined;
-}
-
-/** Why the request does not name a launchable application. */
-export type LinuxApplicationRefusal =
-  | {
-      readonly reason: "desktop_entry_not_found";
-      readonly searched: readonly string[];
-    }
-  | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
-  | { readonly reason: "executable_not_found"; readonly program: string }
-  | {
-      readonly reason: "executable_on_relative_path";
-      readonly program: string;
-    };
-
-/** The inventory plus limitations found while building it. */
-export interface LinuxApplicationFacts {
-  readonly inventory: DesktopApplicationInventory;
-  readonly limitations: readonly string[];
-  /** Verified apt signing keys' bytes by sha256, for the capture to retain. */
-  readonly signingKeys: ReadonlyMap<string, Buffer>;
-}
 
 /** The host commands and apt folders the inventory reads; replaceable in tests. */
 export type LinuxInventoryHost = DebianPackageHost;
@@ -79,11 +58,14 @@ const LINUX_INVENTORY_HOST: LinuxInventoryHost = {
 type Package = DesktopApplicationInventory["package"];
 
 /** Directories searched for desktop entries, most specific first. */
-export const desktopEntryDirectories = (
+const desktopEntryDirectories = (
   environment: LinuxApplicationRequest["environment"],
   home: string,
 ): readonly string[] => {
-  const dataHome = environment.XDG_DATA_HOME || join(home, ".local/share");
+  const dataHome = xdgBase(
+    environment.XDG_DATA_HOME,
+    join(home, ".local/share"),
+  );
   const dataDirectories = (
     environment.XDG_DATA_DIRS || "/usr/local/share:/usr/share"
   )
@@ -94,9 +76,88 @@ export const desktopEntryDirectories = (
   );
 };
 
+/** How deep below one applications directory a nested id search may descend. */
+const NESTED_SEARCH_MAX_DEPTH = 4;
+/** How many applicable path probes one applications directory search may issue. */
+const NESTED_SEARCH_MAX_ENTRIES = 4096;
+
+type DesktopPathKind = "file" | "directory" | "other" | "absent";
+
+/** Only missing paths establish absence; failed identity probes remain unresolved. */
+const desktopPathKind = async (
+  path: string,
+): Promise<Result<DesktopPathKind, unknown>> => {
+  try {
+    const facts = await stat(path);
+    return ok(
+      facts.isFile() ? "file" : facts.isDirectory() ? "directory" : "other",
+    );
+  } catch (cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? ok("absent") : err(cause);
+  }
+};
+
+/**
+ * A desktop ID replaces path separators with dashes, while names can also
+ * contain dashes. Probe only spellings that encode this ID, rather than
+ * enumerating unrelated directories. Each descent consumes part of the ID.
+ */
+const findNestedDesktopEntry = async (
+  applicationsDirectory: string,
+  id: string,
+  signal: AbortSignal | undefined,
+): Promise<{ path: string } | { truncated: true } | undefined> => {
+  const pending = [{ path: applicationsDirectory, remaining: id, depth: 1 }];
+  let examined = 0;
+  let incomplete = false;
+  while (pending.length > 0) {
+    assertArtifactReadActive(signal);
+    const directory = pending.pop()!;
+    if (directory.depth > 1) {
+      if (examined >= NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      examined++;
+      const path = join(directory.path, directory.remaining);
+      const kind = await desktopPathKind(path);
+      assertArtifactReadActive(signal);
+      if (!kind.ok) incomplete = true;
+      else if (kind.value === "file") return { path };
+    }
+    for (
+      let split = directory.remaining.indexOf("-");
+      split !== -1;
+      split = directory.remaining.indexOf("-", split + 1)
+    ) {
+      const prefix = directory.remaining.slice(0, split);
+      if (prefix === "" || prefix === "." || prefix === "..") continue;
+      if (examined >= NESTED_SEARCH_MAX_ENTRIES) return { truncated: true };
+      examined++;
+      const path = join(directory.path, prefix);
+      const kind = await desktopPathKind(path);
+      assertArtifactReadActive(signal);
+      if (!kind.ok) {
+        incomplete = true;
+        continue;
+      }
+      if (kind.value !== "directory") continue;
+      if (directory.depth >= NESTED_SEARCH_MAX_DEPTH) {
+        incomplete = true;
+        continue;
+      }
+      pending.push({
+        path,
+        remaining: directory.remaining.slice(split + 1),
+        depth: directory.depth + 1,
+      });
+    }
+  }
+  return incomplete ? { truncated: true } : undefined;
+};
+
 const locateDesktopEntry = async (
   request: LinuxApplicationRequest,
   selector: string,
+  signal?: AbortSignal,
 ): Promise<
   Result<{ path: string; id: string | null }, LinuxApplicationRefusal>
 > => {
@@ -104,10 +165,23 @@ const locateDesktopEntry = async (
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
+    assertArtifactReadActive(signal);
     const path = join(directory, id);
-    // Flatpak exports and Nix profiles install entries as links to the file.
-    if ((await stat(path).catch(() => undefined))?.isFile() === true)
+    const kind = await desktopPathKind(path);
+    assertArtifactReadActive(signal);
+    if (!kind.ok)
+      return err({ reason: "desktop_entry_search_incomplete", searched });
+    if (kind.value === "file")
       return ok({ path, id: id.slice(0, -".desktop".length) });
+    // A nested entry in this directory outranks a flat one in a later root.
+    const nested = await findNestedDesktopEntry(directory, id, signal);
+    assertArtifactReadActive(signal);
+    if (nested !== undefined && "path" in nested)
+      return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
+    // The bounded search did not establish absence, so a later root must not
+    // supply a different application under the same id.
+    if (nested !== undefined)
+      return err({ reason: "desktop_entry_search_incomplete", searched });
   }
   return err({ reason: "desktop_entry_not_found", searched });
 };
@@ -128,7 +202,8 @@ const readDesktopEntry = async (
       )
     ).toString("utf8");
   } catch (cause: unknown) {
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     if (!isRefusedRead(cause)) throw cause;
     return err({
       reason: "desktop_entry_invalid",
@@ -165,7 +240,8 @@ const readHeader = async (
         (await readStableFilePrefix(handle, path, 16, options)).bytes,
     );
   } catch (cause: unknown) {
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     if (!isRefusedRead(cause)) throw cause;
     return new Uint8Array();
   }
@@ -176,10 +252,12 @@ interface ProgramLocation {
   readonly program: string;
   readonly resolved: string | null;
   readonly flatpak: string | null;
+  /** The launched desktop entry and its resolved file; empty for an executable launch. */
+  readonly entry: readonly string[];
 }
 
 const identifyPackage = async (
-  { program, resolved, flatpak }: ProgramLocation,
+  { program, resolved, flatpak, entry }: ProgramLocation,
   context: InventoryContext,
 ): Promise<Package> => {
   const base = {
@@ -201,8 +279,11 @@ const identifyPackage = async (
   )
     return { kind: "appimage", name: basename(resolved ?? program), ...base };
   return debianPackage(
-    [program, ...(resolved === null ? [] : [resolved])],
-    resolved ?? program,
+    {
+      program: [program, ...(resolved === null ? [] : [resolved])],
+      executable: resolved ?? program,
+      entry,
+    },
     context,
   );
 };
@@ -221,69 +302,18 @@ const electronMarkers = async (
     );
     if (image.slices.some((slice) => slice.sentinel_count > 0))
       markers.push("fuse-sentinel");
-  } catch {
-    signal?.throwIfAborted();
+  } catch (cause: unknown) {
+    if (
+      cause instanceof ArtifactReaderFailure &&
+      (cause.cleanup !== undefined || cause.reason === "cancelled")
+    )
+      throw cause;
     // Scripts and other non-binary launchers carry no fuse wire.
   }
   const asar = join(dirname(resolved), "resources/app.asar");
   if ((await lstat(asar).catch(() => undefined)) !== undefined)
     markers.push("app-asar");
   return markers;
-};
-
-/** Whether a home entry is a dotfile named after the application, such as `.varicad-cfg.ini` or `.notesrc`. */
-const appNamedDotfile = (entry: string, names: ReadonlySet<string>): boolean =>
-  [...names].some((name) => {
-    // Short names would match unrelated dotfiles.
-    if (name.length < 3 || !entry.startsWith(`.${name}`)) return false;
-    const rest = entry.slice(name.length + 1);
-    return rest === "rc" || /^[-._]./u.test(rest);
-  });
-
-/**
- * Folder names under XDG and dot-directories where the application may keep
- * state, and the dotfiles in the home named after it, which an application
- * may only read during a capture.
- */
-const stateDirectories = async (
-  names: readonly (string | null)[],
-  { environment, home }: Pick<LinuxApplicationRequest, "environment" | "home">,
-  extra: readonly string[],
-): Promise<DesktopApplicationInventory["state_directories"]> => {
-  const bases = [
-    environment.XDG_CONFIG_HOME || join(home, ".config"),
-    environment.XDG_DATA_HOME || join(home, ".local/share"),
-    environment.XDG_STATE_HOME || join(home, ".local/state"),
-    environment.XDG_CACHE_HOME || join(home, ".cache"),
-  ];
-  const variants = new Set(
-    names
-      .filter(
-        (name): name is string =>
-          name !== null &&
-          /^[^/\0]+$/u.test(name) &&
-          name !== "." &&
-          name !== "..",
-      )
-      .flatMap((name) => [name, name.toLowerCase()]),
-  );
-  const dotfiles = (await readdir(home).catch(() => [] as string[]))
-    .filter((entry) => appNamedDotfile(entry, variants))
-    .map((entry) => join(home, entry));
-  const paths = new Set([
-    ...[...variants].flatMap((name) => [
-      ...bases.map((base) => join(base, name)),
-      join(home, `.${name}`),
-    ]),
-    ...dotfiles,
-    ...extra,
-  ]);
-  return Promise.all(
-    [...paths].map(async (path) => ({
-      path,
-      exists_at_start: (await lstat(path).catch(() => undefined)) !== undefined,
-    })),
-  );
 };
 
 const launchCommand = async (
@@ -306,7 +336,7 @@ const launchCommand = async (
     return ok({
       argv: [
         executable.includes("/")
-          ? resolve(request.callerDirectory, executable)
+          ? absoluteCallerPath(executable, { cwd: request.callerDirectory })
           : executable,
         ...request.arguments,
       ],
@@ -314,7 +344,11 @@ const launchCommand = async (
       entry: null,
     });
   }
-  const located = await locateDesktopEntry(request, request.desktopEntry);
+  const located = await locateDesktopEntry(
+    request,
+    request.desktopEntry,
+    signal,
+  );
   if (!located.ok) return located;
   const entry = await readDesktopEntry(located.value.path, signal);
   if (!entry.ok) return entry;
@@ -348,26 +382,6 @@ const launchCommand = async (
   });
 };
 
-/**
- * Names the application's state folders may carry, including the entry's
- * full reverse-DNS id and its last part. The executable is null for a
- * `flatpak run` launch, whose `flatpak` launcher names flatpak's own folders.
- */
-const stateNames = (
-  package_: Package,
-  executable: string | null,
-  entry: DesktopApplicationInventory["desktop_entry"],
-): readonly (string | null)[] => [
-  package_.kind === "deb"
-    ? (package_.name?.split(":")[0] ?? null)
-    : package_.name,
-  executable === null ? null : basename(executable),
-  entry?.id ?? null,
-  entry?.id?.split(".").at(-1) ?? null,
-  entry?.startup_wm_class ?? null,
-  entry?.name ?? null,
-];
-
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -397,6 +411,7 @@ export const inspectLinuxApplication = async (
   const { path } = found;
   const resolved = await realpath(path).catch(() => null);
   const context: InventoryContext = {
+    libraryPolicy: desktopLibraryPolicy(request.libraryPolicy),
     host,
     signal,
     limitations: [],
@@ -404,8 +419,12 @@ export const inspectLinuxApplication = async (
   };
   const { limitations, signingKeys } = context;
   const flatpak = wrapper.kind === "flatpak" ? wrapper.application_id : null;
+  const entryFiles =
+    entry === null
+      ? []
+      : [entry.path, await realpath(entry.path).catch(() => entry.path)];
   const identified = await identifyPackage(
-    { program: path, resolved, flatpak },
+    { program: path, resolved, flatpak, entry: entryFiles },
     context,
   );
   const package_ =

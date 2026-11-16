@@ -245,6 +245,7 @@ const observationMatchesIdentity = (
       return false;
     const location = evidence.location.value;
     return (
+      evidence.evidence_ids.includes(identity.capture_evidence_id) &&
       location.capture_sha256 === identity.capture_sha256 &&
       [location.target_key, location.frame_key, location.script_key].includes(
         identity.runtime_key,

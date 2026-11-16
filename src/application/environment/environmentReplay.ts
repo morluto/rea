@@ -19,6 +19,7 @@ import {
   type EnvironmentSource,
   type RecordedExchange,
 } from "./environmentSource.js";
+import { utf8HeadExcerpt } from "../../domain/utf8HeadExcerpt.js";
 
 /** Caller arguments as the MCP tool receives them. */
 export type ReplayArguments = Readonly<Record<string, unknown>>;
@@ -307,13 +308,6 @@ export const selectsRecordedLine = (
   return true;
 };
 
-/** The longest prefix of text whose UTF-8 encoding fits the byte limit, encoding only that prefix. */
-const utf8Prefix = (text: string, maxBytes: number): string => {
-  // encodeInto stops before the first character that does not fit, so `read` ends on a boundary.
-  const { read } = new TextEncoder().encodeInto(text, new Uint8Array(maxBytes));
-  return text.slice(0, read);
-};
-
 /** Base64 characters, in whole groups, whose bytes fit the replay limit. */
 const BASE64_LIMIT_CHARS = Math.floor(REPLAY_BODY_LIMIT_BYTES / 3) * 4;
 
@@ -334,7 +328,7 @@ const replayBody = (exchange: RecordedExchange): ReplayBody => {
         : { body: body.encoded.slice(0, BASE64_LIMIT_CHARS), truncated: true };
     case "cut":
       return {
-        body: utf8Prefix(body.text, REPLAY_BODY_LIMIT_BYTES),
+        body: utf8HeadExcerpt(body.text, REPLAY_BODY_LIMIT_BYTES).text,
         truncated: true,
       };
     case "json":
@@ -380,29 +374,31 @@ export const replayAnswer = (
   exact: boolean,
   { body, truncated }: ReplayBody = replayBody(exchange),
 ): ReplayResult => {
-  const recordedPath = utf8Prefix(exchange.path, REPLAY_METADATA_LIMIT_BYTES);
+  const recordedPath = utf8HeadExcerpt(
+    exchange.path,
+    REPLAY_METADATA_LIMIT_BYTES,
+  );
   const recordedQuery =
     exchange.query === null
       ? null
-      : utf8Prefix(exchange.query, REPLAY_METADATA_LIMIT_BYTES);
+      : utf8HeadExcerpt(exchange.query, REPLAY_METADATA_LIMIT_BYTES);
   const contentType =
     exchange.contentType === null
       ? null
-      : utf8Prefix(exchange.contentType, REPLAY_METADATA_LIMIT_BYTES);
+      : utf8HeadExcerpt(exchange.contentType, REPLAY_METADATA_LIMIT_BYTES);
   return {
     status: exchange.status,
-    content_type: contentType,
+    content_type: contentType?.text ?? null,
     body,
     replay: {
       record_ordinal: exchange.ordinal,
       evidence_id: source.evidenceId,
       exact_match: exact,
-      recorded_path: recordedPath,
-      recorded_query: recordedQuery,
+      recorded_path: recordedPath.text,
+      recorded_query: recordedQuery?.text ?? null,
       recorded_line_truncated:
-        recordedPath.length < exchange.path.length ||
-        (recordedQuery?.length ?? 0) < (exchange.query?.length ?? 0),
-      content_type_truncated: contentType !== exchange.contentType,
+        recordedPath.truncated || recordedQuery?.truncated === true,
+      content_type_truncated: contentType?.truncated === true,
       body_recorded: exchange.bodyText !== null,
       body_encoding: exchange.bodyEncoding ?? "utf-8",
       truncated,

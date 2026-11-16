@@ -1,4 +1,4 @@
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { ok } from "../../src/domain/result.js";
 
 const FIXTURE_PROVIDER = {

@@ -303,3 +303,23 @@ it("reports no remaining time after terminal expiry near the monotonic boundary"
     vi.useRealTimers();
   }
 });
+
+it("finalizes an expired startup under its own budget and the caller's signal", async () => {
+  const caller = new AbortController();
+  const deadline = new ProviderStartupDeadline(100, caller.signal, {
+    finalizeMs: 1_000,
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(100);
+    expect(deadline.signal.aborted).toBe(true);
+    expect(deadline.interruption).toBe("timeout");
+
+    const finalization = deadline.finalize();
+    // Startup expiry does not interrupt finalization; only the caller does.
+    expect(finalization.signal).toBe(caller.signal);
+    expect(finalization.signal?.aborted).toBe(false);
+    expect(finalization.deadline.remainingMs()).toBe(1_000);
+  } finally {
+    deadline.dispose();
+  }
+});

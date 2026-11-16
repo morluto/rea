@@ -2,18 +2,21 @@
 import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { WABT_WORKFLOW_TIMEOUT_MS } from "./lib/wabt-verifier-timeouts.mjs";
 import { verifyPackagePack } from "./verify-package-pack.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-const root = await PrivateRuntimeRoot.create({
+const root = await VerifierFixture.open({
   prefix: "rea-wabt-package-verifier-",
 });
 let commands;
 const verifiedOutput = await withVerifierCleanup(async () => {
-  commands = await createPackageVerifierCommands({ workspace: root });
+  // The package command owner releases the fixture after its commands close.
+  commands = await createPackageVerifierCommands({
+    workspace: { path: root.path, close: () => root.release() },
+  });
   const { tarball } = await verifyPackagePack({
     root: process.cwd(),
     workspace: root.path,
@@ -66,5 +69,5 @@ const verifiedOutput = await withVerifierCleanup(async () => {
     },
   );
   return verified.stdout;
-}, [() => (commands === undefined ? root.close() : commands.close())]);
+}, [() => (commands === undefined ? root.release() : commands.close())]);
 process.stdout.write(verifiedOutput);

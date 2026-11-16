@@ -4,7 +4,6 @@ import { DatabaseSync } from "node:sqlite";
 
 import { expect } from "vitest";
 
-import { JSON_LINES_SELECTION_REMEDIATION } from "../../src/cli/jsonLines.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { analysisViewJavaScriptEvidence } from "../fixtures/analysisView.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -174,7 +173,11 @@ cliTest(
           code: "invalid_request",
           category: "invalid_input",
           retryable: false,
-          remediation: { action: JSON_LINES_SELECTION_REMEDIATION },
+          remediation: {
+            action: expect.stringMatching(
+              /--format json.*record collection.*--filter-output/iu,
+            ),
+          },
           details: {
             operation: "inspect-sqlite-database",
             issues: [{ path: [option], reason: "invalid_value", observed }],

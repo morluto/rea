@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,9 +16,11 @@ export { change, checkpoint, retained };
 
 /** A synthetic capture of a notes app: a settings key file, a document and a SQLite database. */
 export const HOME = "/home/ada";
-const sha256 = (text: string) =>
+/** A retained file's content: text, or bytes such as a zip archive's. */
+type Content = string | Buffer;
+const sha256 = (text: Content) =>
   createHash("sha256").update(text).digest("hex");
-const facts = (text: string) => ({
+const facts = (text: Content) => ({
   type: "file" as const,
   size: text.length,
   mode: 0o644,
@@ -26,7 +29,7 @@ const facts = (text: string) => ({
 });
 const change = (
   path: string,
-  versions: { readonly before?: string; readonly after: string },
+  versions: { readonly before?: Content; readonly after: Content },
   marks: { readonly state?: boolean } = {},
 ) => ({
   path,
@@ -39,7 +42,7 @@ const change = (
   in_state_directory: marks.state === true,
   opened_by_application: false,
 });
-const retained = (path: string, text: string) => ({
+const retained = (path: string, text: Content) => ({
   path,
   sha256: sha256(text),
   size: text.length,
@@ -122,6 +125,7 @@ export const capture = (): DesktopApplicationCapture => ({
   state: {
     roots: [HOME],
     content_roots: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
+    baseline_non_files: [],
     excluded: [],
     state_directories: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
     checkpoints: [
@@ -165,10 +169,93 @@ export const capture = (): DesktopApplicationCapture => ({
   limitations: [],
 });
 
+/** The note as saved before checkpoint `seed`, then as edited and saved before `end`. */
+export const SAVED_NOTE = "milk\n";
+export const EDITED_NOTE = "milk\neggs\n";
+
+/**
+ * The app launches, the user saves a new note and takes `seed`, edits and
+ * saves it and takes `end`, then stops; the app writes its settings as it
+ * exits. Write it with `EDITED_NOTE` as extra content.
+ */
+export const seedEndCapture = (): DesktopApplicationCapture => {
+  const base = capture();
+  const wrap = { before: "[ui]\nwrap=false\n", after: "[ui]\nwrap=true\n" };
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        checkpoint(
+          "baseline",
+          "baseline",
+          [],
+          [retained(SETTINGS, wrap.before)],
+        ),
+        checkpoint(
+          "seed",
+          "request",
+          [change(NOTE, { after: SAVED_NOTE })],
+          [retained(NOTE, SAVED_NOTE)],
+        ),
+        checkpoint(
+          "end",
+          "request",
+          [change(NOTE, { before: SAVED_NOTE, after: EDITED_NOTE })],
+          [retained(NOTE, EDITED_NOTE)],
+        ),
+        { ...checkpoint("stop", "request", [], []), trigger: "stop" },
+        checkpoint(
+          "exit",
+          "exit",
+          [change(SETTINGS, wrap, { state: true })],
+          [retained(SETTINGS, wrap.after)],
+        ),
+      ],
+    },
+  };
+};
+
+/** The note once bread is added after the eggs, and with the eggs then misspelled. */
+export const BREAD_NOTE = "milk\neggs\nbread\n";
+export const NEAR_EGGS_NOTE = "milk\negs\nbread\n";
+
+/**
+ * Two tasks in one capture: eggs added by `end`, bread on top by
+ * `end-add-bread`, then the eggs misspelled by checkpoint `near`, before the
+ * stop. Write it with `EDITED_NOTE`, `BREAD_NOTE` and `NEAR_EGGS_NOTE` as extra content.
+ */
+export const severalEndsCapture = (near: string): DesktopApplicationCapture => {
+  const base = seedEndCapture();
+  const { checkpoints } = base.state;
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        ...checkpoints.slice(0, 3),
+        checkpoint(
+          "end-add-bread",
+          "request",
+          [change(NOTE, { before: EDITED_NOTE, after: BREAD_NOTE })],
+          [retained(NOTE, BREAD_NOTE)],
+        ),
+        checkpoint(
+          near,
+          "request",
+          [change(NOTE, { before: BREAD_NOTE, after: NEAR_EGGS_NOTE })],
+          [retained(NOTE, NEAR_EGGS_NOTE)],
+        ),
+        ...checkpoints.slice(3),
+      ],
+    },
+  };
+};
+
 export const writeCaptureFolder = async (
   result: DesktopApplicationCapture,
   operation = DESKTOP_OPERATION,
-  extraContent: readonly string[] = [],
+  extraContent: readonly Content[] = [],
 ) => {
   const folder = await createTestTempDirectory("desktop-state-");
   await mkdir(join(folder, "content"));
@@ -181,14 +268,18 @@ export const writeCaptureFolder = async (
     ...extraContent,
   ])
     await writeFile(join(folder, "content", sha256(text)), text);
-  const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-    predicateType: "rea.desktop-application-capture",
-    operation,
-    parameters: {},
-    result,
-    confidence: "observed",
-    authority: "controlled-replay",
-  });
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    DESKTOP_PROVIDER,
+    {
+      predicateType: "rea.desktop-application-capture",
+      operation,
+      parameters: {},
+      result,
+      confidence: "observed",
+      authority: "controlled-replay",
+    },
+  );
   await writeFile(join(folder, "capture.json"), JSON.stringify(evidence));
   return folder;
 };

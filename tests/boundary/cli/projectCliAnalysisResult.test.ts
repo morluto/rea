@@ -1,17 +1,25 @@
 import { expect, it } from "vitest";
 
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+  reattributedResourceConstraint,
+} from "../../../src/domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../../src/domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
 import { ownedJsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import {
+  projectCliAnalysisResult,
+  projectCliInputFields,
+} from "../../../src/cli/projectCliAnalysisResult.js";
 
 const binding = {
   operation: "inspect_keyed_archive",
   fields: { path: "archive" },
+  flags: {},
 };
 
 it("projects bound input fields without changing canonical facts or nested identities", () => {
@@ -27,7 +35,7 @@ it("projects bound input fields without changing canonical facts or nested ident
       ]),
     ),
   );
-  const mapped = projectCliAnalysisResult(err(original), binding);
+  const mapped = projectCliInputFields(original, binding);
   expect(mapped).toEqual({
     ...original,
     details: {
@@ -83,7 +91,7 @@ it("keeps cleanup history and retained output while binding the actionable prima
     projectAnalysisError(analysisErrorWithCleanupFailure(primary, cleanup)),
   );
   expect(original.code).toBe("cleanup_incomplete");
-  const mapped = projectCliAnalysisResult(err(original), binding);
+  const mapped = projectCliInputFields(original, binding);
   expect(mapped).toMatchObject({
     code: "cleanup_incomplete",
     details: {
@@ -111,20 +119,21 @@ it("keeps cleanup history and retained output while binding the actionable prima
 
 it("passes through successful data, unbound operations and unknown error values", () => {
   const value = { path: "caller-selected data" };
-  expect(projectCliAnalysisResult(ok(value), binding)).toBe(value);
+  expect(projectCliInputFields(value, binding)).toBe(value);
   const targetError = projectAnalysisError(
     new AnalysisInputError("open_binary", undefined, [
       { path: ["path"], reason: "invalid_format" },
     ]),
   );
-  expect(projectCliAnalysisResult(err(targetError), binding)).toBe(targetError);
+  expect(projectCliInputFields(targetError, binding)).toBe(targetError);
   const unbound = projectAnalysisError(
     new AnalysisInputError("inspect_keyed_archive", undefined, [
       { path: ["root"], reason: "invalid_value" },
     ]),
   );
-  expect(projectCliAnalysisResult(err(unbound), binding)).toBe(unbound);
+  expect(projectCliInputFields(unbound, binding)).toBe(unbound);
   expect(projectCliAnalysisResult(err(targetError))).toBe(targetError);
+  expect(projectCliAnalysisResult(ok(value))).toBe(value);
   const unknown = {
     code: "future_failure",
     details: {
@@ -132,5 +141,45 @@ it("passes through successful data, unbound operations and unknown error values"
       issues: [{ path: ["path"] }],
     },
   };
-  expect(projectCliAnalysisResult(err(unknown), binding)).toBe(unknown);
+  expect(projectCliInputFields(unknown, binding)).toBe(unknown);
+});
+
+it("names related fields and operations by contract identity and renders only this command's flags", () => {
+  const constraint = new AnalysisResourceConstraintError(
+    "inspect_sqlite_database",
+    "memory",
+    "fixture limit",
+    null,
+    {
+      related: {
+        parameters: ["columns", "table", "row_limit"],
+        operations: ["inspect_artifact"],
+      },
+    },
+  );
+  // Re-attribution keeps the inputs the recovery names, as it keeps `limit`.
+  const projected = projectAnalysisError(
+    reattributedResourceConstraint("inspect_sqlite_database", constraint),
+  );
+  expect(projected.details).toMatchObject({
+    related_parameters: ["columns", "table", "row_limit"],
+    related_operations: ["inspect_artifact"],
+  });
+  const sqlite = {
+    operation: "inspect_sqlite_database",
+    fields: {},
+    flags: { columns: "--column", table: "--table" },
+  };
+  // A field the command takes no flag for is left to the contract name.
+  expect(projectCliInputFields(projected, sqlite)).toMatchObject({
+    details: { related_cli_flags: { columns: "--column", table: "--table" } },
+  });
+  // Another command's failure keeps its fields for that command to render.
+  expect(
+    projectCliInputFields(projected, { ...sqlite, operation: "inspect_plist" }),
+  ).toBe(projected);
+  // An error that names nothing projects no related fields.
+  expect(
+    projectAnalysisError(new AnalysisInputError("inspect_plist")).details ?? {},
+  ).not.toHaveProperty("related_parameters");
 });

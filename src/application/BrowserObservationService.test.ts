@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { BrowserObservationPort } from "./BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import {
   listBrowserTargets,
   inspectWebPage,
@@ -18,13 +18,14 @@ import {
   expectKeptPartial,
   expectOutputError,
   expectOwnerError,
-} from "./ownerObservationExpectation.fixture.js";
+} from "../../tests/fixtures/ownerObservationExpectation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { err, ok } from "../domain/result.js";
 import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCapture.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const input = {
   cdp_endpoint: {
@@ -182,7 +183,7 @@ it.each([true, false])(
     });
     if (wrapperRetainsFacts)
       expect(failure.partialObservation).toBe(primary.partialObservation);
-    failure.resolveCleanup();
+    releaseOwnedCleanup(failure);
     expect(resolvedAnalysisError(failure)).toBe(primary);
     expect(
       parseEvidence(
@@ -286,7 +287,6 @@ it("retains completed bundle facts as bundle Evidence after cancellation", async
     total_analysis_timeout_ms: 1000,
   });
   const result = await analyzeWebBundle(browser, selected);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBe(failure);
   expect(result.error.cause).toBe(reason);
@@ -313,7 +313,6 @@ it("preserves a prior caller reason without admitting browser work", async () =>
     input,
     { signal: AbortSignal.abort(reason) },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancelled inventory");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);
