@@ -112,10 +112,13 @@ it("saves a GameCube DOL snapshot and replays it after reopening", async () => {
   const snapshot = await readAnalysisSnapshot(snapshotPath);
   if (!snapshot.ok) throw snapshot.error;
   expect(snapshot.value.target).toMatchObject({
-    format: "gamecube-dol",
     kind: "executable",
-    architecture: "powerpc",
-    entry_point: "0x80003100",
+    identity: {
+      kind: "file",
+      format: "gamecube-dol",
+      architecture: "powerpc",
+      selection: { kind: "entry-point", entry_point: "0x80003100" },
+    },
   });
   expect(snapshot.value.entries).toHaveLength(1);
   expect(snapshot.value.evidence_bundle.artifacts).toEqual([
