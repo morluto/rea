@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { spawnFailure } from "../../../tests/support/process/spawnFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
@@ -574,6 +575,47 @@ it.skipIf(process.platform === "win32")(
       diagnostics: { catalog_path: "Contents/Resources/Assets.car" },
     });
     expect(launches).toBe(1);
+  },
+);
+
+it.each([
+  ["EAGAIN", "processes"],
+  ["EMFILE", "file-descriptors"],
+])(
+  "reports a host that lacks capacity to launch assetutil (%s) as a retryable constraint",
+  async (code, resource) => {
+    const bundle = await createTestTempDirectory("rea-assetutil-capacity-");
+    await mkdir(join(bundle, "Contents", "Resources"), { recursive: true });
+    await writeFile(
+      join(bundle, "Contents", "Resources", "Assets.car"),
+      "catalog",
+    );
+    await expect(
+      analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        analyzeInterfaceBuilder: async () =>
+          ({
+            graph: { nodes: [], truncated: false, coverage: [] },
+          }) as unknown as Awaited<
+            ReturnType<typeof analyzeInterfaceBuilderBundle>
+          >,
+        assetUtilLauncher: async () => {
+          throw spawnFailure(code, "/usr/bin/assetutil");
+        },
+        platform: "darwin",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      retryable: true,
+      reportedLimits: { spawn_error: code, exhausted_resource: resource },
+      diagnostics: {
+        catalog_path: "Contents/Resources/Assets.car",
+        boundary: "host-capacity",
+        system_code: code,
+      },
+    });
   },
 );
 

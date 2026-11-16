@@ -47,6 +47,7 @@ import type {
   SpawnedOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
 import { providerOutcomeOf } from "../../process/ProviderOutcome.js";
+import { describeLaunchFailure } from "../../process/launchFailure.js";
 import {
   classifyProviderOutcome,
   type ProviderOutcomeContext,
@@ -536,6 +537,7 @@ const assetUtilFailure = (
 const assetUtilOutcomeContext = (
   entry: ArtifactEntry,
 ): ProviderOutcomeContext => ({
+  providerId: ARTIFACT_GRAPH_PROVIDER.id,
   operation: OPERATION,
   capturedOutput: capturedProviderOutput,
   details: { diagnostics: { catalog_path: entry.path } },
@@ -548,16 +550,16 @@ const assetUtilOutcomeContext = (
       "capture",
     ),
   },
+  launchUnavailable: (failure, details) =>
+    new AnalysisCapabilityUnavailableError(
+      "artifact",
+      OPERATION,
+      failure.kind === "missing"
+        ? "macOS assetutil is unavailable"
+        : `macOS assetutil could not be launched (${describeLaunchFailure(failure)})`,
+      details,
+    ),
   dialect: (outcome, details) => {
-    if (outcome.kind === "launch-refused")
-      return new AnalysisCapabilityUnavailableError(
-        "artifact",
-        OPERATION,
-        outcome.refusal.kind === "missing"
-          ? "macOS assetutil is unavailable"
-          : `macOS assetutil could not be launched (${outcome.refusal.code})`,
-        details,
-      );
     // assetutil's explicit input rejection is distinct from unusable tool
     // output. Match its complete diagnostic for this exact selected path;
     // other text, interrupted runs and incomplete captures establish no cause.
