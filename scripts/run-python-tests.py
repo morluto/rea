@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -92,6 +93,28 @@ def run_analysis_efficiency():
         fail("no_executed_analysis_efficiency_tests")
 
 
+def run_windows_tools():
+    # Top-level tools tests: structure guards run on every OS, cmd.exe behavior
+    # tests skip themselves off-Windows, but executed coverage is still asserted
+    # so a silent skip cannot count as green on the Windows host lane.
+    sys.path.insert(0, str(root))
+    suite = unittest.defaultTestLoader.discover(
+        str(root / "tests"), pattern="test_windows_quicktools.py"
+    )
+    result = unittest.TextTestRunner(verbosity=2, resultclass=ExecutedResult).run(suite)
+    if not result.wasSuccessful():
+        raise SystemExit(1)
+    if not result.completed:
+        fail("no_executed_windows_tools_tests")
+    if os.name != "nt":
+        return
+    executed_behavior = [
+        name for name in result.completed if "LauncherBehaviorTests" in name
+    ]
+    if not executed_behavior:
+        fail("no_executed_windows_tools_behavior_tests")
+
+
 bridge_root = root / "bridge"
 bridge_tests = sorted(
     path for path in bridge_root.rglob("test_*.py") if path.is_file()
@@ -112,6 +135,9 @@ if sys.argv[1:] == ["--bridge"]:
     raise SystemExit(0)
 if sys.argv[1:] == ["--analysis-efficiency"]:
     run_analysis_efficiency()
+    raise SystemExit(0)
+if sys.argv[1:] == ["--windows-tools"]:
+    run_windows_tools()
     raise SystemExit(0)
 if sys.argv[1:]:
     fail("invalid_python_test_arguments")

@@ -23,6 +23,11 @@ export const documentationSections = [
         source: "getting-started/mcp-prompts.md",
         route: "/mcp-prompts",
       },
+      {
+        text: "Windows quick tools launcher",
+        source: "getting-started/windows-quicktools.md",
+        route: "/windows-quicktools",
+      },
     ],
   },
   {
