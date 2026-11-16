@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import {
   BINARY_ARCHITECTURES,
-  ELF_METADATA_ARCHITECTURES,
+  HEADER_ARCHITECTURE_EXCLUSIONS,
   RAW_ONLY_ARCHITECTURES,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
@@ -13,12 +13,9 @@ import {
 import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
-const headerArchitectureSchema = architectureSchema.exclude([
-  ...ELF_METADATA_ARCHITECTURES,
-  ...RAW_ONLY_ARCHITECTURES,
-  "hexagon",
-  "arm64_32",
-]);
+const headerArchitectureSchema = architectureSchema.exclude(
+  HEADER_ARCHITECTURE_EXCLUSIONS,
+);
 const identity = { path: z.string(), sha256: digestSchema };
 const executable = { ...identity, kind: z.literal("executable") };
 

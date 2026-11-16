@@ -17,6 +17,7 @@ import {
   session as kunaSession,
   unprovenCleanupLauncher,
 } from "../providers/kuna/kunaSessionFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -50,7 +51,10 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "kuna-close-retry", version: "1" });
+  const client = new Client(
+    { name: "kuna-close-retry", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

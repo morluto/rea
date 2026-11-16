@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -36,7 +37,30 @@ cliTest(
       matched_count: 1,
       entries: [{ name: "CONFIG_SECURITY_SELINUX", kind: "y", value: "y" }],
     });
-    expect(evidence.subject?.format).toBe("elf");
+    expect(fileIdentity(evidence.subject).format).toBe("elf");
+  },
+);
+
+cliTest(
+  "keeps the compiler group separate from an empty builder group",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-kernel-banner-cli-");
+    const path = join(root, "banner.bin");
+    const text = "Linux version 6.1.0 () (gcc 12.2.0) #1 SMP";
+    await writeFile(path, `${text}\0`);
+    const result = await cli.run({
+      arguments: ["inspect-kernel-build-config", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    expect(evidence.normalized_result.banner).toMatchObject({
+      status: "present",
+      text,
+      version: "6.1.0",
+      builder: null,
+      compiler: "gcc 12.2.0",
+      location: { space: "file", offset: 0, bytes: text.length },
+    });
   },
 );
 

@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 import {
-  normalizeCliArguments,
   adaptCliOutputArgumentsForIncur,
+  parseCliGlobalArguments,
 } from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
@@ -279,7 +279,8 @@ describe("CLI output flag value forms", () => {
     "preserves a flag-shaped spaced value owned by %s",
     (flag) => {
       expect(
-        normalizeCliArguments([flag, "--format=json", "providers", "--json"]),
+        parseCliGlobalArguments([flag, "--format=json", "providers", "--json"])
+          .arguments,
       ).toEqual([flag, "--format=json", "providers", "--json"]);
     },
   );
@@ -293,7 +294,6 @@ describe("CLI output flag value forms", () => {
       ]) {
         const result = await cli.run({
           arguments: [...filter, "providers", "--json"],
-          timeoutMs: 10_000,
         });
         expect(result.exitCode).toBe(0);
         expect(JSON.parse(result.stdout)).toEqual({});
@@ -304,7 +304,7 @@ describe("CLI output flag value forms", () => {
 
   it("splits only the equals forms of valued output flags", () => {
     expect(
-      normalizeCliArguments([
+      parseCliGlobalArguments([
         "inspect-sqlite-database",
         "--table=a=b",
         "--format=json",
@@ -313,7 +313,7 @@ describe("CLI output flag value forms", () => {
         "--token-offset=",
         "--json",
         "--format-hint=x",
-      ]),
+      ]).arguments,
     ).toEqual([
       "inspect-sqlite-database",
       "--table=a=b",
@@ -393,7 +393,6 @@ describe("unclosed CLI output filter slices", () => {
             "--filter-output",
             "result[0,1].name[",
           ],
-          timeoutMs: 3000,
         });
         expect(result.exitCode).toBe(1);
         expect(result.stdout).toContain("INVALID_OUTPUT_FILTER");
@@ -402,7 +401,6 @@ describe("unclosed CLI output filter slices", () => {
       }
       const splitPath = await cli.run({
         arguments: ["providers", "--json", "--filter-output", "][,]"],
-        timeoutMs: 3000,
       });
       expect(splitPath.exitCode).toBe(1);
       expect(splitPath.json).toMatchObject({
@@ -422,7 +420,6 @@ describe("unclosed CLI output filter slices", () => {
           "--filter-output",
           "capabilities[0,1].provider.id,open",
         ],
-        timeoutMs: 3000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toEqual({
@@ -808,8 +805,8 @@ describe("CLI update root alias", () => {
   ])(
     "routes only an unambiguous root update while retaining option data: %j",
     (input, expected) => {
-      expect(normalizeCliArguments(input)).toEqual(expected);
-      expect(normalizeCliArguments(expected)).toEqual(expected);
+      expect(parseCliGlobalArguments(input).arguments).toEqual(expected);
+      expect(parseCliGlobalArguments(expected).arguments).toEqual(expected);
     },
   );
 });
@@ -819,7 +816,7 @@ describe("version report requests", () => {
     [["--version", "--json"], "json"],
     [["--json", "--version"], "json"],
     [["--version", "--format", "yaml"], "yaml"],
-    [normalizeCliArguments(["--version", "--format=toon"]), "toon"],
+    [parseCliGlobalArguments(["--version", "--format=toon"]).arguments, "toon"],
     // Without an explicit format, Incur prints the bare version.
     [["--version"], undefined],
     // Help keeps precedence over --version.

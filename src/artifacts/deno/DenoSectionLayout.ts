@@ -1,10 +1,11 @@
-import { TextDecoder } from "node:util";
-
-import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  artifactFixedLimitFailure,
+} from "../../resources/index.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Opening and closing marker of a Deno compile data section. */
 export const DENO_SECTION_MAGIC = Buffer.from("d3n0l4nd", "latin1");
@@ -20,11 +21,8 @@ const FLAG_TRANSPILED = 1 << 0;
 const FLAG_SOURCE_MAP = 1 << 1;
 const FLAG_CJS = 1 << 2;
 const FLAG_UTF8 = 1 << 3;
-const specifierDecoder = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
-const jsonDecoder = new TextDecoder("utf-8", { fatal: true });
+const specifierDecoder = strictUtf8Decoder("preserve");
+const jsonDecoder = strictUtf8Decoder("strip-signature");
 
 const MEDIA_TYPE_NAMES = [
   "JavaScript",
@@ -378,14 +376,16 @@ const addRemoteBody = (total: bigint, length: number): bigint => {
 };
 
 const assertTableCount = (count: number, scope: string): void => {
-  if (count > MAX_DENO_TABLE_COUNT) {
-    const allowance = `Deno compile ${scope} allowance of ${String(MAX_DENO_TABLE_COUNT)} records`;
-    const message = `Deno compile ${scope} table claims ${String(count)} records, exceeding MAX_DENO_TABLE_COUNT (${String(MAX_DENO_TABLE_COUNT)} records). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-    throw new ArtifactReaderFailure("limit", message, {
-      boundary: "capacity",
-      userMessage: message,
-    });
-  }
+  if (count > MAX_DENO_TABLE_COUNT)
+    throw artifactFixedLimitFailure(
+      {
+        name: `The Deno compile ${scope} record allowance`,
+        kind: "count",
+        limit: MAX_DENO_TABLE_COUNT,
+        unit: "records",
+      },
+      `Deno compile ${scope} table claims ${String(count)} records, exceeding MAX_DENO_TABLE_COUNT (${String(MAX_DENO_TABLE_COUNT)} records).`,
+    );
 };
 
 const decodeStrict = (
@@ -530,11 +530,14 @@ export const denoByteLimit = (
   scope: string,
   claimed: number | bigint,
   allowance: number,
-): ArtifactReaderFailure => {
-  const name = `Deno compile ${scope} allowance of ${String(allowance)} bytes`;
-  const message = `The ${scope} claims ${String(claimed)} bytes. ${fixedAllowanceRemediation(name, "parser")} This release has no runtime override.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "memory",
-    userMessage: message,
-  });
-};
+): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: `The Deno compile ${scope} allowance`,
+      kind: "parser",
+      limit: allowance,
+      unit: "bytes",
+    },
+    `The ${scope} claims ${String(claimed)} bytes, above ${String(allowance)} bytes.`,
+    "memory",
+  );

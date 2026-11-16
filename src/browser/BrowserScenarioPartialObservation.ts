@@ -11,7 +11,7 @@ import type {
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { browserCleanupObservation } from "../domain/browserObservationError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
@@ -138,9 +138,5 @@ export const browserScenarioOperationFailure = (
           { reason: observation.reason },
           { operation: "close_browser_scenario", cause: cleanupFailure.cause },
         );
-  return analysisErrorWithCleanupFailure(
-    primary,
-    cleanup,
-    OPERATION,
-  ).bindCleanupDependencies([primary, cleanup]);
+  return analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
 };

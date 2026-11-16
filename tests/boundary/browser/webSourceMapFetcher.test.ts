@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 import { describe, expect, it } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -109,7 +109,7 @@ it.each(["regular", "indexed"])(
         })),
       );
       expect(webSourceMapsSchema.parse(result)).toEqual(result);
-      const historical = {
+      expectInvalidSourceMaps({
         ...result,
         items: [
           {
@@ -119,8 +119,21 @@ it.each(["regular", "indexed"])(
             ),
           },
         ],
-      };
-      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      });
+      for (const omit of ["source_index", "declaration_index"] as const)
+        expectInvalidSourceMaps({
+          ...result,
+          items: [
+            {
+              ...item,
+              original_sources: item.original_sources.map((source) =>
+                Object.fromEntries(
+                  Object.entries(source).filter(([key]) => key !== omit),
+                ),
+              ),
+            },
+          ],
+        });
       expectInvalidSourceMaps({
         ...result,
         items: [
@@ -323,6 +336,24 @@ it("parses ECMA-426 HTTP source-map prefixes while retaining exact response evid
       { artifact: null, mappings: [], original_sources: [] },
       { artifact: null, mappings: [], original_sources: [] },
     ]);
+    expect(webSourceMapsSchema.parse(result)).toEqual(result);
+    const without = (value: object, omit: string) =>
+      Object.fromEntries(Object.entries(value).filter(([key]) => key !== omit));
+    for (const omit of ["source_index", "declaration_index"])
+      expectInvalidSourceMaps({
+        ...result,
+        items: result.items.map((item) => ({
+          ...item,
+          mappings: item.mappings.map((row) => without(row, omit)),
+        })),
+      });
+    // An invalid map was read in full, so its body identity is required.
+    expectInvalidSourceMaps({
+      ...result,
+      items: result.items.map((item) =>
+        item.status === "invalid" ? without(item, "response_identity") : item,
+      ),
+    });
   } finally {
     server.closeAllConnections();
     if (server.listening)
@@ -777,17 +808,14 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
 
 describe("source-map response cancellation", () => {
   it("cancels a pending response reader on caller abort", async () => {
-    let markPullStarted: (() => void) | undefined;
-    const pullStarted = new Promise<void>((resolve) => {
-      markPullStarted = resolve;
-    });
+    const pullStart = phaseArrival();
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("{"));
       },
       pull() {
-        markPullStarted?.();
+        pullStart.arrive();
       },
       cancel() {
         cancelled = true;
@@ -800,11 +828,7 @@ describe("source-map response cancellation", () => {
     });
 
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(
-        pullStarted,
-        pending,
-        "source-map response pull",
-      );
+      await pullStart.reached(pending, "source-map response pull");
       controller.abort(abortReason);
       const result = await pending;
       expect(result.ok).toBe(false);
@@ -823,17 +847,14 @@ describe("completed source-map cancellation", () => {
   it.each([null, { stopped: "caller" }, new AnalysisCancelledError("test")])(
     "retains a completed map when a later response is cancelled with reason %s",
     async (reason) => {
-      let markPullStarted: (() => void) | undefined;
-      const pullStarted = new Promise<void>((resolve) => {
-        markPullStarted = resolve;
-      });
+      const pullStart = phaseArrival();
       let cancelled = false;
       const secondBody = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("{"));
         },
         pull() {
-          markPullStarted?.();
+          pullStart.arrive();
         },
         cancel() {
           cancelled = true;
@@ -872,11 +893,7 @@ describe("completed source-map cancellation", () => {
       );
 
       await withVerifierCleanup(async () => {
-        await awaitAcknowledgement(
-          pullStarted,
-          pending,
-          "second source-map response pull",
-        );
+        await pullStart.reached(pending, "second source-map response pull");
         controller.abort(reason);
         const result = await pending;
         expect(result.ok).toBe(false);
@@ -1658,7 +1675,7 @@ describe("web source-map collection", () => {
     expect(result.items).toHaveLength(requests.length);
   });
 
-  it("includes source-map text above the former per-map byte budget", async () => {
+  it("includes source-map text above 8 MiB", async () => {
     const content = "x".repeat(8 * 1_024 * 1_024 + 1);
     const map = JSON.stringify({
       version: 3,

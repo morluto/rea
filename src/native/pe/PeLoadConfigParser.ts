@@ -3,15 +3,15 @@ import {
   appendPeConsumedSpan as consume,
 } from "./PeRvaSpans.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
   BinaryResourceFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
-import { readPeImage, type PeImage } from "../metadata/PeImage.js";
+} from "../../domain/binaryContainer.js";
+import { readPeImage, type PeImage } from "../../domain/native/peImage.js";
 import {
   guardFlagRecord,
   loadConfigFieldCovered,
@@ -36,20 +36,24 @@ const PE_LOAD_CONFIG_DIRECTORY = 10;
 /** Callback slots decoded between event-loop yields and cancellation checks. */
 const ENTRIES_PER_YIELD = 1024;
 
-/** The parser-owned allowance an image exhausted. */
-export type PeLoadConfigLimit = "callbacks";
-
-/** Structured parser allowance refusal; consumers branch on `limit`, never on prose. */
-export class PeLoadConfigLimitFailure extends BinaryResourceFailure {
-  constructor(
-    readonly limit: PeLoadConfigLimit,
-    readonly allowance: number,
-    message: string,
-  ) {
-    super("structure", allowance, message);
-    this.name = "PeLoadConfigLimitFailure";
+/** Derived locations may be unmapped; ambiguous mappings remain malformed. */
+const optionalFileOffset = (
+  lookup: { offset(address: bigint, size: number): number },
+  address: bigint,
+  size: number,
+): number | null => {
+  try {
+    return lookup.offset(address, size);
+  } catch (cause) {
+    if (!(cause instanceof BinaryMappingFailure) || cause.reason !== "unmapped")
+      throw cause;
+    return null;
   }
-}
+};
+
+/** The parser-owned allowances an image can exhaust. */
+export const PE_LOAD_CONFIG_LIMITS = ["callbacks"] as const;
+export type PeLoadConfigLimit = (typeof PE_LOAD_CONFIG_LIMITS)[number];
 
 const hex = (value: bigint | number): string => `0x${value.toString(16)}`;
 
@@ -181,15 +185,7 @@ export const parsePeLoadConfig = async (
     const rva = rvaOf(va);
     let fileOffset: number | null = null;
     if (rva !== null) {
-      try {
-        fileOffset = lookup.offset(va, 1);
-      } catch (cause) {
-        if (
-          !(cause instanceof BinaryMappingFailure) ||
-          cause.reason !== "unmapped"
-        )
-          throw cause;
-      }
+      fileOffset = optionalFileOffset(lookup, va, 1);
     }
     return {
       va: hex(va),
@@ -309,7 +305,7 @@ const readTls = async ({
     const rva = rvaOf(start);
     rawSection = rva === null ? null : sectionName(rva);
   } else {
-    rawFile = lookup.offset(start, rawSize);
+    rawFile = optionalFileOffset(lookup, start, rawSize);
     const startRva = rvaOf(start);
     const last = startRva === null ? null : startRva + rawSize - 1;
     if (startRva !== null && last !== null && last <= 0xffffffff) {
@@ -336,10 +332,11 @@ const readTls = async ({
       consume(callbackArrayLocations, slotOffset, pointerWidth);
       if (value === 0n) break;
       if (callbacks.length >= maxCallbacks)
-        throw new PeLoadConfigLimitFailure(
-          "callbacks",
+        throw new BinaryResourceFailure(
+          "structure",
           maxCallbacks,
           `TLS callback array exceeds the ${String(maxCallbacks)}-entry callback allowance`,
+          "callbacks" satisfies PeLoadConfigLimit,
         );
       callbacks.push(locate(value));
       slot += BigInt(pointerWidth);

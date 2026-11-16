@@ -6,7 +6,11 @@ import {
   composedCallerGuidance,
 } from "./analysisErrorPresentation.js";
 
-/** Preserve the original lifecycle failure alongside incomplete cleanup. */
+/**
+ * Preserve the original lifecycle failure alongside incomplete cleanup. The
+ * composite waits for an owner to bind its completion; compose with
+ * `analysisErrorWithCleanupDependencies` when the parts own it.
+ */
 export const analysisErrorWithCleanupFailure = (
   primary: AnalysisError,
   cleanup: AnalysisError,
@@ -53,3 +57,48 @@ export const analysisErrorWithCleanupFailure = (
       }),
     },
   );
+
+/**
+ * Compose a failure with the cleanup failure that followed it. The composite
+ * has no cleanup record of its own: it completes once the primary's and the
+ * cleanup's records both report release, each read from its owner.
+ */
+export const analysisErrorWithCleanupDependencies = (
+  primary: AnalysisError,
+  cleanup: AnalysisError,
+  operation = "close_binary",
+): AnalysisError =>
+  analysisErrorWithCleanupFailure(
+    primary,
+    cleanup,
+    operation,
+  ).bindCleanupDependencies([primary, cleanup]);
+
+/**
+ * Compose a failure with a close rejection whose completion may be unknown. A
+ * rejection without a live cleanup record has unknown completion, not
+ * confirmed release, so the composite binds its parts only while the rejection
+ * is live. Otherwise it keeps its own pending record and never reads as
+ * complete.
+ */
+export const analysisErrorWithCloseRejection = (
+  primary: AnalysisError,
+  rejection: AnalysisError,
+  operation = "close_binary",
+): AnalysisError =>
+  rejection.cleanupIncomplete
+    ? analysisErrorWithCleanupDependencies(primary, rejection, operation)
+    : analysisErrorWithCleanupFailure(primary, rejection, operation);
+
+/**
+ * Compose two close rejections. Each may have unknown completion, so the
+ * composite binds them only while both are live.
+ */
+export const analysisErrorWithCloseRejections = (
+  first: AnalysisError,
+  second: AnalysisError,
+  operation = "close_binary",
+): AnalysisError =>
+  first.cleanupIncomplete
+    ? analysisErrorWithCloseRejection(first, second, operation)
+    : analysisErrorWithCleanupFailure(first, second, operation);

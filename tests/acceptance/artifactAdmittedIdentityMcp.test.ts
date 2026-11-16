@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -32,7 +33,7 @@ it("refuses changed admitted archives over stdio MCP before publishing extractio
     const inspected = await call("inspect_artifact", { detail: "complete" });
     expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
     const evidence = parseEvidence(inspected.structuredContent);
-    expect(evidence.subject?.digest.sha256).toBe(digest);
+    expect(fileIdentity(evidence.subject).sha256).toBe(digest);
     const inspection = artifactInspectionResultSchema.parse(
       evidence.normalized_result,
     );

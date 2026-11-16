@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { execFile } from "node:child_process";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
@@ -8,15 +9,15 @@ import {
   HopperCancelledError,
   HopperProcessError,
   HopperStartError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+  ArtifactResourceScope,
+  AnalysisCleanupLeaseGroup,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import type {
@@ -48,17 +49,17 @@ import {
 import {
   acquireHopperTargetLease,
   acquireLinuxHopperApplicationLease,
-} from "../process/HopperLease.js";
+} from "./HopperLease.js";
 import type { OwnedLease } from "../process/OwnedLease.js";
 import {
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
   MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
-  type BridgeMaxRequestBytes,
-} from "../config/bridgeMaxRequestBytes.js";
+} from "../domain/analysisResourceLimits.js";
+import type { BridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
 import { HOPPER_SHUTDOWN_TIMEOUT_MS } from "./HopperSessionValues.js";
 import { verifyMacHopperNativeHelper } from "./HopperMacPublisher.js";
-import { inspectLinuxHopperLauncher } from "../application/LinuxHopper.js";
-import { retryLinuxHopperPublisherCleanup } from "../application/LinuxHopperPublisher.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const execFileAsync = promisify(execFile);
 const HOPPER_BACKGROUND_STARTUP_MS = 5_000;
@@ -161,8 +162,12 @@ export type HopperApplicationLauncherOptions =
 export interface HopperApplicationLauncherDependencies {
   readonly imageFileSystem?: HopperImageCopyFileSystem;
   readonly verifyNativeHelper?: typeof verifyMacHopperNativeHelper;
-  readonly verifyLinuxLauncher?: typeof inspectLinuxHopperLauncher;
-  readonly retryPublisherCleanup?: typeof retryLinuxHopperPublisherCleanup;
+  /**
+   * Linux launcher authentication, supplied by composition. Without it a
+   * Linux demo launch is refused before the launcher runs.
+   */
+  readonly verifyLinuxLauncher?: LinuxHopperLauncherVerification["inspect"];
+  readonly retryPublisherCleanup?: LinuxHopperLauncherVerification["retryCleanup"];
   readonly platform?: NodeJS.Platform;
   readonly acquireTargetLease?: typeof acquireHopperTargetLease;
   readonly acquireApplicationLease?: typeof acquireLinuxHopperApplicationLease;
@@ -199,7 +204,12 @@ export class HopperApplicationLauncher implements BridgeLauncher {
   constructor(
     readonly options: HopperApplicationLauncherOptions,
     readonly dependencies: HopperApplicationLauncherDependencies = {},
-  ) {}
+  ) {
+    this.#platform = dependencies.platform ?? HOST_PLATFORM.platform;
+  }
+
+  /** The host Hopper runs on; defaults to the running host. */
+  readonly #platform: NodeJS.Platform;
 
   async cleanup(): Promise<Result<null, ProviderCleanupError>> {
     const failures: ProviderCleanupError[] = [];
@@ -237,10 +247,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     }
     if (usesLinuxDemo(this.options)) {
       try {
-        await (
-          this.dependencies.retryPublisherCleanup ??
-          retryLinuxHopperPublisherCleanup
-        )();
+        // Without a verification owner nothing was verified, so nothing is retained.
+        await this.dependencies.retryPublisherCleanup?.();
       } catch (cause: unknown) {
         const observation = ArtifactReaderFailure.cleanupObservation(
           cause,
@@ -326,9 +334,9 @@ export class HopperApplicationLauncher implements BridgeLauncher {
         } catch (cause: unknown) {
           const failure = new HopperStartError({
             cause,
-            userMessage: `Previous Hopper image cleanup remains incomplete: ${cause instanceof Error ? cause.message : String(cause)}`,
+            userMessage: `Previous Hopper image cleanup remains incomplete: ${errorMessage(cause)}`,
             cleanup: {
-              reason: cause instanceof Error ? cause.message : String(cause),
+              reason: errorMessage(cause),
               resources: this.#preparedImageResources.cleanupResources,
             },
           });
@@ -410,7 +418,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     let launched = false;
     try {
       if (signal?.aborted === true) return err(hopperCancelledBySignal(signal));
-      if ((this.dependencies.platform ?? process.platform) === "darwin") {
+      if (this.#platform === "darwin") {
         // The vendor helper embeds argv in AppleScript quoted literals. Check
         // the actual prepared paths before even starting the application. Do
         // not rewrite caller names or double-escape values passed to the helper.
@@ -439,7 +447,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       let expectedLinuxSha256: string | undefined;
       if (usesLinuxDemo(this.options)) {
         const inspected = await (
-          this.dependencies.verifyLinuxLauncher ?? inspectLinuxHopperLauncher
+          this.dependencies.verifyLinuxLauncher ?? unverifiableLinuxLauncher
         )(this.options.launcherPath, this.options.environment, signal);
         if (!inspected.ok)
           return inspected.error.reason === "cancelled"
@@ -459,7 +467,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
       const display = await this.#privateDisplay(signal);
       if (!display.ok) return display;
       const nativeHelperVerified =
-        (this.dependencies.platform ?? process.platform) === "darwin" &&
+        this.#platform === "darwin" &&
         this.options.launchMode === "native" &&
         (await (
           this.dependencies.verifyNativeHelper ?? verifyMacHopperNativeHelper
@@ -522,7 +530,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
               ? { nativeHelperVerified: true as const }
               : {}),
             // Argument admission above established literal handoff semantics.
-            ...((this.dependencies.platform ?? process.platform) === "darwin"
+            ...(this.#platform === "darwin"
               ? { authorizationDenialBeforeHandoff: true as const }
               : {}),
           });
@@ -540,7 +548,7 @@ export class HopperApplicationLauncher implements BridgeLauncher {
   async #acquireLaunchLease(
     runId: string,
   ): Promise<Result<OwnedLease | undefined, HopperStartError>> {
-    const platform = this.dependencies.platform ?? process.platform;
+    const platform = this.#platform;
     const applicationLease =
       platform === "linux" && usesLinuxDemo(this.options);
     if (!applicationLease && platform !== "darwin") return ok(undefined);
@@ -779,6 +787,20 @@ export const linuxDemoLaunch = (
     args: helperArguments,
   };
 };
+
+/** Refuse a Linux launcher when no verification owner was supplied. */
+const unverifiableLinuxLauncher: LinuxHopperLauncherVerification["inspect"] =
+  () =>
+    Promise.resolve(
+      err(
+        Object.assign(
+          new Error(
+            "Linux Hopper launcher verification is not configured; REA does not run an unverified launcher.",
+          ),
+          { reason: "verification_unavailable" },
+        ),
+      ),
+    );
 
 const cancelledLauncherVerification = (
   signal: AbortSignal | undefined,

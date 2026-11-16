@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import type { Client } from "@modelcontextprotocol/client";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 
 import { seedEndCapture } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -21,6 +21,7 @@ import { callOk, startBuildComputer } from "../../fixtures/buildComputerMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { cancelDuringCommit } from "../../fixtures/outputTreeCommit.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { waitFor } from "../../support/testWait.js";
 
 const call = (client: Client, name: string, args: Record<string, unknown>) =>
   client.callTool({ name, arguments: args });
@@ -201,7 +202,7 @@ it("releases a capture whose start was cancelled after launch, so another start 
     { name: "start_build_capture", arguments: { computer_id: id } },
     { signal: controller.signal },
   );
-  await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
+  await waitFor(() => expect(screenshots()).toBe(2));
   controller.abort();
   await expect(started).rejects.toThrow();
   const again = await callOk(client, "start_build_capture", {
@@ -235,7 +236,7 @@ it("cancels a capture's start when the computer closes while it waits for the op
     computer.calls.filter(({ name }) => name === "computer_screenshot").length;
   expect(screenshots()).toBe(1);
   const started = call(client, "start_build_capture", { computer_id: id });
-  await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
+  await waitFor(() => expect(screenshots()).toBe(2));
   await callOk(client, "close_build_computer", { computer_id: id });
   expect(parseMcpToolError(await started).error.code).toBe("cancelled");
 });

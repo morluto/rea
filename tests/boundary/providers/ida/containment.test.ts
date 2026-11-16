@@ -39,6 +39,7 @@ const session = async (cappedReferences = false) => {
       args: [],
       env: {},
       mode: "headless",
+      protocol: "modern",
       timeoutMs: 1000,
       workspaceRoot: root,
     },

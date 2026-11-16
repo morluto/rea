@@ -23,13 +23,13 @@ import { fileURLToPath } from "node:url";
 import { createMessage, generateKey, readPrivateKey, sign } from "openpgp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 import {
   LinuxHopperPublisher,
   retryLinuxHopperPublisherCleanup,
 } from "../../../src/application/LinuxHopperPublisher.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
   HOPPER_RELEASES_URL,
@@ -709,7 +709,8 @@ linux(
       ).toMatchObject({
         ok: false,
         error: {
-          reason: "integrity",
+          // The signature verified; only the feed's launcher digest differs.
+          reason: "launcher_digest_mismatch",
           message: expect.stringContaining(f.release.main_exe_hash),
         },
       });
@@ -761,6 +762,8 @@ linux(
         cacheDirectory: f.publisher.cacheRoot,
         launcherSha256: f.release.main_exe_hash,
         runId: "fixture-competing-writer",
+        failure: (failure: { readonly kind: string }) =>
+          new Error(`Fixture cache lease failed: ${failure.kind}`),
       };
       expect(await acquire(input)).toMatchObject({ acquired: false });
       await expect(f.publisher.close()).rejects.toMatchObject({
@@ -1072,14 +1075,7 @@ portableTar(
       await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
     ).toMatchObject({ ok: true });
 
-    let reachedMetadataClose!: () => void;
-    const metadataCloseStarted = new Promise<void>((resolve) => {
-      reachedMetadataClose = resolve;
-    });
-    let releaseMetadataClose!: () => void;
-    const metadataCloseGate = new Promise<void>((resolve) => {
-      releaseMetadataClose = resolve;
-    });
+    const metadataClose = phaseGate();
     const metadataIdentity = await stat(join(f.cache, "release.json"));
     const launcherIdentity = await stat(f.launcher);
     let metadataOwner: OwnedFileHandle | undefined;
@@ -1098,8 +1094,7 @@ portableTar(
           observed.ino === metadataIdentity.ino
         ) {
           metadataOwner = this;
-          reachedMetadataClose();
-          await metadataCloseGate;
+          await metadataClose.hold();
         }
         if (
           hashActive &&
@@ -1117,11 +1112,7 @@ portableTar(
       });
     const inspection = f.publisher.inspectLauncher(f.launcher);
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(
-        metadataCloseStarted,
-        inspection,
-        "metadata close",
-      );
+      await metadataClose.reached(inspection, "metadata close");
       hashActive = true;
       const hashFailure = await f.publisher.hashLauncher(f.launcher).then(
         () => undefined,
@@ -1139,7 +1130,7 @@ portableTar(
       expect(hashOwner?.handle.fd).toBeGreaterThanOrEqual(0);
       expect(hashCloseAttempts).toBeGreaterThanOrEqual(2);
       allowHashClose = true;
-      releaseMetadataClose();
+      metadataClose.release();
       await expect(inspection).resolves.toMatchObject({
         ok: true,
         value: { source: "signed_package_cache" },
@@ -1150,7 +1141,7 @@ portableTar(
     }, [
       () => {
         allowHashClose = true;
-        releaseMetadataClose();
+        metadataClose.release();
       },
       async () => {
         await inspection;

@@ -6,7 +6,7 @@ import {
   failBrowserScenarioOperation,
   PlaywrightScenarioBrowserCleanupOwner,
 } from "./PlaywrightScenarioBrowser.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real browser verification lives in
 // `npm run verify:browser`.
 import { describe, expect, it, vi } from "vitest";
@@ -256,6 +256,7 @@ const capturedResponseBodyEvents = (): readonly BrowserScenarioEvent[] => [
     kind: "response",
     transaction_id: "request-1",
     redirected_from_transaction_id: null,
+    redirected_from_transaction_state: "root",
     method: "GET",
     url: sanitizeBrowserUrl("https://app.example.test/main.js"),
     resource_type: "script",
@@ -536,7 +537,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     expect(result.value.limitations).toContain(session.storageGaps[0]);
   });
 
-  it("returns an initial state and every step beyond the former action ceiling", async () => {
+  it("returns an initial state and every step of a long scenario", async () => {
     const session = new FakeSession("launch");
     const provider = new PlaywrightBrowserScenarioProvider(() =>
       Promise.resolve(session),
