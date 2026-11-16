@@ -516,6 +516,7 @@
 * **domain:** one owner for the non-array record predicate ([#10588](https://github.com/morluto/rea/issues/10588)) ([5bf66f7](https://github.com/morluto/rea/commit/5bf66f75008a6ffa1353779442703e6de45c9143))
 * **domain:** redact declared sensitive values and transport credentials through one owner ([#11327](https://github.com/morluto/rea/issues/11327)) ([a97a5b8](https://github.com/morluto/rea/commit/a97a5b823d70a410543fbfcb19703a6dc8dc58df))
 * **domain:** type UTF-8 excerpts apart from identity strings ([#11272](https://github.com/morluto/rea/issues/11272)) ([b6659b7](https://github.com/morluto/rea/commit/b6659b70a3e55f6bc0d1e71cee21a87acd6131b9))
+* **errors:** derive parse-limit resource_constraint refusals from LimitRef ([#11775](https://github.com/morluto/rea/issues/11775)) ([ddd0d6d](https://github.com/morluto/rea/commit/ddd0d6d4a4e7a4c967977d6f35e59e81f958b997))
 * **errors:** give caller aborts a typed reason at the adapters ([#10633](https://github.com/morluto/rea/issues/10633)) ([b655645](https://github.com/morluto/rea/commit/b655645608aeb68cf17a8632927e646b2e52a221))
 * **errors:** read cleanup completion from dependencies instead of pushing it to dependents ([#10744](https://github.com/morluto/rea/issues/10744)) ([dd7597a](https://github.com/morluto/rea/commit/dd7597a108d83b727f81950784c0c8102664fc9d))
 * **errors:** require a reason for every analysis cancellation ([#10566](https://github.com/morluto/rea/issues/10566)) ([85da0bd](https://github.com/morluto/rea/commit/85da0bd4eec0213bdf43cd8f2be02f8c266ec1fa))
