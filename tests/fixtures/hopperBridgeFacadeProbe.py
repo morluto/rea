@@ -162,7 +162,7 @@ def main():
 
     bridge["REA_TARGET_PATH"] = "/tmp/rea-hopper-facade-fixture"
     bridge["REA_OWNS_PROCESS_LIFETIME"] = False
-    bridge["_configure_hopper_api"](FakeDocumentProvider)
+    bridge["Document"] = FakeDocumentProvider
     bridge["_bind_session_document"]()
     current = bridge["_dispatch"]("current_document", {})
     current_address = bridge["_dispatch"]("current_address", {})

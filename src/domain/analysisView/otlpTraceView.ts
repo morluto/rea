@@ -59,7 +59,7 @@ export const projectOtlpTraceView = (
       resource_count: report.resources.length,
       scope_count: report.scopes.length,
     },
-    coverage: completeWithinViewCoverage(1, 1),
+    coverage: completeWithinViewCoverage(1),
     limitations: boundedViewMessages(
       [...parent.limitations, ...report.limitations],
       parent.evidenceId,

@@ -5,16 +5,16 @@ import { afterAll, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { JAVASCRIPT_FEATURE_TRACE_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { deliverApplicationEvidence } from "../../../src/server/registerApplicationTools/helpers.js";
 import { traceApplicationFeatureEvidence } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { silentLogger } from "../../../src/logger.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { deliverApplicationExecution } from "../../../src/server/deliverApplicationExecution.js";
+import { settledExecution } from "../../../src/application/ApplicationToolExecutions.js";
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -148,7 +148,7 @@ it.each(["full", "compact"] as const)(
           ? null
           : {
               path: parent.subject.local_path,
-              sha256: parent.subject.digest.sha256,
+              sha256: fileIdentity(parent.subject).sha256,
             },
       summary: {
         trace_id: full.trace_id,
@@ -515,25 +515,18 @@ it("commits no session facts when cancelled after the trace completes", async ()
     JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
   );
   if (!traceExecution.ok) throw traceExecution.error;
-  const artifactResources = new ArtifactResourceScope();
-  onTestFinished(() => artifactResources.close());
   const before = session.exportEvidenceBundle();
   for (const view of [undefined, { kind: "summary" } as const]) {
     const cancelled = new AbortController();
     cancelled.abort(new Error("client cancelled"));
-    // Cancellation can only arrive between completion and commit through this
-    // staging step, which the public workflow cannot schedule deterministically.
-    const delivered = await deliverApplicationEvidence(
-      { delivery: createToolResultDelivery(undefined) },
+    const delivered = await deliverApplicationExecution(
+      createToolResultDelivery(undefined),
       {
-        artifactResources,
-        logger: silentLogger,
         evidenceById: (id) => session.evidenceById(id),
         recordEvidence: (evidence) => session.recordEvidence(evidence),
-        recordEvidenceWithUnknown: undefined,
       },
       toolContract("trace_application_feature"),
-      traceExecution.value,
+      settledExecution(traceExecution.value),
       view,
       cancelled.signal,
     );
@@ -544,40 +537,4 @@ it("commits no session facts when cancelled after the trace completes", async ()
     });
     expect(session.exportEvidenceBundle()).toEqual(before);
   }
-});
-
-it("retains a completed standalone import when cancelled after it", async () => {
-  const session = createTestBinarySession(() => {
-    throw new Error("No deep provider");
-  });
-  const traceExecution = traceApplicationFeatureEvidence(
-    JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
-  );
-  if (!traceExecution.ok) throw traceExecution.error;
-  const artifactResources = new ArtifactResourceScope();
-  onTestFinished(() => artifactResources.close());
-  const cancelled = new AbortController();
-  cancelled.abort(new Error("client cancelled"));
-  // The OTLP import reads one export and references no other record, so its
-  // completed parent is self-contained and must survive the late cancellation.
-  const delivered = await deliverApplicationEvidence(
-    { delivery: createToolResultDelivery(undefined) },
-    {
-      artifactResources,
-      logger: silentLogger,
-      evidenceById: (id) => session.evidenceById(id),
-      recordEvidence: (evidence) => session.recordEvidence(evidence),
-      recordEvidenceWithUnknown: undefined,
-    },
-    toolContract("inspect_otlp_trace"),
-    { evidence: traceExecution.value.evidence, sources: [] },
-    undefined,
-    cancelled.signal,
-  );
-  const error = parseMcpToolError(delivered);
-  expect(error).toMatchObject({ error: { code: "cancelled" } });
-  const reference = z
-    .object({ kind: z.literal("retained-evidence"), evidence_id: z.string() })
-    .parse(error.error.details?.partial_observation);
-  expect(session.evidenceById(reference.evidence_id)).toBeDefined();
 });

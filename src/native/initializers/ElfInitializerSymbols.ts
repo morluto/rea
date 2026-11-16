@@ -1,5 +1,5 @@
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
@@ -13,8 +13,8 @@ import {
   elfCopyRelocationType,
   elfRelativeRelocationType,
   elfRelocationWidth,
-} from "../metadata/ElfPointerRelocations.js";
-import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/elfPointerRelocations.js";
+import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import type { InitializerNotes } from "./initializerNotes.js";
 
 /** One symbol-table row. `section` 0 is an undefined import. */

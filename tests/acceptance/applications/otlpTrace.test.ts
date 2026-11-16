@@ -136,7 +136,7 @@ cliTest(
       recording_completeness: "unknown",
     });
 
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-otlp-trace", fixture.path, "--json"],
     });
@@ -200,7 +200,7 @@ cliTest(
       }),
     ]);
 
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-otlp-trace", fixture.path, "--json"],
     });
@@ -253,7 +253,7 @@ cliTest(
         cycleDiagnostics.some((entry) => entry.message.includes(id.repeat(16))),
       ).toBe(true);
     }
-    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const run = cli.run.bind(cli);
     const result = await run({
       arguments: ["inspect-otlp-trace", path, "--json"],
     });

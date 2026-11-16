@@ -36,8 +36,7 @@ import {
   jsonObjectSchema,
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
-
-const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** The book the first served create of "Boundary Book" makes: one second past the served clock's start. */
 const BOUNDARY_BOOK = book(3, "Boundary Book", bookClock(13));
@@ -125,7 +124,10 @@ processTest(
     await expect(
       rpc("data/add", { parts: [{ kind: "data", data: document }] }),
     ).resolves.toMatchObject({ result: {} });
-    const client = new Client({ name: "own-keys-writes", version: "1" });
+    const client = new Client(
+      { name: "own-keys-writes", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       for (const [tool, args, name, id] of [
@@ -160,7 +162,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -180,7 +181,10 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({ name: "write-views", version: "1" });
+    const client = new Client(
+      { name: "write-views", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -220,7 +224,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest(
@@ -266,10 +269,13 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "write-schema-defaults",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "write-schema-defaults",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -282,8 +288,9 @@ processTest(
       }
       const update = tools.find((tool) => tool.name === "patch_books_by_id")!;
       const create = tools.find((tool) => tool.name === "post_books")!;
-      expect(update.inputSchema.required).not.toContain("notify");
-      expect(create.inputSchema.required).not.toContain("notify");
+      // The advertised dialect omits an empty `required` list.
+      expect(update.inputSchema.required ?? []).not.toContain("notify");
+      expect(create.inputSchema.required ?? []).not.toContain("notify");
       expect(update.inputSchema.properties?.["notify"]).not.toHaveProperty(
         "enum",
       );
@@ -357,7 +364,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 describe("rea environment-serve write tools", () => {
@@ -376,7 +382,10 @@ describe("rea environment-serve write tools", () => {
         "--port",
         "0",
       ]);
-      const client = new Client({ name: "environment-writes", version: "1" });
+      const client = new Client(
+        { name: "environment-writes", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       await client.connect(new StreamableHTTPClientTransport(started.url));
       try {
         const { tools } = await client.listTools();
@@ -428,7 +437,6 @@ describe("rea environment-serve write tools", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 
   processTest(
@@ -465,7 +473,10 @@ describe("rea environment-serve write tools", () => {
         "--port",
         "0",
       ]);
-      const client = new Client({ name: "raw-utf16-writes", version: "1" });
+      const client = new Client(
+        { name: "raw-utf16-writes", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       await client.connect(new StreamableHTTPClientTransport(started.url));
       try {
         for (const id of [3, 4]) {
@@ -504,7 +515,6 @@ describe("rea environment-serve write tools", () => {
         await client.close();
       }
     },
-    HTTP_BOUNDARY_TIMEOUT_MS,
   );
 });
 
@@ -531,10 +541,13 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "bulk-response-verification",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "bulk-response-verification",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -597,7 +610,6 @@ processTest(
       await client.close();
     }
   },
-  HTTP_BOUNDARY_TIMEOUT_MS,
 );
 
 processTest.for([
@@ -619,7 +631,6 @@ processTest.for([
   })),
 ])(
   "withholds $label from public tools",
-  { timeout: HTTP_BOUNDARY_TIMEOUT_MS },
   async ({ rows, read, write }, { processes }) => {
     const root = await createTestTempDirectory("rea-create-reference-mcp-");
     const files = await writeEnvironmentServeFiles(
@@ -634,10 +645,13 @@ processTest.for([
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "contradictory-reference",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "contradictory-reference",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();

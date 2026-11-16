@@ -6,7 +6,13 @@ export const SQLITE_DATABASE_LIMITS = {
   inputBytes: 256 * 1024 * 1024,
   outputBytes: SQLITE_DATABASE_OUTPUT_BYTES,
   diagnosticBytes: 1024 * 1024,
+  /** V8 old-space ceiling for the owned worker, passed as --max-old-space-size. */
+  workerHeapMiB: 256,
 } as const;
+
+/** The owned worker's JavaScript heap ceiling in bytes, as reported on memory refusals. */
+export const SQLITE_WORKER_HEAP_BYTES =
+  SQLITE_DATABASE_LIMITS.workerHeapMiB * 1024 * 1024;
 /**
  * Failure reasons the worker protocol may carry. The reply schema and the
  * worker's own failure type read this one list, so a refusal that the worker

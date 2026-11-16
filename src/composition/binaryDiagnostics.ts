@@ -1,3 +1,4 @@
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
 import { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
@@ -7,7 +8,6 @@ import { RecordedCrashService } from "../application/binaryDiagnostics/RecordedC
 import { PwntoolsRecordedCrashProvider } from "../native/pwntools/PwntoolsRecordedCrashProvider.js";
 import { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { PwntoolsLayoutProvider } from "../native/pwntools/PwntoolsLayoutProvider.js";
-import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
 import { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import { PeResourcesProvider } from "../native/pe/PeResourcesProvider.js";
 import { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
@@ -28,7 +28,7 @@ import { KernelModuleService } from "../application/binaryDiagnostics/KernelModu
 import { KernelModuleProvider } from "../native/elf/KernelModuleProvider.js";
 import { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
 import { KernelBuildConfigProvider } from "../native/elf/KernelBuildConfigProvider.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { NativeExportsService } from "../application/binaryDiagnostics/NativeExportsService.js";
 import { NativeExportsProvider } from "../native/exports/NativeExportsProvider.js";
 
@@ -36,8 +36,6 @@ import { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeSe
 import { DevicetreeProvider } from "../firmware/devicetree/DevicetreeProvider.js";
 export const createDevicetreeService = (): DevicetreeService =>
   new DevicetreeService(new DevicetreeProvider());
-
-export { pwntoolsHostSupported };
 
 /** Portable PE inspection with no engine, installation or target acquisition. */
 export const createPeResourcesService = (): PeResourcesService =>
@@ -82,14 +80,20 @@ export const createKernelBuildConfigService = (): KernelBuildConfigService =>
 /** Compose the offline adapter without import-time I/O or dependency acquisition. */
 export const createBinaryLayoutService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  host: HostPlatform = HOST_PLATFORM,
 ): BinaryLayoutService =>
-  new BinaryLayoutService(new PwntoolsLayoutProvider(environment));
+  new BinaryLayoutService(
+    new PwntoolsLayoutProvider(environment, undefined, undefined, host),
+  );
 
 /** Compose recorded-core inspection without acquiring a debugger or toolchain. */
 export const createRecordedCrashService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  host: HostPlatform = HOST_PLATFORM,
 ): RecordedCrashService =>
-  new RecordedCrashService(new PwntoolsRecordedCrashProvider(environment));
+  new RecordedCrashService(
+    new PwntoolsRecordedCrashProvider(environment, undefined, undefined, host),
+  );
 
 /** Provider-free local byte analysis. */
 export const createByteEntropyService = (

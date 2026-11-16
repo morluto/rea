@@ -1,6 +1,7 @@
 import type { Document, Node } from "@xmldom/xmldom";
 import { MAX_PLIST_DEPTH, PlistNestingLimitError } from "./apple/plistValue.js";
 import { err, ok, type Result } from "./result.js";
+import { type ParseFailureError, unsupportedInput } from "./parseFailure.js";
 import { parseXmlDocument, XML_LINE_ENDING } from "./xmlDocument.js";
 import {
   decodeXmlPlistData,
@@ -13,12 +14,13 @@ interface ScalarSpan {
   readonly selfClosing: boolean;
 }
 
-export class XmlPlistSourceError extends TypeError {
-  readonly _tag = "XmlPlistSourceError";
-  constructor() {
-    super("Cannot locate XML plist scalar in its original source");
-  }
-}
+/** The DOM node's reported position does not locate its scalar in the text. */
+const scalarSourceUnlocated = (): ParseFailureError<"unsupported"> =>
+  unsupportedInput(
+    "xml-plist",
+    "Cannot locate XML plist scalar in its original source",
+    { undecodedContent: true },
+  );
 
 /** One source owner binds lexical scalar values to their validated DOM nodes. */
 export const readXmlPlistSource = (
@@ -61,11 +63,13 @@ export const readXmlPlistSource = (
   const spans = collectXmlPlistScalarSpans(document, readSpan, maximumDepth);
   return {
     document,
-    scalarLiteral(node: Node): Result<string, XmlPlistSourceError> {
+    scalarLiteral(
+      node: Node,
+    ): Result<string, ParseFailureError<"unsupported">> {
       const span = spans.get(node);
       return span?.ok === true
         ? ok(text.slice(span.value.start, span.value.end))
-        : err(new XmlPlistSourceError());
+        : err(scalarSourceUnlocated());
     },
     dataValue(node: Node): Result<Uint8Array, XmlPlistDataError> {
       const span = spans.get(node);
