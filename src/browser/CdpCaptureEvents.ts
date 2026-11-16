@@ -191,6 +191,9 @@ export class CdpCaptureEvents implements CdpCaptureEventsState {
       case "Runtime.executionContextsCleared":
         this.executionContextFrames.clear();
         return;
+      default:
+        // Other registered events belong to timeline or discovery projections.
+        return;
     }
   }
 

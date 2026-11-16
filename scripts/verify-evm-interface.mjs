@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { LINUX_SYSTEM_PS_LOCATIONS } from "../dist/process/systemPs.js";
+import { isOwnershipInventoryExecution } from "./verify/recorded-crash/trace-ownership.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, readFile, readdir, writeFile } from "node:fs/promises";
@@ -164,11 +166,13 @@ try {
   };
   const ownershipProbe = join(root.path, "ownership-prerequisite.hex");
   await writeFile(ownershipProbe, "0x00");
-  const missingInspection = await inspect(
+  // System ps is selected independently of PATH; an isolated PATH must not
+  // disable a supported ownership prerequisite already present on this host.
+  const systemInspection = await inspect(
     "cli",
     ownershipProbe,
     "hex",
-    "unsupported_provider",
+    undefined,
     {
       command: process.execPath,
       prefix: [],
@@ -176,9 +180,8 @@ try {
       environment: { ...environment, PATH: root.path },
     },
   );
-  assert.equal(missingInspection.code, "capability_unavailable");
-  assert.match(missingInspection.message, /procps-compatible ps/u);
-  assert.equal(missingInspection.details.operation, "prepare_owned_process");
+  assert.equal(systemInspection.bytecode.hex, "00");
+  assert.deepEqual(systemInspection.functions, []);
   cases++;
   for (const [name, optimizer, viaIR] of [
     ["plain", false, false],
@@ -513,10 +516,8 @@ try {
           `Incomplete exec observation: ${line}`,
         );
         const ownershipInspection =
-          ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-          line.includes(
-            '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]',
-          );
+          LINUX_SYSTEM_PS_LOCATIONS.includes(match[1]) &&
+          isOwnershipInventoryExecution(match[1], line);
         assert.ok(
           [
             process.execPath,

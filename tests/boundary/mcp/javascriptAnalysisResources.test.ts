@@ -11,6 +11,12 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { recoveryInstructions } from "../../../src/server/recoveryInstructions.js";
 import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEncoding.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
+import {
+  describeAdvertisedTool,
+  presentAdvertisedInput,
+} from "../../../src/contracts/compactInputSchema.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { retainedEvidenceReferenceSchema } from "../../../src/domain/evidenceReference.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -32,8 +38,15 @@ it("delivers deadline recovery guidance at initialization before any tool call",
     const analysis = catalog.tools.find(
       (tool) => tool.name === "analyze_javascript_application",
     );
+    const contract = toolContract("analyze_javascript_application");
+    const presentation = presentAdvertisedInput(
+      advertisedInputJsonSchema(contract),
+      {
+        budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+      },
+    );
     expect(analysis?.description).toBe(
-      toolContract("analyze_javascript_application").description,
+      describeAdvertisedTool(contract.description, presentation.guidance),
     );
   } finally {
     await client.close();

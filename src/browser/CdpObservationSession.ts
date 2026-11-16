@@ -279,6 +279,9 @@ class TimelineCapture {
       case "Inspector.targetCrashed":
         this.targetTerminated();
         return;
+      default:
+        // Frame events were handled above; other events do not change this timeline.
+        return;
     }
   }
 

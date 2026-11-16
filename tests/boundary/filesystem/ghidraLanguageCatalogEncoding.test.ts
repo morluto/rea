@@ -64,8 +64,13 @@ it.each([
     else
       await expect(
         readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
-      ).rejects.toMatchObject({
-        reason: expectedError,
-      });
+      ).rejects.toMatchObject(
+        expectedError === "malformed"
+          ? {
+              _tag: "ParseFailureError",
+              failure: { format: "xml", kind: "malformed" },
+            }
+          : { reason: expectedError },
+      );
   },
 );

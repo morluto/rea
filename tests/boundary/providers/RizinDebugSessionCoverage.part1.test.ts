@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { access } from "node:fs/promises";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   stopFakeNoInferior,
@@ -10,7 +11,6 @@ import type { SpawnedOwnedProviderProcess } from "../../../src/process/ProviderP
 import {
   createRizinCoverageHarness,
   createInjectedProcess,
-  abortOnCheck,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
 
@@ -135,8 +135,17 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "does not spawn Rizin when cancellation arrives during TTY validation",
+  "does not spawn Rizin when cancellation arrives during TTY finalization",
   async () => {
+    const controller = new AbortController();
+    const reason = { stage: "TTY handle closed" };
+    const close = OwnedFileHandle.prototype.close;
+    const validation = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(async function (this: OwnedFileHandle) {
+        await close.call(this);
+        controller.abort(reason);
+      });
     let spawned = false;
     const manager = createManager(
       { REA_RIZIN_COMMAND: "injected-rizin" },
@@ -147,15 +156,23 @@ it.skipIf(process.platform === "win32")(
         },
       },
     );
-    const result = await manager.start(
-      {
-        path: "/tmp/cancel-before-spawn",
-        inferior_tty: await rizinTestInferiorTty(),
-      },
-      abortOnCheck(2),
-    );
-    expect(result.ok).toBe(false);
-    expect(spawned).toBe(false);
+    try {
+      const result = await manager.start(
+        {
+          path: "/tmp/cancel-before-spawn",
+          inferior_tty: await rizinTestInferiorTty(),
+        },
+        controller.signal,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError", cause: reason },
+      });
+      expect(validation).toHaveBeenCalledOnce();
+      expect(spawned).toBe(false);
+    } finally {
+      validation.mockRestore();
+    }
   },
 );
 
@@ -163,6 +180,7 @@ it.skipIf(process.platform === "win32")(
   "closeAll drains concurrent startups and blocks later admission",
   async () => {
     let spawnCount = 0;
+    let stopCount = 0;
     let resolveSpawnCalls!: () => void;
     const bothSpawnsCalled = new Promise<void>((resolve) => {
       resolveSpawnCalls = resolve;
@@ -181,7 +199,10 @@ it.skipIf(process.platform === "win32")(
           await spawnGate;
           return injected.spawnProcess(options);
         },
-        stopProcess: async () => ({ status: "stopped" }),
+        stopProcess: async () => {
+          stopCount += 1;
+          return { status: "stopped" };
+        },
       },
     );
     const tty = await rizinTestInferiorTty();
@@ -198,11 +219,13 @@ it.skipIf(process.platform === "win32")(
     expect(closeAllResolved).toBe(false);
     releaseSpawns();
     const started = await Promise.all(starts);
-    expect(started.every((result) => result.ok)).toBe(true);
+    for (const result of started)
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError" },
+      });
     await closing;
-    expect(
-      manager.status(started[0]!.ok ? started[0]!.value.session_id : "missing"),
-    ).toBeUndefined();
+    expect(stopCount).toBe(2);
     expect(
       (await manager.start({ path: "/tmp/after-close-all", inferior_tty: tty }))
         .ok,

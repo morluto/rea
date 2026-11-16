@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 
 import {
   absoluteXdgConfigHome,
+  mcporterConfigDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
 
@@ -23,6 +24,19 @@ it.each([
     expect(absoluteXdgConfigHome({ home, env })).toBe(specification);
   },
 );
+
+it.each([
+  [undefined, "/home/user/.mcporter"],
+  ["relative", "/home/user/.mcporter"],
+  ["  /custom  ", "/custom/mcporter"],
+  ["~/config", "/home/user/config/mcporter"],
+  ["~someone/config", "/home/user/.mcporter"],
+])("reads MCPorter's XDG_CONFIG_HOME=%j as %s", (value, directory) => {
+  const env = value === undefined ? {} : { XDG_CONFIG_HOME: value };
+  expect(mcporterConfigDirectory({ home, platform: "linux", env })).toBe(
+    directory,
+  );
+});
 
 // Client root semantics differ per reader, so they are derived only here.
 it("keeps client configuration-root variables in one owner", async () => {
