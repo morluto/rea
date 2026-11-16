@@ -153,6 +153,11 @@ export const analysisErrorRemediationAction = (
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof ArtifactOperationError) {
+    const refusal = analysisErrorRefusal(error);
+    if (refusal !== undefined)
+      return analysisRefusalRemediation(refusal, callerLifetime);
+  }
   if (
     error instanceof ArtifactOperationError &&
     error.readerLimit !== undefined

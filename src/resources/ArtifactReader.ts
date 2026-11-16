@@ -1,4 +1,7 @@
-import { fixedAllowanceRemediation } from "../domain/fixedAllowanceRemediation.js";
+import type {
+  FixedAllowance,
+  FixedAllowanceKind,
+} from "../domain/fixedAllowanceRemediation.js";
 import type { ArtifactReaderLimitFact } from "../domain/artifactReaderLimits.js";
 import type {
   ArtifactAdmissionLimit,
@@ -41,6 +44,8 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   /** Named admission whose recovery must not be inferred from other limit text. */
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
+  /** For a `limit` failure, the release-fixed allowance that refused the input. */
+  readonly fixedAllowance?: FixedAllowance;
   /** For an `integrity` failure, the check that failed, when the reader names it. */
   readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
 }
@@ -290,6 +295,7 @@ export class ArtifactReaderFailure extends Error {
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
+  readonly fixedAllowance: FixedAllowance | undefined;
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   /** An `integrity` failure names the check that failed. */
@@ -340,6 +346,7 @@ export class ArtifactReaderFailure extends Error {
     this.boundary = options?.boundary;
     this.admission = options?.admission;
     this.readerLimit = options?.readerLimit;
+    this.fixedAllowance = options?.fixedAllowance;
     this.integrityCheck = options?.integrityCheck;
   }
 
@@ -349,7 +356,12 @@ export class ArtifactReaderFailure extends Error {
    */
   primaryFacts(): Pick<
     ArtifactReaderFailureOptions,
-    "userMessage" | "resolvedPath" | "boundary" | "admission" | "readerLimit"
+    | "userMessage"
+    | "resolvedPath"
+    | "boundary"
+    | "admission"
+    | "readerLimit"
+    | "fixedAllowance"
   > & { readonly integrityCheck: ArtifactIntegrityCheck | undefined } {
     return {
       ...(this.userMessage === undefined
@@ -363,6 +375,9 @@ export class ArtifactReaderFailure extends Error {
       ...(this.readerLimit === undefined
         ? {}
         : { readerLimit: this.readerLimit }),
+      ...(this.fixedAllowance === undefined
+        ? {}
+        : { fixedAllowance: this.fixedAllowance }),
       integrityCheck: this.integrityCheck,
     };
   }
@@ -440,18 +455,29 @@ export class ArtifactReaderFailure extends Error {
   }
 }
 
-/** Fixed reader input ceilings share producer-owned recovery across CLI and MCP. */
+/** A release-fixed reader ceiling and its value. */
+export interface ArtifactFixedLimit {
+  /** Display name, such as "The wxapkg member table allowance". */
+  readonly name: string;
+  readonly kind: FixedAllowanceKind;
+  readonly limit: number;
+  readonly unit: string;
+}
+
+/**
+ * Refuse input above a release-fixed reader ceiling. `outcome` states what
+ * exceeded it; CLI and MCP derive the recovery from the typed allowance.
+ */
 export const artifactFixedLimitFailure = (
-  name: string,
-  maximum: number,
-  unit: string,
-): ArtifactReaderFailure => {
-  const message = `${fixedAllowanceRemediation(`${name} of ${String(maximum)} ${unit}`, "parser")} This release has no runtime override. Summary delivery and pagination do not raise this input limit.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "capacity",
-    userMessage: message,
+  allowance: ArtifactFixedLimit,
+  outcome: string,
+  boundary: ArtifactLimitBoundary = "capacity",
+): ArtifactReaderFailure =>
+  new ArtifactReaderFailure("limit", outcome, {
+    boundary,
+    userMessage: outcome,
+    fixedAllowance: allowance,
   });
-};
 
 const combineCleanup = (
   primary: AnalysisCleanupObservation | undefined,
