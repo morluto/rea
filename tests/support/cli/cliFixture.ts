@@ -21,6 +21,7 @@ import {
   createCliCommandSession,
   type CliCommandSession,
 } from "./cliCommandSession.js";
+import { terminalStdoutInvocation } from "./terminalStdout.js";
 
 /** Caller-controlled values for one compiled REA CLI invocation. */
 export interface CliInvocation {
@@ -34,6 +35,12 @@ export interface CliInvocation {
    * command. Use it for process-level facts such as startup or exit.
    */
   readonly freshProcess?: boolean;
+  /**
+   * Put stdout on a pseudo-terminal (POSIX only), as when a user runs `rea`
+   * in a terminal. Stdin is empty and stderr stays a pipe. Always starts a
+   * fresh process.
+   */
+  readonly terminal?: boolean;
 }
 
 /** Normalized result from the compiled REA CLI. */
@@ -279,8 +286,10 @@ const sharedProcessCanServe = ({
   input,
   timeoutMs,
   freshProcess,
+  terminal,
 }: CliInvocation): boolean =>
   freshProcess !== true &&
+  terminal !== true &&
   input === undefined &&
   timeoutMs === undefined &&
   arguments_[0] !== "mcp" &&
@@ -318,17 +327,21 @@ export const createTestCli = (
     environment,
     input,
     timeoutMs,
+    terminal,
   }) => {
-    const result = await processes.run(
-      process.execPath,
-      [resolve("scripts/rea.mjs"), ...arguments_],
-      {
-        cwd: cwd ?? process.cwd(),
-        env: cliProcessEnvironment(environment, compileCache),
-        ...(input === undefined ? {} : { input }),
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      },
-    );
+    if (terminal === true && input !== undefined)
+      throw new Error("A terminal run has an empty stdin.");
+    const rea = [resolve("scripts/rea.mjs"), ...arguments_];
+    const { command, arguments: commandArguments } =
+      terminal === true
+        ? terminalStdoutInvocation(process.execPath, rea)
+        : { command: process.execPath, arguments: rea };
+    const result = await processes.run(command, commandArguments, {
+      cwd: cwd ?? process.cwd(),
+      env: cliProcessEnvironment(environment, compileCache),
+      ...(input === undefined ? {} : { input }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    });
     return { ...result, json: parseJson(result.stdout) };
   },
 });
