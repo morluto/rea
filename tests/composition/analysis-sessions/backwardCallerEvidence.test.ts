@@ -1,5 +1,5 @@
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
+import type { AnalysisProvider } from "../../../src/ports/AnalysisProvider.js";
 import {
   executeComposedWorkflow,
   createWorkflowEvidence,

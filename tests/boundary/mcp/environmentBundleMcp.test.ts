@@ -22,6 +22,7 @@ import {
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const TOOL = "export_environment_bundle";
 
@@ -35,7 +36,10 @@ const connect = async () => {
       environment: { ...process.env },
     },
   );
-  const client = new Client({ name: "environment-bundle-mcp", version: "1" });
+  const client = new Client(
+    { name: "environment-bundle-mcp", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

@@ -1,19 +1,18 @@
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import type { WebArtifactAcquisition as Acquisition } from "../../domain/webArtifactAcquisition.js";
+import { isAbortOf } from "../../process/SignalAbort.js";
 import { z } from "zod";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../../artifacts/StableArtifactFailure.js";
 import {
+  ArtifactReaderFailure,
+  stableArtifactInputRecovery,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
+  type ArtifactResourceScope,
   completedStableArtifact,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
+} from "../../resources/index.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -27,12 +26,13 @@ import {
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 import {
   malformedInput,
   ParseFailureError,
 } from "../../domain/parseFailure.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** The selected artifact and input field owning a reader failure. */
 export interface WebArtifactReadContext {
@@ -158,11 +158,11 @@ export const webArtifactReadError = (
       { cause, operation: context.operation },
     );
     bindArtifactFileCleanup(cause, cleanup);
-    return analysisErrorWithCleanupFailure(
+    return analysisErrorWithCleanupDependencies(
       primary,
       cleanup,
       context.operation,
-    ).bindCleanupDependencies([primary, cleanup]);
+    );
   }
   return primary;
 };
@@ -183,15 +183,7 @@ const webArtifactPrimaryError = (
       context.operation,
       carriedReason(artifactFileCancellationCause(cause)),
     );
-  if (
-    origin === "owned-or-classified" &&
-    signal?.aborted === true &&
-    (cause === signal.reason ||
-      (cause instanceof Error &&
-        cause.name === "AbortError" &&
-        "code" in cause &&
-        cause.code === "ABORT_ERR"))
-  )
+  if (origin === "owned-or-classified" && isAbortOf(cause, signal))
     return cancelledBy(context.operation, signal);
   const selection = context.callerSelected
     ? selectedFileError({ cause, origin }, context)
@@ -260,7 +252,7 @@ const webArtifactPrimaryError = (
     diagnostics: {
       target_path: context.targetPath,
       field: context.field.join("."),
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 };

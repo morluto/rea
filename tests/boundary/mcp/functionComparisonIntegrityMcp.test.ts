@@ -8,7 +8,11 @@ import {
   PROCESS_CAPTURE_RECONSTRUCTION,
   PROCESS_COMPARISON_EVIDENCE,
 } from "../../../src/contracts/investigationExamples.js";
-import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
 import {
   functionComparisonResultSchema,
   type FunctionComparisonResult,
@@ -168,16 +172,20 @@ it.each([
   async (scenario) => {
     const base = FUNCTION_COMPARISON_EVIDENCE;
     const result = functionComparisonResultSchema.parse(base.normalized_result);
-    const comparison = createEvidence(undefined, base.provider, {
-      predicateType: base.predicate_type,
-      operation: base.operation,
-      parameters: base.parameters,
-      result: scenario.result(result),
-      confidence: base.confidence,
-      authority: base.authority,
-      limitations: base.limitations,
-      evidenceLinks: base.evidence_links,
-    });
+    const comparison = createEvidence(
+      evidenceSubjectInput(base.subject),
+      base.provider,
+      {
+        predicateType: base.predicate_type,
+        operation: base.operation,
+        parameters: base.parameters,
+        result: scenario.result(result),
+        confidence: base.confidence,
+        authority: base.authority,
+        limitations: base.limitations,
+        evidenceLinks: base.evidence_links,
+      },
+    );
     let providerLaunches = 0;
     const session = createTestBinarySession(() => {
       providerLaunches += 1;

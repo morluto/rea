@@ -25,7 +25,7 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./pyinstaller/CArchive.fixture.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
@@ -37,7 +37,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   assembleReleaseExposureReport,
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
@@ -64,17 +64,17 @@ const stableRead = vi.hoisted(() => ({
     | undefined
     | ((
         ...args: Parameters<
-          typeof import("./readStableArtifact.js").readStableArtifact
+          typeof import("../resources/readStableArtifact.js").readStableArtifact
         >
       ) => ReturnType<
-        typeof import("./readStableArtifact.js").readStableArtifact
+        typeof import("../resources/readStableArtifact.js").readStableArtifact
       >),
 }));
 
-vi.mock("./readStableArtifact.js", async () => {
+vi.mock("../resources/readStableArtifact.js", async () => {
   const actual = await vi.importActual<
-    typeof import("./readStableArtifact.js")
-  >("./readStableArtifact.js");
+    typeof import("../resources/readStableArtifact.js")
+  >("../resources/readStableArtifact.js");
   stableRead.impl = actual.readStableArtifact;
   return {
     ...actual,
@@ -680,6 +680,7 @@ describe("ReleaseExposureReader limits", () => {
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact changed during inventory: ${target}`,
+        { integrityCheck: "container-identity" },
       );
     };
     const reader = new ReleaseExposureReader();

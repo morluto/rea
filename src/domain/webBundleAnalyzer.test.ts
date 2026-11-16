@@ -1,3 +1,4 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../tests/fixtures/evidenceSubject.js";
 import { projectAnalysisView } from "./analysisView/analysisView.js";
 import { analysisViewRequestSchema } from "./analysisView/analysisViewRequest.js";
 import { describe, expect, it } from "vitest";
@@ -50,6 +51,65 @@ it("retains standalone GraphQL Source operations in captured scripts", () => {
   expect(result.observations.endpoints).toEqual([
     expect.objectContaining({ value: "GetUser", mechanism: "graphql:query" }),
   ]);
+});
+
+it("reports a browser request whose URL is not a literal as an unknown endpoint at its call site", () => {
+  const scriptKey = `scr_${"1".repeat(64)}`;
+  const result = analyzeWebBundleFixture(
+    inspection(
+      [
+        "fetch(flag ? '/a' : '/b');",
+        "new WebSocket(base + '/socket');",
+        "fetch('/literal');",
+        "const lookup = new Map(); lookup.get(key);",
+      ].join("\n"),
+    ),
+  );
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual([
+    "/literal",
+  ]);
+  expect(result.unknowns).toContainEqual({
+    dimension: "endpoints",
+    reason:
+      "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+    affected_script_keys: [scriptKey],
+    call_sites: [
+      {
+        mechanism: "call:fetch",
+        location: { script_key: scriptKey, line: 1, column: 0 },
+      },
+      {
+        mechanism: "call:WebSocket",
+        location: { script_key: scriptKey, line: 2, column: 0 },
+      },
+    ],
+  });
+});
+
+it("reads an XMLHttpRequest URL from open's second argument on an inline receiver", () => {
+  const scriptKey = `scr_${"1".repeat(64)}`;
+  const result = analyzeWebBundleFixture(
+    inspection(
+      [
+        "new XMLHttpRequest().open('GET', url);",
+        "new XMLHttpRequest().open('POST', '/inline-xhr');",
+      ].join("\n"),
+    ),
+  );
+  expect(result.observations.endpoints).toContainEqual(
+    expect.objectContaining({ value: "/inline-xhr" }),
+  );
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        {
+          mechanism: "call:open",
+          location: { script_key: scriptKey, line: 1, column: 0 },
+        },
+      ],
+    }),
+  );
 });
 
 it.each([
@@ -484,7 +544,7 @@ describe("web bundle analyzer", () => {
     expect(analyzed.completeness.status).toBe("complete");
   });
 
-  it("analyzes AST nodes after the former fixed node ceiling", () => {
+  it("analyzes every AST node of a bundle with more than 250,000 nodes", () => {
     const source = `${";".repeat(250_001)}fetch('/last');`;
     const result = analyzeWebBundleFixture(inspection(source));
 
@@ -2091,7 +2151,7 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
       operation: "analyze_web_bundle",
       normalizedResult: report,
       limitations: report.limitations,
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
     };
   const summary = projectAnalysisView(
     parent,

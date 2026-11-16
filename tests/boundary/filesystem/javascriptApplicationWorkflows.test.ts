@@ -1,3 +1,8 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 
@@ -12,8 +17,15 @@ import {
   traceApplicationFeatureEvidence,
 } from "../../../src/application/javascript/JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "../../../src/application/javascript/JavaScriptRuntimeReconciliationService.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
@@ -202,7 +214,7 @@ describe("JavaScript application comparison workflows", () => {
     );
     const applicationEvidence = (side: string) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           predicateType: "rea.javascript-application-analysis",
@@ -219,6 +231,38 @@ describe("JavaScript application comparison workflows", () => {
     expect(
       compareApplicationVersionsRequestSchema.safeParse(input).success,
     ).toBe(true);
+  });
+});
+
+describe("JavaScript application workflow cancellation", () => {
+  it("stops resolving retained version-comparison sources when the caller cancels mid-request", () => {
+    const { left, right } = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+    const sources = [left, right];
+    const controller = new AbortController();
+    const reason = { request: "cancel version comparison" };
+    const looked: string[] = [];
+    const result = compareApplicationVersionsEvidence(
+      {
+        left: {
+          kind: "retained-evidence",
+          evidence_id: left.evidence_id,
+        },
+        right: {
+          kind: "retained-evidence",
+          evidence_id: right.evidence_id,
+        },
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return sources.find(({ evidence_id }) => evidence_id === id);
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([left.evidence_id]);
   });
 });
 
@@ -241,7 +285,7 @@ describe("historical native comparison projections", () => {
     const binding = original.graph.nodes.find(
       ({ kind }) => kind === "native-export",
     );
-    if (binding === undefined || source.subject === null)
+    if (binding === undefined || source.subject.identity.kind !== "file")
       throw new Error("Missing fixture binding");
     const historical = (name: string, explicitEmpty = false) => {
       const artifact = binding.observations[0]!.evidence.artifact;
@@ -284,9 +328,9 @@ describe("historical native comparison projections", () => {
       });
       return createEvidence(
         {
-          path: source.subject!.local_path,
-          sha256: source.subject!.digest.sha256,
-          format: source.subject!.format,
+          path: fileSubjectDisplay(source.subject).local_path,
+          sha256: fileIdentity(source.subject).sha256,
+          format: fileIdentity(source.subject).format,
         },
         source.provider,
         {
@@ -473,22 +517,26 @@ describe("Application graph Evidence envelopes", () => {
             )
           : managedApplicationGraphResultSchema.parse(source.normalized_result);
       const extraLink = `ev_${"f".repeat(64)}`;
-      const malformed = createEvidence(undefined, source.provider, {
-        predicateType: source.predicate_type,
-        operation: source.operation,
-        parameters: source.parameters,
-        result: {
-          ...result,
-          evidence_links: [...result.evidence_links, extraLink],
+      const malformed = createEvidence(
+        evidenceSubjectInput(source.subject),
+        source.provider,
+        {
+          predicateType: source.predicate_type,
+          operation: source.operation,
+          parameters: source.parameters,
+          result: {
+            ...result,
+            evidence_links: [...result.evidence_links, extraLink],
+          },
+          rawResult: source.raw_result,
+          confidence: source.confidence,
+          authority: source.authority,
+          environment: source.environment,
+          limitations: source.limitations,
+          locations: source.locations,
+          evidenceLinks: source.evidence_links,
         },
-        rawResult: source.raw_result,
-        confidence: source.confidence,
-        authority: source.authority,
-        environment: source.environment,
-        limitations: source.limitations,
-        locations: source.locations,
-        evidenceLinks: source.evidence_links,
-      });
+      );
       const workflowInput = {
         application: source,
         seed: { kind: "route" as const, value: "/not-present" },
@@ -525,7 +573,8 @@ describe("JavaScript application workflow error diagnostics", () => {
     temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
-    if (subject === null) throw new Error("Analysis Evidence subject missing");
+    if (subject.identity.kind !== "file")
+      throw new Error("Analysis Evidence must name its file");
     const inconsistentPath = "/different/application.js";
     const inconsistent = {
       ...evidence,
@@ -557,7 +606,6 @@ describe("JavaScript application workflow error diagnostics", () => {
     temporary.push(root);
     const evidence = await analyzeFixture(root);
     const subject = evidence.subject;
-    if (subject === null) throw new Error("Analysis Evidence subject missing");
     const result = javascriptApplicationAnalysisResultSchema.parse(
       evidence.normalized_result,
     );
@@ -570,9 +618,9 @@ describe("JavaScript application workflow error diagnostics", () => {
     };
     const malformedEvidence = createEvidence(
       {
-        path: subject.local_path,
-        sha256: subject.digest.sha256,
-        format: subject.format,
+        path: fileSubjectDisplay(subject).local_path,
+        sha256: fileIdentity(subject).sha256,
+        format: fileIdentity(subject).format,
       },
       JAVASCRIPT_APPLICATION_PROVIDER,
       {
@@ -682,25 +730,29 @@ describe("JavaScript runtime reconciliation local paths", () => {
       );
       // Keep target and script coordinates consistent so an unrelated target
       // cannot activate the static layer after its script mapping was rejected.
-      const runtime = createEvidence(undefined, original.provider, {
-        predicateType: original.predicate_type,
-        operation: original.operation,
-        parameters: { ...original.parameters, include_script_sources: false },
-        result: {
-          ...inspection,
-          target: { ...inspection.target, file_path: path },
-          scripts: {
-            ...inspection.scripts,
-            items: inspection.scripts.items.map((script) => ({
-              ...script,
-              file_path: path,
-              source: { included: false, reason: "not-requested" },
-            })),
+      const runtime = createEvidence(
+        evidenceSubjectInput(original.subject),
+        original.provider,
+        {
+          predicateType: original.predicate_type,
+          operation: original.operation,
+          parameters: { ...original.parameters, include_script_sources: false },
+          result: {
+            ...inspection,
+            target: { ...inspection.target, file_path: path },
+            scripts: {
+              ...inspection.scripts,
+              items: inspection.scripts.items.map((script) => ({
+                ...script,
+                file_path: path,
+                source: { included: false, reason: "not-requested" },
+              })),
+            },
           },
+          confidence: original.confidence,
+          authority: original.authority,
         },
-        confidence: original.confidence,
-        authority: original.authority,
-      });
+      );
       const reconciled = reconcileJavaScriptRuntimeEvidence({
         static_layers: base.static_layers.map((layer) => ({
           ...layer,

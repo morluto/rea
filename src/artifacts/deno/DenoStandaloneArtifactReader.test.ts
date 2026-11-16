@@ -13,11 +13,11 @@ import {
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
 } from "../../domain/native/elfNotes.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactPathRegistry } from "../ArtifactPaths.js";
+import { ArtifactPathRegistry } from "../../resources/ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
 import { locateDenoStandalone } from "./DenoStandaloneLocation.js";

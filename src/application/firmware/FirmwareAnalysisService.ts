@@ -1,6 +1,6 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
-import type { FirmwareAnalysisPort } from "./FirmwareAnalysisPort.js";
+import type { FirmwareAnalysisPort } from "../../ports/firmware/FirmwareAnalysisPort.js";
 import {
   firmwareRequestSchema,
   firmwareExecutionBudgetSchema,

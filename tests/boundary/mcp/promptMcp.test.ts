@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -5,7 +6,12 @@ import {
 import { ok as resultOk, err, ok } from "../../../src/domain/result.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import {
+  phaseArrival,
+  phaseGate,
+  type PhaseArrival,
+  type PhaseGate,
+} from "../../support/lifecycleHarness.js";
 
 import {
   Client,
@@ -28,7 +34,7 @@ import {
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -53,6 +59,7 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { serveStreamableHttp } from "../../../src/server/http/serveStreamableHttp.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 type PromptResource = {
   close(): Promise<void | Awaited<ReturnType<BinarySession["close"]>>>;
@@ -506,7 +513,7 @@ describe("guided prompt completion registry", () => {
     for (let index = 0; index < 150; index += 1)
       expect(
         session.recordEvidence(
-          createEvidence(undefined, fixtureProvider, {
+          createEvidence(unknownTarget("not-observed"), fixtureProvider, {
             operation: `fixture-${String(index)}`,
             parameters: { index },
             result: index,
@@ -555,10 +562,13 @@ describe("guided prompt completion registry", () => {
       { execute: async () => observed(["fixture-document"]) },
       session,
     );
-    const client = new Client({
-      name: "prompt-registry-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "prompt-registry-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const changed = new Promise<void>((resolve) => {
       client.setNotificationHandler("notifications/prompts/list_changed", () =>
         resolve(),
@@ -633,11 +643,11 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
   const startup = fixture.holdStartup();
   const warming = client.callTool({ name: "list_documents", arguments: {} });
   await withVerifierCleanup(async () => {
-    await startup.started;
+    await startup.reached(warming, "deep provider startup");
     expect(await complete(client, "document", "")).toEqual([]);
     expect(await complete(client, "procedure", "")).toEqual([]);
     expect(fixture.childrenCreated()).toBe(1);
-    startup.finish();
+    startup.release();
     const warmed = await warming;
     expect(warmed.isError, JSON.stringify(warmed)).not.toBe(true);
     expect(fixture.childrenCreated()).toBe(1);
@@ -646,7 +656,7 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
     ]);
   }, [
     async () => {
-      startup.finish();
+      startup.release();
     },
     async () => {
       await warming;
@@ -662,7 +672,7 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
     },
     { signal: controller.signal },
   );
-  await cancellation.started;
+  await cancellation.start.reached(cancelled, "prompt completion start");
   controller.abort();
   await expect(cancelled).rejects.toThrow();
   await cancellation.aborted;
@@ -672,7 +682,7 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
     ref: { type: "ref/prompt", name: "investigate_feature" },
     argument: { name: "document", value: "" },
   });
-  await lifecycle.started;
+  await lifecycle.start.reached(pending, "prompt completion start");
   const closed = await client.callTool({
     name: "close_binary",
     arguments: {},
@@ -685,18 +695,9 @@ it("guided prompt completion avoids cold startup and cancels warm lookup on clos
 it.each(["replacement", "shutdown"])(
   "waits for cancelled completion cleanup before HTTP %s",
   async (ending) => {
-    let release!: () => void;
-    let entered!: () => void;
-    let cancelled!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const aborted = new Promise<void>((resolve) => {
-      cancelled = resolve;
-    });
+    const completionStart = phaseArrival();
+    const completionAbort = phaseArrival();
+    const completionCleanup = phaseGate();
     const server = new EvidenceMcpServer(
       { name: "http-completion-drain", version: "1" },
       {},
@@ -708,20 +709,20 @@ it.each(["replacement", "shutdown"])(
     registerGuidedPrompts(server, {
       async execute(_operation, _parameters, options) {
         if (++calls > 1) return observed(["fresh-document"]);
-        entered();
+        completionStart.arrive();
         try {
           await new Promise<void>((resolve) => {
             options?.signal?.addEventListener(
               "abort",
               () => {
-                cancelled();
+                completionAbort.arrive();
                 resolve();
               },
               { once: true },
             );
           });
         } finally {
-          await gate;
+          await completionCleanup.hold();
         }
         return observed(["old-document"]);
       },
@@ -733,7 +734,10 @@ it.each(["replacement", "shutdown"])(
     });
     retainPromptResources(served);
     const connectHttp = async () => {
-      const client = new Client({ name: "completion-http", version: "1" });
+      const client = new Client(
+        { name: "completion-http", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       retainPromptResources(client);
       await client.connect(
         new StreamableHTTPClientTransport(new URL(served.url)),
@@ -747,7 +751,7 @@ it.each(["replacement", "shutdown"])(
     try {
       initial = complete(first, "document", "");
       void initial.catch(() => undefined);
-      await awaitAcknowledgement(started, initial, "prompt completion start");
+      await completionStart.reached(initial, "prompt completion start");
       let finished = false;
       finishing = (
         ending === "shutdown"
@@ -758,22 +762,21 @@ it.each(["replacement", "shutdown"])(
       ).then(() => {
         finished = true;
       });
-      await awaitAcknowledgement(
-        aborted,
+      await completionAbort.reached(
         finishing,
         "prompt completion cancellation",
       );
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(connections).toHaveBeenCalledTimes(1);
       expect(finished).toBe(false);
-      release();
+      completionCleanup.release();
       await finishing;
       if (next !== undefined)
         expect(await complete(next, "document", "fresh")).toEqual([
           "fresh-document",
         ]);
     } finally {
-      release();
+      completionCleanup.release();
       await finishing?.catch(() => undefined);
     }
   },
@@ -782,14 +785,7 @@ it.each(["replacement", "shutdown"])(
 describe("guided prompt completion lifecycle", () => {
   it("survives a cancelled completion and ignores its late result", async () => {
     let calls = 0;
-    let markStarted = (): void => undefined;
-    let release = (): void => undefined;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const completionStart = phaseGate();
     let producerDone!: () => void;
     const producerFinished = new Promise<void>((resolve) => {
       producerDone = resolve;
@@ -805,9 +801,8 @@ describe("guided prompt completion lifecycle", () => {
       async execute() {
         calls += 1;
         if (calls === 1) {
-          markStarted();
           try {
-            await gate;
+            await completionStart.hold();
             return observed(["late-document"]);
           } finally {
             producerDone();
@@ -816,7 +811,10 @@ describe("guided prompt completion lifecycle", () => {
         return observed(["fresh-document"]);
       },
     });
-    const client = new Client({ name: "prompt-cancel-client", version: "1" });
+    const client = new Client(
+      { name: "prompt-cancel-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await connectPair(server, client);
     const controller = new AbortController();
     const pending = client.complete(
@@ -827,10 +825,10 @@ describe("guided prompt completion lifecycle", () => {
       { signal: controller.signal },
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, pending, "prompt completion start");
+      await completionStart.reached(pending, "prompt completion start");
       controller.abort();
       await expect(pending).rejects.toThrow();
-      release();
+      completionStart.release();
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(await complete(client, "document", "fresh")).toEqual([
@@ -840,7 +838,7 @@ describe("guided prompt completion lifecycle", () => {
     }, [
       async () => {
         controller.abort();
-        release();
+        completionStart.release();
       },
       async () => {
         await pending.catch(() => undefined);
@@ -916,15 +914,10 @@ const createWarmCompletionFixture = async () => {
     resultOk(createAnalysisExecution(result, identity, { analysisProfile }));
   let childrenCreated = 0;
   let ready = false;
-  let startupGate:
-    | {
-        readonly started: () => void;
-        readonly release: Promise<void>;
-      }
-    | undefined;
+  let startupGate: PhaseGate | undefined;
   let completionGate:
     | {
-        readonly started: () => void;
+        readonly start: PhaseArrival;
         readonly aborted: () => void;
       }
     | undefined;
@@ -937,8 +930,7 @@ const createWarmCompletionFixture = async () => {
             const gate = startupGate;
             if (gate !== undefined) {
               startupGate = undefined;
-              gate.started();
-              await gate.release;
+              await gate.hold();
             }
             ready = true;
           }
@@ -966,7 +958,7 @@ const createWarmCompletionFixture = async () => {
               ),
             );
           completionGate = undefined;
-          gate.started();
+          gate.start.arrive();
           return new Promise((resolve) => {
             const signal = options?.signal;
             const cancel = (): void => {
@@ -1005,28 +997,18 @@ const createWarmCompletionFixture = async () => {
     client,
     childrenCreated: () => childrenCreated,
     holdStartup: () => {
-      let started = (): void => undefined;
-      let finish = (): void => undefined;
-      const observedStart = new Promise<void>((resolve) => {
-        started = resolve;
-      });
-      const release = new Promise<void>((resolve) => {
-        finish = resolve;
-      });
-      startupGate = { started, release };
-      return { started: observedStart, finish };
+      const gate = phaseGate();
+      startupGate = gate;
+      return gate;
     },
     holdCompletion: () => {
-      let started = (): void => undefined;
+      const start = phaseArrival();
       let aborted = (): void => undefined;
-      const observedStart = new Promise<void>((resolve) => {
-        started = resolve;
-      });
       const observedAbort = new Promise<void>((resolve) => {
         aborted = resolve;
       });
-      completionGate = { started, aborted };
-      return { started: observedStart, aborted: observedAbort };
+      completionGate = { start, aborted };
+      return { start, aborted: observedAbort };
     },
   };
 };
@@ -1167,7 +1149,10 @@ const complete = async (
 const connect = async (
   server: Awaited<ReturnType<typeof createServer>>,
 ): Promise<Client> => {
-  const client = new Client({ name: "prompt-test", version: "1" });
+  const client = new Client(
+    { name: "prompt-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   await connectPair(server, client);
   return client;
 };

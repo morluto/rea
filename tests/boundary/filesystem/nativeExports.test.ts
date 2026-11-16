@@ -32,7 +32,7 @@ describe("native export stable filesystem boundary", () => {
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256 },
+        identity: { sha256 },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -83,10 +83,10 @@ describe("native export stable filesystem boundary", () => {
             reportedLimits: { boundary: "structure", maximum: 16777216 },
             retryable: false,
             fixedAllowance: {
-              name: expect.stringContaining(
-                "16777216-byte native export retained-text allowance",
-              ),
+              name: "The native export retained-text allowance",
               kind: "bytes",
+              limit: 16777216,
+              unit: "bytes",
             },
           });
           expect(result.error.message).toContain(
@@ -131,7 +131,7 @@ describe("native export stable filesystem boundary", () => {
         operation: "inspect_native_exports",
         provider: { id: "rea-native-exports" },
         confidence: "observed",
-        subject: { local_path: path, format, digest: { sha256 } },
+        subject: { local_path: path, identity: { format, sha256 } },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),
@@ -161,7 +161,7 @@ describe("native export text capacity", () => {
       const report = nativeExportsSchema.parse(evidence.normalized_result);
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       });
       expect(report).toMatchObject({
         exports: [expect.objectContaining({ name: "kept" })],
@@ -298,10 +298,10 @@ describe("native export entry allowance", () => {
           reportedLimits: { boundary: "structure", maximum: 262144 },
           retryable: false,
           fixedAllowance: {
-            name: expect.stringContaining(
-              "262144-entry native export inventory allowance",
-            ),
+            name: "The native export inventory allowance",
             kind: "count",
+            limit: 262144,
+            unit: "entries",
           },
         });
         const action = analysisErrorRemediationAction(result.error);

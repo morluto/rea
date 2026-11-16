@@ -1,3 +1,4 @@
+import { boundedList } from "../domain/boundedList.js";
 import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { withOverviewInventoryCoverage } from "../domain/native/inventoryCoverage.js";
 import type { NativeCallGraph } from "../domain/native/nativeCallGraph.js";
@@ -18,7 +19,7 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   enhancedInputSchemas,
   type CallRelationshipDirection,
@@ -328,14 +329,13 @@ export class EnhancedTools {
       );
 
     const addresses = [...new Set(candidates.map(({ address }) => address))];
-    const scannedAddresses = addresses.slice(0, MAX_DISPATCH_METADATA_RECORDS);
+    const scanned = boundedList(addresses, MAX_DISPATCH_METADATA_RECORDS);
     const bindingsExecution = await this.#observe(
       "inspect_native_dispatch_metadata",
       {
         max_records: MAX_DISPATCH_METADATA_RECORDS,
-        objc_class_import_addresses: scannedAddresses,
-        objc_class_import_addresses_complete:
-          addresses.length <= MAX_DISPATCH_METADATA_RECORDS,
+        objc_class_import_addresses: [...scanned.items],
+        objc_class_import_addresses_complete: scanned.omitted === 0,
       },
       signal,
     );
