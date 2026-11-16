@@ -28,7 +28,7 @@ describe("web content artifacts", () => {
     ).toBe(false);
   });
 
-  it("preserves provider media types longer than the former field ceiling", () => {
+  it("preserves a 300-character provider media type", () => {
     const mediaType = `application/${"x".repeat(300)}`;
     const artifact = createWebTextArtifact("content", mediaType);
 

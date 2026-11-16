@@ -485,7 +485,7 @@ describe("web bundle analyzer", () => {
     expect(analyzed.completeness.status).toBe("complete");
   });
 
-  it("analyzes AST nodes after the former fixed node ceiling", () => {
+  it("analyzes every AST node of a bundle with more than 250,000 nodes", () => {
     const source = `${";".repeat(250_001)}fetch('/last');`;
     const result = analyzeWebBundleFixture(inspection(source));
 
