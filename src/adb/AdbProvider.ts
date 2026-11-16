@@ -652,10 +652,17 @@ const runtimeRootLease = (
   root: AdbRuntimeRoot,
   children: ArtifactResourceScope,
 ): AnalysisCleanupLease =>
-  new AnalysisCleanupLease(async () => {
-    await children.close();
-    await root.close();
-  });
+  new AnalysisCleanupLease(
+    async () => {
+      await children.close();
+      await root.close();
+    },
+    {
+      get cleanupResources() {
+        return [root.path, ...children.cleanupResources];
+      },
+    },
+  );
 
 interface PendingOutputDirectoryCleanup {
   readonly operation: "pull_adb_package" | "collect_adb_bugreport";
@@ -1094,6 +1101,7 @@ export class AdbProvider {
               ],
             );
             rootLease.bindCleanupError(cleanup);
+            cleanup.bindCleanupResourceOwner(rootLease);
             throw cleanup;
           },
           partial: (completed) =>
@@ -2097,6 +2105,29 @@ export class AdbProvider {
         signal,
       );
       if (!pulled.ok) {
+        if (pulled.error.cleanupIncomplete) {
+          pulled.error.retainPartialObservation({
+            provider_id: "adb",
+            operation,
+            result: {
+              client,
+              serial,
+              package_name: packageName,
+              output_directory: directory.value,
+              artifacts,
+              failures: [
+                ...observedFailures(),
+                {
+                  device_path: entry.device_path,
+                  stage: "pull",
+                  message: `Pull cleanup remains incomplete; any incomplete file is retained at ${localPath}. Remaining APKs were not attempted.`,
+                },
+              ],
+              coverage: "partial",
+            },
+          });
+          return err(pulled.error);
+        }
         if (pulled.error instanceof AnalysisCancelledError)
           return cancelledPackagePull(
             pulled.error,
@@ -2398,11 +2429,12 @@ export class AdbProvider {
           operation,
           signal,
         );
+        const scopedSelection: AdbCommandHost = { ...selection, resources };
         const directoryProbe = await probeAdbPathDirectory(
           operation,
           input.serial,
           input.device_path,
-          selection,
+          scopedSelection,
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
         );
@@ -2414,7 +2446,7 @@ export class AdbProvider {
           operation,
           input.serial,
           devicePath,
-          selection,
+          scopedSelection,
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
         );
@@ -2434,7 +2466,7 @@ export class AdbProvider {
             path: input.device_path,
             localPath: digest.path,
           },
-          selection,
+          scopedSelection,
           adbArguments(input.serial, ["push", digest.path, input.device_path]),
           { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
           signal,
@@ -2488,7 +2520,7 @@ export class AdbProvider {
         const deviceDigest = await runAdb(
           operation,
           { device: input.serial, path: devicePath },
-          selection,
+          scopedSelection,
           adbArguments(input.serial, ["shell", "sha256sum", devicePath]),
           {
             timeoutMs: SHELL_TIMEOUT_MS,
@@ -2501,6 +2533,7 @@ export class AdbProvider {
         if (!deviceDigest.ok) {
           const cancelled =
             deviceDigest.error instanceof AnalysisCancelledError;
+          const cleanupIncomplete = deviceDigest.error.cleanupIncomplete;
           // The check never started and the push already completed, so a
           // retryable error would invite a repeat that overwrite=false refuses.
           const hostCapacity =
@@ -2508,6 +2541,7 @@ export class AdbProvider {
             deviceDigest.error.resource === "capacity";
           const verificationFailed =
             cancelled ||
+            cleanupIncomplete ||
             (!hostCapacity &&
               (deviceDigest.error instanceof AnalysisResourceConstraintError ||
                 deviceDigest.error instanceof AnalysisTimeoutError));
@@ -2626,10 +2660,11 @@ export class AdbProvider {
           operation,
           signal,
         );
+        const scopedSelection: AdbCommandHost = { ...selection, resources };
         const installed = await runAdb(
           operation,
           { device: input.serial, path: apkPath, localPath: digest.path },
-          selection,
+          scopedSelection,
           adbArguments(input.serial, [
             "install",
             ...(input.replace ? ["-r"] : []),

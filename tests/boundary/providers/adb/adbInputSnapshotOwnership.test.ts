@@ -12,6 +12,8 @@ import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.j
 import { AdbInputSnapshotFailure } from "../../../../src/adb/AdbInputSnapshot.js";
 import { AnalysisOutputError } from "../../../../src/domain/analysisErrorCore.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
+import { OwnedCommandFailure } from "../../../../src/process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
 
 vi.mock("../../../../src/adb/AdbProcess.js", async (importOriginal) => ({
   ...(await importOriginal<
@@ -33,7 +35,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(async () => {
+  const actual =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  vi.mocked(open).mockImplementation(actual.open);
+  vi.mocked(rm).mockImplementation(actual.rm);
+  vi.restoreAllMocks();
+});
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-adb-input-owner-");
@@ -740,4 +750,286 @@ test("reports input snapshot capacity failures before contacting the device", as
   expect(adbDouble.version).toHaveBeenCalledTimes(1);
   expect(adbDouble.device).not.toHaveBeenCalled();
   await f.provider.close();
+});
+
+test("retains the push input workspace until unfinished command cleanup succeeds and preserves sha256sum cleanup failure", async () => {
+  const f = await fixture();
+  let allowCommandStop = false;
+  let stopAttempts = 0;
+  let rootRemovedWithCommandUnstopped = false;
+  const runtime = await PrivateRuntimeRoot.create({
+    prefix: "rea-adb-cmd-root-",
+  });
+  const supervisor = {
+    stop: async () => {
+      stopAttempts += 1;
+      if (!allowCommandStop)
+        return {
+          status: "incomplete" as const,
+          reason: "sha256sum process group still running",
+        };
+      return { status: "stopped" as const };
+    },
+  } as unknown as ProviderProcessSupervisor;
+
+  const baseDevice = adbDouble.device.getMockImplementation()!;
+  adbDouble.device.mockImplementation(async (args) => {
+    if (args[2] === "shell" && args[3] === "sha256sum") {
+      throw new OwnedCommandFailure(
+        "process",
+        "Command cleanup failed.",
+        {
+          exitCode: 0,
+          signal: null,
+          stdout: {
+            text: `${f.digest}  /data/local/tmp/payload.bin\n`,
+            bytes: 86,
+            observedBytes: 86,
+          },
+          stderr: {
+            text: "",
+            bytes: 0,
+            observedBytes: 0,
+          },
+          diagnosticTruncated: false,
+        },
+        "sha256sum process group still running",
+        undefined,
+        ["rea-adb-sha256sum", "pid:4242"],
+        supervisor,
+      );
+    }
+    return baseDevice(args);
+  });
+
+  const provider = new AdbProvider({
+    environment: { REA_ADB_PATH: join(f.root, "adb") },
+    createRuntimeRoot: async () => ({
+      path: runtime.path,
+      close: async () => {
+        if (!allowCommandStop) {
+          rootRemovedWithCommandUnstopped = true;
+          throw new Error(
+            "runtime root removed before command cleanup succeeded",
+          );
+        }
+        await runtime.close();
+      },
+    }),
+  });
+  onTestFinished(async () => {
+    allowCommandStop = true;
+    await provider.close();
+  });
+
+  const result = await provider.execute(f.request);
+  if (result.ok) throw new Error("expected sha256sum command cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(
+    expect.arrayContaining([runtime.path, "rea-adb-sha256sum", "pid:4242"]),
+  );
+  // #withRuntimeRoot drained children once before refusing to remove the root.
+  expect(stopAttempts).toBe(1);
+  expect(rootRemovedWithCommandUnstopped).toBe(false);
+  await expect(lstat(runtime.path)).resolves.toBeDefined();
+  const evidence = parseEvidence(result.error.partialObservation);
+  expect(evidence.normalized_result).toMatchObject({
+    local_path: f.source,
+    device_path: "/data/local/tmp/payload.bin",
+    bytes: 17,
+    sha256: f.digest,
+    device_sha256: null,
+    device_digest_source: "unavailable",
+  });
+
+  // A subsequent operation retries the retained root (and its child command) before admitting work.
+  const blocked = await provider.execute({
+    operation: "list_adb_devices",
+    input: {},
+  });
+  expect(blocked.ok).toBe(false);
+  if (!blocked.ok) expect(blocked.error.cleanupIncomplete).toBe(true);
+  expect(stopAttempts).toBe(2);
+  await expect(lstat(runtime.path)).resolves.toBeDefined();
+
+  allowCommandStop = true;
+  await provider.close();
+  expect(stopAttempts).toBe(3);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  await expect(lstat(runtime.path)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test("stops package pulls when a split pull leaves incomplete command cleanup", async () => {
+  const f = await fixture();
+  let allowCommandStop = false;
+  let secondPullAttempted = false;
+  const supervisor = {
+    stop: async () =>
+      allowCommandStop
+        ? { status: "stopped" as const }
+        : {
+            status: "incomplete" as const,
+            reason: "adb pull process group still running",
+          },
+  } as unknown as ProviderProcessSupervisor;
+
+  adbDouble.device.mockImplementation(async (args) => {
+    if (args[2] === "shell" && args[3] === "pm" && args[4] === "path") {
+      return {
+        stdout: Buffer.from(
+          "package:/data/app/x/base.apk\npackage:/data/app/x/split_config.apk\n",
+        ),
+        stderr: Buffer.alloc(0),
+      };
+    }
+    if (args[2] === "pull" && args[3] === "/data/app/x/base.apk") {
+      await writeFile(args[4]!, "base apk bytes");
+      throw new OwnedCommandFailure(
+        "process",
+        "Command cleanup failed.",
+        {
+          exitCode: 0,
+          signal: null,
+          stdout: {
+            text: "1 file pulled.\n",
+            bytes: 15,
+            observedBytes: 15,
+          },
+          stderr: {
+            text: "",
+            bytes: 0,
+            observedBytes: 0,
+          },
+          diagnosticTruncated: false,
+        },
+        "adb pull process group still running",
+        undefined,
+        ["rea-adb-pull", "pid:5151"],
+        supervisor,
+      );
+    }
+    if (args[2] === "pull") {
+      secondPullAttempted = true;
+      return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+    }
+    throw new Error(`Unexpected ADB command: ${JSON.stringify(args)}`);
+  });
+
+  onTestFinished(async () => {
+    allowCommandStop = true;
+    await f.provider.close();
+  });
+
+  const outputDirectory = join(f.root, "pulls");
+  const result = await f.provider.execute({
+    operation: "pull_adb_package",
+    input: {
+      serial: "device",
+      package: "com.example",
+      output_directory: outputDirectory,
+    },
+  });
+  if (result.ok) throw new Error("expected pull cleanup failure");
+  expect(secondPullAttempted).toBe(false);
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(
+    expect.arrayContaining(["rea-adb-pull", "pid:5151"]),
+  );
+
+  allowCommandStop = true;
+  await f.provider.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+});
+
+test("retains the install APK workspace until unfinished command cleanup succeeds", async () => {
+  const f = await fixture();
+  let allowCommandStop = false;
+  let stopAttempts = 0;
+  let rootRemovedWithCommandUnstopped = false;
+  const runtime = await PrivateRuntimeRoot.create({
+    prefix: "rea-adb-apk-root-",
+  });
+  const supervisor = {
+    stop: async () => {
+      stopAttempts += 1;
+      return allowCommandStop
+        ? { status: "stopped" as const }
+        : {
+            status: "incomplete" as const,
+            reason: "adb install process group still running",
+          };
+    },
+  } as unknown as ProviderProcessSupervisor;
+
+  adbDouble.device.mockImplementation(async (args) => {
+    if (args[2] === "install") {
+      throw new OwnedCommandFailure(
+        "process",
+        "Command cleanup failed.",
+        {
+          exitCode: 0,
+          signal: null,
+          stdout: {
+            text: "Success\n",
+            bytes: 8,
+            observedBytes: 8,
+          },
+          stderr: {
+            text: "",
+            bytes: 0,
+            observedBytes: 0,
+          },
+          diagnosticTruncated: false,
+        },
+        "adb install process group still running",
+        undefined,
+        ["rea-adb-install", "pid:6262"],
+        supervisor,
+      );
+    }
+    throw new Error(`Unexpected ADB command: ${JSON.stringify(args)}`);
+  });
+
+  const provider = new AdbProvider({
+    environment: { REA_ADB_PATH: join(f.root, "adb") },
+    createRuntimeRoot: async () => ({
+      path: runtime.path,
+      close: async () => {
+        if (!allowCommandStop) {
+          rootRemovedWithCommandUnstopped = true;
+          throw new Error(
+            "runtime root removed before install command cleanup succeeded",
+          );
+        }
+        await runtime.close();
+      },
+    }),
+  });
+  onTestFinished(async () => {
+    allowCommandStop = true;
+    await provider.close();
+  });
+
+  const result = await provider.execute({
+    operation: "install_adb_package",
+    input: {
+      serial: "device",
+      apk_path: f.source,
+      replace: true,
+    },
+  });
+  if (result.ok) throw new Error("expected install command cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(
+    expect.arrayContaining([runtime.path, "rea-adb-install", "pid:6262"]),
+  );
+  expect(stopAttempts).toBe(1);
+  expect(rootRemovedWithCommandUnstopped).toBe(false);
+  await expect(lstat(runtime.path)).resolves.toBeDefined();
+
+  allowCommandStop = true;
+  await provider.close();
+  expect(stopAttempts).toBe(2);
+  expect(result.error.cleanupIncomplete).toBe(false);
+  await expect(lstat(runtime.path)).rejects.toMatchObject({ code: "ENOENT" });
 });

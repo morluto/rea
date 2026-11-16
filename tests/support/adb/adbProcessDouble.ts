@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 
 import type { AdbRunOutcome } from "../../../src/adb/AdbProcess.js";
+import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 
 /** What a scripted adb run printed and how it exited (0 unless given). */
 export interface AdbDoubleRun {
@@ -57,14 +58,34 @@ export const runAdbProcessDouble = async (
       },
     };
   } catch (cause: unknown) {
+    const commandFailure =
+      cause instanceof OwnedCommandFailure ? cause : undefined;
+    const exited =
+      commandFailure?.snapshot?.exitCode !== null &&
+      commandFailure?.snapshot?.exitCode !== undefined
+        ? {
+            stdout: Buffer.from(commandFailure.snapshot.stdout.text),
+            stderr: commandFailure.snapshot.stderr.text,
+            exitCode: commandFailure.snapshot.exitCode,
+            capturedOutput: {
+              stdout: commandFailure.snapshot.stdout.text,
+              stderr: commandFailure.snapshot.stderr.text,
+              stdout_bytes: commandFailure.snapshot.stdout.observedBytes,
+              stderr_bytes: commandFailure.snapshot.stderr.observedBytes,
+              exit_code: commandFailure.snapshot.exitCode,
+              signal: null,
+              truncated: false,
+            },
+          }
+        : undefined;
     return {
       ok: false,
       failure: {
         cause,
-        command: undefined,
+        command: commandFailure,
         launch: undefined,
-        capturedOutput: undefined,
-        exited: undefined,
+        capturedOutput: exited?.capturedOutput,
+        exited,
       },
     };
   }
