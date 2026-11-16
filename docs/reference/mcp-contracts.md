@@ -352,7 +352,8 @@ Omit `fields` for complete records; a selected field list always retains
 remain distinguishable. Search tools apply their existing filters before retention.
 Follow `coverage.next_offset`; exhaustion describes the retained list, not
 complete discovery of all code or strings. An unbound source keeps
-`artifact: null` and the derived Evidence keeps `subject: null`.
+`artifact: null`, and the derived Evidence names an unknown subject
+(`subject.identity.kind: "unknown"`).
 
 The CLI uses the same projector. For an original complete Evidence JSON file,
 write `{"source":{"kind":"evidence-file","path":"/absolute/source.json"},"view":{"kind":"native-inventory","limit":32}}`
@@ -1015,11 +1016,47 @@ whether it was never recorded, cleared, or retained by another connection.
 Supply complete inline Evidence, repeat its producer, or import an exported
 Evidence bundle before referencing that imported record. Export a bundle or use
 `reset_investigation(save_path)` before ending the process if the investigation
-needs it later. Exported bundles carry `evidence_format`, the Evidence format revision
-(currently `1`). Import, comparison and every other bundle reader refuse a
-bundle without it, or with another revision, as an integrity mismatch whose
-recovery is to recreate the observations with the current release;
-re-exporting an earlier bundle does not update its format or identities. Retention has no automatic persistence or silent eviction.
+needs it later. Exported bundles and every Evidence record carry
+`evidence_format`, the Evidence format revision (currently `2`). Import,
+comparison and every other Evidence reader refuse a bundle or record without
+it, or with another revision, as an integrity mismatch whose recovery is to
+recreate the observations with the current release; re-exporting an earlier
+bundle does not update its format or identities. Revision 2 names the subject
+by its target identity, `subject.identity` (`kind: "file"`, `sha256`, `format`,
+`architecture` and `selection`: the raw or DOL entry point, the ESP flash
+offsets, or the universal Mach-O slice (`offset`, `size`, and the FAT
+`cpu_type` and `cpu_subtype`, `null` when the FAT table was not admitted) that
+select what was analysed, otherwise `null`), and the Evidence ID
+commits to that identity; `subject.name` and `subject.local_path` are display
+facts outside the ID. The subject has no separate `digest`, `format` or
+`architecture` members; read them from `subject.identity`. A live browser page
+observation names the page's reported URL,
+`{ "kind": "url", "url": …, "origin": … }`, with userinfo removed and `origin`
+`null` for an opaque origin; its `name` and `local_path` are `null`. A process
+capture names its launched root,
+`{ "kind": "process", "pid": …, "start_time": …, "executable_sha256": … }`,
+where `start_time` is the platform start identity read for that PID at launch
+and `executable_sha256` is `null` when the executable was not stable across
+spawn; its `name` and `local_path` are `null`. A Rizin or GDB debugger
+command names its session,
+`{ "kind": "session", "session_kind": …, "id": …, "target": … }`, where `id`
+is the session ID REA minted and `target` is the launch file hashed when the
+session started (validated like a file subject), or an `unknown` target when
+REA did not observe one. `start_gdb_session` accepts an optional absolute
+`executable` path: REA hashes the initial file, disables automatic loading, and
+loads it without running an inferior. Omission leaves the target unknown. A
+physical hash failure also leaves it unknown and records the reason; a failed
+descriptor close or cancellation fails startup and retains cleanup ownership.
+GDB Evidence records the original and absolute paths in `parameters.launch_provenance`;
+later debugger commands do not rebind it. Every
+record has a subject: one whose target REA did not identify names
+`{ "kind": "unknown", "reason": … }`, where the reason is
+`derived-from-linked-evidence` (comparisons and workflows, whose sources are
+committed through `evidence_links`), `not-observed`, `unsupported-subject`, or
+`withheld-by-caller` (REA observed the target and the caller chose not to
+record its identity, as with process capture PID normalization), and its
+`name` and `local_path` are `null`. Retention has no
+automatic persistence or silent eviction.
 `binary_session.investigation` reports record/revision/head counts, estimated
 retained representation bytes and the fixed allowance derived from initial V8
 heap headroom. A capacity refusal preserves the existing investigation; checkpoint
@@ -1274,6 +1311,9 @@ resource readers remain read-only within the selected bundle.
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
+When `path` is omitted and the open target is itself a plist, a plist that
+cannot be read or decoded is reported against that target
+(`target_unavailable`), not as an input issue on `path`.
 The CLI `rea inspect-plist <path>` opens its selected artifact for one invocation.
 
 Each provider client receives `binary_session.analysis_run.run_id` before any
@@ -1479,6 +1519,10 @@ reported only when its owning ledger confirms it; an inline result with
 observation cannot fit the MCP response, its corresponding `_omitted` detail
 reports the delivery limit. Cleanup failure and other completed source failures
 remain visible separately.
+A composite request that completes one argument's observation before another
+step fails reports it in `details.argument_observations` as
+`{argument, observation}`, named by the composite's input field, beside the
+failing step's own `partial_observation`.
 For these tools, cancellation observed during result finalization or owned
 cleanup also returns typed cancellation with the available observations.
 A normal target exit does not establish request completion. Incomplete cleanup

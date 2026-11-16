@@ -21,7 +21,7 @@ import {
   type EnvironmentToolAnswer,
 } from "../../application/environment/environmentToolAnswer.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import { transformAdvertisedInputJsonSchema } from "../../contracts/toolSchemaMetadata.js";
 import {
   advertisedEnvironmentTool,
@@ -65,7 +65,7 @@ import {
   bufferedJsonParts,
   jsonParts,
 } from "../../domain/jsonSerialization.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Where the environment card is served. */
 export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";

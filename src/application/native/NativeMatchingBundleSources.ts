@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { readImmutableEvidence } from "../../domain/evidenceValidation.js";

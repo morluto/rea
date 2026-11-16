@@ -1,5 +1,8 @@
 import type { DolHeader } from "./gamecubeDol.js";
-import type { ZipPackageFormat } from "./zipPackageFormat.js";
+import {
+  ZIP_PACKAGE_FORMATS,
+  type ZipPackageFormat,
+} from "./zipPackageFormat.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
@@ -335,6 +338,55 @@ export type BinaryTarget =
         readonly kind: "artifact";
         readonly format: "plist" | "javascript" | "source-map";
       });
+
+/** The kind of every target variant that may carry `Format`. */
+type TargetKindOf<Format> = BinaryTarget extends infer Target
+  ? Target extends { readonly format: infer Formats; readonly kind: infer Kind }
+    ? Format extends Formats
+      ? Kind
+      : never
+    : never
+  : never;
+
+/**
+ * The one kind each target format has. A target, snapshot or identity whose
+ * kind disagrees with its format is malformed.
+ */
+export const BINARY_TARGET_FORMAT_KINDS = {
+  "analysis-database": "database",
+  "mach-o": "executable",
+  "mach-o-universal": "executable",
+  elf: "executable",
+  pe: "executable",
+  "dos-mz": "executable",
+  "dos-com": "executable",
+  "raw-binary": "executable",
+  "gamecube-dol": "executable",
+  ...(Object.fromEntries(
+    ZIP_PACKAGE_FORMATS.map((format) => [format, "archive"]),
+  ) as Record<ZipPackageFormat, "archive">),
+  asar: "archive",
+  ines: "archive",
+  "godot-pck": "archive",
+  unityfs: "archive",
+  wxapkg: "archive",
+  uimage: "archive",
+  dmg: "archive",
+  pkg: "archive",
+  "intel-hex": "archive",
+  srec: "archive",
+  "esp-image": "archive",
+  uf2: "archive",
+  dfuse: "archive",
+  "esp-flash-image": "archive",
+  fit: "archive",
+  "ntfs-mft": "archive",
+  plist: "artifact",
+  javascript: "artifact",
+  "source-map": "artifact",
+} as const satisfies {
+  readonly [Format in BinaryTarget["format"]]: TargetKindOf<Format>;
+};
 
 /** Caller inputs that select how an ESP flash dump is read. */
 export interface EspFlashTargetSelection {

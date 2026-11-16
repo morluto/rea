@@ -14,6 +14,7 @@ import type {
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { Budget } from "../domain/budget.js";
 import type { FixedAllowance } from "../domain/fixedAllowanceRemediation.js";
 import {
   ProviderProcessSupervisor,
@@ -29,7 +30,8 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Injectable acquisition seam; production owns a POSIX group or Windows job. */
 export type OwnedMcpLauncher = (
@@ -63,7 +65,8 @@ export class OwnedMcpStdioTransport implements Transport {
   #supervisor: ProviderProcessSupervisor | undefined;
   #frameBuffer = Buffer.alloc(0);
   #frameLength = 0;
-  #bytes = 0;
+  /** Output charged to the current operation; stays over once it is exceeded. */
+  readonly #bytes: Budget | undefined;
   #started = false;
   #closed = false;
   readonly #cleanup = new AnalysisCleanupLease(
@@ -96,7 +99,10 @@ export class OwnedMcpStdioTransport implements Transport {
       readonly notifyOnExit?: boolean;
     },
     readonly launcher: OwnedMcpLauncher = spawnOwnedProviderProcess,
-  ) {}
+  ) {
+    if (settings.maxOperationBytes !== undefined)
+      this.#bytes = new Budget(settings.maxOperationBytes);
+  }
 
   /** Acquires exactly one protocol process after the SDK installs callbacks. */
   start(): Promise<void> {
@@ -225,7 +231,7 @@ export class OwnedMcpStdioTransport implements Transport {
 
   /** Scope both the byte budget and diagnostic retention to the next serialized request. */
   beginOperation(): void {
-    this.#bytes = 0;
+    this.#bytes?.restore(0);
     this.#supervisor?.resetOutput();
   }
 
@@ -313,7 +319,7 @@ export class OwnedMcpStdioTransport implements Transport {
         this.#releasedPreparations.add(owner);
         return;
       } catch (cause: unknown) {
-        reason = cause instanceof Error ? cause.message : String(cause);
+        reason = errorMessage(cause);
       }
     const failure = new ProviderCleanupError(
       this.settings.provider,
@@ -354,10 +360,11 @@ export class OwnedMcpStdioTransport implements Transport {
   };
   /** Charge output to the operation budget; false once it is exceeded. */
   #countOperationBytes(bytes: number): boolean {
-    const limit = this.settings.maxOperationBytes;
-    if (limit === undefined) return true;
-    this.#bytes += bytes;
-    if (this.#bytes <= limit) return true;
+    const budget = this.#bytes;
+    if (budget === undefined) return true;
+    budget.chargeOverCommitting(bytes);
+    if (budget.overCommitted === 0) return true;
+    const limit = budget.maximum;
     this.#failLimit(
       "operation",
       limit,

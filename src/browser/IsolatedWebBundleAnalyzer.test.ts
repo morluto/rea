@@ -1,4 +1,7 @@
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import { expect, it } from "vitest";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
@@ -13,7 +16,10 @@ import type {
   AnalyzeWebBundleInput,
   WebBundleAnalysis,
 } from "../domain/webBundleAnalysis.js";
-import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
+import {
+  analyzeWebBundleInputSchema,
+  webBundleScriptTimeoutRecovery,
+} from "../domain/webBundleAnalysis.js";
 import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
 import { unavailableWebScriptRecovery } from "../domain/webBundleScriptAnalysis.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -53,7 +59,12 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
       calls.push(script.script_key);
       if (calls.length === 2)
         return err({
-          error: new AnalysisTimeoutError("analyze_web_bundle", 5),
+          // The worker's per-script deadline, inside a total that has time left.
+          error: new AnalysisTimeoutError(
+            "analyze_web_bundle",
+            5,
+            webBundleScriptTimeoutRecovery(5),
+          ),
           completed: null,
         });
       return ok(analyzeCapturedWebScript(script));
@@ -80,11 +91,28 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
     parsed_scripts: 2,
     parse_failures: 0,
   });
-  expect(result.value.unknowns).toContainEqual({
+  // The partial result records the per-call control by contract field; it
+  // names no adapter spelling.
+  const timedOut = result.value.unknowns.find(
+    ({ dimension }) => dimension === "javascript_analysis",
+  );
+  expect(timedOut).toEqual({
     dimension: "javascript_analysis",
     reason: expect.stringContaining("deadline"),
     affected_script_keys: [captured.scripts.items[1]?.script_key],
+    limit: {
+      control_kind: "parameter",
+      parameter: "analysis_timeout_ms",
+      effective_value: 5,
+      unit: "ms",
+      minimum: expect.any(Number),
+      maximum: expect.any(Number),
+      default_value: expect.any(Number),
+      applies_at: "next_call",
+    },
+    remediation: expect.stringContaining("analysis_timeout_ms"),
   });
+  expect(JSON.stringify(timedOut)).not.toContain("--");
 });
 
 it("keeps the selected allowance and its recovery for a refused script", async () => {
@@ -319,13 +347,13 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
     "fetch('/cancelled');",
     "fetch('/cancelled-suffix');",
   ]);
-  const started = deferred<void>();
+  const started = phaseArrival();
   const controller = new AbortController();
   const analyzer = new IsolatedWebBundleAnalyzer(() => ({
     analyze: async (script, _timeout, signal) => {
       if (script.script_key === captured.scripts.items[0]?.script_key)
         return ok(analyzeCapturedWebScript(script));
-      started.resolve();
+      started.arrive();
       await waitForAbort(signal);
       return err({
         error: new AnalysisCancelledError("analyze_web_bundle", {
@@ -346,7 +374,7 @@ it("carries the exact caller cancellation reason and completed prefix facts", as
   );
   let result: Awaited<typeof pending>;
   try {
-    await awaitAcknowledgement(started.promise, pending, "script analysis");
+    await started.reached(pending, "script analysis");
     controller.abort(exactReason);
     result = await pending;
   } finally {
@@ -399,22 +427,18 @@ it("refuses work after close with REA's own cancellation reason, not an absent o
 
 it("retains all completed facts when cancellation arrives during worker close", async () => {
   const captured = inspection(["fetch('/one');", "fetch('/two');"]);
-  const closeStarted = deferred<void>();
-  let closeWorker: (() => void) | undefined;
+  const workerClose = phaseGate();
   const analyzer = new IsolatedWebBundleAnalyzer(() => ({
     analyze: async (script) => ok(analyzeCapturedWebScript(script)),
     close: async () => {
-      closeStarted.resolve();
-      await new Promise<void>((resolve) => {
-        closeWorker = resolve;
-      });
+      await workerClose.hold();
     },
   }));
   expect((await analyzer.reserve()).ok).toBe(true);
   const pending = analyzer.analyze(captured, noSourceMaps, input);
-  await closeStarted.promise;
+  await workerClose.reached(pending, "worker close");
   const closing = analyzer.close();
-  closeWorker?.();
+  workerClose.release();
   await closing;
   const result = await pending;
   analyzer.releaseReservation();
@@ -563,17 +587,6 @@ const waitForAbort = (signal: AbortSignal | undefined): Promise<void> => {
   return new Promise((resolve) => {
     signal?.addEventListener("abort", () => resolve(), { once: true });
   });
-};
-
-const deferred = <T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-} => {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
 };
 
 const inspection = (sources: readonly string[]) =>

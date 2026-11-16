@@ -3,8 +3,8 @@ import { watch } from "node:fs";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
 import {
@@ -804,18 +804,16 @@ fs.writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000
     });
     onTestFinished(() => provider.close());
     const controller = new AbortController();
-    let watcher: ReturnType<typeof watch> | undefined;
-    const ready = new Promise<void>((resolve) => {
-      watcher = watch(root, (_event, name) => {
-        if (name === "ready") resolve();
-      });
+    const toolStart = phaseArrival();
+    const watcher = watch(root, (_event, name) => {
+      if (name === "ready") toolStart.arrive();
     });
     const pending = provider.execute(
       { operation: "inspect_pcap_capture", input: { path } },
       { signal: controller.signal },
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(ready, pending, `${phase} tool startup`);
+      await toolStart.reached(pending, `${phase} tool startup`);
       controller.abort(new Error("caller cancellation"));
       const result = await pending;
       if (result.ok) throw new Error("expected cancellation");
@@ -826,7 +824,7 @@ fs.writeFileSync(${JSON.stringify(marker)}, 'ready'); setInterval(() => {}, 1000
       async () => {
         await pending;
       },
-      () => watcher?.close(),
+      () => watcher.close(),
     ]);
   },
 );
@@ -846,7 +844,7 @@ it.each(["change", "cancel"] as const)(
       { signal: controller.signal },
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(held.firstRead, pending, "snapshot read");
+      await held.reached(pending, "snapshot read");
       if (action === "cancel") controller.abort();
       else await writeFile(path, "changed source bytes");
       held.release();
@@ -879,7 +877,7 @@ it("admits one capture and drains it before close releases resources", async () 
   });
   let closing: Promise<void> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(held.firstRead, pending, "snapshot read");
+    await held.reached(pending, "snapshot read");
     const concurrent = await provider.execute({
       operation: "inspect_pcap_capture",
       input: { path },
@@ -972,6 +970,19 @@ it("requests HTTP/2 URI facts and projects them through capture inspection", asy
   expect(result.http_request_uris).toEqual(["http://example.test/h2"]);
   expect(result.http_request_uri_count).toBe(1);
   expect(result.coverage).toBe("complete");
+});
+
+it("keeps the packet summary when only the DNS wire pass exits unsuccessfully", async () => {
+  const { provider, root } = await providerWith({ failDnsPass: true });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    packet_count: 3,
+  });
 });
 
 it("reports partial DNS coverage when raw extraction fails without selected DNS facts", async () => {

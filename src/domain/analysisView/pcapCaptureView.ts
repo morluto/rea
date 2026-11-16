@@ -15,6 +15,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisTextPage } from "./analysisViewText.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const captureSchema = pcapResultSchemas.inspect_pcap_capture;
 const fields = captureSchema.shape;
@@ -126,8 +127,8 @@ const parseParent = (
 ): Result<Capture, AnalysisError> => {
   const parsed = parseAnalysisViewResult(captureSchema, parent);
   if (!parsed.ok) return parsed;
-  const subject = parent.subject;
-  if (subject == null || subject.digest.sha256 !== parsed.value.target.sha256)
+  const subject = evidenceFileTarget(parent);
+  if (subject == null || subject.sha256 !== parsed.value.target.sha256)
     return err(
       analysisViewInputError([
         {

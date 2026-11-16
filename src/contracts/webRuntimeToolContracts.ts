@@ -1,5 +1,9 @@
 import type { ToolContract } from "./toolContractTypes.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import {
+  toolContractMetadata,
+  browserEvidenceEffects,
+  toolEffects,
+} from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
   observeWebExecutionInputSchema,
@@ -15,7 +19,17 @@ export const WEB_RUNTIME_TOOL_CONTRACTS = [
   {
     name: "observe_web_execution",
     availability: "standalone",
-    ...toolContractMetadata("observe_web_execution"),
+    cli: true,
+    ...toolContractMetadata(
+      "observe_web_execution",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        accessesNetwork: true,
+        mayDiscardData: true,
+        idempotent: false,
+      }),
+    ),
     description:
       "Instrument one selected CDP page for a finite, externally driven precise coverage window. Resets execution counters and prevents optimized execution until stopped. Returns complete nested UTF-16 ranges/counts, independently hashed script text and request initiator associations by session script ID. Does not navigate, click, evaluate selected code or close the externally owned page. Navigation ends document-scoped collection; workers and UI causality remain outside this claim. Emits an actual armed progress notification before external actions.",
     kind: "browser-provider",
@@ -35,7 +49,11 @@ export const WEB_RUNTIME_TOOL_CONTRACTS = [
   {
     name: "inspect_web_event_listeners",
     availability: "standalone",
-    ...toolContractMetadata("inspect_web_event_listeners"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_web_event_listeners",
+      browserEvidenceEffects,
+    ),
     description:
       "Inspect listeners registered directly on the first main-document CSS match in one selected CDP page. Returns event flags, native callback locations, source ownership and exact script text/digests inline. Does not dispatch events, evaluate JavaScript or invoke handlers. Delegated ancestor/framework listeners and execution history remain unknown. Releases REA's object group and transport, preserving the external page.",
     kind: "browser-provider",

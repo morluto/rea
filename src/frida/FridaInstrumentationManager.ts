@@ -1,5 +1,5 @@
 import { isUtf8 } from "node:buffer";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import type {
@@ -22,9 +22,9 @@ import type {
   FridaSessionObservation,
   FridaSessionStatus,
   StartFridaSessionInput,
-} from "../application/frida/FridaInstrumentationPort.js";
-import { FridaScriptLoadCancelledError } from "../application/frida/FridaInstrumentationPort.js";
-import type { OptionalProviderLoadFailure } from "../application/OptionalObservationProviders.js";
+} from "../ports/frida/FridaInstrumentationPort.js";
+import { FridaScriptLoadCancelledError } from "../ports/frida/FridaInstrumentationPort.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
@@ -37,24 +37,27 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
+import { explicitValueSpans } from "../domain/explicitSensitiveValues.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   unknownFridaScript,
   unknownFridaSession,
-} from "../application/frida/fridaInputErrors.js";
+} from "../domain/fridaInputErrors.js";
 import {
   MAX_MESSAGE_METADATA_BYTES,
   type FridaOwnedCaptureLimit,
-} from "./fridaCaptureLimits.js";
+} from "../domain/fridaCaptureLimits.js";
 import {
   resolveFridaCapturePolicy,
   type FridaCapturePolicy,
 } from "../domain/fridaCapturePolicy.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -453,7 +456,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         source.sourceKind === "inline"
           ? source.source
           : await readFile(source.path);
-      sourceSha256 = createHash("sha256").update(selectedSource).digest("hex");
+      sourceSha256 = sha256Hex(selectedSource);
       scriptSource =
         typeof selectedSource === "string"
           ? selectedSource
@@ -462,9 +465,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
         sourceRepresentation = {
           encoding: "utf8",
           decoding: "replacement",
-          loadedSourceSha256: createHash("sha256")
-            .update(scriptSource)
-            .digest("hex"),
+          loadedSourceSha256: sha256Hex(scriptSource),
         };
     } catch (cause: unknown) {
       const sourcePath = source.sourceKind === "file" ? source.path : undefined;
@@ -1307,9 +1308,7 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
     remote: FridaRemoteConnection,
   ): Promise<Device> {
     return this.#withRemoteLock(remote.address, async () => {
-      const optionsDigest = createHash("sha256")
-        .update(JSON.stringify(remoteOptions(remote)))
-        .digest("hex");
+      const optionsDigest = sha256Hex(JSON.stringify(remoteOptions(remote)));
       let reference = this.#remoteDevices.get(remote.address);
       if (reference !== undefined) {
         if (reference.optionsDigest !== optionsDigest)
@@ -1392,59 +1391,45 @@ export class FridaInstrumentationManager implements FridaInstrumentationPort {
   }
 }
 
+/** Redact declared values, then keep what fits `maximumBytes` of JSON string body. */
 const boundedRedactedString = (
   input: string,
   maximumBytes: number,
   secrets: readonly string[],
 ): { readonly value: string; readonly truncated: boolean } => {
+  const replacement = "[redacted]";
+  const replacementBytes = jsonStringByteLength(replacement) - 2;
   const chunks: string[] = [];
   let outputBytes = 0;
   let cursor = 0;
-  let segmentStart = 0;
-  let truncated = false;
-  while (cursor < input.length) {
-    let nextSecretStart = input.length;
-    let nextSecret: string | undefined;
-    for (const secret of secrets) {
-      const match = input.indexOf(secret, cursor);
-      if (match !== -1 && match < nextSecretStart) {
-        nextSecretStart = match;
-        nextSecret = secret;
-      }
-    }
-    if (nextSecretStart === cursor && nextSecret !== undefined) {
-      const replacement = "[redacted]";
-      const replacementBytes = jsonStringByteLength(replacement) - 2;
-      if (outputBytes + replacementBytes > maximumBytes) {
-        truncated = true;
-        break;
-      }
-      chunks.push(input.slice(segmentStart, cursor), replacement);
-      outputBytes += replacementBytes;
-      cursor += nextSecret.length;
-      segmentStart = cursor;
-      continue;
-    }
-    while (cursor < nextSecretStart) {
+  const keep = (end: number): boolean => {
+    const start = cursor;
+    while (cursor < end) {
       const codePoint = input.codePointAt(cursor);
       if (codePoint === undefined) break;
       const character = String.fromCodePoint(codePoint);
       const characterBytes = jsonStringByteLength(character) - 2;
       if (
-        cursor + character.length > nextSecretStart ||
+        cursor + character.length > end ||
         outputBytes + characterBytes > maximumBytes
-      ) {
-        truncated = true;
+      )
         break;
-      }
       outputBytes += characterBytes;
       cursor += character.length;
     }
-    if (truncated) break;
+    chunks.push(input.slice(start, cursor));
+    return cursor === end;
+  };
+  for (const span of explicitValueSpans(input, secrets)) {
+    if (!keep(span.start)) return { value: chunks.join(""), truncated: true };
+    if (outputBytes + replacementBytes > maximumBytes)
+      return { value: chunks.join(""), truncated: true };
+    chunks.push(replacement);
+    outputBytes += replacementBytes;
+    cursor = span.end;
   }
-  chunks.push(input.slice(segmentStart, cursor));
-  if (cursor < input.length) truncated = true;
-  return { value: chunks.join(""), truncated };
+  const complete = keep(input.length);
+  return { value: chunks.join(""), truncated: !complete };
 };
 
 type BoundedJson = {
@@ -1721,9 +1706,6 @@ const providerError = (
         }),
   });
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const cancelledOperation = (
   operation: string,

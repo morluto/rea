@@ -1,6 +1,6 @@
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { SqliteDatabasePort } from "./SqliteDatabasePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { SqliteDatabasePort } from "../../ports/sqlite/SqliteDatabasePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import type { Evidence, EvidenceSubjectTarget } from "../../domain/evidence.js";
