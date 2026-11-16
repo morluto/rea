@@ -13,7 +13,7 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
-} from "../mcpStartupPolicy.js";
+} from "../config/mcpStartupPolicy.js";
 import {
   clientConfigurationRecordSchema,
   clientRegistrationEntry,

@@ -1,7 +1,6 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createReleaseExposureService } from "../composition/releaseExposure.js";
 import { RELEASE_EXPOSURE_TOOL_CONTRACTS } from "../contracts/releaseExposureToolContracts.js";
 import {
@@ -30,7 +29,6 @@ export const registerReleaseExposureCommands = (
     logger,
     contractNamed(RELEASE_EXPOSURE_TOOL_CONTRACTS, "audit_release_exposure"),
     {
-      command: CLI_COMMANDS.auditReleaseExposure,
       description:
         "Report what static analysis of a shipped artifact recovers. Reads the selected path. When the selection is a file, the parent directory is listed for sibling .pdb, .dSYM, .debug, and .map debug companions.",
       positionals: ["path"],

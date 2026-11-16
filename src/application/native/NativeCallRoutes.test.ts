@@ -1,10 +1,10 @@
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { describe, expect, it } from "vitest";
 import { readNativeCallRoutes } from "./NativeCallRoutes.js";
 import {
   createAnalysisExecution,
   type AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { ghidraReferenceEdge } from "../../domain/ghidraValues.fixture.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";

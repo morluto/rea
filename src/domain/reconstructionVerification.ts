@@ -1,3 +1,4 @@
+import { evidenceFileTarget } from "./evidence.js";
 import {
   ArtifactInventoryCarrierError,
   parseArtifactInventoryEvidence,
@@ -497,7 +498,7 @@ const authorityLimitations = (
     );
   if (
     claim.kind !== "behavioral" &&
-    sources.some(({ subject }) => subject === null)
+    sources.some((source) => evidenceFileTarget(source) === undefined)
   )
     limitations.push("Structural source artifact identity is unavailable.");
   if (claim.kind === "behavioral") {

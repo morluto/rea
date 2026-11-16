@@ -90,6 +90,7 @@ export const alternativePointers = (
             ]
           : [],
       )
+      // generation-cap: alternative selectors offered for a check
       .slice(0, MAX_ALTERNATIVES);
     if (found.length > 0 || !tagOnly) return found;
   }

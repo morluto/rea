@@ -24,6 +24,10 @@ export class ProviderAdapterError extends AnalysisError {
     this.userMessage = options.userMessage;
     this.remediationAction = options.remediationAction;
   }
+
+  override get providerWide(): boolean {
+    return true;
+  }
 }
 
 /** A request reached an analysis client after its session closed that client. */

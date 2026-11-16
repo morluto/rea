@@ -1,6 +1,5 @@
 import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import type { JavaScriptPackageType } from "../domain/javascript/javascriptSourceParser.js";
@@ -28,6 +27,7 @@ import type {
 import { typescriptEmittedSourceCandidates } from "./TypeScriptEmittedSourceCandidates.js";
 import { appendAll } from "../domain/appendAll.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface ParsedReferenceSourceEntries {
   readonly entries: HistoricalSourceGraphInput["entries"];
@@ -56,9 +56,6 @@ const entryRecoveryGuidance = (
     return "This entry's type could not be determined. Check the parent directory and try again.";
   return "This file could not be read. Check its permissions, then try again.";
 };
-
-const hashBytes = (bytes: Uint8Array): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const failedEntry = (
   entry: Extract<ReferenceSourceEntry, { status: "failed" }>,
@@ -563,7 +560,7 @@ const appendFile = (
   output.entries.push({
     path: entry.path,
     kind: "file",
-    sha256: hashBytes(entry.bytes),
+    sha256: sha256Hex(entry.bytes),
     size: entry.size,
     language,
     classifications: classifyReferenceSourcePath(entry.path),

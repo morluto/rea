@@ -8,7 +8,7 @@ import {
   type BrowserScenarioNormalization,
   type BrowserScenarioNormalizationRule,
 } from "./browserScenarioDiffValues.js";
-import { isRecord } from "./isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Canonically order and commit a parsed browser scenario normalization policy. */
 export const commitBrowserScenarioNormalization = (
