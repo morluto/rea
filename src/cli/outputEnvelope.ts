@@ -111,12 +111,21 @@ export const renderFailure = (
   cta: CallToAction,
   presentation: EnvelopePresentation,
 ): string => {
-  if (presentation.human && !presentation.fullOutput)
-    return line(humanError(failure)) + line(humanCallToAction(cta));
   const { format } = presentation;
-  if (presentation.tokenCount)
-    return line(String(estimateTokenCount(formatCliOutput(failure, format))));
   const meta = { command, cta, duration };
+  if (presentation.tokenCount) {
+    const document = presentation.fullOutput
+      ? { ok: false, error: failure, meta }
+      : { ...failure, cta };
+    return line(String(estimateTokenCount(formatCliOutput(document, format))));
+  }
+  if (
+    presentation.human &&
+    !presentation.fullOutput &&
+    presentation.tokenLimit === undefined &&
+    presentation.tokenOffset === undefined
+  )
+    return line(humanError(failure)) + line(humanCallToAction(cta));
   if (presentation.fullOutput) {
     const window = tokenWindow(formatCliOutput(failure, format), presentation);
     return line(
