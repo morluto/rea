@@ -4,6 +4,7 @@ import {
   inspectV8CodeCacheInputSchema,
   v8CodeCacheSchema,
   V8_CODE_CACHE_HEADER_BYTES,
+  V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
@@ -318,4 +319,64 @@ it("refuses a wide container that is only four bytes short", () => {
   expect(parse(narrow).header.header_bytes).toBe(
     V8_CODE_CACHE_NARROW_HEADER_BYTES,
   );
+});
+
+it("rejects a reported word table that does not cover the header it declares", () => {
+  // The parser derives both from one offset, so this pair cannot disagree on a
+  // parsed container; the schema is what a stored or projected report also goes
+  // through, and there the two are independent fields. Without these cases the
+  // rule could be deleted and every parser test would still pass.
+  const reported = (fieldCount: number, headerBytes: number) => ({
+    artifact: {
+      path: "/artifacts/module.jsc",
+      sha256: "a".repeat(64),
+      bytes: 4096,
+    },
+    header: {
+      magic: 0xf00d,
+      magic_build_stable: V8_CODE_CACHE_MAGIC_HIGH,
+      fields: Array.from({ length: fieldCount }, (_, index) => ({
+        offset: index * 4,
+        value: index,
+        role: "reserved",
+        status: "unconfirmed" as const,
+      })),
+      header_bytes: headerBytes,
+      source_length: 10,
+      producer: "script" as const,
+    },
+    payload: {
+      offset: headerBytes,
+      bytes: 4096 - headerBytes,
+      sha256: "b".repeat(64),
+      trailing_bytes: 0,
+    },
+    embedded_strings: [],
+    coverage: {
+      status: "complete" as const,
+      scanned_bytes: 4096 - headerBytes,
+      strings: 0,
+    },
+    limitations: ["measured on one producer"],
+  });
+
+  // Seven words is 28 bytes and eight is 32, so each header size has exactly one
+  // word count that covers it.
+  const cases = [
+    { fields: 7, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: false },
+    { fields: 8, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
+    { fields: 7, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: true },
+    { fields: 8, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: true },
+  ];
+  for (const { fields, bytes, accepted } of cases) {
+    const label = `${String(fields)} words / ${String(bytes)} bytes`;
+    const parsed = v8CodeCacheSchema.safeParse(reported(fields, bytes));
+    expect(parsed.success, label).toBe(accepted);
+    expect(
+      parsed.error?.issues.some(
+        (issue) => issue.path.join(".") === "header.fields",
+      ) ?? false,
+      label,
+    ).toBe(!accepted);
+  }
 });

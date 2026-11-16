@@ -94,17 +94,22 @@ export const parseV8CodeCache = (
   const declaredPayload = field(5);
   const payloadOffset = bytes.length - declaredPayload;
   // A 64-bit producer pads the header with a word V8 leaves zero, so a four-byte-short wide
-  // container derives the same 28-byte size a 32-bit producer writes. The padding word is the
-  // only thing that separates them: a narrow container has payload where that padding sits, and
-  // measured on Node 24.22.1 every real payload begins with a non-zero word. Reading the
-  // padding as payload would report a truncated cache as a complete one.
+  // container derives the same 28-byte size a 32-bit producer writes. The producer zeroes that
+  // padding rather than copying payload over it: `SerializedData::AllocateWithPayload`
+  // (src/snapshot/snapshot-data.cc) does `std::fill_n(data_, header_size, 0)` before writing the
+  // header words, and `kHeaderSize = POINTER_SIZE_ALIGN(kUnalignedHeaderSize)`
+  // (src/snapshot/code-serializer.h) puts the four padding bytes inside `header_size`. So a zero
+  // word at byte 28 says the container claims a wide header whose payload does not begin there.
+  // The rule is stated as the reservation it is rather than as proof: a narrow container whose
+  // payload happened to begin with four zero bytes would also match, and no reading of the header
+  // alone can separate the two.
   if (
     payloadOffset === V8_CODE_CACHE_NARROW_HEADER_BYTES &&
     bytes.length >= V8_CODE_CACHE_HEADER_BYTES &&
     field(V8_CODE_CACHE_NARROW_HEADER_BYTES / 4) === 0
   )
     malformed(
-      `Header declares a ${String(declaredPayload)}-byte payload, which resolves to the ${String(V8_CODE_CACHE_NARROW_HEADER_BYTES)}-byte header size only if the ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} zero alignment bytes a wide header carries are payload; the container is ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} bytes short of that layout and is truncated or corrupt.`,
+      `Header declares a ${String(declaredPayload)}-byte payload, which resolves to the ${String(V8_CODE_CACHE_NARROW_HEADER_BYTES)}-byte header size only if the ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} alignment bytes a wide header zeroes are payload; the container is either ${String(V8_CODE_CACHE_HEADER_BYTES - V8_CODE_CACHE_NARROW_HEADER_BYTES)} bytes short of the wide layout or a narrow one whose payload begins with a zero word, and this reader cannot tell them apart.`,
     );
   if (
     !(V8_CODE_CACHE_HEADER_SIZES as readonly number[]).includes(payloadOffset)
