@@ -88,6 +88,7 @@
     "README.md",
     "DISCLAIMER.md",
     "THIRD_PARTY_NOTICES.md",
+    "website/public/assets/licenses/dinosaur.txt",
     "LICENSE",
     "native/windows/build/manifest.json",
     "native/windows/build/rea-windows-x64.node",
