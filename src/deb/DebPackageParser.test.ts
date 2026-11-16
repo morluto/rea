@@ -804,6 +804,36 @@ it("resolves a GNU ar long name at the name limit", () => {
   expect(report.ar.extra_member_names).toContain(longName);
 });
 
+it.for([
+  [
+    "past the end of the string table",
+    "/40",
+    /outside the 18-byte string table/u,
+  ],
+  ["at an empty string-table entry", "/17", /empty string-table entry/u],
+] as const)(
+  "refuses a GNU ar long name reference %s with the partial report",
+  ([, reference, message]) => {
+    const fixture = debPackageFixture({
+      extraMembers: [
+        { name: "//", data: Buffer.from("long-member-name/\n") },
+        { name: reference, data: Buffer.alloc(0) },
+      ],
+    });
+    // The fixture writes `/40/`; GNU ar writes the reference as `/40`.
+    const bytes = Buffer.from(fixture);
+    bytes[bytes.indexOf(`${reference}/ `) + reference.length] = 0x20;
+    const error = expectFailure(() => parse(bytes), DebPackageFormatFailure);
+    expect(error.kind).toBe("malformed");
+    expect(error.message).toMatch(message);
+    expect(error.partial?.artifact.sha256).toBe("a".repeat(64));
+    expect(error.partial?.ar.format_version).toBe("2.0");
+    expect(error.partial?.ar.members.map((member) => member.name)).toContain(
+      "//",
+    );
+  },
+);
+
 it("keeps a GNU ar string table as a counted member", () => {
   const bytes = debPackageFixture({
     extraMembers: [{ name: "//", data: Buffer.from("long-member-name/\n") }],

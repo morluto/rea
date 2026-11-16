@@ -46,6 +46,31 @@ const memberNameTooLong = (length: number): DebPackageAllowanceFailure =>
     MAX_AR_MEMBER_NAME_BYTES,
     `ar member name of ${String(length)} bytes exceeds the ${String(MAX_AR_MEMBER_NAME_BYTES)}-byte name limit.`,
   );
+
+/** Resolves a GNU ar `/<offset>` reference against the `//` string table. */
+const gnuLongName = (
+  stringTable: string,
+  index: number,
+): string | DebPackageFormatFailure | DebPackageAllowanceFailure => {
+  if (index >= stringTable.length)
+    return new DebPackageFormatFailure(
+      "malformed",
+      `GNU ar long name offset ${String(index)} is outside the ${String(stringTable.length)}-byte string table.`,
+    );
+  const newline = stringTable.indexOf("\n", index);
+  let end = newline === -1 ? stringTable.length : newline;
+  if (end > index && stringTable[end - 1] === "/") end -= 1;
+  if (end - index > MAX_AR_MEMBER_NAME_BYTES)
+    return memberNameTooLong(end - index);
+  const name = trimField(stringTable.slice(index, end));
+  if (name === "")
+    return new DebPackageFormatFailure(
+      "malformed",
+      `GNU ar long name offset ${String(index)} names an empty string-table entry.`,
+    );
+  return name;
+};
+
 const TAR_BLOCK = 512;
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
@@ -331,7 +356,6 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
       // and counted against max_ar_members like any other.
       stringTable = ascii(bytes.subarray(dataStart, dataStart + size));
     } else if (/^\/\d+$/u.test(name)) {
-      const index = Number(name.slice(1));
       if (stringTable === null)
         return {
           members,
@@ -340,12 +364,9 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
             "GNU ar long name refers to a missing string table.",
           ),
         };
-      const newline = stringTable.indexOf("\n", index);
-      let end = newline === -1 ? stringTable.length : newline;
-      if (end > index && stringTable[end - 1] === "/") end -= 1;
-      if (end - index > MAX_AR_MEMBER_NAME_BYTES)
-        return { members, error: memberNameTooLong(end - index) };
-      name = trimField(stringTable.slice(index, end));
+      const resolved = gnuLongName(stringTable, Number(name.slice(1)));
+      if (typeof resolved !== "string") return { members, error: resolved };
+      name = resolved;
     } else {
       name = name.replace(/\/$/u, "");
     }
