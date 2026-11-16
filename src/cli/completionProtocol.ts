@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+import {
+  declaredOptionType,
+  isCountOption,
+  optionFlagName,
+} from "./optionFields.js";
+
 /**
  * REA's shell completion protocol: the hook script each shell sources, the
  * candidates for the words before the cursor, and their per-shell encoding.
@@ -128,31 +134,11 @@ export const completionScript = (
   }
 };
 
-const kebab = (key: string): string =>
-  key.replace(/[A-Z]/gu, (character) => `-${character.toLowerCase()}`);
-
-/** Strip wrappers (optional, default, nullable, ...) to the declared value type. */
-const declaredType = (field: z.ZodType): z.ZodType => {
-  let current = field;
-  for (
-    let inner = innerType(current);
-    inner !== undefined;
-    inner = innerType(current)
-  )
-    current = inner;
-  return current;
-};
-
-const innerType = (field: z.ZodType): z.ZodType | undefined => {
-  const inner: unknown = Reflect.get(field._zod.def, "innerType");
-  return inner instanceof z.ZodType ? inner : undefined;
-};
-
 const isFlagOption = (field: z.ZodType): boolean =>
-  field.meta()?.count === true || declaredType(field) instanceof z.ZodBoolean;
+  isCountOption(field) || declaredOptionType(field) instanceof z.ZodBoolean;
 
 const enumValues = (field: z.ZodType): readonly string[] | undefined => {
-  const type = declaredType(field);
+  const type = declaredOptionType(field);
   return type instanceof z.ZodEnum
     ? type.options.map((value) => String(value))
     : undefined;
@@ -168,7 +154,7 @@ const optionKey = (
   if (token.startsWith("--")) {
     const raw = token.slice(2);
     return (
-      keys.find((key) => kebab(key) === raw) ??
+      keys.find((key) => optionFlagName(key) === raw) ??
       (keys.includes(raw) ? raw : undefined)
     );
   }
@@ -191,7 +177,7 @@ const flagCandidates = (
     )
       candidates.push({ value, description: shape[key]?.description });
   };
-  for (const key of Object.keys(shape)) add(`--${kebab(key)}`, key);
+  for (const key of Object.keys(shape)) add(`--${optionFlagName(key)}`, key);
   for (const [key, short] of Object.entries(alias ?? {})) add(`-${short}`, key);
 };
 

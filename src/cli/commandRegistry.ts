@@ -5,6 +5,7 @@ import type {
   ContractCliDocumentDescription,
 } from "./contractCliDescription.js";
 import type { CliInstance } from "./types.js";
+import { optionFlagName } from "./optionFields.js";
 
 /** One contract operation a command can run, with the flag of each field it takes. */
 export interface CliCommandOperation {
@@ -118,9 +119,6 @@ export const registerCliCommand = <
 export const cliCommands = (cli: CliInstance): readonly CliCommandEntry[] =>
   registries.get(cli) ?? [];
 
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
-
 /**
  * The operations one contract description runs: its own contract, the
  * contract that opens its session target, and the source of its Evidence
@@ -147,7 +145,7 @@ export const contractDescriptionOperations = (
             flags: Object.fromEntries(
               sessionTarget.options.map(({ field, key }) => [
                 field,
-                `--${kebabCase(key)}`,
+                `--${optionFlagName(key)}`,
               ]),
             ),
           },
