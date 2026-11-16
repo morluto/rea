@@ -19,9 +19,11 @@ import {
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, toolEffects } from "../toolEffects.js";
+import { COMPARE_ANDROID_DECLARATIONS_CONTRACT } from "./androidComparisonContracts.js";
 
-/** Static APK operations backed by a separately supplied headless engine. */
+/** Static APK observations and comparisons over retained declarations. */
 export const ANDROID_TOOL_CONTRACTS = [
+  COMPARE_ANDROID_DECLARATIONS_CONTRACT,
   {
     name: "inspect_android_jni_bindings",
     cli: true,

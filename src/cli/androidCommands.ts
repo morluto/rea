@@ -1,5 +1,7 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { compareAndroidDeclarations } from "../application/android/AndroidDeclarationComparisonService.js";
+import { COMPARE_ANDROID_DECLARATIONS_CONTRACT } from "../contracts/android/androidComparisonContracts.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { Logger } from "pino";
@@ -8,10 +10,15 @@ import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   registerContractCommand,
+  registerContractDocumentCommand,
   type ContractCommandContext,
 } from "./contractCommand.js";
 import { ANDROID_TOOL_CONTRACTS } from "../contracts/android/androidToolContracts.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+import {
+  evidenceBundleOption,
+  runEvidenceInputCommand,
+} from "./evidenceInputCommand.js";
 
 /** Expose the same explicit APK requests through one-shot CLI commands. */
 export const registerAndroidCommands = (
@@ -19,6 +26,33 @@ export const registerAndroidCommands = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
+  registerContractDocumentCommand(
+    cli,
+    logger,
+    COMPARE_ANDROID_DECLARATIONS_CONTRACT,
+    {
+      description:
+        "Compare retained APK SDK, permission-list and component declarations",
+      document:
+        "Inline JSON or input file containing left/right complete Android inspection Evidence or retained references",
+      cliOptions: { evidenceBundle: evidenceBundleOption },
+    },
+    (document, { signal, operation, frame, cliOptions }) =>
+      runEvidenceInputCommand(
+        document,
+        { operation, signal, frame, cliOptions },
+        async (lookup) => {
+          const result = await compareAndroidDeclarations(
+            document,
+            { signal },
+            lookup,
+          );
+          return result.ok
+            ? { ok: true, value: result.value.evidence }
+            : result;
+        },
+      ).then(projectCliAnalysisResult),
+  );
   const provider = createAndroidAnalysisProvider(environment);
   const service = new AndroidAnalysisService(provider);
   const contract = <Name extends AndroidOperation>(name: Name) =>
