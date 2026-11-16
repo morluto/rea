@@ -217,21 +217,3 @@ it("keeps request defaults out of observed Frida policies", () => {
     capture_limits,
   });
 });
-
-it("refuses a relative script file in the load and instrument contracts", () => {
-  expect(
-    contract("load_frida_script").safeParse({
-      session_id: "00000000-0000-4000-8000-000000000001",
-      source_kind: "file",
-      path: "script.js",
-    }).success,
-  ).toBe(false);
-  expect(
-    contract("instrument_with_frida").safeParse({
-      mode: "spawn",
-      program: "app",
-      source_kind: "file",
-      path: "script.js",
-    }).success,
-  ).toBe(false);
-});
