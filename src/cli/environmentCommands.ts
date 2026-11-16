@@ -40,6 +40,7 @@ import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField, publishArgvInput } from "./options.js";
 
@@ -482,7 +483,7 @@ const registerBuildCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.environmentBuild, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentBuild, {
     description:
       "Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes",
     args: z.object({
@@ -607,7 +608,7 @@ const compareEnvironmentCommand = async (
 
 /** Register the comparison of an environment with probe captures of its application. */
 const registerCompareCommand = (cli: CliInstance, logger: Logger): void => {
-  cli.command(CLI_COMMANDS.environmentCompare, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentCompare, {
     description:
       "Compare an environment with probe captures of the application it was captured from: each probe is one call sequence recorded against a freshly reset application, answered by the environment from a reset state, with agreement reported per step, tool and probe",
     args: z.object({ manifest: manifestArgument }),
@@ -633,7 +634,7 @@ const registerCompareCommand = (cli: CliInstance, logger: Logger): void => {
 
 /** Register the one-shot bundle export command. */
 const registerExportCommand = (cli: CliInstance, logger: Logger): void => {
-  cli.command(CLI_COMMANDS.environmentExport, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentExport, {
     description:
       "Export an environment manifest and its capture Evidence as an agent environment bundle folder the agentenv framework runs with agent-env run",
     args: z.object({
@@ -678,7 +679,7 @@ export const registerEnvironmentCommands = (
   registerBuildCommand(cli, logger, environment);
   registerExportCommand(cli, logger);
   registerCompareCommand(cli, logger);
-  cli.command(CLI_COMMANDS.environmentServe, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentServe, {
     description:
       "Serve an environment manifest as an agent environment over streamable HTTP until SIGINT or SIGTERM: read tools, and write tools whose effect the capture confirmed, answer from the state the capture observed, derived at startup, or every tool replays retained capture records with --replay-only or when the state is unavailable",
     args: z.object({ manifest: manifestArgument }),

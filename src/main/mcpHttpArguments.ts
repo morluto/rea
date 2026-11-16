@@ -1,4 +1,4 @@
-import { Help } from "incur";
+import { formatCommandHelp } from "../cli/help.js";
 import { z } from "zod";
 import type { HttpHostname } from "../domain/httpHostname.js";
 
@@ -46,11 +46,10 @@ const VALUED_FLAGS: ReadonlySet<string> = new Set([
   "--allowed-hosts",
 ]);
 
-/** Render help for the dispatcher entry, which accepts no Incur global options. */
+/** Render help for the dispatcher entry, which accepts no global options. */
 export const renderMcpHttpHelp = (): string =>
-  Help.formatCommand(MCP_HTTP_COMMAND, {
+  formatCommandHelp(MCP_HTTP_COMMAND, {
     description: MCP_HTTP_DESCRIPTION,
-    hideGlobalOptions: true,
     options: MCP_HTTP_OPTIONS,
     alias: MCP_HTTP_ALIAS,
     hint: "This entry accepts only the options above. The bound URL is logged as one JSON line on stderr.",
