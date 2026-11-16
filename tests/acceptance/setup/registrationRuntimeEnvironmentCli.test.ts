@@ -793,7 +793,7 @@ for (const [client, provider, engine] of [
           registrationConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
-            protocol: "native",
+            ...(engine === "ida" ? { protocol: "native" } : {}),
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),
