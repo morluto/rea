@@ -183,10 +183,12 @@ registerHooks({ resolve(specifier, context, next) {
       expect(version.exitCode, version.stderr).toBe(0);
       expect(version.stdout).toBe(`${PRODUCT_IDENTITY.packageVersion}\n`);
       expect(version.stderr).not.toContain(marker);
-      const retired = await run(["doctor", "--mcp", "--json"]);
+      const retired = await run(["doctor", "--mcp", "--json", "--full-output"]);
       expect(retired.exitCode, retired.stderr).toBe(1);
       expect(JSON.parse(retired.stdout)).toMatchObject({
-        code: "MCP_MODE_REMOVED",
+        ok: false,
+        error: { code: "MCP_MODE_REMOVED" },
+        meta: { command: "doctor" },
       });
       expect(retired.stderr).not.toContain(marker);
       const complete = await run(["list-cutter-sessions", "--help"]);

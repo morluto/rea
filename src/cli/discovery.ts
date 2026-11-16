@@ -244,9 +244,6 @@ const retiredMcpAnswer = (
   const controls = readCliOutputArguments(global);
   const sensitive = declaredSensitiveValues(global.command);
   const text = (value: string): string => redactExplicitText(value, sensitive);
-  const command = cliCommands(cli).find(
-    ({ name }) => name === global.command[0],
-  );
   return answer(
     renderFailure(
       {
@@ -256,7 +253,7 @@ const retiredMcpAnswer = (
         ),
       },
       {
-        command: text(command?.name ?? cli.name),
+        command: text(global.command[0] ?? cli.name),
         duration: `${Math.round(performance.now() - invocation.started)}ms`,
       },
       {

@@ -1,9 +1,11 @@
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { estimateTokenCount } from "tokenx";
 
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import { serveDiscovery } from "../../../src/cli/discovery.js";
+import { renderFailure } from "../../../src/cli/outputEnvelope.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
@@ -105,7 +107,7 @@ cliTest("refuses per-command MCP through the public CLI", async ({ cli }) => {
     const cta = { commands: [{ command: "rea mcp" }] };
     expect(reply.json).toMatchObject(
       arguments_.includes("--full-output")
-        ? { ok: false, error: failure, meta: { cta } }
+        ? { ok: false, error: failure, meta: { command: "doctor", cta } }
         : { ...failure, cta },
     );
   }
@@ -121,6 +123,51 @@ cliTest.skipIf(process.platform === "win32")(
     expect(reply.exitCode).toBe(1);
     expect(reply.stdout).toContain("Error (MCP_MODE_REMOVED)");
     expect(reply.stdout).toContain("rea mcp");
+  },
+);
+
+it.for([false, true])(
+  "counts the selected refusal document including recovery and envelope (%s)",
+  (fullOutput) => {
+    const render = (tokenCount: boolean) =>
+      renderFailure(
+        { code: "MCP_MODE_REMOVED", message: "Use rea mcp" },
+        { command: "doctor", duration: "0ms" },
+        {
+          description: "Suggested command:",
+          commands: [{ command: "rea mcp" }],
+        },
+        {
+          format: "json",
+          human: false,
+          fullOutput,
+          tokenCount,
+          tokenLimit: undefined,
+          tokenOffset: undefined,
+        },
+      );
+    expect(Number(render(true))).toBe(
+      estimateTokenCount(render(false).trimEnd()),
+    );
+  },
+);
+
+cliTest.skipIf(process.platform === "win32")(
+  "applies token controls to terminal MCP refusals",
+  async ({ cli }) => {
+    const count = await cli.run({
+      arguments: ["doctor", "--mcp", "--token-count"],
+      terminal: true,
+    });
+    expect(count.exitCode).toBe(1);
+    expect(count.stdout.trim()).toMatch(/^\d+$/u);
+    const window = await cli.run({
+      arguments: ["doctor", "--mcp", "--token-limit", "0"],
+      terminal: true,
+    });
+    expect(window.exitCode).toBe(1);
+    expect(window.stdout).toMatch(/\[truncated: showing tokens 0–0 of \d+\]/u);
+    expect(window.stdout).not.toContain("Per-command");
   },
 );
 
