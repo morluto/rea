@@ -9,13 +9,13 @@ import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
+import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
-import { registerFridaTools } from "./registerFridaTools.js";
+import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
@@ -30,14 +30,10 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
-import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
-import { registerBrowserTools } from "./registerBrowserTools.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
-import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
@@ -55,9 +51,6 @@ import {
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
 import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
-import { registerCutterTools } from "./registerCutterTools.js";
-import { registerGdbTools } from "./registerGdbTools.js";
-import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -303,14 +296,6 @@ export const createServer = (
   } = createSessionRecorders(server, session);
   const analysisAdmission = withAdmittedAnalysis(source);
   server.withAdmittedAnalysis = analysisAdmission;
-  const recordSessionEvidence =
-    session === undefined
-      ? undefined
-      : (
-          evidence: Parameters<
-            NonNullable<typeof session>["recordEvidence"]
-          >[0],
-        ) => session.recordEvidence(evidence);
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
@@ -380,7 +365,7 @@ export const createServer = (
         reverseEngineering,
         toolLogger,
         delivery,
-        recordSessionEvidence,
+        recordEvidence,
         analysisAdmission,
         session === undefined
           ? undefined
@@ -396,43 +381,19 @@ export const createServer = (
               ),
         evidenceById,
       );
-      registerCutterTools(
+      registerServiceTools(
         server,
-        cutter,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-      );
-      registerGdbTools(
-        server,
-        gdbSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-        evidenceById,
-      );
-      registerRizinDebugTools(
-        server,
-        rizinDebugSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
-      );
-      registerBinaryDiagnosticsTools(
-        server,
-        binaryLayout,
-        toolLogger,
-        recordEvidence,
-        evidenceById,
-        analysisAdmission,
+        {
+          cutter: { service: cutter, session },
+          gdb: { manager: gdbSessions, session },
+          rizinDebug: { manager: rizinDebugSessions, session },
+        },
+        { logger: toolLogger, recordEvidence, evidenceById },
       );
       registerServiceTools(
         server,
         {
-          cutterSessions: cutter,
+          binaryLayout,
           byteEntropy: createByteEntropyService(artifactResources),
           peResources,
           nativeExports,
@@ -512,13 +473,12 @@ export const createServer = (
       );
     },
     frida: () =>
-      registerFridaTools(
+      // Frida instruments a live process the caller selects, outside
+      // analysis admission.
+      registerServiceTools(
         server,
-        fridaInstrumentation,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        evidenceById,
+        { frida: new FridaInstrumentationService(fridaInstrumentation) },
+        { logger: toolLogger, recordEvidence, evidenceById },
       ),
     apktool: () =>
       registerServiceTools(
@@ -539,22 +499,28 @@ export const createServer = (
         contractTools,
       ),
     browser: () => {
-      registerBrowserTools(server, {
-        ...common,
-        evidenceById,
-        browser: options.browserObservation,
-        loadFailure: options.optionalProviderLoadFailures?.browserObservation,
-      });
-      registerBrowserScenarioTool(server, {
-        ...common,
-        evidenceById,
-        provider: options.browserScenarioCapture,
-        loadFailure:
-          options.optionalProviderLoadFailures?.browserScenarioCapture,
-      });
       registerServiceTools(
         server,
-        { webRuntime, webNetworkCapture },
+        {
+          browserObservation: {
+            browser: options.browserObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.browserObservation,
+          },
+        },
+        contractTools,
+      );
+      registerServiceTools(
+        server,
+        {
+          browserScenario: {
+            provider: options.browserScenarioCapture,
+            loadFailure:
+              options.optionalProviderLoadFailures?.browserScenarioCapture,
+          },
+          webRuntime,
+          webNetworkCapture,
+        },
         contractTools,
       );
     },
@@ -573,12 +539,18 @@ export const createServer = (
           options.optionalProviderLoadFailures?.electronActiveObservation,
       }),
     "javascript-runtime": () =>
-      registerJavaScriptRuntimeObservationTools(server, {
-        ...common,
-        runtime: options.javascriptRuntimeObservation,
-        loadFailure:
-          options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
-      }),
+      registerServiceTools(
+        server,
+        {
+          javascriptRuntime: {
+            runtime: options.javascriptRuntimeObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures
+                ?.javascriptRuntimeObservation,
+          },
+        },
+        contractTools,
+      ),
     application: () => {
       registerServiceTools(
         server,
@@ -594,10 +566,12 @@ export const createServer = (
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
           applicationWorkflows: { resources: artifactResources },
+          guidedWorkflows: promptsForToolFamilies(
+            server.advertisedToolFamilies,
+          ),
         },
         contractTools,
       );
-      registerGuidedWorkflowTool(server);
       registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {

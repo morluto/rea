@@ -550,8 +550,12 @@ const assetUtilOutcomeContext = (
     reason: "assetutil output exceeds the 64 MiB capture allowance",
     limits: { maximum_output_bytes: MAX_CATALOG_BYTES },
     recovery: fixedAllowanceOptions(
-      "the fixed 64 MiB assetutil capture allowance",
+      "The assetutil capture allowance",
       "capture",
+      {
+        limit: MAX_CATALOG_BYTES,
+        unit: "bytes",
+      },
     ),
   },
   launchUnavailable: (failure, details) =>

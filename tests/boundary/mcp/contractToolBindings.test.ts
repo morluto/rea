@@ -4,7 +4,7 @@ import {
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import {
   registerContractTools,
@@ -141,6 +141,53 @@ mcpTest(
     });
     expect(admitted).toEqual(["evaluate_reconstruction_coverage"]);
     expect(ran).toEqual(["search_guidance"]);
+  },
+);
+
+mcpTest(
+  "reads the analysis a query's admission grants, and refuses a query on a server that admits none",
+  async ({ mcp }) => {
+    const analysis = { kind: "fixture-analysis" } as never;
+    const received: unknown[] = [];
+    const bindings: ContractToolBindings = {
+      get_navigation_context: {
+        admission: "sdk",
+        query: async (_input, granted) => {
+          received.push(granted);
+          return ok({
+            document: "fixture",
+            address: "0x1000",
+            procedure: null,
+          });
+        },
+      },
+    };
+    expect(() =>
+      registerContractTools(evidenceServer(), bindings, {
+        logger: silentLogger,
+      }),
+    ).toThrow(/get_navigation_context/);
+
+    const admitted: string[] = [];
+    const server = evidenceServer();
+    registerContractTools(server, bindings, {
+      logger: silentLogger,
+      withAdmittedAnalysis: async (operationName, _signal, operation) => {
+        admitted.push(operationName);
+        return ok(await operation(analysis));
+      },
+    });
+    const client = await mcp.connect(server);
+    const reply = await client.callTool({
+      name: "get_navigation_context",
+      arguments: {},
+    });
+    expect(reply.isError ?? false, JSON.stringify(reply)).toBe(false);
+    expect(reply.structuredContent).toEqual({
+      result: { document: "fixture", address: "0x1000", procedure: null },
+    });
+    expect(admitted).toEqual(["get_navigation_context"]);
+    expect(received).toEqual([analysis]);
   },
 );
 

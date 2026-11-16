@@ -843,6 +843,9 @@ it.each([
       diagnostics: { catalog_path: "Assets.car" },
       capturedOutput: { stderr: "specific catalog diagnostic" },
       ...(reason === "timeout" ? { timeoutMs: 60000 } : {}),
+      ...(reason === "output-limit"
+        ? { fixedAllowance: { limit: 64 * 1024 * 1024, unit: "bytes" } }
+        : {}),
     });
   },
 );

@@ -551,6 +551,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
               ...fixedAllowanceOptions(
                 "The packet-field discovery record allowance",
                 "capture",
+                { limit: cause.failure.limit.maximum, unit: "bytes" },
               ),
             })
           : undefined,
