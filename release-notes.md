@@ -160,6 +160,7 @@
 * **cli:** exit one-shot commands by draining the event loop ([054fbc4](https://github.com/morluto/rea/commit/054fbc4c2612f99781278a4ded4a372dca458567))
 * **cli:** record the caller's --join-path spelling in Apple IPS Evidence ([#10606](https://github.com/morluto/rea/issues/10606)) ([11c1e45](https://github.com/morluto/rea/commit/11c1e45cce80555133a352617a94a11dd22cf409))
 * **cli:** refuse silent direct command-registry execution ([#11204](https://github.com/morluto/rea/issues/11204)) ([6136c6f](https://github.com/morluto/rea/commit/6136c6f3babd5cf2ada552341003829d41a06f71))
+* **cli:** render help in REA and list csv and tsv formats ([#11688](https://github.com/morluto/rea/issues/11688)) ([a8cd584](https://github.com/morluto/rea/commit/a8cd584ccf90fb32ce0ef14e6eeb1c040fe6db30))
 * **cli:** report observe-web-session progress on stderr ([3e95d22](https://github.com/morluto/rea/commit/3e95d22dd4bfd3274e613e76ededd899381fd078))
 * **cli:** report the byte-entropy provider id in cleanup diagnostics ([bac8a11](https://github.com/morluto/rea/commit/bac8a115cdd5c6c3e2e6edb9b220d306b1f0fa63)), closes [#7279](https://github.com/morluto/rea/issues/7279)
 * **cli:** treat ENOTCONN on stdout as a closed reader ([#11275](https://github.com/morluto/rea/issues/11275)) ([ac9064b](https://github.com/morluto/rea/commit/ac9064b394474970bc8ee8c5f1344bac7398d681))
