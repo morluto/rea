@@ -80,6 +80,13 @@ describe("resolvePcapTools", () => {
     expect(() =>
       resolvePcapTools({ [TSHARK_COMMAND_ENV]: "bin/tshark" }, "linux"),
     ).toThrow(/must be an absolute path/u);
+    // Not absolute on POSIX either; on Windows it is rooted on the current drive.
+    expect(() =>
+      resolvePcapTools(
+        { [TSHARK_COMMAND_ENV]: "\\tools\\tshark.exe" },
+        "win32",
+      ),
+    ).toThrow(/must be an absolute path/u);
   });
 
   it("rejects a relative capinfos path explicitly", () => {
