@@ -1,4 +1,4 @@
-import { readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { recordPredicateCounts } from "./record-predicate-guard.mjs";
@@ -1077,6 +1077,31 @@ checkCounted(
     "tests/boundary/mcp/outputValidatorReuse.test.ts",
   ],
 );
+
+// Scripts covered by tsconfig.scripts.json declare and check their types in
+// JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
+// creates a second, unchecked type source that hides signature drift.
+const scriptsTsconfig = JSON.parse(
+  await readFile(join(root, "tsconfig.scripts.json"), "utf8"),
+);
+const siblingDeclarationFiles = [];
+for (const scriptPath of scriptsTsconfig.files ?? []) {
+  if (typeof scriptPath !== "string") continue;
+  for (const suffix of [".d.mts", ".d.ts"]) {
+    const declarationPath = scriptPath.replace(/\.(?:mjs|js)$/u, suffix);
+    if (declarationPath === scriptPath) continue;
+    try {
+      await access(join(root, declarationPath));
+      siblingDeclarationFiles.push(declarationPath);
+    } catch {
+      // No sibling declaration file.
+    }
+  }
+}
+if (siblingDeclarationFiles.length > 0)
+  failures.push(
+    `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
 
 for (const key of baselineTexts.keys())
   if (!checkedBaselineKeys.has(key))
