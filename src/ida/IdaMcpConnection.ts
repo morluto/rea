@@ -8,8 +8,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  decodeMcpTextReply,
-  type McpTextReplyKind,
+  decodeMcpJsonText,
 } from "../providers/McpToolResult.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import {
@@ -73,8 +72,6 @@ export interface IdaMcpConnection {
     options?: {
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
-      /** The tool's declared text reply kind; JSON unless the tool returns plain text. */
-      readonly reply?: McpTextReplyKind | undefined;
     },
   ): Promise<JsonValue>;
   readResource?(
@@ -190,11 +187,8 @@ const idaStdioLauncher =
     });
   };
 
-const parseIdaTextReply = (
-  text: string,
-  reply: McpTextReplyKind = "json",
-): JsonValue => {
-  const decoded = decodeMcpTextReply(text, reply);
+const parseIdaTextReply = (text: string): JsonValue => {
+  const decoded = decodeMcpJsonText(text);
   if (!decoded.ok)
     throw new AnalysisProtocolError("IDA MCP returned malformed JSON text.");
   return decoded.value;
@@ -202,13 +196,12 @@ const parseIdaTextReply = (
 
 /**
  * Decode Python FastMCP's scalar wrapper without dropping structured
- * dictionaries. A text block is read as the tool's declared reply kind.
+ * dictionaries. A text block is read as JSON.
  */
 export const decodeIdaToolResult = (
   input: unknown,
   protocol?: "native",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
-  reply: McpTextReplyKind = "json",
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
@@ -251,7 +244,7 @@ export const decodeIdaToolResult = (
     throw new AnalysisProtocolError(
       "IDA MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
     );
-  return parseIdaTextReply(text, reply);
+  return parseIdaTextReply(text);
 };
 
 // Retain only producer-sanitized JSON diagnostics, never a native parser cause.
@@ -745,7 +738,6 @@ export const createIdaMcpConnection = (
         }),
         config.protocol === "native" ? "native" : undefined,
         redactor,
-        options?.reply,
       );
     },
     async readResource(uri, options) {

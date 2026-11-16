@@ -279,6 +279,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         if (mode === "incomplete" && !recovering)
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "synthetic stop remains pending",
           };
         child.kill("SIGTERM");

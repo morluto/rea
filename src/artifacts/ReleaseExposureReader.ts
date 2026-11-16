@@ -35,6 +35,8 @@ import {
   hashStableRootArtifactHandle,
   openRootArtifact,
   releaseRootArtifact,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
 import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
@@ -42,10 +44,6 @@ import {
   invariantViolation,
 } from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
-import {
-  asarHeaderAdmissionRecovery,
-  createAsarHeaderSignatureProbe,
-} from "./AsarHeader.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -123,6 +121,7 @@ import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferen
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "audit_release_exposure";
 type PackageFormat = Extract<
@@ -3724,7 +3723,7 @@ const releaseExposureFailurePrimary = (
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

@@ -347,7 +347,7 @@ try {
         const snapshot = parseAnalysisSnapshot(
           JSON.parse(await readFile(snapshotPath, "utf8")),
         );
-        assert.equal(snapshot.target.architecture, "mips");
+        assert.equal(snapshot.target.identity.architecture, "mips");
         const parameters = snapshot.binding.analysis_profile.parameters;
         assert.equal(
           parameters.language_id,
@@ -660,7 +660,7 @@ try {
       const snapshot = parseAnalysisSnapshot(
         JSON.parse(await readFile(snapshotPath, "utf8")),
       );
-      assert.equal(snapshot.target.architecture, "mips");
+      assert.equal(snapshot.target.identity.architecture, "mips");
       assert.deepEqual(
         snapshot.binding.analysis_profile.parameters.mips_elf,
         expectedMipsElfProfile(independent.mips),
@@ -697,7 +697,10 @@ try {
         );
       }
       for (const evidence of snapshot.evidence_bundle.records)
-        assert.equal(parseEvidence(evidence).subject?.architecture, "mips");
+        assert.equal(
+          parseEvidence(evidence).subject?.identity.architecture,
+          "mips",
+        );
       await call("open_binary", {
         path: fixture.path,
         provider_id: "ghidra",
@@ -766,8 +769,8 @@ try {
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
       const evidence = parseEvidence(JSON.parse(cli.stdout));
-      assert.equal(evidence.subject?.architecture, "mips");
-      assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject?.identity.architecture, "mips");
+      assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
       const cliDossier = functionDossierSchema.parse(
         evidence.normalized_result,
       );

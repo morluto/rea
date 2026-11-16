@@ -131,6 +131,7 @@ import {
   GhidraCheckpoint,
   type GhidraPackedProgram,
 } from "./GhidraCheckpoint.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 /**
@@ -348,7 +349,7 @@ export class GhidraClient {
       },
       (cause: unknown) => {
         this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Ghidra startup promise rejected during bookkeeping",
         );
         if (this.#startupAttempt === attempt) this.#startupAttempt = undefined;
@@ -843,7 +844,7 @@ export class GhidraClient {
         ),
       ],
       {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         diagnostics: this.#diagnostics(),
       },
       { cause },
@@ -901,7 +902,7 @@ export class GhidraClient {
       () => ok(null),
       (cause: unknown) => {
         this.#logger.error(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Ghidra cleanup after active request cancellation failed",
         );
         return err(this.#cleanupError(cause));
@@ -1515,7 +1516,7 @@ export class GhidraClient {
         firstCause ??= cause;
         leftovers.push({
           path: root.path,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         });
       }
     }

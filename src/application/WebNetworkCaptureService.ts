@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
@@ -244,7 +245,7 @@ export class WebNetworkCaptureService {
     });
     const evidence = createEvidence(
       safeSha256 === null
-        ? undefined
+        ? unknownTarget("not-observed")
         : {
             path: safePath,
             sha256: safeSha256,
@@ -278,8 +279,10 @@ export class WebNetworkCaptureService {
             }),
         confidence: "observed",
         authority: "historical-reference",
-        limitations,
-        ...(safeSha256 === null ? { subjectUnavailableReason } : {}),
+        limitations:
+          safeSha256 === null
+            ? [subjectUnavailableReason, ...limitations]
+            : limitations,
         locations:
           safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
       },

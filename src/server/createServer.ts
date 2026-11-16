@@ -8,7 +8,6 @@ import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { parseMcpToolsListPageBudget } from "../config/mcpToolsListPageBudget.js";
-import { registerAnalysisSettingsTools } from "./registerAnalysisSettingsTools.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
@@ -16,7 +15,6 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
-import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
 import { registerFridaTools } from "./registerFridaTools.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -33,14 +31,13 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerApplicationTools } from "./registerApplicationTools.js";
+import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
 import { registerBrowserTools } from "./registerBrowserTools.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
-import { registerEnhancedTools } from "./registerEnhancedTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
 import { registerManagedTools } from "./registerManagedTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
@@ -49,7 +46,6 @@ import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js"
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
@@ -68,6 +64,7 @@ import {
   type McpOutputSchemaProfile,
   COMPACT_INPUT_SCHEMA_PRESENTATION,
 } from "../contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly analysisSettings?: AnalysisSettings;
@@ -326,7 +323,7 @@ export const createServer = (
     void closeProviders().catch((cause: unknown) => {
       logger.error(
         {
-          error: cause instanceof Error ? cause.message : String(cause),
+          error: errorMessage(cause),
           ...retainedDebuggerDiagnostics(cause),
         },
         "Provider cleanup failed during server shutdown",
@@ -343,16 +340,10 @@ export const createServer = (
     if (failures.length > 1)
       throw new AggregateError(failures, "REA server cleanup failed");
   };
-  const recordUnknown =
-    session === undefined
-      ? undefined
-      : (input: Parameters<NonNullable<typeof session>["recordUnknown"]>[0]) =>
-          session.recordUnknown(input);
   const analysisOptions = {
     logger: toolLogger,
     activeTarget,
     recordEvidence,
-    recordUnknown,
     evidenceById,
     withAdmittedAnalysis: analysisAdmission,
     ...(session === undefined
@@ -373,6 +364,7 @@ export const createServer = (
   const contractTools = {
     logger: toolLogger,
     recordEvidence,
+    recordEvidenceWithUnknown,
     withAdmittedAnalysis: analysisAdmission,
     evidenceById,
   };
@@ -382,28 +374,11 @@ export const createServer = (
   registerToolFamilies({
     direct: () => registerOfficialTools(server, analysisOptions),
     enhanced: () =>
-      registerEnhancedTools(server, {
-        ...analysisOptions,
-        ...(session === undefined
-          ? {}
-          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
-        ...(session === undefined
-          ? {}
-          : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
-        analysisProfile:
-          session === undefined
-            ? undefined
-            : (operation) =>
-                session.analysisProfile() ?? session.analysisProfile(operation),
-        allowsSnapshotReplay:
-          session === undefined
-            ? undefined
-            : (operation) => session.allowsSnapshotReplay(operation),
-        recordWorkflowSnapshot:
-          session === undefined
-            ? undefined
-            : (input) => session.recordWorkflowSnapshot(input),
-      }),
+      registerServiceTools(
+        server,
+        { enhancedWorkflows: { session } },
+        contractTools,
+      ),
     native: () => {
       registerNativeTools(server, { ...evidenceOptions, evidenceById });
       registerReverseEngineeringTools(
@@ -512,13 +487,11 @@ export const createServer = (
     managed: () => {
       registerManagedTools(server, { ...evidenceOptions, evidenceById });
       if (session !== undefined)
-        registerManagedWorkflowTools(server, {
-          logger: toolLogger,
-          recordEvidence,
-          recordEvidenceWithUnknown,
-          session,
-          withAdmittedAnalysis: analysisAdmission,
-        });
+        registerServiceTools(
+          server,
+          { managedWorkflows: session },
+          contractTools,
+        );
     },
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
@@ -613,34 +586,24 @@ export const createServer = (
           options.optionalProviderLoadFailures?.javascriptRuntimeObservation,
       }),
     application: () => {
-      registerAnalysisSettingsTools(server, analysisSettings);
-      registerAnalysisViewTool(
-        server,
-        toolLogger,
-        evidenceById,
-        recordEvidence,
-        analysisAdmission,
-        artifactResources,
-      );
       registerServiceTools(
         server,
         {
+          analysisSettings: {
+            settings: analysisSettings,
+            delivery: server.delivery,
+          },
+          analysisView: { resources: artifactResources },
           webScripts: artifactResources,
           guidance: artifactResources,
           webModuleTrace,
           webSourceLocation,
           javascriptRecovery: javascriptRecoveryService,
+          applicationWorkflows: { resources: artifactResources },
         },
         contractTools,
       );
-      registerApplicationTools(server, {
-        artifactResources,
-        evidenceById,
-        logger: toolLogger,
-        recordEvidence,
-        recordEvidenceWithUnknown,
-        withAdmittedAnalysis: analysisAdmission,
-      });
+      registerGuidedWorkflowTool(server);
       registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {

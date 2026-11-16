@@ -149,7 +149,7 @@ it.each(["inspect_pcap_client", "inspect_pcap_capture"] as const)(
         expect(evidence.authority).toBe("historical-reference");
         expect(evidence.subject).toMatchObject({
           local_path: path,
-          digest: { sha256: target.sha256 },
+          identity: { sha256: target.sha256 },
         });
       }
       pcapResultSchemas[operation].parse(evidence.normalized_result);

@@ -17,9 +17,6 @@ import {
 import { createToolResultDelivery } from "./toolResult.js";
 import { paginateToolsList } from "./toolListPagination.js";
 
-/** FastMCP's default per-event SSE limit, the bound #9093 reports. */
-const FASTMCP_SSE_EVENT_LIMIT_BYTES = 1_048_576;
-
 /**
  * The compact presentation strips field descriptions before advertising, so
  * one fixture tool advertises about 2 KiB and an 80-tool catalog about
@@ -141,8 +138,8 @@ describe("tools/list pagination", () => {
       const pages = replies.filter(isToolsListReply);
       expect(pages.length).toBeGreaterThan(1);
       for (const page of pages) {
-        expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThan(
-          FASTMCP_SSE_EVENT_LIMIT_BYTES,
+        expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(
+          PAGING_TEST_PAGE_BUDGET_BYTES,
         );
       }
       expect(typeof pages[0]?.result.nextCursor).toBe("string");

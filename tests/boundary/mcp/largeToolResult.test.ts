@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -303,7 +304,7 @@ describe("large complete Evidence MCP delivery", () => {
   });
 
   it("does not claim retention without a recording acknowledgment", () => {
-    const evidence = createEvidence(undefined, provider, {
+    const evidence = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_pseudo_code",
       parameters: {},
       result: "x".repeat(Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2)),

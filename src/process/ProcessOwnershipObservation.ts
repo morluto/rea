@@ -38,9 +38,9 @@ import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import {
   execFileOutput,
   execFileOutputFailure,
-  HOST_SPAWN_CAPACITY_CODES,
   spawnCapacityExhausted,
 } from "./ExecFileOutput.js";
+import { launchExhaustedResource } from "./launchFailure.js";
 import {
   createDarwinProcessRunTokenReader,
   DarwinProcessOwnershipInspectionError,
@@ -64,6 +64,7 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import type { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Native preparation transfers its typed helper owner instead of an unavailable row. */
 const rethrowInspectionFailure = (cause: unknown): void => {
@@ -1556,8 +1557,7 @@ export const createSystemProcessOwnershipHost = (
         spawnCapacityExhausted(failure) ||
         (typeof cause === "object" &&
           cause !== null &&
-          typeof Reflect.get(cause, "code") === "string" &&
-          HOST_SPAWN_CAPACITY_CODES.has(Reflect.get(cause, "code") as string))
+          launchExhaustedResource(Reflect.get(cause, "code")) !== undefined)
       )
         throw cause;
       const rawCode =
@@ -1986,6 +1986,3 @@ const processIsGone = async (
     return false;
   }
 };
-
-export const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

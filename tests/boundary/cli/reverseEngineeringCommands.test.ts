@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import pino from "pino";
 import { Cli, z } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
@@ -41,7 +42,7 @@ afterEach(() => {
 
 const observation = (completionStatus: "complete" | "unknown") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "gnu.objdump", name: "GNU objdump", version: null },
     {
       predicateType: "rea.reverse-engineering.command-observation",
@@ -499,7 +500,7 @@ it.each([false, true])(
       },
     } as unknown as CliInstance;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",
@@ -601,6 +602,12 @@ it.each([false, true])(
   },
 );
 
+/** The one-shot command reports the retained debugger and why its stop is unconfirmed. */
+const retainedRizinCleanup = {
+  retained_debugger_pids: [4242],
+  debugger_cleanup_codes: ["stop-failed"],
+};
+
 it.each(["incomplete", "interrupt", "control"] as const)(
   "reports final Rizin cleanup %s as a typed outcome",
   async (mode) => {
@@ -619,7 +626,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     } as unknown as CliInstance;
     const previous = process.exitCode;
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rizin.debugger", name: "Rizin debugger", version: null },
       {
         predicateType: "rea.debugger.command-observation",
@@ -695,7 +702,11 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         abortedAtCleanupEnd = signal?.aborted === true;
         await closeOwnedDebuggerSessions(
           sessions,
-          async () => ({ status: "incomplete", reason: "stop unconfirmed" }),
+          async () => ({
+            status: "incomplete",
+            code: "stop-failed",
+            reason: "stop unconfirmed",
+          }),
           "Rizin",
         );
       });
@@ -732,7 +743,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
           details: {
             cleanup: "incomplete",
             resources: ["fixture-session"],
-            diagnostics: { retained_debugger_pids: [4242] },
+            diagnostics: retainedRizinCleanup,
             partial_observation: {
               operation: "rizin_debug_command",
               parameters: { session_id: "fixture-session" },

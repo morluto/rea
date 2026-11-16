@@ -1,3 +1,8 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -92,24 +97,32 @@ describe("guided prompt completion from live analysis", () => {
 it("offers only captures admitted by the process comparison identity", async () => {
   const session = createTestBinarySession(() => client([]));
   const captureResult = jsonValueSchema.parse(EMPTY_PROCESS_CAPTURE_EXAMPLE);
-  const unsupportedProvider = createEvidence(undefined, fixtureProvider, {
-    predicateType: "rea.process-capture",
-    operation: "capture_process_scenario",
-    parameters: {},
-    result: captureResult,
-    confidence: "observed",
-    authority: "controlled-replay",
-    environment: fixtureEnvironment,
-  });
-  const wrongPredicate = createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: "rea.other-process-data",
-    operation: "capture_process_scenario",
-    parameters: {},
-    result: captureResult,
-    confidence: "observed",
-    authority: "controlled-replay",
-    environment: fixtureEnvironment,
-  });
+  const unsupportedProvider = createEvidence(
+    unknownTarget("not-observed"),
+    fixtureProvider,
+    {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: captureResult,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: fixtureEnvironment,
+    },
+  );
+  const wrongPredicate = createEvidence(
+    unknownTarget("not-observed"),
+    PROCESS_PROVIDER,
+    {
+      predicateType: "rea.other-process-data",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: captureResult,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: fixtureEnvironment,
+    },
+  );
   for (const evidence of [
     PROCESS_CAPTURE_REFERENCE,
     unsupportedProvider,
@@ -138,15 +151,19 @@ describe("guided prompt completion from investigation records", () => {
       ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
       manifest: { ...legacyManifest, executable_sha256 },
     };
-    const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-capture",
-      operation: "capture_process_scenario",
-      parameters: {},
-      result: legacyCapture,
-      confidence: "observed",
-      authority: "controlled-replay",
-      environment: fixtureEnvironment,
-    });
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: legacyCapture,
+        confidence: "observed",
+        authority: "controlled-replay",
+        environment: fixtureEnvironment,
+      },
+    );
     expect(session.recordEvidence(evidence).ok).toBe(true);
     const completion = createPromptCompletionSource(session, session);
 
@@ -159,36 +176,48 @@ describe("guided prompt completion from investigation records", () => {
 
   it("projects only validated typed identifiers from the evidence ledger", async () => {
     const session = createTestBinarySession(() => client([]));
-    const invalidCapture = createEvidence(undefined, PROCESS_PROVIDER, {
-      predicateType: "rea.process-capture",
-      operation: "capture_process_scenario",
-      parameters: {},
-      result: {},
-      confidence: "observed",
-      authority: "controlled-replay",
-      environment: fixtureEnvironment,
-    });
-    const invalidInventory = createEvidence(undefined, fixtureProvider, {
-      operation: "fixture_inventory",
-      parameters: {},
-      result: ARTIFACT_COMPARISON_EXAMPLE.right.normalized_result,
-      confidence: "observed",
-      authority: "shipped-artifact",
-    });
+    const invalidCapture = createEvidence(
+      unknownTarget("not-observed"),
+      PROCESS_PROVIDER,
+      {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: {},
+        confidence: "observed",
+        authority: "controlled-replay",
+        environment: fixtureEnvironment,
+      },
+    );
+    const invalidInventory = createEvidence(
+      unknownTarget("not-observed"),
+      fixtureProvider,
+      {
+        operation: "fixture_inventory",
+        parameters: {},
+        result: ARTIFACT_COMPARISON_EXAMPLE.right.normalized_result,
+        confidence: "observed",
+        authority: "shipped-artifact",
+      },
+    );
     const inventoryInspection = createArtifactInspection(
       ARTIFACT_COMPARISON_EXAMPLE.left,
     );
     const inventory = artifactInventoryResultSchema.parse(
       ARTIFACT_COMPARISON_EXAMPLE.left.normalized_result,
     );
-    const inspectionEvidence = createEvidence(undefined, fixtureProvider, {
-      operation: "inspect_artifact",
-      parameters: {},
-      result: inventoryInspection,
-      confidence: "observed",
-      authority: "shipped-artifact",
-      evidenceLinks: inventoryInspection.evidence_links,
-    });
+    const inspectionEvidence = createEvidence(
+      unknownTarget("not-observed"),
+      fixtureProvider,
+      {
+        operation: "inspect_artifact",
+        parameters: {},
+        result: inventoryInspection,
+        confidence: "observed",
+        authority: "shipped-artifact",
+        evidenceLinks: inventoryInspection.evidence_links,
+      },
+    );
     for (const evidence of [
       ARTIFACT_COMPARISON_EXAMPLE.left,
       inspectionEvidence,
@@ -342,13 +371,17 @@ describe("guided prompt completion from retained records", () => {
   it("deduplicates, case-folds, and returns deterministic live evidence IDs", async () => {
     const session = createTestBinarySession(() => client([]));
     for (let index = 149; index >= 0; index -= 1) {
-      const evidence = createEvidence(undefined, fixtureProvider, {
-        operation: `fixture-${String(index)}`,
-        parameters: { index },
-        result: index,
-        confidence: "derived",
-        authority: "analyst-inference",
-      });
+      const evidence = createEvidence(
+        unknownTarget("not-observed"),
+        fixtureProvider,
+        {
+          operation: `fixture-${String(index)}`,
+          parameters: { index },
+          result: index,
+          confidence: "derived",
+          authority: "analyst-inference",
+        },
+      );
       expect(session.recordEvidence(evidence).ok).toBe(true);
       expect(session.recordEvidence(evidence).ok).toBe(true);
     }
@@ -561,12 +594,12 @@ const createPagedInspectionEvidence = async (
   if (target === null) throw new Error("fixture inventory has no subject");
   const evidence = createEvidence(
     {
-      path: target.local_path,
+      path: fileSubjectDisplay(target).local_path,
       sha256:
         corruption === "carrier-subject"
           ? "a".repeat(64)
-          : target.digest.sha256,
-      format: target.format,
+          : fileIdentity(target).sha256,
+      format: fileIdentity(target).format,
     },
     fixtureProvider,
     {

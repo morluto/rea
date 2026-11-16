@@ -38,7 +38,6 @@ import {
 import {
   adapterError,
   ENDS,
-  errorText,
   readOutput,
   refused,
   reportedFailure,
@@ -51,6 +50,7 @@ import {
   desktopOutputFailure,
   type DesktopOutputCompletion,
 } from "./DesktopOutputTree.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const EXPORT = "export_build_environment";
 const exportResultSchema = z.looseObject({
@@ -485,7 +485,7 @@ export const exportBuild = async (
           ? cancelledBy(EXPORT, carriedReason(cause))
           : adapterError(
               EXPORT,
-              redactSecrets(errorText(cause), capture.secrets),
+              redactSecrets(errorMessage(cause), capture.secrets),
               cause,
             );
     if (published !== undefined)

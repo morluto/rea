@@ -1,3 +1,4 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../tests/fixtures/evidenceSubject.js";
 import { projectAnalysisView } from "./analysisView/analysisView.js";
 import { analysisViewRequestSchema } from "./analysisView/analysisViewRequest.js";
 import { describe, expect, it } from "vitest";
@@ -484,7 +485,7 @@ describe("web bundle analyzer", () => {
     expect(analyzed.completeness.status).toBe("complete");
   });
 
-  it("analyzes AST nodes after the former fixed node ceiling", () => {
+  it("analyzes every AST node of a bundle with more than 250,000 nodes", () => {
     const source = `${";".repeat(250_001)}fetch('/last');`;
     const result = analyzeWebBundleFixture(inspection(source));
 
@@ -2091,7 +2092,7 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
       operation: "analyze_web_bundle",
       normalizedResult: report,
       limitations: report.limitations,
-      subject: null,
+      subject: UNKNOWN_EVIDENCE_SUBJECT,
     };
   const summary = projectAnalysisView(
     parent,

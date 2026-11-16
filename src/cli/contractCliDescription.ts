@@ -46,6 +46,11 @@ export interface ProjectedContract<Name extends string = string> {
     | z.ZodObject
     | z.ZodDiscriminatedUnion<readonly z.ZodObject[]>
     | z.ZodUnion<readonly z.ZodObject[]>;
+  /**
+   * The result schema. It declares which result positions are controls REA
+   * recorded; without it the CLI renders no result controls.
+   */
+  readonly outputSchema?: z.ZodType;
 }
 
 /** A contract whose whole input a CLI command takes as one JSON document. */
@@ -424,6 +429,11 @@ export interface ContractCliEvidenceTargets {
   readonly targets: readonly ContractCliEvidenceTarget[];
   /** Options that supply fields of the source contract. */
   readonly options: readonly ContractCliOpeningOption[];
+  /**
+   * Each source contract field this command takes as an option, with that
+   * option's flag, so a source failure's control names it.
+   */
+  readonly sourceFlags: Readonly<Record<string, string>>;
   /**
    * The source fields the parsed options select, in contract spelling,
    * admitted by the source input with each target as its `path`. Issues
@@ -1506,6 +1516,9 @@ const describeEvidenceTargets = (
     source: targets.source.contract.name,
     targets: described,
     options,
+    sourceFlags: Object.fromEntries(
+      options.map(({ field, key }) => [field, `--${kebabCase(key)}`]),
+    ),
     admitSource: (operation, values) => {
       let admitted: Result<
         Readonly<Record<string, unknown>>,

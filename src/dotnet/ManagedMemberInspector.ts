@@ -2,7 +2,7 @@ import {
   admitManagedProjection,
   managedDecodeBudget,
   ManagedRepresentationFailure,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedMemberInspectionSchema,
@@ -13,16 +13,16 @@ import {
   readManagedPeLayout,
   type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
+} from "../domain/managed/managedPeReader.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   readManagedResourceDirectory,
   readManagedMetadataInventory,
   readManagedModuleIdentity,
-} from "./ManagedMetadataInventory.js";
-import { managedMetadataTypeNames } from "./ManagedMetadataInventoryRows.js";
+} from "../domain/managed/managedMetadataInventory.js";
+import { managedMetadataTypeNames } from "../domain/managed/managedMetadataInventoryRows.js";
 import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
   appendManagedParseIssues,
   ManagedReaderFailure,
@@ -30,18 +30,18 @@ import {
   uniqueManagedParseIssues,
   managedMetadataFailureStatus,
   type ManagedMetadataHeaderFacts,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import {
   parseTypes,
   readTypeDefinitions,
   type DecodedTypeDefinition,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import { edgeTargets, methodSpecMethod } from "./ManagedMethodSpecs.js";
-import { managedSignatureTypeNames } from "./ManagedSignatureTypeNames.js";
+import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTypeNames.js";
 import { typeNameLookup } from "./ManagedTypeNames.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
+import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import {
   edges,
@@ -52,7 +52,7 @@ import {
   readReferencedMemberCores,
   type SelectedTypeTokens,
 } from "./ManagedMemberRows.js";
-import type { MetadataTokenFact } from "./ManagedMetadataHeaps.js";
+import type { MetadataTokenFact } from "../domain/managed/managedMetadataHeaps.js";
 
 const unavailable = (
   target: BinaryTarget,

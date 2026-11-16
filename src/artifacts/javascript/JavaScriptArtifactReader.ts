@@ -1,7 +1,7 @@
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type { ArtifactReader } from "../../resources/index.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import { DirectoryArtifactReader } from "../../resources/index.js";
 
 /** Create the reader for an admitted JavaScript artifact format. */
 export const createJavaScriptArtifactReader = (
