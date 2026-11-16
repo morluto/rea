@@ -200,6 +200,7 @@ const partnersOf = (versions: readonly CountedVersion[]) => {
     for (const member of candidates) {
       const keys = member && unpaired.get(member.number);
       if (member === undefined || keys === undefined) continue;
+      // generation-cap: member pairs offered as selector conditions
       const paired = member.pairable.slice(0, MAX_PAIRED);
       for (const key of paired.filter((pairs) => keys.has(pairs))) {
         const byKey = partners.get(member.number) ?? new Map();

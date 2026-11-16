@@ -2,7 +2,7 @@ import {
   fridaCapturePolicySchema,
   FRIDA_CAPTURE_MAX_JSON_DEPTH,
   type FridaCapturePolicy,
-} from "../domain/fridaCapturePolicy.js";
+} from "./fridaCapturePolicy.js";
 
 /** Reserved envelope bytes, independent of the caller's payload allowance. */
 export const MAX_MESSAGE_METADATA_BYTES = 128 * 1024;

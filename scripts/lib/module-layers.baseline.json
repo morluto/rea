@@ -13,7 +13,6 @@
     "model -> artifacts": 1
   },
   "entry": {
-    "application -> desktop": 41,
-    "application -> frida": 2
+    "application -> desktop": 41
   }
 }

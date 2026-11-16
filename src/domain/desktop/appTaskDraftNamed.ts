@@ -654,7 +654,7 @@ export const namedDraft = (
     edited
       ? clean
       : options.document
-        ? flaggable.slice(0, MAX_FLAGGED)
+        ? flaggable.slice(0, MAX_FLAGGED) // generation-cap: suggested checks of flagged values
         : flaggable
   ).slice(0, options.limit.suggestions);
   const listed = [...change.added, ...change.changed, ...change.removed];
@@ -683,6 +683,7 @@ export const namedDraft = (
           ),
         ),
       ]
+        // generation-cap: suggested guards
         .slice(0, MAX_GUARDS)
         .concat(counts.guards)
     : [];

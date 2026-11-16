@@ -564,6 +564,7 @@ export const compareAnswers = (
     scope: entity.scope,
     at: entity.at ?? "",
     identity: entity.identity === true,
+    // optional-fact-default: a caller-selected comparison option, not an observation.
     rules: entity.rules ?? [],
   });
   if (live.status !== env.status)

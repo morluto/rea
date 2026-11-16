@@ -43,11 +43,14 @@ import { AnalysisCleanupLease } from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { unknownFridaScript, unknownFridaSession } from "./fridaInputErrors.js";
+import {
+  unknownFridaScript,
+  unknownFridaSession,
+} from "../domain/fridaInputErrors.js";
 import {
   MAX_MESSAGE_METADATA_BYTES,
   type FridaOwnedCaptureLimit,
-} from "./fridaCaptureLimits.js";
+} from "../domain/fridaCaptureLimits.js";
 import {
   resolveFridaCapturePolicy,
   type FridaCapturePolicy,

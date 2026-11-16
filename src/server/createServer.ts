@@ -30,7 +30,7 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerApplicationTools } from "./registerApplicationTools.js";
+import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
@@ -46,7 +46,6 @@ import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js"
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
@@ -506,13 +505,11 @@ export const createServer = (
     managed: () => {
       registerManagedTools(server, { ...evidenceOptions, evidenceById });
       if (session !== undefined)
-        registerManagedWorkflowTools(server, {
-          logger: toolLogger,
-          recordEvidence,
-          recordEvidenceWithUnknown,
-          session,
-          withAdmittedAnalysis: analysisAdmission,
-        });
+        registerServiceTools(
+          server,
+          { managedWorkflows: session },
+          contractTools,
+        );
     },
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
@@ -624,11 +621,7 @@ export const createServer = (
         },
         contractTools,
       );
-      registerApplicationTools(server, {
-        evidenceById,
-        logger: toolLogger,
-        withAdmittedAnalysis: analysisAdmission,
-      });
+      registerGuidedWorkflowTool(server);
       registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {

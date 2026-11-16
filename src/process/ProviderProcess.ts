@@ -1058,6 +1058,7 @@ export class ProviderProcessSupervisor {
 
 class ProcessOutputCapture {
   readonly #chunks: Buffer[] = [];
+  // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
   #bytes = 0;
   /** Observed bytes before the first retained one, which tail retention dropped. */
   #start = 0;

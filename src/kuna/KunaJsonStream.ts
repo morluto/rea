@@ -159,6 +159,7 @@ export abstract class KunaJsonDocumentReader<Parsed> extends Writable {
   /** Whether the scalar being assembled is a key. */
   #inKey = false;
   /** The key or kept scalar assembled so far. */
+  // not-an-allowance: the scalar being assembled; keys are capped at MAX_TOKEN_CODE_UNITS and kept values are charged through #charge.
   #text = "";
   #rows = 0;
   #projectedBytes = 0;

@@ -142,6 +142,7 @@ const candidatesOf = (
       ...identities.filter(({ key }) => !named(key)),
       ...pairable,
     ].map(condition),
+    // generation-cap: member pairs offered as selector conditions
     ...pairsOf(pairable.slice(0, MAX_PAIRED)),
     ...ranked.filter(({ tier }) => tier === 3).map(condition),
   ];
