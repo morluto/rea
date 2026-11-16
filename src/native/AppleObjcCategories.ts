@@ -39,9 +39,30 @@ const unnamedClassReference = (
     : `Category ${category} class reference is bound to ${bound.symbol}, which is not read as an Objective-C class name`;
 };
 
+/** `objc_image_info` flag: this image's `category_t` records end in `_classProperties`. */
+const HAS_CATEGORY_CLASS_PROPERTIES = 1 << 6;
+
+/**
+ * Whether `category_t` records extend to `_classProperties`. Images built
+ * before the field existed end at `instanceProperties`, so the bytes after it
+ * are a field only when the image info declares them.
+ */
+const declaresCategoryClassProperties = (
+  sections: readonly Section[],
+  read: Pick<ObjcDispatchReaders, "u32">,
+): boolean =>
+  sections.some(
+    ({ name, address, size }) =>
+      name === "__objc_imageinfo" &&
+      size >= 8 &&
+      (read.u32(address + 4n) & HAS_CATEGORY_CLASS_PROPERTIES) !== 0,
+  );
+
 /**
  * Decode `__objc_catlist` `category_t` records:
  * name, cls, instanceMethods, classMethods, protocols, instanceProperties.
+ * A declared `_classProperties` list is reported, not decoded: the public
+ * property shape has no class/instance discriminator.
  */
 export const decodeObjcCategories = (input: {
   readonly sections: readonly Section[];
@@ -67,6 +88,7 @@ export const decodeObjcCategories = (input: {
 }): number => {
   const { read, result } = input;
   let examined = 0;
+  let classPropertiesDeclared: boolean | undefined;
   for (const section of input.sections.filter(
     ({ name }) => name === "__objc_catlist",
   )) {
@@ -150,9 +172,25 @@ export const decodeObjcCategories = (input: {
           issues: input.issues,
           onTruncated,
         });
+        classPropertiesDeclared ??= declaresCategoryClassProperties(
+          input.sections,
+          read,
+        );
+        const classProperties =
+          classPropertiesDeclared && read.pointer(category + 48n) !== 0n;
+        if (classProperties)
+          input.issues.push(
+            issue(
+              "objc_properties_categories",
+              "category_class_properties_not_decoded",
+              `Category ${name} class property list is not decoded`,
+              `0x${(category + 48n).toString(16)}`,
+            ),
+          );
         const decodeReasons = [
           ...(className === null ? ["category_class_unresolved"] : []),
           ...(protocols.ok ? [] : ["protocol_list_unreadable"]),
+          ...(classProperties ? ["category_class_properties_not_decoded"] : []),
           ...(budgetTruncated ? ["max_records_reached"] : []),
         ];
         result.objc_categories.push({
