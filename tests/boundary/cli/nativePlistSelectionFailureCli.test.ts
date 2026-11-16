@@ -8,6 +8,16 @@ import { z } from "zod";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import type { FixedAllowanceKind } from "../../../src/domain/fixedAllowanceRemediation.js";
+
+/** Guidance for a 64 MiB plist ceiling, from the refusal's owning formatter. */
+const fixedCeilingRemediation = (name: string, kind: FixedAllowanceKind) =>
+  analysisRefusalRemediation({
+    kind: "fixed_ceiling",
+    operation: "inspect_plist",
+    ceiling: { name, kind, limit: 64 * 1024 * 1024, unit: "bytes" },
+  });
 
 const environment = {
   REA_LOG_LEVEL: "silent",
@@ -412,8 +422,9 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringContaining(
-              "The allowance is 67108864 bytes; this release has no runtime override.",
+            action: fixedCeilingRemediation(
+              "The native binary plist decode allowance",
+              "parser",
             ),
           },
           details: {
@@ -449,8 +460,9 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringContaining(
-              "The allowance is 67108864 bytes; this release has no runtime override.",
+            action: fixedCeilingRemediation(
+              "The native plist input allowance",
+              "input",
             ),
           },
           details: {

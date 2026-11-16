@@ -15,6 +15,7 @@ import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.
 import { MAX_NATIVE_PLIST_BYTES } from "../../../../src/native/parsers/plist.js";
 import { MAX_JSON_DEPTH } from "../../../../src/domain/jsonValue.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { analysisRefusalRemediation } from "../../../../src/domain/analysisRefusal.js";
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
@@ -82,8 +83,18 @@ it("reports a binary source-size refusal as a typed resource limit", async () =>
       },
     },
   });
-  expect(projected.remediation.action).toContain(
-    `The allowance is ${String(MAX_NATIVE_PLIST_BYTES)} bytes`,
+  // Guidance comes from the refusal's owning formatter, not a fixed sentence.
+  expect(projected.remediation.action).toBe(
+    analysisRefusalRemediation({
+      kind: "fixed_ceiling",
+      operation: "inspect_plist",
+      ceiling: {
+        name: "The native plist input allowance",
+        kind: "input",
+        limit: MAX_NATIVE_PLIST_BYTES,
+        unit: "bytes",
+      },
+    }),
   );
   expect(runner.tools).toEqual(["file"]);
 });
@@ -147,8 +158,17 @@ it.each([
         },
       },
     });
-    expect(projected.remediation.action).toContain(
-      `The allowance is ${String(refusal.limit)} ${refusal.unit}; this release has no runtime override.`,
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_plist",
+        ceiling: {
+          name: refusal.allowance,
+          kind: "parser",
+          limit: refusal.limit,
+          unit: refusal.unit,
+        },
+      }),
     );
     expect(runner.tools).toEqual(["file"]);
   },
