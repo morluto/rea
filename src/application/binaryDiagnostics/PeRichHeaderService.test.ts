@@ -79,8 +79,7 @@ it("locates the whole record in observed Evidence", async () => {
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(report);
   expect(result.value.subject).toMatchObject({
-    format: "pe",
-    architecture: "x86_64",
+    identity: { format: "pe", architecture: "x86_64" },
   });
   expect(result.value.locations).toContainEqual({
     kind: "file-offset-range",

@@ -1,42 +1,26 @@
+import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
 import {
   projectArtifactCloseFailure,
   imageFileSizeRemediation,
-} from "../../artifacts/StableArtifactFailure.js";
-import {
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
-import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeRichHeaderPort } from "../../ports/binaryDiagnostics/PeRichHeaderPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import {
-  AnalysisResourceConstraintError,
-  type ResourceConstraintRecovery,
-} from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
-import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+  fixedAllowanceOptions,
+  type FixedCeilingFacts,
+} from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_PE_RICH_HEADER_ENTRIES,
   MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
   type InspectPeRichHeaderInput,
 } from "../../domain/native/peRichHeader.js";
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
-import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
 import { PE_RICH_HEADER_PROVIDER } from "../../domain/investigationProviders.js";
-import {
-  classifyProviderFailure,
-  type ProviderFailureDialect,
-} from "../../providers/classifyProviderFailure.js";
-import {
-  BinaryResourceFailure,
-  binaryResourceAllowance,
-} from "../metadata/BinaryContainer.js";
 import {
   parsePeRichHeader,
   PE_RICH_HEADER_ENTRY_ALLOWANCE,
@@ -44,13 +28,8 @@ import {
 
 const OPERATION = "inspect_pe_rich_header";
 
-/**
- * Portable Rich header reader over one bounded, identity-checked regular file.
- * It satisfies PeRichHeaderPort structurally; composition checks that where it
- * hands the provider to PeRichHeaderService, so this adapter needs no upward
- * import from the application layer.
- */
-export class PeRichHeaderProvider {
+/** Portable Rich header reader over one bounded, identity-checked regular file. */
+export class PeRichHeaderProvider implements PeRichHeaderPort {
   readonly identity = PE_RICH_HEADER_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
@@ -66,10 +45,7 @@ export class PeRichHeaderProvider {
     }
   }
 
-  async inspect(
-    input: InspectPeRichHeaderInput,
-    options?: { readonly signal?: AbortSignal },
-  ) {
+  async inspect(input: InspectPeRichHeaderInput, options?: ExecutionOptions) {
     let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
@@ -93,95 +69,30 @@ export class PeRichHeaderProvider {
         assertArtifactReadActive(options?.signal);
         return ok(report);
       });
-    } catch (cause: unknown) {
-      const failure = classifyProviderFailure(cause, failureDialect(input));
-      // The read completed before decoding failed or was cancelled; keep the
-      // exact file identity it established.
-      const observation = completedStableArtifactObservation(
-        cause,
-        input.path,
-        snapshot,
+    } catch (cause) {
+      // The shared PE projection keeps the completed read's file identity.
+      return err(
+        projectPeBinaryFailure(
+          cause,
+          input,
+          {
+            operation: OPERATION,
+            providerId: PE_RICH_HEADER_PROVIDER.id,
+            fileSizeRemediation: () =>
+              imageFileSizeRemediation(
+                input.max_file_bytes,
+                MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
+              ),
+            limits: [PE_RICH_HEADER_ENTRY_ALLOWANCE],
+            limitRecovery: (limit, ceiling) =>
+              limitRecovery(limit, input, ceiling),
+          },
+          snapshot,
+        ),
       );
-      if (observation !== undefined)
-        failure.retainPartialObservation(observation);
-      return err(failure);
     }
   }
 }
-
-/** What this reader adds to the shared classification of its failures. */
-const failureDialect = (
-  input: InspectPeRichHeaderInput,
-): ProviderFailureDialect => ({
-  providerId: PE_RICH_HEADER_PROVIDER.id,
-  operation: OPERATION,
-  // Parser refusals, before the shared facts about the selected file.
-  recognise: (raised, details) =>
-    raised instanceof BinaryResourceFailure
-      ? new AnalysisResourceConstraintError(
-          OPERATION,
-          "capacity",
-          `Selected artifact ${input.path}: ${raised.message}`,
-          {
-            boundary: raised.boundary,
-            maximum: raised.maximum_bytes,
-            limit: binaryResourceAllowance(raised, [
-              PE_RICH_HEADER_ENTRY_ALLOWANCE,
-            ]),
-          },
-          { ...details, cause: raised, ...limitRecovery(raised, input) },
-        )
-      : parseFailureAnalysisError(OPERATION, input.path, raised),
-  file: {
-    path: input.path,
-    description: "image",
-    fileSize: (read, details) =>
-      new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        read.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          ...details,
-          retryable: false,
-          remediationAction: imageFileSizeRemediation(
-            input.max_file_bytes,
-            MAX_INSPECT_PE_RICH_HEADER_FILE_BYTES,
-          ),
-        },
-      ),
-  },
-  readCleanup: (read, primary) => {
-    const cleanup = new ProviderCleanupError(
-      PE_RICH_HEADER_PROVIDER.id,
-      read.cleanup.resources,
-      { reason: read.cleanup.reason },
-      { operation: OPERATION, cause: read },
-    );
-    if (primary === undefined) {
-      bindArtifactFileCleanup(read, cleanup);
-      return cleanup;
-    }
-    // A nested read reports its own cleanup failure first. Keep the physical
-    // primary under this read's cleanup, so nesting adds no envelope.
-    const error = analysisErrorWithCleanupFailure(
-      primaryAnalysisError(primary),
-      cleanup,
-      OPERATION,
-    );
-    bindArtifactFileCleanup(read, error);
-    return error;
-  },
-  unclassified: (raised, details) =>
-    new ProviderAdapterError(PE_RICH_HEADER_PROVIDER.id, OPERATION, {
-      ...details,
-      cause: raised,
-      diagnostics: {
-        path: input.path,
-        reason: raised instanceof Error ? raised.message : String(raised),
-      },
-    }),
-});
 
 const entryRemediation = (input: InspectPeRichHeaderInput): string =>
   input.max_entries >= MAX_INSPECT_PE_RICH_HEADER_ENTRIES
@@ -190,9 +101,14 @@ const entryRemediation = (input: InspectPeRichHeaderInput): string =>
 
 /** Recovery for the caller's entry budget, or for the shared PE decoding allowance. */
 const limitRecovery = (
-  failure: BinaryResourceFailure,
+  limit: typeof PE_RICH_HEADER_ENTRY_ALLOWANCE | null,
   input: InspectPeRichHeaderInput,
+  ceiling: FixedCeilingFacts,
 ): ResourceConstraintRecovery =>
-  binaryResourceAllowance(failure, [PE_RICH_HEADER_ENTRY_ALLOWANCE]) !== null
+  limit === PE_RICH_HEADER_ENTRY_ALLOWANCE
     ? { retryable: false, remediationAction: entryRemediation(input) }
-    : fixedAllowanceOptions("The PE structural decoding allowance", "parser");
+    : fixedAllowanceOptions(
+        "The PE structural decoding allowance",
+        "parser",
+        ceiling,
+      );

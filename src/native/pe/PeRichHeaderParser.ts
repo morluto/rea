@@ -1,5 +1,5 @@
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   PE_RICH_HEADER_ABSENT_LIMITATION,
   PE_RICH_HEADER_ENTRY_BYTES,
@@ -14,8 +14,8 @@ import {
 import {
   BinaryReader,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
-import { readPeHeaders } from "./PeResourceLayout.js";
+} from "../../domain/binaryContainer.js";
+import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
 
 /**
  * The caller's entry budget, named on the failure. Consumers read it with

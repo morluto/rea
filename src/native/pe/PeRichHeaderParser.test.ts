@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   inspectPeRichHeaderInputSchema,
   PE_RICH_HEADER_ABSENT_LIMITATION,
   peRichHeaderSchema,
 } from "../../domain/native/peRichHeader.js";
-import { BinaryResourceFailure } from "../metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import {
   parsePeRichHeader,
   PE_RICH_HEADER_ENTRY_ALLOWANCE,
@@ -224,6 +224,8 @@ it("rejects an image without a PE signature", async () => {
   const bytes = peRichHeaderImage();
   bytes.write("ZZ", 0, "latin1");
   const failure = await parseBytes(bytes).catch((error: unknown) => error);
-  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  expect(failure).toMatchObject({ reason: "format" });
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({
+    failure: { kind: "malformed", format: "pe" },
+  });
 });
