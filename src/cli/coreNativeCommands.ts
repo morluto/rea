@@ -38,7 +38,7 @@ export const registerCoreNativeCommands = (
     contractNamed(OFFICIAL_TOOL_CONTRACTS, "annotate_native_function"),
     {
       description:
-        "Edit function annotations and return refreshed analysis. Ghidra discards CLI edits when the command exits, so the returned dossier is the edited observation; use one MCP session for dependent edits and reads, where edits last until close or until an active Ghidra request is cancelled.",
+        "Edit function annotations and return refreshed analysis. Ghidra discards edits on close unless REA_GHIDRA_CHECKPOINT_DIR enables checkpoint mode, which saves them on normal close. The CLI closes when the command exits, so without checkpoint mode the returned dossier is the only edited observation; use one MCP session for dependent edits and reads. Cancelling an active Ghidra request can also discard edits.",
       sessionTarget: executable,
       positionals: ["procedure"],
       fields: {
