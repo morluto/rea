@@ -103,6 +103,7 @@
 
 * **adb:** classify adb launch failures through the shared launch owner ([#11659](https://github.com/morluto/rea/issues/11659)) ([9953f0e](https://github.com/morluto/rea/commit/9953f0e46eb8590047440186cb1b338b789d27ca))
 * **adb:** drop the remaining exclusivity claim from push guidance ([90c70ba](https://github.com/morluto/rea/commit/90c70ba770472b8a301dbc46555a29dd7050a93a))
+* **adb:** give the adb and retained command-output capture allowances their byte values ([#11678](https://github.com/morluto/rea/issues/11678)) ([5d283a6](https://github.com/morluto/rea/commit/5d283a6e4ac68d399a55842954e5bb3e94d3738b))
 * **adb:** preserve malformed version declarations ([1adc3fa](https://github.com/morluto/rea/commit/1adc3fa5532c9ac96fe44620c051e943af45504c)), closes [#7534](https://github.com/morluto/rea/issues/7534)
 * **adb:** reject package ids with attached text instead of admitting the prefix ([6227c44](https://github.com/morluto/rea/commit/6227c443bb6ed3b6d6bf951f0ad3d15c82de926e)), closes [#7409](https://github.com/morluto/rea/issues/7409) [#7470](https://github.com/morluto/rea/issues/7470)
 * **agentenv:** record a verified teardown through the long-run release claim ([144d6f9](https://github.com/morluto/rea/commit/144d6f959fdd9cc7e7a64feb51e34671bd844942))
