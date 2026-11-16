@@ -515,16 +515,18 @@ export class AnalysisSnapshotCache {
     };
   }): void {
     this.select(input.target, input.profile);
+    const target = this.#target ?? snapshotTarget(input.target);
+    const binding = this.#binding ?? snapshotBinding(input.profile);
     const queryId = analysisQueryId(
-      snapshotTarget(input.target),
-      snapshotBinding(input.profile),
+      target,
+      binding,
       input.operation,
       input.parameters,
     );
     if (!this.#workflowEntries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotWorkflowEntry({
-      target: snapshotTarget(input.target),
-      binding: snapshotBinding(input.profile),
+      target,
+      binding,
       operation: input.operation,
       parameters: input.parameters,
       execution: input.execution,
@@ -633,16 +635,18 @@ export class AnalysisSnapshotCache {
       if (closed === null) return;
       sourceBinding = closed;
     }
+    const snapshotTargetValue = this.#target ?? snapshotTarget(target);
+    const snapshotBindingValue = this.#binding ?? snapshotBinding(profile);
     const queryId = analysisQueryId(
-      snapshotTarget(target),
-      snapshotBinding(profile),
+      snapshotTargetValue,
+      snapshotBindingValue,
       operation,
       parameters,
     );
     if (!this.#entries.has(queryId) && !this.#hasCapacity()) return;
     const entry = createAnalysisSnapshotEntry({
-      target: snapshotTarget(target),
-      binding: snapshotBinding(profile),
+      target: snapshotTargetValue,
+      binding: snapshotBindingValue,
       operation,
       parameters,
       execution: {
