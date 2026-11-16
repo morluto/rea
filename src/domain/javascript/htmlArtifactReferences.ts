@@ -22,6 +22,8 @@ export interface HtmlInlineScript {
   readonly scriptType: "classic" | "module";
   /** The body's range, between the opening and closing tags. */
   readonly location: JavaScriptSourceRange;
+  /** The body as the HTML parser decoded it. */
+  readonly text: string;
 }
 
 /**
@@ -80,6 +82,30 @@ const javaScriptType = (
 const asciiLowercase = (value: string): string =>
   value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
 
+/** SVG uses href/XLink and has no HTML language fallback or src attribute. */
+const scriptAttributes = (node: DefaultTreeAdapterTypes.Element) => {
+  const html = node.namespaceURI === "http://www.w3.org/1999/xhtml";
+  const source = html
+    ? node.attrs.find(({ name }) => name === "src")
+    : (node.attrs.find(
+        ({ name, namespace }) => name === "href" && namespace === undefined,
+      ) ??
+      node.attrs.find(
+        ({ name, namespace }) =>
+          name === "href" && namespace === "http://www.w3.org/1999/xlink",
+      ));
+  return {
+    source,
+    scriptType: javaScriptType(
+      html
+        ? node.attrs
+        : node.attrs.filter(
+            ({ name, namespace }) => name === "type" && namespace === undefined,
+          ),
+    ),
+  };
+};
+
 /**
  * Extract inert HTML script references, inline JavaScript bodies, and the
  * first document base href.
@@ -105,15 +131,19 @@ export const htmlArtifactReferences = (
     if (node === undefined) continue;
     if (
       defaultTreeAdapter.isElementNode(node) &&
-      node.namespaceURI === "http://www.w3.org/1999/xhtml"
+      (node.namespaceURI === "http://www.w3.org/1999/xhtml" ||
+        node.namespaceURI === "http://www.w3.org/2000/svg")
     ) {
-      if (node.tagName === "base" && baseHref === null) {
+      if (
+        node.namespaceURI === "http://www.w3.org/1999/xhtml" &&
+        node.tagName === "base" &&
+        baseHref === null
+      ) {
         const href = node.attrs.find(({ name }) => name === "href");
         if (href !== undefined) baseHref = href.value;
       }
       if (node.tagName === "script") {
-        const scriptType = javaScriptType(node.attrs);
-        const src = node.attrs.find(({ name }) => name === "src");
+        const { scriptType, source: src } = scriptAttributes(node);
         const location = node.sourceCodeLocation?.startTag;
         if (src !== undefined && src.value !== "" && location !== undefined) {
           scripts.push({
@@ -129,7 +159,7 @@ export const htmlArtifactReferences = (
         if (inline !== undefined && scriptType !== null) {
           inlineScriptCount += 1;
           if (inlineScripts.length < HTML_INLINE_SCRIPT_LOCATION_LIMIT)
-            inlineScripts.push({ scriptType, location: inline });
+            inlineScripts.push({ scriptType, ...inline });
         }
       }
     }
@@ -145,22 +175,27 @@ export const htmlArtifactReferences = (
 /** Locate a script element's non-blank body; browsers ignore it when src is set. */
 const inlineScriptBody = (
   node: DefaultTreeAdapterTypes.Element,
-): JavaScriptSourceRange | undefined => {
+): Pick<HtmlInlineScript, "location" | "text"> | undefined => {
   const startTag = node.sourceCodeLocation?.startTag;
   if (startTag === undefined) return undefined;
   let blank = true;
+  let text = "";
   let end: DefaultTreeAdapterTypes.TextNode["sourceCodeLocation"];
   for (const child of node.childNodes) {
     if (!defaultTreeAdapter.isTextNode(child)) continue;
     if (blank && /\S/u.test(child.value)) blank = false;
+    text += child.value;
     end = child.sourceCodeLocation ?? end;
   }
   // An unclosed script's element range ends at its opening tag, so the body's
   // own text location bounds it.
   if (blank || end == null) return undefined;
   return {
-    start: sourcePoint(startTag.endLine, startTag.endCol),
-    end: sourcePoint(end.endLine, end.endCol),
+    location: {
+      start: sourcePoint(startTag.endLine, startTag.endCol),
+      end: sourcePoint(end.endLine, end.endCol),
+    },
+    text,
   };
 };
 

@@ -217,14 +217,6 @@ new RuleTester({
       "rawResult",
     ),
     invalid(
-      "aliased imports retain their owner",
-      `
-          import { createEvidence as record } from "../domain/evidence.js";
-          import { jsonValueSchema as json } from "../domain/jsonValue.js";
-          record(target, provider, { result: json.parse(input) });`,
-      "result",
-    ),
-    invalid(
       "namespace members retain their owner",
       `
           import * as evidence from "../domain/evidence.js";

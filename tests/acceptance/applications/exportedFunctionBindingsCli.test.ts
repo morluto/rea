@@ -19,6 +19,7 @@ import {
   createCliCommandSession,
   type CliCommandSession,
 } from "../../support/cli/cliCommandSession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
@@ -541,8 +542,15 @@ describe("CommonJS export identity and scope regressions", () => {
     expect(comparison).toMatchObject({
       left: { status: "selected" },
       right: { status: "selected" },
-      summary: { added: 0, removed: 0, changed: 0 },
-      changes: [],
+      summary: { added: 0, removed: 0, changed: 0, unknown: 1 },
+      changes: [
+        {
+          status: "unknown",
+          path: "/count",
+          left: { availability: "unknown" },
+          right: { availability: "unknown" },
+        },
+      ],
     });
   });
 });
@@ -1115,11 +1123,15 @@ const expectRuntimeExports = async (
   expected: (count: number) => unknown,
 ): Promise<void> => {
   // Execute only source-owned fixtures as an independent runtime oracle.
-  for (const [path, exportName, count] of [
+  const entries = [
     [fixture.leftPath, fixture.input.left_export_name, 1],
     [fixture.rightPath, fixture.input.right_export_name, 2],
-  ] as const)
-    expect(await runtimeExport(path, exportName)).toEqual(expected(count));
+  ] as const;
+  const values = await runtimeExports(
+    entries.map(([path, exportName]) => [path, exportName]),
+  );
+  for (const [index, [, , count]] of entries.entries())
+    expect(values[index]).toEqual(expected(count));
 };
 
 const expectExportedCallableBinding = (
@@ -1319,10 +1331,13 @@ const getMcpClient = async (): Promise<Client> => {
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({
-      name: "exported-function-bindings",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "exported-function-bindings",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     mcpConnection = {
       client,
       transport,
@@ -1333,20 +1348,30 @@ const getMcpClient = async (): Promise<Client> => {
   return mcpConnection.client;
 };
 
-const runtimeExport = async (
-  path: string,
-  exportName: string,
-): Promise<unknown> => {
+const runtimeExports = async (
+  entries: readonly (readonly [path: string, exportName: string])[],
+): Promise<unknown[]> => {
   const { stdout } = await execute(process.execPath, [
     "--input-type=module",
     "-e",
     `import { pathToFileURL } from 'node:url';
-     const module = await import(pathToFileURL(process.argv[1]).href);
-     const value = module[process.argv[2]];
-     console.log(JSON.stringify({ value: typeof value === 'function' ? value() : value }));`,
-    path,
-    exportName,
+     const results = [];
+     for (const [path, exportName] of JSON.parse(process.argv[1])) {
+       const module = await import(pathToFileURL(path).href);
+       const value = module[exportName];
+       results.push({ value: typeof value === 'function' ? value() : value });
+     }
+     console.log(JSON.stringify(results));`,
+    JSON.stringify(entries),
   ]);
-  return z.object({ value: z.unknown().optional() }).parse(JSON.parse(stdout))
-    .value;
+  return z
+    .array(z.object({ value: z.unknown().optional() }))
+    .length(entries.length)
+    .parse(JSON.parse(stdout))
+    .map(({ value }) => value);
 };
+
+const runtimeExport = async (
+  path: string,
+  exportName: string,
+): Promise<unknown> => (await runtimeExports([[path, exportName]]))[0];

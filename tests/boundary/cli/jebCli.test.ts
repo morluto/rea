@@ -32,7 +32,7 @@ it("validates decompile item input before contacting the engine", async () => {
     fieldErrors: [
       {
         code: "too_small",
-        path: "item-address",
+        path: "itemAddress",
       },
     ],
   });
@@ -91,6 +91,7 @@ it.each(
       tool: "open_project",
       argv: ["open-jeb-project", "sample.apk", "--json"],
       input: { path: "sample.apk" },
+      providerInput: { file_path: "sample.apk" },
     },
   ].flatMap((request) =>
     ["metadata-refusal", "primary-refusal", "success"].map((stage) => ({
@@ -100,7 +101,7 @@ it.each(
   ),
 )(
   "preserves $operation attribution and primary payload with $stage",
-  async ({ operation, tool, argv, input, stage }) => {
+  async ({ operation, tool, argv, input, providerInput, stage }) => {
     const refusal = {
       success: false,
       message: "Selected stage refused",
@@ -123,7 +124,6 @@ it.each(
       const result = await cli.run({
         arguments: argv,
         environment: { HOME: home, REA_JEB_MCP_URL: fixture.endpoint },
-        timeoutMs: 10_000,
       });
       const output = JSON.parse(result.stdout);
       if (stage === "success") {
@@ -158,6 +158,10 @@ it.each(
       expect(fixture.calls).toEqual(
         stage === "primary-refusal" ? [tool] : [tool, "get_client_information"],
       );
+      expect(fixture.requests[0]).toEqual({
+        name: tool,
+        arguments: providerInput ?? input,
+      });
     } finally {
       await processes.shutdown();
       await fixture.close();

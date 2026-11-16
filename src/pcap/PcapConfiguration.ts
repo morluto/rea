@@ -1,9 +1,9 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
 
-import { appendCallerPath } from "../filesystem/callerPath.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
@@ -47,7 +47,8 @@ export const assertWiresharkExecutableIdentity = (
 export const TSHARK_COMMAND_ENV = "REA_TSHARK_COMMAND";
 export const CAPINFOS_COMMAND_ENV = "REA_CAPINFOS_COMMAND";
 
-const TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
+/** Repair for any unusable caller-selected Wireshark tool; shared by readiness and execution. */
+export const PCAP_TOOL_REMEDIATION = `Supply Wireshark 4.x tshark and capinfos on PATH or through absolute ${TSHARK_COMMAND_ENV} and ${CAPINFOS_COMMAND_ENV}; REA does not install them.`;
 
 /**
  * Host-tool refusals concern the caller's Wireshark installation, not the
@@ -61,7 +62,7 @@ export const pcapToolUnavailable = (
 ): AnalysisCapabilityUnavailableError =>
   new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
     ...options,
-    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${TOOL_REMEDIATION}`,
+    userMessage: `${/[.!?]$/u.test(reason) ? reason : `${reason}.`} ${PCAP_TOOL_REMEDIATION}`,
   });
 
 /** How one caller-supplied Wireshark tool was selected. */
@@ -111,7 +112,7 @@ export const selectWiresharkTool = (
  */
 export const resolvePcapTools = (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {
@@ -146,9 +147,11 @@ export const locateWiresharkTool = (
 ): string | undefined => {
   if (selection.source === "environment" || isAbsolute(selection.command))
     return selection.command;
-  for (const directory of (environment.PATH ?? "").split(delimiter)) {
-    if (!isAbsolute(directory)) continue;
-    const candidate = appendCallerPath(directory, selection.command);
+  for (const { path: candidate } of posixPathCandidates(
+    selection.command,
+    environment.PATH ?? "",
+    { relativeEntries: "skip" },
+  )) {
     try {
       accessSync(candidate, constants.X_OK);
       if (statSync(candidate).isFile()) return candidate;
@@ -246,5 +249,6 @@ export const pcapConfigurationAvailability = (
   status: "unavailable",
   code: rejectionCodeOf(cause.code),
   reason: cause.message,
+  remediation: PCAP_TOOL_REMEDIATION,
   diagnostics: { ...cause.diagnostics },
 });

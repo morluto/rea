@@ -14,6 +14,40 @@ import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImag
 import { parseGhidraInventoryResult } from "./GhidraInventoryValues.js";
 import { prepareGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 
+it("retains the provider symbol without claiming DOS verification of it", () => {
+  const fixture = fixtureDosLoadImage();
+  fixture.observation.relocations[0]!.symbol = "provider_name";
+  const result = compareDosFixture(
+    fixture.bytes,
+    fixture.sha256,
+    fixture.observation,
+  );
+  if (!result.ok) throw new Error(result.error);
+  expect(result.value.status).toBe("verified");
+  expect(result.value.observations.relocations[0]?.symbol).toBe(
+    "provider_name",
+  );
+  expect(result.value.limitations).toContain(
+    "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.",
+  );
+});
+
+it("preserves Ghidra relocation symbol values at the inventory boundary", () => {
+  for (const symbol of ["audit_external", "", null] as const) {
+    const observation = structuredClone(fixtureDosLoadImage().observation);
+    observation.relocations[0]!.symbol = symbol;
+    const parsed = parseGhidraInventoryResult(
+      "inspect_native_load_image",
+      jsonValueSchema.parse(observation),
+      null,
+    );
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: { value: { relocations: [{ symbol }] } },
+    });
+  }
+});
+
 it("accepts DOS header padding after a complete relocation table", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
@@ -79,13 +113,13 @@ const damage: ReadonlyArray<
   [
     "modified source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].modified_sha256 = "f".repeat(64));
+      x.source_files[0]!.modified_sha256 = "f".repeat(64);
     },
   ],
   [
     "original source",
     (x) => {
-      x.source_files[0] && (x.source_files[0].original_sha256 = "f".repeat(64));
+      x.source_files[0]!.original_sha256 = "f".repeat(64);
     },
   ],
   [
@@ -312,6 +346,7 @@ it.each(malformedCoordinates)(
       provider: parseGhidraInventoryResult(
         "inspect_native_load_image",
         jsonValueSchema.parse(observation),
+        null,
       ).ok,
     }).toEqual({ shared: false, provider: false });
   },
@@ -330,8 +365,8 @@ it("preserves zero-padded, qualified, and large observation addresses", () => {
   const parsed = parseGhidraInventoryResult(
     "inspect_native_load_image",
     jsonValueSchema.parse(observation),
+    null,
   );
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual(observation);
 });
@@ -384,6 +419,20 @@ describe("independent DOS MZ import verification", () => {
     });
     if (!result.ok || result.value.status === "unsupported")
       throw new Error("Expected measured MZ checks");
+    expect(result.value.checks).toEqual(
+      expect.arrayContaining(
+        [
+          "original_file_sha256",
+          "modified_file_sha256",
+          "entry_points",
+          "relocation_records",
+          "mapping[0].memory_sha256",
+          "mapping[1].memory_sha256",
+          "initialized_file_coverage_end",
+          "initialized_unbacked_mappings",
+        ].map((name) => expect.objectContaining({ name, matched: true })),
+      ),
+    );
     expect(result.value.checks.every((check) => check.matched)).toBe(true);
     expect(result.value.observations).toEqual(fixture.observation);
     expect(result.value.limitations.join(" ")).toMatch(

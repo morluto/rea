@@ -3680,12 +3680,13 @@ msgstr "Ligar Ghidra em Windows"
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
-"12.1.x installation and a 64-bit JDK 21 or newer:"
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.1.x installation and a 64-bit JDK 21 or newer:"
 msgstr ""
 "O Windows x64 tem suporte experimental somente leitura para aplicativos e "
-"DLLs nativos x86 e x64 PE em unidades NTFS locais fixas. Use uma instalação "
-"existente do Ghidra 12.1.x e um JDK de 64 bits, versão 21 ou posterior:"
+"DLLs nativos x86 e x64 PE em unidades NTFS/ReFS locais fixas. Use uma "
+"instalação existente do Ghidra 12.1.x e um JDK de 64 bits, versão 21 ou "
+"posterior:"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -11817,7 +11818,8 @@ msgctxt "runtime"
 msgid "Switch to dark mode"
 msgstr "Alternar para o modo escuro"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/web-network-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-
 #. captures.md" >
 #. {ph1}: </a >
 #: website/public/guides/browser/index.html:487
@@ -13492,8 +13494,8 @@ msgstr "Claude Desktop · use um chat no desktop"
 
 #. {ph0}: <a href="https://claude.ai/download">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#claude-desktop" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#claude-desktop" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:597
 #, python-brace-format
@@ -13540,12 +13542,11 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "ID de configuração"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md" >
 #. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
-#. package-and-main" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#released-package-and-main" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:757
 #, python-brace-format
@@ -13573,8 +13574,8 @@ msgstr ""
 "No chat do Grok Bot, peça para ele adicionar um servidor MCP personalizado "
 "chamado {ph0}, executando este comando no computador do bot:"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#other-client-settings" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#other-client-settings" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:788
 #, python-brace-format
@@ -13844,9 +13845,8 @@ msgstr ""
 "REA em Ajustes do Sistema → Privacidade e Segurança → Automação e tente "
 "novamente."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#hopper" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1099
 #, python-brace-format
@@ -13927,11 +13927,11 @@ msgstr ""
 "caminhos, execute a configuração novamente, aprove a configuração atualizada"
 " do cliente e reinicie seu agente."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#ghidra" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1258
@@ -13982,7 +13982,8 @@ msgstr ""
 "Use o arquivo JSON de registro que você preparou com o guia do provedor. "
 "Depois, execute a configuração novamente e reinicie seu agente."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/ida-
 #. provider.md" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1376
@@ -14131,13 +14132,16 @@ msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "Comportamento de processos"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/flutter-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/flutter-
 #. analysis.md" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/javascript-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-
 #. artifact-reconstruction.md" >
 #. {ph3}: </a >
-#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/evm-
+#. {ph4}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-
 #. bytecode.md" >
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
@@ -14240,9 +14244,8 @@ msgstr ""
 "Se você instalou a CLI global, atualize com {ph0}. Use {ph1} para remover a "
 "configuração dos clientes e a skill do REA."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
-#. update-and-remove" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1812
 #, python-brace-format
@@ -14472,9 +14475,8 @@ msgstr ""
 "No macOS, a compilação precisa de Xcode Command Line Tools, make e bison. "
 "Use o guia correspondente ao seu computador:"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
-#. macos-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#missing-macos-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1216
 #, python-brace-format
@@ -14482,9 +14484,8 @@ msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
 msgstr "{ph0}macOS · Intel{ph1}"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
-#. arm64-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#macos-arm64-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1222
 #, python-brace-format
@@ -15896,7 +15897,8 @@ msgstr ""
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/android-
 #. analysis.md" >
 #. {ph3}: </a >
 #: website/public/showcase/aegis/index.html:714
@@ -17620,3 +17622,13 @@ msgstr ""
 #~ msgctxt "page:showcase/th04/index.html"
 #~ msgid "{ph0}Angle and velocity · source excerpt{ph1}"
 #~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
+#~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
+#~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+#~ "O Windows x64 tem suporte experimental somente leitura para aplicativos e "
+#~ "DLLs nativos x86 e x64 PE em unidades NTFS locais fixas. Use uma instalação "
+#~ "existente do Ghidra 12.1.x e um JDK de 64 bits, versão 21 ou posterior:"

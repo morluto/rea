@@ -1,11 +1,10 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { nativeInventoryRowsSchemas } from "../native/nativeInventory.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -19,13 +18,14 @@ const rows = () => [
   { address: "0x20", value: "last" },
 ];
 const parent = (normalizedResult: unknown): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"a".repeat(64)}`,
   operation: "search_procedures",
   normalizedResult,
   sealedResult: true,
   provider: { id: "fixture", name: "Fixture", version: "1" },
   artifact: null,
-  subject: null,
+  subject: UNKNOWN_EVIDENCE_SUBJECT,
   parameters: { pattern: "a", mode: "literal", case_sensitive: false },
   limitations: ["Provider discovery is partial."],
 });

@@ -67,6 +67,7 @@ const report: Il2cppMetadata = {
 };
 
 const parent = (normalizedResult: unknown, sealedResult: boolean) => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"b".repeat(64)}`,
   operation: "inspect_il2cpp_metadata",
   normalizedResult,
@@ -480,6 +481,34 @@ const linkedReport = (): Il2cppMetadata => ({
   field_types: [{ type: 0, name: "int" }],
   parameter_types: [{ type: 0, name: "int" }],
 });
+
+it.each([-1, 1, 99])(
+  "rejects imported code-generation module image reference %i",
+  (image) => {
+    const value = linkedReport();
+    value.binary!.code_gen_modules[0]!.image = image;
+    const parsed = il2cppMetadataParentSchema.safeParse(value);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(parsed.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: ["binary", "code_gen_modules", 0, "image"],
+          }),
+        ]),
+      );
+    for (const selection of [{}, { image_indices: [image] }]) {
+      const view = projectIl2cppMetadataView(parent(value, false), {
+        kind: "il2cpp-metadata",
+        collection: "code_gen_modules",
+        ...selection,
+        offset: 0,
+        limit: 64,
+      });
+      expect(view.ok).toBe(false);
+    }
+  },
+);
 
 it("selects every folded method by numeric address with stable indices and both source identities", () => {
   const source = parent(freezeJsonSnapshot(linkedReport()), true);

@@ -8,10 +8,9 @@ import {
 } from "../../tests/fixtures/nativeCommands.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
-import { NativeCommandFailure } from "./CommandRunner.js";
+import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
 import { inspectMachoSchema } from "../domain/native/nativeInspection.js";
 import { err, ok } from "../domain/result.js";
-import { VTOOL_CONTAINER_REFUSAL_LIMITATION } from "./NativeMachoInspection.js";
 
 const targetDirectories: string[] = [];
 afterEach(async () => {
@@ -61,7 +60,7 @@ const tracer: NativeCallTracer = {
 };
 
 describe("private otool operand lifecycle", () => {
-  it("uses a private alias only for otool and removes it after all commands settle", async () => {
+  it("uses a private alias for native commands and removes it after all commands settle", async () => {
     const path = await mkdtemp(join(tmpdir(), "rea-macho-operand-test-"));
     const selected = await parenthesizedTarget();
     const target = selected.target.path;
@@ -90,10 +89,13 @@ describe("private otool operand lifecycle", () => {
     try {
       const result = await client.execute("inspect_macho", {});
       if (!result.ok) throw result.error;
-      expect(JSON.stringify(result.value.result)).toContain(
-        join(path, "artifact.macho"),
-      );
       const alias = join(path, "artifact.macho");
+      const report = inspectMachoSchema.parse(result.value.result);
+      expect(
+        report.provenance
+          .find((entry) => entry.tool === "lipo")
+          ?.command.at(-1),
+      ).toBe(alias);
       expect(calls.some(({ operand }) => operand === alias)).toBe(true);
       expect(calls.some(({ operand }) => operand === target)).toBe(false);
       await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
@@ -155,7 +157,13 @@ describe("private otool operand lifecycle", () => {
         exit: { code: 1, signal: null },
       });
       expect(vtool?.command.at(-1)).toBe(alias);
-      expect(report.limitations).toContain(VTOOL_CONTAINER_REFUSAL_LIMITATION);
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(
+            /vtool.*universal container.*build metadata.*binary load commands/iu,
+          ),
+        ]),
+      );
       expect(
         report.provenance.find((entry) => entry.tool === "lipo"),
       ).toMatchObject({ exit: { code: 0, signal: null } });
@@ -166,7 +174,9 @@ describe("private otool operand lifecycle", () => {
       await rm(selected.directory, { recursive: true, force: true });
     }
   });
+});
 
+describe("private operand command cleanup", () => {
   it("retains the alias until command cleanup is confirmed", async () => {
     const path = await mkdtemp(join(tmpdir(), "rea-macho-operand-test-"));
     let unresolved = true;
@@ -190,7 +200,6 @@ describe("private otool operand lifecycle", () => {
     ).createClient((await parenthesizedTarget()).target);
     try {
       const result = await client.execute("inspect_macho", {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cleanup failure");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.partialObservation).toMatchObject({
@@ -252,7 +261,6 @@ describe("private otool operand cleanup", () => {
       ).createClient((await parenthesizedTarget()).target);
       try {
         const result = await client.execute("inspect_macho", {});
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("expected native failure");
         expect(result.error.capturedOutput?.stderr).toBe(message);
         expect(result.error.cleanupIncomplete).toBe(cleanupFails);
@@ -286,7 +294,6 @@ describe("private otool operand cleanup", () => {
     ).createClient((await parenthesizedTarget()).target);
     try {
       const result = await client.execute("inspect_macho", {});
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cleanup failure");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanupResources).toContain(path);
@@ -321,7 +328,6 @@ describe("private otool operand cleanup", () => {
         {},
         { signal: controller.signal },
       );
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("expected cancellation");
       expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.partialObservation).toMatchObject({

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import {
   BINARY_ARCHITECTURES,
-  ELF_METADATA_ARCHITECTURES,
+  HEADER_ARCHITECTURE_EXCLUSIONS,
   RAW_ONLY_ARCHITECTURES,
 } from "./binaryTargetTypes.js";
 import { digestSchema } from "./digests.js";
@@ -13,12 +13,9 @@ import {
 import { ZIP_PACKAGE_FORMATS } from "./zipPackageFormat.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
-const headerArchitectureSchema = architectureSchema.exclude([
-  ...ELF_METADATA_ARCHITECTURES,
-  ...RAW_ONLY_ARCHITECTURES,
-  "hexagon",
-  "arm64_32",
-]);
+const headerArchitectureSchema = architectureSchema.exclude(
+  HEADER_ARCHITECTURE_EXCLUSIONS,
+);
 const identity = { path: z.string(), sha256: digestSchema };
 const executable = { ...identity, kind: z.literal("executable") };
 
@@ -70,17 +67,46 @@ export const liveBinaryTargetSummaryVariants = [
     format: z.enum([
       ...ZIP_PACKAGE_FORMATS,
       "asar",
+      "ines",
       "godot-pck",
       "unityfs",
+      "wxapkg",
       "uimage",
       "dmg",
       "pkg",
       "intel-hex",
       "srec",
       "esp-image",
+      "uf2",
+      "dfuse",
       "fit",
+      "ntfs-mft",
     ]),
     architecture: z.null(),
+  }),
+  z.object({
+    ...identity,
+    kind: z.literal("archive"),
+    format: z.literal("esp-flash-image"),
+    architecture: z.null(),
+    flash_offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(0xffff_ffff)
+      .nullable()
+      .describe(
+        "Caller-selected flash address of the dump's first byte; null reads it as flash address 0.",
+      ),
+    partition_table_offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(0xffff_ffff)
+      .nullable()
+      .describe(
+        "Caller-selected partition table address; null tries 0x8000, then a scan.",
+      ),
   }),
   z.object({
     ...identity,

@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -19,11 +21,12 @@ it.each(["inspect_packet_capture", "inspect_packet_fields"])(
     const tool = (await harness.client.listTools()).tools.find(
       (tool) => tool.name === name,
     );
-    if (tool?.outputSchema === undefined)
-      throw new Error("Capture tool missing");
+    if (tool === undefined) throw new Error("Capture tool missing");
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const inputSchema: Record<string, unknown> = tool.inputSchema;
-    const outputSchema: Record<string, unknown> = tool.outputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      tool.name,
+    );
     expect(ajv.validateSchema(inputSchema)).toBe(true);
     expect(ajv.validateSchema(outputSchema)).toBe(true);
     const input =
@@ -66,7 +69,7 @@ it.each(["cancelled", "cleanup"])(
       fields: ["ip.addr"],
     };
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed capture fixture", version: "1" },
       {
         operation: "inspect_packet_capture",
@@ -155,7 +158,21 @@ it("rejects oversized selector expansion through the MCP boundary before invokin
       display_filter: "界".repeat(8192),
     },
   });
-  expect(response.isError).toBe(true);
-  expect(JSON.stringify(response)).toContain("32 KiB");
+  expect(parseMcpToolError(response)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "inspect_packet_capture",
+        issues: [
+          {
+            path: [],
+            reason: "invalid_value",
+            message: expect.stringContaining("32 KiB encoded argument budget"),
+          },
+        ],
+      },
+    },
+  });
   expect(calls).toBe(0);
 });

@@ -5,7 +5,6 @@ import {
   admitRawBinary,
   parseRawBinaryEntryPoint,
   rawBinarySelectionError,
-  validateRawBinaryLength,
 } from "./rawBinary.js";
 
 describe("headerless format hints", () => {
@@ -97,7 +96,6 @@ describe("raw-binary admission", () => {
     });
   });
   it("rejects an empty file as a target refusal while naming the extent", () => {
-    expect(validateRawBinaryLength(0).ok).toBe(false);
     const result = admitRawBinary({
       architecture: "x86",
       entryPoint: "0x1000",
@@ -117,7 +115,6 @@ describe("raw-binary admission", () => {
       entryPoint: "0xfffffffc",
       fileBytes: 8,
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected overflow rejection");
     expect(result.error.reason).toContain("arm address width");
     expect(result.error.constraint).toBe("load_selection_rejected");
@@ -157,7 +154,6 @@ describe("raw-binary admission", () => {
     ["mismatched family name", { architecture: "68000", entryPoint: "0x1000" }],
   ])("classifies a %s as caller input", (_name, selection) => {
     const result = admitRawBinary({ ...selection, fileBytes: 4 });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected caller-input rejection");
     expect(result.error.constraint).toBe("load_selection_rejected");
   });

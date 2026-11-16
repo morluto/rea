@@ -1,7 +1,5 @@
-import {
-  projectAnalysisView,
-  analysisViewResultSchema,
-} from "../../domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatching.js";
 import { expect, it } from "vitest";
 import { matchNativeFunctions } from "./NativeFunctionMatchingService.js";
@@ -119,6 +117,7 @@ it("rebuilds native row selection when a caller's sealed flag covers only a shal
   );
   Object.freeze(report);
   const parent = {
+    predicateType: matched.value.evidence.predicate_type,
     evidenceId: matched.value.evidence.evidence_id,
     operation: matched.value.evidence.operation,
     normalizedResult: report,

@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,12 +25,15 @@ import {
   observeJavaScriptRuntimeInputSchema,
 } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
-import { createEvidence } from "../../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createNodeDiscoveryTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 test("reports static-layer Evidence digest failure at its caller path", () => {
   const layer = JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers[0];
@@ -62,7 +66,7 @@ test("reports static-layer Evidence digest failure at its caller path", () => {
         {
           path: ["static_layers", 0, "analysis", "evidence_id"],
           reason: "invalid_value",
-          message: "Evidence semantic identifier does not match its record",
+          message: expect.stringMatching(/semantic identifier.*not match/iu),
         },
       ],
     },
@@ -84,19 +88,23 @@ test("reports browser origin scope mismatch at the caller parameter path", async
     const evidence = createBrowserEvidence(
       "inspect_web_page",
       input,
-      observed.value,
+      { source: jsonValueSchema.parse(observed.value), facts: observed.value },
       provider.identity(),
     );
-    const invalidEvidence = createEvidence(undefined, evidence.provider, {
-      predicateType: evidence.predicate_type,
-      operation: evidence.operation,
-      parameters: { ...evidence.parameters, allowed_origins: [] },
-      result: evidence.normalized_result,
-      confidence: evidence.confidence,
-      authority: evidence.authority,
-      environment: evidence.environment,
-      limitations: evidence.limitations,
-    });
+    const invalidEvidence = createEvidence(
+      evidenceSubjectInput(evidence.subject),
+      evidence.provider,
+      {
+        predicateType: evidence.predicate_type,
+        operation: evidence.operation,
+        parameters: { ...evidence.parameters, allowed_origins: [] },
+        result: evidence.normalized_result,
+        confidence: evidence.confidence,
+        authority: evidence.authority,
+        environment: evidence.environment,
+        limitations: evidence.limitations,
+      },
+    );
     const result = reconcileJavaScriptRuntimeEvidence({
       static_layers: JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
       runtime_observations: [invalidEvidence],
@@ -109,8 +117,9 @@ test("reports browser origin scope mismatch at the caller parameter path", async
           {
             path: ["runtime_observations", 0, "parameters", "allowed_origins"],
             reason: "invalid_value",
-            message:
-              "Browser Evidence target is outside its recorded origin scope",
+            message: expect.stringMatching(
+              /target.*outside.*recorded origin scope/i,
+            ),
           },
         ],
       },
@@ -155,7 +164,8 @@ describe("Inspector execution-context lifecycle metadata", () => {
         if (!result.ok) throw result.error;
         expect(result.value.execution_contexts).toEqual([
           {
-            context_key: "1",
+            context_key: "context_0",
+            execution_context_id: 1,
             state,
             name: "worker#one",
             origin: "https://context.example",
@@ -167,7 +177,7 @@ describe("Inspector execution-context lifecycle metadata", () => {
     },
   );
 
-  test("replaces context metadata only when a new context creation is observed", async () => {
+  test("retains each context lifetime after an ID is reused", async () => {
     const fixture = await runtimeFixture();
     const fake = await startFakeV8Inspector({
       targetUrl: pathToFileURL(fixture.entry).href,
@@ -202,14 +212,35 @@ describe("Inspector execution-context lifecycle metadata", () => {
       );
       if (!result.ok) throw result.error;
       expect(result.value.execution_contexts).toEqual([
-        { context_key: "1", state: "created", name: "", origin: "" },
-        { context_key: "2", state: "destroyed", name: null, origin: null },
+        {
+          context_key: "context_0",
+          execution_context_id: 1,
+          state: "destroyed",
+          name: "old context",
+          origin: "https://old.example",
+        },
+        {
+          context_key: "context_1",
+          execution_context_id: 1,
+          state: "created",
+          name: "",
+          origin: "",
+        },
+        {
+          context_key: "context_2",
+          execution_context_id: 2,
+          state: "destroyed",
+          name: null,
+          origin: null,
+        },
       ]);
     } finally {
       await fake.close();
     }
   });
+});
 
+describe("Inspector execution-context ID validation", () => {
   test.each([
     ["malformed", "2", "1"],
     ["valid", 2, 1],
@@ -251,7 +282,13 @@ describe("Inspector execution-context lifecycle metadata", () => {
         });
         if (mode === "malformed") {
           expect(result.value.execution_contexts).toEqual([
-            { context_key: "1", state: "created", name: "main", origin: "" },
+            {
+              context_key: "context_0",
+              execution_context_id: 1,
+              state: "created",
+              name: "main",
+              origin: "",
+            },
           ]);
           expect(invalidContextUnknowns).toEqual([
             "2 execution-context lifecycle events with a missing or malformed execution-context ID were excluded; the affected contexts' lifecycle state is unknown.",
@@ -259,8 +296,20 @@ describe("Inspector execution-context lifecycle metadata", () => {
           return;
         }
         expect(result.value.execution_contexts).toEqual([
-          { context_key: "1", state: "destroyed", name: "main", origin: "" },
-          { context_key: "2", state: "created", name: "worker", origin: "" },
+          {
+            context_key: "context_0",
+            execution_context_id: 1,
+            state: "destroyed",
+            name: "main",
+            origin: "",
+          },
+          {
+            context_key: "context_1",
+            execution_context_id: 2,
+            state: "created",
+            name: "worker",
+            origin: "",
+          },
         ]);
         expect(invalidContextUnknowns).toEqual([]);
       } finally {
@@ -401,7 +450,8 @@ test("captures complete metadata with two enable commands", async () => {
     expect(result.value.scripts.excluded.unsupported_location).toBe(0);
     expect(result.value.execution_contexts).toEqual([
       {
-        context_key: "1",
+        context_key: "context_0",
+        execution_context_id: 1,
         state: "created",
         name: "node[fixture]",
         origin: "",
@@ -410,7 +460,11 @@ test("captures complete metadata with two enable commands", async () => {
     expect(new Set(fake.commands.map(({ method }) => method))).toEqual(
       new Set(["Runtime.enable", "Debugger.enable"]),
     );
-    expect(JSON.stringify(result.value)).toContain(outside);
+    expect(result.value.scripts.items).toContainEqual(
+      expect.objectContaining({
+        location: expect.objectContaining({ file_path: outside }),
+      }),
+    );
     expect(result.value.unavailable_without_instrumentation).toContain(
       "Electron IPC messages and handlers",
     );
@@ -522,7 +576,7 @@ describe("undeclared V8 runtime role", () => {
 });
 
 describe("V8 Inspector script retention", () => {
-  test("retains authorized script locations longer than the former byte ceiling", async () => {
+  test("retains an authorized script location of more than 20,000 characters", async () => {
     const longUrl = `https://example.test/${"a".repeat(20_000)}`;
     const fake = await startFakeV8Inspector({
       targetUrl: longUrl,
@@ -545,7 +599,7 @@ describe("V8 Inspector script retention", () => {
     }
   });
 
-  test("returns every authorized script beyond the former collection ceiling", async () => {
+  test("returns every authorized script of a target with 2,005 scripts", async () => {
     const fixture = await runtimeFixture();
     const scriptUrls = [
       pathToFileURL(fixture.entry).href,
@@ -688,7 +742,7 @@ describe("passive V8 Inspector evidence", () => {
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(result.runtime_captures[0]?.kind).toBe("v8-inspector");
     expect(result.summary.runtime_scripts).toBe(1);
@@ -749,7 +803,7 @@ describe("passive V8 Inspector evidence", () => {
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     expect(result.summary.runtime_scripts).toBe(2);
     expect(result.reconciliations).toContainEqual(
@@ -759,9 +813,17 @@ describe("passive V8 Inspector evidence", () => {
         reason: "runtime-location-unresolved",
       }),
     );
-    expect(JSON.stringify(result.graph)).toContain(rawUrl);
-    expect(JSON.stringify(result.graph)).toContain("v8-hash");
-    expect(JSON.stringify(result.graph)).toContain('"reported_url":""');
+    const runtimeProperties = result.graph.nodes
+      .filter(({ kind }) => kind === "runtime-script-instance")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties),
+      );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: rawUrl, cdp_hash: "v8-hash" }),
+    );
+    expect(runtimeProperties).toContainEqual(
+      expect.objectContaining({ reported_url: "", cdp_hash: null }),
+    );
   });
 });
 
@@ -836,7 +898,7 @@ test("keeps Inspector parse failures separate and preserves file URL script iden
     });
     if (!reconciled.ok) throw reconciled.error;
     const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
+      reconciled.value.evidence.normalized_result,
     );
     const runtimeScripts = result.graph.nodes.filter(
       (node) => node.kind === "runtime-script-instance",
@@ -855,23 +917,27 @@ test("keeps Inspector parse failures separate and preserves file URL script iden
     );
     expect(new Set(scriptKeys).size).toBe(2);
 
-    const parsedCapture = parseRuntimeCaptures([evidence])[0];
+    const parsedCapture = parseRuntimeCapture(evidence, [
+      "runtime_observations",
+      0,
+    ]);
     if (parsedCapture?.kind !== "v8-inspector")
       throw new Error("Expected the Inspector Evidence to parse as V8 capture");
     expect(
       parsedCapture.inspection.completeness.unavailable_sections,
     ).not.toContain("scripts");
 
-    const legacySnapshot = {
+    const withoutCount = {
       ...observed.value,
       scripts: {
         ...observed.value.scripts,
       },
     };
-    delete legacySnapshot.scripts.parse_failed_total;
-    const parsedLegacySnapshot =
-      javascriptRuntimeObservationSchema.parse(legacySnapshot);
-    expect("parse_failed_total" in parsedLegacySnapshot.scripts).toBe(false);
+    delete (withoutCount.scripts as { parse_failed_total?: number })
+      .parse_failed_total;
+    expect(
+      javascriptRuntimeObservationSchema.safeParse(withoutCount).error?.issues,
+    ).toMatchObject([{ path: ["scripts", "parse_failed_total"] }]);
   } finally {
     await fake.close();
   }
@@ -903,14 +969,14 @@ test("keeps malformed scriptFailedToParse protocol values in the invalid count",
 });
 
 const runtimeFixture = async () => {
-  const root = await createTestTempDirectory("rea-v8-runtime-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-runtime-");
   const entry = join(root, "entry.js");
   await writeFile(entry, "export const value = 1;\n");
   return { root, entry };
 };
 
 const temporaryFile = async (name: string): Promise<string> => {
-  const root = await createTestTempDirectory("rea-v8-outside-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-outside-");
   const path = join(root, name);
   await writeFile(path, "export {};\n");
   return path;
@@ -959,6 +1025,7 @@ const runtimeObservation = (
         script_key: `v8_script_${"4".repeat(64)}`,
         location: { kind: "file", file_path: scriptPath },
         execution_context_key: "1",
+        execution_context_id: 1,
         cdp_hash: "v8-hash",
         length: 29,
         is_module: true,
@@ -966,6 +1033,7 @@ const runtimeObservation = (
       },
     ],
     observed_total: 1,
+    parse_failed_total: 0,
     excluded: {
       unsupported_location: 0,
       invalid_protocol_value: 0,

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -22,6 +21,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const mode = process.argv[2] ?? "call";
 assert(["chat", "call"].includes(mode), "Select chat or call.");
@@ -34,7 +34,9 @@ const { assertClientSchemaPatterns } = await importVerifierSource(
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_DEEPSEEK_COMMAND ?? "dsh";
-const lab = await mkdtemp(join(tmpdir(), "rea-deepseek-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-deepseek-client-",
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const workspace = join(lab, "workspace");
@@ -56,6 +58,7 @@ let catalog;
 let patternCount = 0;
 let skillRequested = false;
 let skillLoaded = false;
+let expectedSkillBody;
 let evidenceSeen = false;
 let finalSeen = false;
 let artifactDigest;
@@ -169,11 +172,34 @@ await withVerifierCleanup(async () => {
         const toolMessages = (body.messages ?? []).filter(
           (message) => message.role === "tool",
         );
-        const serialized = JSON.stringify(toolMessages);
-        skillLoaded ||=
-          serialized.includes(
-            '<skill_content name=\\"reverse-engineer-anything\\">',
-          ) && serialized.includes(dirname(skillPath));
+        skillLoaded ||= toolMessages.some((message) => {
+          if (
+            typeof message.content !== "string" ||
+            expectedSkillBody === undefined
+          )
+            return false;
+          const open =
+            '<skill_content name="reverse-engineer-anything">\n<skill_resources>\n';
+          const start = message.content.indexOf(open);
+          if (start < 0) return false;
+          const resourcesStart = start + open.length;
+          const instructions = `\n</skill_resources>\n\n<skill_instructions>\n${expectedSkillBody}\n</skill_instructions>\n</skill_content>`;
+          const resourcesEnd = message.content.indexOf(
+            instructions,
+            resourcesStart,
+          );
+          if (resourcesEnd < 0) return false;
+          const expectedPath = dirname(skillPath)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;");
+          const resources = message.content.slice(resourcesStart, resourcesEnd);
+          return (
+            !resources.includes("</skill_content>") &&
+            !resources.includes("</skill_resources>") &&
+            resources.includes(expectedPath)
+          );
+        });
         for (const message of toolMessages) {
           const found = findClientResult(
             message.content,
@@ -281,11 +307,15 @@ await withVerifierCleanup(async () => {
     const configured = await readFile(configPath, "utf8");
     assert.deepEqual(withoutRea(configured), withoutRea(original));
     assert(configured.includes("!!js process.cwd()"));
-    assert(
-      (await readFile(skillPath, "utf8")).includes(
-        "name: reverse-engineer-anything",
-      ),
+    const installedSkill = await readFile(skillPath, "utf8");
+    assert(installedSkill.includes("name: reverse-engineer-anything"));
+    const frontmatter = /^---\r?\n[\s\S]*?^---(?:\r?\n|$)/mu.exec(
+      installedSkill,
     );
+    assert(frontmatter, "Installed skill must have its authored frontmatter");
+    expectedSkillBody = installedSkill.slice(frontmatter[0].length).trim();
+    assert(expectedSkillBody.length > 0);
+
     lifecycle.push("setup");
     const repeated = await runRea(
       ["setup", "--client", "dsh", "--yes"],

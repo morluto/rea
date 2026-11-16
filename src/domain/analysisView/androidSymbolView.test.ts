@@ -1,14 +1,15 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 import { androidComponentsViewRequestSchema } from "../android/androidPackageQuery.js";
 import { createEvidence } from "../evidence.js";
 import { immutableJsonSnapshotMember } from "../immutableJson.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+} from "./analysisViewResult.js";
 import type { AdmittedView } from "./analysisViewShape.js";
 import {
   androidClassSummarySchema,
@@ -166,6 +167,7 @@ const fixture = (operation: Operation, report: unknown, rawMetadata = "") => {
     { immutable: true },
   );
   const parent: AnalysisViewParent = {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation,
     normalizedResult:
@@ -261,7 +263,10 @@ it.each(["inspect_android_class", "inspect_android_method"] as const)(
       operation === "inspect_android_class" ? classReport() : methodReport(),
     );
     expect(
-      projectAnalysisView({ ...parent, subject: null }, { kind: "summary" }),
+      projectAnalysisView(
+        { ...parent, subject: UNKNOWN_EVIDENCE_SUBJECT },
+        { kind: "summary" },
+      ),
     ).toMatchObject({
       ok: false,
       error: {

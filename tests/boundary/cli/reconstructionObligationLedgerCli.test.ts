@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { reconstructionProofApplicabilityCases } from "../../fixtures/reconstructionProofApplicability.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { reconstructionObligationLedgerSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
@@ -76,14 +77,14 @@ describe("reconstruction obligation ledger CLI parity", () => {
         );
       }
     }
-  }, 20_000);
+  });
 });
 
 describe("reconstruction obligation ledger CLI bundle validation", () => {
   it("reports non-canonical authenticated bundles as caller input", async () => {
     const records = ["first", "second"].map((label) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           operation: "observe",
@@ -143,11 +144,11 @@ describe("reconstruction obligation ledger CLI bundle validation", () => {
       retryable: false,
       details: {
         reason: expect.stringContaining(
-          "Evidence bundle manifests are not canonical",
+          "Evidence bundle sections are not canonical: records",
         ),
       },
     });
-  }, 20_000);
+  });
 
   it("builds the same Evidence-backed empty ledger through the CLI", async () => {
     const input = {
@@ -181,7 +182,7 @@ describe("reconstruction obligation ledger CLI bundle validation", () => {
         summary: { total: 0 },
       },
     });
-  }, 20_000);
+  });
 
   it("summarizes obligations by their cited Evidence authorities", async () => {
     const { stdout } = await execute(
@@ -221,7 +222,7 @@ describe("reconstruction obligation ledger CLI bundle validation", () => {
       ],
       ["review.shipped", ["shipped-artifact/candidate"]],
     ]);
-  }, 20_000);
+  });
 });
 
 describe("reconstruction obligation ledger CLI contradictions", () => {
@@ -282,7 +283,7 @@ describe("reconstruction obligation ledger CLI contradictions", () => {
         ],
       });
     }
-  }, 20_000);
+  });
 });
 
 cliTest(
@@ -376,44 +377,38 @@ describe("reconstruction proof applicability through CLI", () => {
     reason,
     codes,
   } of reconstructionProofApplicabilityCases())
-    cliTest(
-      name,
-      async ({ cli }) => {
-        const invocation = {
-          arguments: [
-            "build-reconstruction-obligation-ledger",
-            JSON.stringify(input),
-            "--json",
-          ],
-        };
-        const result =
-          name === "matching implementation and revision"
-            ? await cli.run(invocation)
-            : await runFileCli(cli, invocation);
-        expect(result.exitCode, result.stderr).toBe(0);
-        const ledger = reconstructionObligationLedgerSchema.parse(
-          (result.json as { normalized_result: unknown }).normalized_result,
-        );
-        expect(ledger.status).toBe(status);
-        const obligation = ledger.obligations[0]!;
-        expect(obligation.status).toBe(
-          status === "ready" ? "verified" : "implemented",
-        );
-        expect(obligation.diagnostics.map(({ code }) => code).sort()).toEqual(
-          [...codes].sort(),
-        );
-        expect(ledger.summary.required_open).toBe(status === "ready" ? 0 : 1);
-        for (const fixture of input.manifest.bindings[0]!.fixtures)
-          for (const evidenceId of fixture.evidence_ids)
-            expect(ledger.evidence_links).toContain(evidenceId);
-        if (reason === null) expect(obligation.diagnostics).toEqual([]);
-        else
-          expect(
-            obligation.diagnostics.some(({ detail }) =>
-              detail.includes(reason),
-            ),
-          ).toBe(true);
-      },
-      20_000,
-    );
+    cliTest(name, async ({ cli }) => {
+      const invocation = {
+        arguments: [
+          "build-reconstruction-obligation-ledger",
+          JSON.stringify(input),
+          "--json",
+        ],
+      };
+      const result = await cli.run({
+        ...invocation,
+        freshProcess: name === "matching implementation and revision",
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const ledger = reconstructionObligationLedgerSchema.parse(
+        (result.json as { normalized_result: unknown }).normalized_result,
+      );
+      expect(ledger.status).toBe(status);
+      const obligation = ledger.obligations[0]!;
+      expect(obligation.status).toBe(
+        status === "ready" ? "verified" : "implemented",
+      );
+      expect(obligation.diagnostics.map(({ code }) => code).sort()).toEqual(
+        [...codes].sort(),
+      );
+      expect(ledger.summary.required_open).toBe(status === "ready" ? 0 : 1);
+      for (const fixture of input.manifest.bindings[0]!.fixtures)
+        for (const evidenceId of fixture.evidence_ids)
+          expect(ledger.evidence_links).toContain(evidenceId);
+      if (reason === null) expect(obligation.diagnostics).toEqual([]);
+      else
+        expect(
+          obligation.diagnostics.some(({ detail }) => detail.includes(reason)),
+        ).toBe(true);
+    });
 });

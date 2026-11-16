@@ -1,3 +1,8 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  EVIDENCE_FORMAT_REVISION,
+  RECREATE_EVIDENCE_GUIDANCE,
+} from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
@@ -23,12 +28,11 @@ import {
 } from "../../../src/domain/residualUnknown.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 
 const revisionBundle = () => {
   const records = ["open", "investigate"].map((operation) =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation, parameters: {}, result: { observed: operation } },
     ),
@@ -254,8 +258,14 @@ cliTest.for([
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: JSON_BYTE_ORDER_MARK_MESSAGE,
-      remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+      remediation: {
+        action: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+      },
     });
     expect(await readFile(path, "utf8")).toBe(bom);
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
@@ -359,8 +369,7 @@ cliTest(
     expect(result.json).toMatchObject({
       code: "invalid_request",
       category: "invalid_input",
-      details: { path },
-      message: expect.stringContaining("this JSON is one Evidence record"),
+      details: { path, detected_kind: "evidence-record" },
     });
   },
 );
@@ -403,7 +412,7 @@ cliTest(
       JSON.parse('{"__proto__":{"answer":7},"normal":{"answer":7}}'),
     );
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -446,7 +455,7 @@ cliTest(
       literal: "&copy; <br>",
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "ordinary-json",
@@ -466,7 +475,9 @@ cliTest(
     expect(json.stdout).toContain(JSON.stringify(result.text));
     expect(json.stdout).toContain(JSON.stringify(result.type));
     expect(json.stdout).toContain(JSON.stringify(result.literal));
-    const markdown = await cli.run({ arguments: [...base, "--format", "md"] });
+    const markdown = await cli.run({
+      arguments: [...base, "--format", "md"],
+    });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     expect(markdown.stdout).toContain("left\\|right\\\\tail<br>next");
     expect(markdown.stdout).toContain("List&lt;string&gt;");
@@ -475,12 +486,15 @@ cliTest(
 );
 
 cliTest(
-  "diagnoses an obsolete explicit-null Evidence commitment without claiming the file was modified",
+  "refuses an earlier-format record inside a current bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
     const record = PRE_66_NULL_COVERAGE_EVIDENCE;
+    // A current-format bundle carrying an earlier record is refused by the
+    // record's own format marker, before its ID is checked.
     const bundle = {
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       providers: [record.provider],
       environments: [],
@@ -497,9 +511,7 @@ cliTest(
     expect(imported.json).toMatchObject({
       code: "evidence_integrity_mismatch",
       retryable: false,
-      message: expect.stringContaining(
-        "earlier relationship_coverage identity commitment",
-      ),
+      message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
     });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
@@ -509,9 +521,7 @@ cliTest(
       error: {
         code: "evidence_integrity_mismatch",
         retryable: false,
-        message: expect.stringContaining(
-          "earlier relationship_coverage identity commitment",
-        ),
+        message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
       },
     });
   },

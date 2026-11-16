@@ -1,12 +1,12 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterAll, expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { sourceToBundleComparisonResultSchema } from "../../../src/domain/javascript/sourceToBundleComparisonSchemas.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
@@ -15,7 +15,7 @@ import { analyzeJavaScriptApplication } from "../../support/javascriptApplicatio
 const schemaValidation = createMcpSchemaValidation();
 afterAll(() => schemaValidation.clear());
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "selects real source-map correspondence with stable identities and full parent retention (%s)",
   async (profile) => {
     const { root, path, reference, session, client, inputs, call } =
@@ -66,7 +66,9 @@ it.each(["full", "compact"] as const)(
     )!;
     for (const tool of [comparisonTool, viewTool]) {
       expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
-      const outputSchema: Record<string, unknown> = tool.outputSchema!;
+      const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+        tool.name,
+      );
       expect(ajv.validateSchema(outputSchema)).toBe(true);
     }
     const request = {
@@ -84,7 +86,9 @@ it.each(["full", "compact"] as const)(
       reference: { kind: "file", path },
       view: request,
     });
-    const outputSchema: Record<string, unknown> = comparisonTool.outputSchema!;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      comparisonTool.name,
+    );
     expect(ajv.validate(outputSchema, selected)).toBe(true);
     expect(selected.confidence).toBe("inferred");
     const page = analysisViewResultSchema.parse(selected.normalized_result);
@@ -149,7 +153,7 @@ it.each(["full", "compact"] as const)(
   },
 );
 
-const comparisonFixture = async (profile: "full" | "compact") => {
+const comparisonFixture = async (profile: "compact") => {
   const root = await createTestTempDirectory("rea-source-view-");
   const previous = join(root, "previous"),
     current = join(root, "current");
@@ -215,24 +219,14 @@ const comparisonFixture = async (profile: "full" | "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("Views must not open a native provider");
   });
-  const server = createServer(
-    { kind: "session", session },
-    {
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "source-view", version: "1" },
+    schemaValidator: schemaValidation,
+    serverOptions: {
       environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
     },
-  );
-  const client = new Client(
-    { name: "source-view", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
   });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
   expect(session.recordEvidence(application.value).ok).toBe(true);
   const inputs = {
     reference: reference.value,

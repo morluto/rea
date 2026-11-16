@@ -1,12 +1,11 @@
 import { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
-import {
-  SigrokRecordingProvider,
-  sigrokHostSupported,
-} from "../signals/SigrokRecordingProvider.js";
-
-export { sigrokHostSupported };
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { SigrokRecordingProvider } from "../signals/SigrokRecordingProvider.js";
 
 export const createSignalRecordingService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): SignalRecordingService =>
-  new SignalRecordingService(new SigrokRecordingProvider(environment));
+  new SignalRecordingService(
+    new SigrokRecordingProvider(environment, undefined, undefined, platform),
+  );

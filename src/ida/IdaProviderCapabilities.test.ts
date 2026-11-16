@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import {
-  IDA_OPERATIONS,
   idaCapabilities,
   idaOperationUnavailableReason,
 } from "./IdaProviderCapabilities.js";
+import { IDA_OPERATIONS } from "./IdaProviderMetadata.js";
 
 describe("IDA profile operation admission", () => {
   for (const [name, profile] of Object.entries(IDA_COMPATIBILITY_PROFILES)) {
@@ -24,10 +24,10 @@ describe("IDA profile operation admission", () => {
           expect(capability.reason).toBe(reason ?? null);
         }
       }
+      // No supported profile proves direct call edges.
       expect(
-        idaOperationUnavailableReason("procedure_callers", profile) ===
-          undefined,
-      ).toBe(name === "legacy");
+        idaOperationUnavailableReason("procedure_callers", profile),
+      ).toBeDefined();
       expect(
         idaOperationUnavailableReason("procedure_callees", profile),
       ).toBeUndefined();

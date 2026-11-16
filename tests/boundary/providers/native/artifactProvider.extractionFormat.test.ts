@@ -1,7 +1,11 @@
-import { access, readFile, symlink, writeFile } from "node:fs/promises";
+import { createPackage } from "@electron/asar";
+import { inesFixture } from "../../../fixtures/ines.js";
+import { nativeAotPeFixture } from "../../../fixtures/nativeaotPe.js";
+import { access, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { buildBinary } from "plist";
 
 import { elfExportImage } from "../../../fixtures/binaryDiagnostics/nativeExports.js";
 import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
@@ -22,8 +26,100 @@ import { artifactExtractionExecutionSchema } from "../../../../src/contracts/art
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 
+it.each(["plist", "pe"] as const)(
+  "refuses iNES bytes after a non-extractable %s target is replaced",
+  async (format) => {
+    const root = await createTestTempDirectory("rea-extract-current-");
+    const path = join(root, "source.bin");
+    await writeFile(
+      path,
+      format === "plist" ? buildBinary({ value: "old" }) : nativeAotPeFixture(),
+    );
+    const target = await parseBinaryTarget(path);
+    if (!target.ok) throw target.error;
+    expect(target.value.format).toBe(format);
+    const client = createOwnedArtifactClient(target.value);
+    await writeFile(path, inesFixture());
+    const output = join(root, "output");
+    const result = await client.execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({ output_root: output }),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisUnsupportedTargetError",
+        operation: "extract_artifact",
+        reason: expect.stringContaining(
+          "Artifact format has no extraction reader:",
+        ),
+      },
+    });
+    await expect(access(output)).rejects.toThrow();
+  },
+);
+
 describe("artifact extraction format support", () => {
-  it("refuses unsupported formats before inventory or output", async () => {
+  it.each(["zip", "asar", "hap", "hsp", "app"] as const)(
+    "refuses a replaced iNES target that scans as %s",
+    async (format) => {
+      const root = await createTestTempDirectory("rea-extract-replaced-");
+      const path = join(root, `source.${format}`);
+      await writeFile(path, inesFixture());
+      const target = await parseBinaryTarget(path);
+      if (!target.ok) throw target.error;
+      expect(target.value.format).toBe("ines");
+      const client = createOwnedArtifactClient(target.value);
+      if (format !== "asar") {
+        await writeOrderedZip(path, ["payload.txt"]);
+      } else {
+        const source = join(root, "source");
+        await mkdir(source);
+        await writeFile(join(source, "payload.txt"), "evidence\n");
+        await createPackage(source, path);
+      }
+      const output = join(root, "output");
+      const result = await client.execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({ output_root: output }),
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "ArtifactOperationError",
+          operation: "extract_artifact",
+          reason: "integrity",
+        },
+      });
+      await expect(access(output)).rejects.toThrow();
+    },
+  );
+
+  it("refuses a scanned non-container instead of selecting a stale reader", async () => {
+    const root = await createTestTempDirectory("rea-extract-replaced-file-");
+    const path = join(root, "source.bin");
+    await writeFile(path, inesFixture());
+    const target = await parseBinaryTarget(path);
+    if (!target.ok) throw target.error;
+    const client = createOwnedArtifactClient(target.value);
+    await writeFile(path, "ordinary replacement bytes");
+    const output = join(root, "output");
+    expect(
+      await client.execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({ output_root: output }),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ArtifactOperationError",
+        reason: "integrity",
+      },
+    });
+    await expect(access(output)).rejects.toThrow();
+  });
+
+  it("refuses a currently unsupported format before child inventory or output", async () => {
     const root = await createTestTempDirectory("rea-extract-format-");
     const image = join(root, "Image.dmg");
     const udif = Buffer.alloc(512);
@@ -57,7 +153,9 @@ describe("artifact extraction format support", () => {
     });
     await expect(access(output)).rejects.toThrow();
   });
+});
 
+describe("artifact extraction executable formats", () => {
   it("refuses a thin Mach-O that inventory lists as root-only", async () => {
     const root = await createTestTempDirectory("rea-extract-thin-macho-");
     const binary = join(root, "thin");

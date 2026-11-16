@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../domain/result.js";
 import { mediaTypeEssence } from "../domain/analysisView/recordedMediaType.js";
+import { cdpResourceColumnSchema } from "../domain/cdpObservationSchemas.js";
 import {
   admitRecords,
   isHttpUrl,
@@ -57,18 +58,22 @@ export const exclusionReasonForUrl = (
       ? "disallowed_origin"
       : "unsupported_url";
 
-/** Preserve omitted and invalid protocol offsets as unknown, never invented coordinates. */
+/**
+ * Preserve omitted and invalid protocol offsets as unknown, never invented
+ * coordinates. Columns follow the shared CDP resource-column policy, which
+ * keeps a negative column Chrome reports.
+ */
 export const cdpSourceCoordinates = (frame: UnknownRecord | undefined) => {
-  const valid = (value: unknown): value is number =>
+  const validLine = (value: unknown): value is number =>
     typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   const line = frame?.lineNumber;
-  const column = frame?.columnNumber;
+  const column = cdpResourceColumnSchema.safeParse(frame?.columnNumber);
   return {
-    line: valid(line) ? line : null,
-    column: valid(column) ? column : null,
+    line: validLine(line) ? line : null,
+    column: column.success ? column.data : null,
     invalid:
-      (line !== undefined && !valid(line)) ||
-      (column !== undefined && !valid(column)),
+      (line !== undefined && !validLine(line)) ||
+      (frame?.columnNumber !== undefined && !column.success),
   };
 };
 

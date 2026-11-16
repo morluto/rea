@@ -1,5 +1,4 @@
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -9,8 +8,8 @@ import {
   type FunctionComparisonResult as Comparison,
 } from "../../../src/domain/functionComparisonSchemas.js";
 
-import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 const template = FUNCTION_COMPARISON_EXAMPLE.left;
 const base = functionDossierSchema.parse(template.normalized_result);
@@ -88,20 +87,22 @@ type Compare = (
   right: ReturnType<typeof evidence>,
 ) => Promise<Comparison>;
 
-const session = createTestBinarySession(() => {
-  throw new Error("Function comparison must not launch a provider");
-});
-const server = createServer({ kind: "session", session });
-const client = new Client({
-  name: "function-string-decoding-test",
-  version: "1",
-});
-const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 let compare: Compare;
 
-beforeAll(async () => {
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
+beforeEach(async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Function comparison must not launch a provider");
+  });
+  const { client } = await createApplicationMcpHarness({
+    session,
+    clientIdentity: { name: "function-string-decoding-test", version: "1" },
+    serverOptions: {
+      environment: {
+        ...process.env,
+        REA_MCP_MAX_INPUT_ELEMENTS: process.env.REA_MCP_MAX_INPUT_ELEMENTS,
+      },
+    },
+  });
   compare = async (left, right) => {
     const response = await client.callTool({
       name: "compare_functions",
@@ -115,10 +116,6 @@ beforeAll(async () => {
       parseEvidence(response.structuredContent).normalized_result,
     );
   };
-});
-
-afterAll(async () => {
-  await Promise.allSettled([client.close(), server.close(), session.close()]);
 });
 
 const stringsNames = (result: Comparison) =>
@@ -260,6 +257,8 @@ describe("compare_functions referenced string decoding", () => {
       status: "changed",
       left_count: 2,
       right_count: 2,
+      left_digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      right_digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
     });
     expect(stringsNames(changed)?.left_digest).not.toBe(
       stringsNames(changed)?.right_digest,

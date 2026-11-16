@@ -1,26 +1,31 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Help } from "incur";
+import { OwnedMcpClient } from "./process/OwnedMcpClient.js";
+import { formatCommandHelp } from "./cli/help.js";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-import { createCatalogIdentity } from "./catalogIdentity.js";
+import { createCatalogIdentity } from "./contracts/catalog/catalogIdentity.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   missingCliOutputValueMessage,
   renderCliDocument,
 } from "./cliOutput.js";
-import {
-  compactPresentationForMcpInputSchemaProfile,
-  parseMcpInputSchemaProfile,
-} from "./config/mcpInputSchemaProfile.js";
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
+import { parseMcpToolCatalogProfile } from "./config/mcpToolCatalogProfile.js";
+import {
+  DISCOVER_TOOLS,
+  HOT_TOOL_NAMES,
+  progressiveCatalogIdentity,
+} from "./contracts/catalog/catalogDiscovery.js";
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
+import { toolContract } from "./contracts/toolContracts.js";
+import { advertisedOutputJsonSchema } from "./contracts/toolSchemaMetadata.js";
 import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { err, ok } from "./domain/result.js";
+import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
   parseMcpStartupBudgets,
@@ -29,8 +34,12 @@ import {
 import {
   MCP_STARTUP_POLICY,
   mcpDoctorDeadlineRecovery,
-} from "./mcpStartupPolicy.js";
+} from "./config/mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
+import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
+import { isRecord } from "./kernel/isRecord.js";
+import { resolveMcpOutputSchemaProfile } from "./contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "./kernel/errorMessage.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -45,14 +54,12 @@ const HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
 
 /**
  * Answer an advertised help request without starting a diagnostic session.
- * Global options are hidden because this dispatcher entry accepts only the
- * options above; the hint says so explicitly instead of implying full
- * Incur parity.
+ * Global options are omitted because this dispatcher entry accepts only the
+ * options above; the hint says so explicitly.
  */
 const renderMcpDoctorHelp = (): string =>
-  Help.formatCommand(MCP_DOCTOR_COMMAND, {
+  formatCommandHelp(MCP_DOCTOR_COMMAND, {
     description: MCP_DOCTOR_DESCRIPTION,
-    hideGlobalOptions: true,
     options: MCP_DOCTOR_OPTIONS,
     alias: MCP_DOCTOR_ALIAS,
     hint: `${MCP_DOCTOR_SCOPE} This entry accepts only the options above.`,
@@ -63,7 +70,6 @@ interface McpDoctorOptions {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly deadlineMs?: number;
 }
 
 interface InventoryComparison {
@@ -106,10 +112,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       },
     };
   const expectation = doctorExpectationForEnvironment(options.environment);
-  const budget = appliedDoctorBudget(
-    parsedBudgets.value.doctor,
-    options.deadlineMs,
-  );
+  const budget = parsedBudgets.value.doctor;
   const budgetMs = budget.milliseconds;
   const deadline = performance.now() + budgetMs;
   const controller = new AbortController();
@@ -118,15 +121,21 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     Math.max(1, Math.ceil(deadline - performance.now())),
   );
   const stderr = captureStderr();
-  const transport = new OwnedStdioClientTransport({
-    command: options.command,
-    args: [...options.args],
-    cwd: options.cwd,
-    env: targetFreeEnvironment(options.environment),
-    stderr: "pipe",
-  });
-  transport.stderr?.on("data", stderr.append);
-  const client = new Client({ name: "rea-mcp-doctor", version: "1" });
+  const transport = new DoctorStdioTransport(
+    {
+      command: options.command,
+      arguments: [...options.args],
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      // The caller's environment is the child's complete base. The launcher
+      // would otherwise merge the ambient process environment, including the
+      // target selection the doctor removes.
+      hostEnvironment: targetFreeEnvironment(options.environment),
+      // A server can start its own providers in separate process groups.
+      sweepTokenOwnedProcesses: true,
+    },
+    stderr.append,
+  );
+  const client = new OwnedMcpClient({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
   try {
@@ -159,25 +168,13 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     };
   } finally {
     clearTimeout(timer);
+    // The owned transport is the only cleanup owner; Client.close would only
+    // delegate to it. An interrupted connect can also clear the client's
+    // transport reference before its startup child is closed.
     try {
-      await client.close();
-    } catch (cause: unknown) {
-      cleanupFailure = { cause };
-    }
-    try {
-      // An interrupted connect can clear the client's transport reference
-      // before its startup child is closed. The transport retains that child.
       await transport.close();
     } catch (cause: unknown) {
-      cleanupFailure = {
-        cause:
-          cleanupFailure === undefined || cleanupFailure.cause === cause
-            ? cause
-            : new AggregateError(
-                [cleanupFailure.cause, cause],
-                `MCP client and transport cleanup failed: ${errorMessage(cleanupFailure.cause)}; ${errorMessage(cause)}`,
-              ),
-      };
+      cleanupFailure = { cause };
     }
   }
   if (cleanupFailure !== undefined)
@@ -189,10 +186,12 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         {
           name: "cleanup",
           ok: false,
-          detail: `MCP stdio cleanup failed: ${errorMessage(cleanupFailure.cause)}`,
+          detail: cleanupFailureDetail(cleanupFailure.cause),
         },
       ],
     };
+  // This reporter keeps the documented stderr prefix, including a withheld
+  // partial character; the transport's own retention serves cleanup errors.
   return { ...result, diagnostics: stderr.value() };
 };
 
@@ -211,18 +210,30 @@ type ProductionMcpDoctorResult =
       readonly checks: readonly McpDoctorCheck[];
     };
 
-/** Join SDK-triggered and caller-triggered close calls for the same child. */
-class OwnedStdioClientTransport extends StdioClientTransport {
-  #closePromise: Promise<void> | undefined;
-
-  override close(): Promise<void> {
-    this.#closePromise ??= super.close();
-    return this.#closePromise;
+/** The doctor's bounded stdio session, owning the process family it starts. */
+class DoctorStdioTransport extends OwnedMcpStdioTransport {
+  constructor(
+    options: ConstructorParameters<typeof OwnedMcpStdioTransport>[0],
+    onStderr: (chunk: unknown) => void,
+  ) {
+    super(options, {
+      provider: "mcp-doctor",
+      operation: "mcp_doctor",
+      label: "MCP doctor",
+      maxFrameBytes: 8 * 1024 * 1024,
+      maxOperationBytes: 32 * 1024 * 1024,
+      // Retain only stderr, with the byte budget the report promises.
+      maxDiagnosticBytes: {
+        stdout: 0,
+        stderr: MCP_STARTUP_POLICY.doctorStderrBytes,
+      },
+      onStderr,
+    });
   }
 }
 
 /** A valid scope can intentionally omit the target-free session request. */
-export const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
+const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
   "binary_session is outside the selected tool families; include the session family for request-flow and identity checks";
 
 /** Doctor expectations derived from the same environment the child inherits. */
@@ -232,6 +243,14 @@ interface DoctorCatalogExpectation {
   readonly expectedPromptNames: readonly string[];
 }
 
+const listPromptsWhenAdvertised = (
+  client: Client,
+  request: ReturnType<typeof requestOptions>,
+) =>
+  client.getServerCapabilities()?.prompts
+    ? client.listPrompts(undefined, request)
+    : Promise.resolve({ prompts: [] });
+
 const inspectProductionMcpSession = async (
   client: Client,
   deadline: number,
@@ -240,23 +259,32 @@ const inspectProductionMcpSession = async (
   budget: McpPhaseBudget,
 ) => {
   const request = requestOptions(deadline, signal);
+  // The SDK logs to stdout when listPrompts is called without the advertised
+  // capability, which corrupts the doctor's structured output. An absent
+  // capability is an empty prompt inventory for this diagnostic.
+  const promptsRequest = listPromptsWhenAdvertised(client, request);
   const [tools, prompts] = await Promise.all([
     client.listTools(undefined, request),
-    client.listPrompts(undefined, request),
+    promptsRequest,
   ]);
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
+  // The reply is checked against the canonical output contract, not the
+  // listing: the default output profile omits output schemas and `compact`
+  // widens them, so the listed schema cannot establish a valid reply.
+  const toolDefinition = {
+    ...(sessionTool ?? {
+      name: "binary_session",
+      inputSchema: { type: "object" as const },
+    }),
+    outputSchema: advertisedOutputJsonSchema(toolContract("binary_session")),
+  };
   // A scope without the session family cannot serve request flow at all;
   // every other case still probes the call so the report names the real cause.
   const requestFlow = expectation.expectedToolNames.includes("binary_session")
     ? await client
         .callTool(
           { name: "binary_session", arguments: {} },
-          {
-            ...requestOptions(deadline, signal),
-            ...(sessionTool === undefined
-              ? {}
-              : { toolDefinition: sessionTool }),
-          },
+          { ...requestOptions(deadline, signal), toolDefinition },
         )
         .then(ok, (cause: unknown) =>
           err({
@@ -301,7 +329,10 @@ const inspectProductionMcpSession = async (
       ok:
         observedIdentity.packageVersion === PRODUCT_IDENTITY.packageVersion &&
         observedIdentity.catalogDigest === catalog.digests.combined_sha256,
-      detail: `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`,
+      // Identity is carried by the request-flow reply; without one it is unobserved, not missing.
+      detail: requestFlow.ok
+        ? `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`
+        : `identity not observed: ${requestFlow.error.detail}`,
     },
     {
       name: "request-flow",
@@ -392,7 +423,7 @@ export const runProductionMcpDoctorCli = async (
 };
 
 /** Compare exact names while retaining actionable mismatch locations. */
-export const compareInventory = (
+const compareInventory = (
   expectedNames: readonly string[],
   observedNames: readonly string[],
 ): InventoryComparison => {
@@ -572,9 +603,6 @@ const targetFreeEnvironment = (
 const doctorExpectationForEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): DoctorCatalogExpectation => {
-  const inputProfile = parseMcpInputSchemaProfile(
-    environment.REA_MCP_INPUT_SCHEMA_PROFILE,
-  );
   const outputProfile = parseMcpOutputSchemaProfile(
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
   );
@@ -588,18 +616,27 @@ const doctorExpectationForEnvironment = (
       : undefined;
   const contracts = contractsForToolFamilies(selection);
   const promptContracts = promptsForToolFamilies(selection);
+  const catalogProfile = parseMcpToolCatalogProfile(
+    environment.REA_MCP_TOOL_CATALOG_PROFILE,
+  );
+  const progressive = catalogProfile.ok && catalogProfile.value === "hot-cold";
+  const catalog = createCatalogIdentity({
+    contracts,
+    outputSchemaProfile: resolveMcpOutputSchemaProfile(
+      outputProfile.ok ? outputProfile.value : undefined,
+    ),
+    promptContracts,
+  });
   return {
-    catalog: createCatalogIdentity({
-      compactPresentation: compactPresentationForMcpInputSchemaProfile(
-        inputProfile.ok ? inputProfile.value : undefined,
-      ),
-      contracts,
-      outputSchemaProfile: outputProfile.ok
-        ? (outputProfile.value ?? "full")
-        : "full",
-      promptContracts,
-    }),
-    expectedToolNames: contracts.map(({ name }) => name),
+    catalog: progressive ? progressiveCatalogIdentity(catalog) : catalog,
+    expectedToolNames: progressive
+      ? [
+          ...contracts
+            .map(({ name }) => name)
+            .filter((name) => HOT_TOOL_NAMES.has(name)),
+          DISCOVER_TOOLS.name,
+        ]
+      : contracts.map(({ name }) => name),
     expectedPromptNames: promptContracts.map(({ name }) => name),
   };
 };
@@ -633,11 +670,19 @@ const captureStderr = () => {
   };
 };
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+/** Report the transport's typed cleanup reason and the resources it retains. */
+const cleanupFailureDetail = (cause: unknown): string => {
+  const detail = `MCP stdio cleanup failed: ${errorMessage(cause)}`;
+  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete)
+    return detail;
+  const reason = cause.diagnostics?.reason;
+  return [
+    typeof reason === "string" ? `${detail} (${reason})` : detail,
+    ...(cause.cleanupResources.length === 0
+      ? []
+      : [`retained resources: ${cause.cleanupResources.join(", ")}`]),
+  ].join("; ");
+};
 
 /**
  * Name the applied doctor deadline when an owned abort or SDK request timeout
@@ -655,23 +700,3 @@ const doctorTransportDetail = (
     (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout);
   return timedOut ? `${message} ${mcpDoctorDeadlineRecovery(budget)}` : message;
 };
-
-/**
- * `deadlineMs` is a caller-selected applied deadline, used by tests. Omitted
- * means the budget resolved from `REA_MCP_DOCTOR_DEADLINE_MS`.
- */
-const appliedDoctorBudget = (
-  resolved: McpPhaseBudget,
-  deadlineMs: number | undefined,
-): McpPhaseBudget =>
-  deadlineMs === undefined
-    ? resolved
-    : {
-        ...resolved,
-        milliseconds: deadlineMs,
-        source:
-          deadlineMs === resolved.defaultMilliseconds &&
-          resolved.source === "default"
-            ? "default"
-            : "setting",
-      };

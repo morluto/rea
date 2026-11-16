@@ -4,7 +4,7 @@ import {
   createAnalysisExecution,
   type AnalysisOperation,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
@@ -444,7 +444,6 @@ describe("EnhancedTools cancellation ownership", () => {
       controller.signal,
     );
 
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Pre-cancelled observation was accepted");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);

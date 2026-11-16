@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { expect, it } from "vitest";
 
 import { registerAnalysisViewCommands } from "../../../src/cli/analysisViewCommands.js";
@@ -49,7 +49,7 @@ const manifest = async (
       }),
     },
   });
-  const cli = Cli.create("scenario-coverage", { sync: false });
+  const cli = createCommandCli();
   registerAnalysisViewCommands(cli, silentLogger);
   let stdout = "";
   let exitCode = 0;
@@ -92,8 +92,8 @@ it.each(
   async ({ url, body }) => {
     const result = await manifest([url], body);
     expect(result.records).toEqual([]);
-    expect(result.limitations).toContain(
-      "1 retained records without a usable request line are not represented in the manifest.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/1.*request line.*not represented.*manifest/iu),
     );
     expect(
       result.limitations.filter((limitation) =>
@@ -144,7 +144,7 @@ it("does not derive a tool from conflicting header-only MIME evidence through th
         })),
       },
     ]);
-    const cli = Cli.create("scenario-mime", { sync: false });
+    const cli = createCommandCli();
     registerAnalysisViewCommands(cli, silentLogger);
     let stdout = "";
     let exitCode = 0;

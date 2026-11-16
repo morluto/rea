@@ -1,8 +1,13 @@
+import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  onceConfirmed,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -12,7 +17,12 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 const execute = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const root = await realpath(await mkdtemp(join(tmpdir(), "rea-inspector-")));
+// A plain directory, as before: this verifier also runs on Windows CI.
+const rootFixture = await VerifierFixture.open({
+  prefix: "rea-inspector-",
+  private: false,
+});
+const root = rootFixture.path;
 const environment = {
   ...process.env,
 };
@@ -38,7 +48,11 @@ const names = [
   ...(process.platform === "win32" ? [] : ['with"quote.cjs']),
 ];
 
-try {
+// The MCP server may still read target files under the root: the client and
+// its transport close before the root is removed.
+rootFixture.releaseAfter(() => client.close());
+rootFixture.releaseAfter(() => transport.close());
+await withVerifierFixture(rootFixture, async () => {
   await client.connect(transport);
   for (const name of names) {
     const targetPath =
@@ -54,19 +68,17 @@ try {
         stdio: ["ignore", "ignore", "pipe"],
       },
     );
-    try {
-      await verifyTarget(child, targetPath, name);
-    } finally {
-      await terminate(child);
-    }
+    // The target runs from the fixture root: the root is removed only after
+    // it is confirmed stopped, and it still stops after its own check.
+    const stop = rootFixture.releaseAfter(
+      onceConfirmed(() => terminate(child)),
+    );
+    await withVerifierCleanup(
+      () => verifyTarget(child, targetPath, name),
+      [stop],
+    );
   }
-} finally {
-  try {
-    await client.close();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}
+});
 
 async function verifyTarget(child, targetPath, name) {
   const socket = new URL(await inspectorUrl(child));
@@ -192,15 +204,37 @@ async function runMcp(name, arguments_) {
 }
 
 async function inspectorUrl(process_) {
-  let captured = "";
-  for await (const chunk of process_.stderr) {
-    captured += chunk.toString("utf8");
-    const match = /Debugger listening on (ws:\/\/[^\s]+)/u.exec(captured);
-    if (match?.[1] !== undefined) return match[1];
-    if (captured.length > 64 * 1_024)
-      throw new Error("Inspector startup output exceeded its bound");
-  }
-  throw new Error("Node exited before reporting its Inspector URL");
+  return new Promise((resolveUrl, rejectUrl) => {
+    let captured = "";
+    const timer = setTimeout(
+      () =>
+        finish(new Error("Inspector startup exceeded its 10000ms deadline")),
+      10_000,
+    );
+    const finish = (error, url) => {
+      clearTimeout(timer);
+      process_.stderr.off("data", onData);
+      process_.stderr.off("end", onEnd);
+      process_.stderr.off("error", onError);
+      process_.off("error", onError);
+      if (error !== undefined) rejectUrl(error);
+      else resolveUrl(url);
+    };
+    const onData = (chunk) => {
+      captured += chunk.toString("utf8");
+      const match = /Debugger listening on (ws:\/\/[^\s]+)/u.exec(captured);
+      if (match?.[1] !== undefined) finish(undefined, match[1]);
+      else if (captured.length > 64 * 1_024)
+        finish(new Error("Inspector startup output exceeded its bound"));
+    };
+    const onEnd = () =>
+      finish(new Error("Node exited before reporting its Inspector URL"));
+    const onError = (error) => finish(error);
+    process_.stderr.on("data", onData);
+    process_.stderr.once("end", onEnd);
+    process_.stderr.once("error", onError);
+    process_.once("error", onError);
+  });
 }
 
 async function runCli(arguments_) {
@@ -236,7 +270,14 @@ async function terminate(process_) {
     )
       return;
     process_.kill("SIGKILL");
-    await exited;
+    clearTimeout(timer);
+    const killed = await Promise.race([
+      exited.then(() => true),
+      new Promise((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout(false), 2_000);
+      }),
+    ]);
+    assert.equal(killed, true, "Inspector fixture did not exit after SIGKILL");
   } finally {
     clearTimeout(timer);
   }

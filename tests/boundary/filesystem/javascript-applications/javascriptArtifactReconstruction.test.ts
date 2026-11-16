@@ -18,13 +18,16 @@ import {
   readJavaScriptArtifactFiles,
 } from "../../../support/javascriptApplicationScope.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { analyzeArtifactFiles } from "../../../fixtures/javascriptArtifactAnalysis.js";
+import {
+  analyzeArtifactFiles,
+  withArtifactFileAnalyzer,
+} from "../../../fixtures/javascriptArtifactAnalysis.js";
 import type { JavaScriptAnalyzedSource } from "../../../../src/domain/javascript/javascriptSourceAnalysis.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import type { JavaScriptModuleSemanticIr } from "../../../../src/domain/javascript/javascriptModuleSemanticIr.js";
 import type { JavaScriptStaticAnalysis } from "../../../../src/domain/javascript/javascriptStaticAnalysisTypes.js";
-import { analyzeJavaScriptStaticSource } from "../../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../fixtures/javascriptStaticAnalysis.js";
 import type { JavaScriptArtifactFile } from "../../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { completeJavaScriptAnalysisSteps } from "../../../../src/application/javascript/JavaScriptAnalysisControl.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
@@ -34,7 +37,7 @@ import {
 } from "../../../../src/javascript/analysis/JavaScriptAnalysisTransfer.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "../../../../src/javascript/analysis/JavaScriptAnalysisWorkerSchemas.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
-import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { createJavaScriptSourceAnalysis } from "../../../../src/javascript/analysis/JavaScriptSourceAnalysis.js";
 import {
   scanCanonicalArtifactInventory,
   withArtifactResourceScope,
@@ -404,93 +407,95 @@ it("keeps known IPC pairings when a different Electron value is dynamic", async 
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
-    const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const { analysis } = await analyzeArtifactFiles(files);
-    expect(
-      analysis.files.find(({ file }) => file.path === "main.js")?.javascript,
-    ).toMatchObject({ parse_status: "partial", parse_error_count: 0 });
-    const { graph, electronSummary } = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
-    );
-    expect(graph.coverage.status).toBe("partial");
-    expect(electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 1,
-      ambiguous_renderer_transmissions: 0,
-    });
+    await withArtifactFileAnalyzer(async (analyze) => {
+      const files = await readJavaScriptArtifactFiles(reader, snapshot);
+      const { analysis } = await analyze(files);
+      expect(
+        analysis.files.find(({ file }) => file.path === "main.js")?.javascript,
+      ).toMatchObject({ parse_status: "partial", parse_error_count: 0 });
+      const { graph, electronSummary } = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
+      );
+      expect(graph.coverage.status).toBe("partial");
+      expect(electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 1,
+        ambiguous_renderer_transmissions: 0,
+      });
 
-    // An unselected source map cannot hide an IPC handler.
-    const withoutMap = await readJavaScriptArtifactFiles(
-      reader,
-      snapshot,
-      undefined,
-      ["package.json", "main.js", "preload.js", "hidden.js"],
-    );
-    const withoutMapAnalysis = (await analyzeArtifactFiles(withoutMap))
-      .analysis;
-    const nonJsResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
+      // An unselected source map cannot hide an IPC handler.
+      const withoutMap = await readJavaScriptArtifactFiles(
+        reader,
         snapshot,
-        withoutMap,
-        withoutMapAnalysis,
-      ),
-    );
-    expect(nonJsResult.graph.coverage.status).toBe("partial");
-    expect(nonJsResult.electronSummary.ipc.paired_renderer_transmissions).toBe(
-      1,
-    );
+        undefined,
+        ["package.json", "main.js", "preload.js", "hidden.js"],
+      );
+      const withoutMapAnalysis = (await analyze(withoutMap)).analysis;
+      const nonJsResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          withoutMap,
+          withoutMapAnalysis,
+        ),
+      );
+      expect(nonJsResult.graph.coverage.status).toBe("partial");
+      expect(
+        nonJsResult.electronSummary.ipc.paired_renderer_transmissions,
+      ).toBe(1);
 
-    // A source outside the requested scope can hide a competing IPC handler,
-    // even when the observed sender and handler have a known package owner.
-    const selected = await readJavaScriptArtifactFiles(
-      reader,
-      snapshot,
-      undefined,
-      ["package.json", "main.js", "preload.js"],
-    );
-    const selectedAnalysis = (await analyzeArtifactFiles(selected)).analysis;
-    const selectionResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
+      // A source outside the requested scope can hide a competing IPC handler,
+      // even when the observed sender and handler have a known package owner.
+      const selected = await readJavaScriptArtifactFiles(
+        reader,
         snapshot,
-        selected,
-        selectedAnalysis,
-      ),
-    );
-    expect(selectionResult.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
-    });
+        undefined,
+        ["package.json", "main.js", "preload.js"],
+      );
+      const selectedAnalysis = (await analyze(selected)).analysis;
+      const selectionResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          selected,
+          selectedAnalysis,
+        ),
+      );
+      expect(selectionResult.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
 
-    const hidden = files.files.find(({ path }) => path === "hidden.js");
-    if (hidden === undefined) throw new Error("Missing hidden source fixture");
-    const unavailable = {
-      ...files,
-      files: files.files.filter(({ path }) => path !== hidden.path),
-      unavailable_relevant_files: [
-        ...files.unavailable_relevant_files,
-        {
-          path: hidden.path,
-          container_sha256: hidden.container_sha256,
-          sha256: hidden.sha256,
-          bytes: hidden.bytes,
-          inventory_artifact_id: hidden.inventory_artifact_id,
-          kind: hidden.kind,
-        },
-      ],
-    };
-    const unavailableAnalysis = {
-      ...analysis,
-      files: analysis.files.filter(({ file }) => file.path !== hidden.path),
-    };
-    const unavailableResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
-        snapshot,
-        unavailable,
-        unavailableAnalysis,
-      ),
-    );
-    expect(unavailableResult.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
+      const hidden = files.files.find(({ path }) => path === "hidden.js");
+      if (hidden === undefined)
+        throw new Error("Missing hidden source fixture");
+      const unavailable = {
+        ...files,
+        files: files.files.filter(({ path }) => path !== hidden.path),
+        unavailable_relevant_files: [
+          ...files.unavailable_relevant_files,
+          {
+            path: hidden.path,
+            container_sha256: hidden.container_sha256,
+            sha256: hidden.sha256,
+            bytes: hidden.bytes,
+            inventory_artifact_id: hidden.inventory_artifact_id,
+            kind: hidden.kind,
+          },
+        ],
+      };
+      const unavailableAnalysis = {
+        ...analysis,
+        files: analysis.files.filter(({ file }) => file.path !== hidden.path),
+      };
+      const unavailableResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          unavailable,
+          unavailableAnalysis,
+        ),
+      );
+      expect(unavailableResult.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
     });
   } finally {
     await reader.close();
@@ -511,34 +516,36 @@ it("keeps IPC pairings uncertain when inline HTML scripts are not examined", asy
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
-    const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const { analysis } = await analyzeArtifactFiles(files);
-    expect(analysis.html_inline_scripts.length).toBeGreaterThan(0);
-    const result = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
-    );
-    expect(result.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
-    });
+    await withArtifactFileAnalyzer(async (analyze) => {
+      const files = await readJavaScriptArtifactFiles(reader, snapshot);
+      const { analysis } = await analyze(files);
+      expect(analysis.html_inline_scripts.length).toBeGreaterThan(0);
+      const result = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(snapshot, files, analysis),
+      );
+      expect(result.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
 
-    const selected = await readJavaScriptArtifactFiles(
-      reader,
-      snapshot,
-      undefined,
-      ["package.json", "main.js", "preload.js"],
-    );
-    const selectedAnalysis = (await analyzeArtifactFiles(selected)).analysis;
-    const selectedResult = await completeJavaScriptAnalysisSteps(
-      buildImmutableJavaScriptArtifactGraphSteps(
+      const selected = await readJavaScriptArtifactFiles(
+        reader,
         snapshot,
-        selected,
-        selectedAnalysis,
-      ),
-    );
-    expect(selectedResult.electronSummary.ipc).toMatchObject({
-      paired_renderer_transmissions: 0,
-      ambiguous_renderer_transmissions: 1,
+        undefined,
+        ["package.json", "main.js", "preload.js"],
+      );
+      const selectedAnalysis = (await analyze(selected)).analysis;
+      const selectedResult = await completeJavaScriptAnalysisSteps(
+        buildImmutableJavaScriptArtifactGraphSteps(
+          snapshot,
+          selected,
+          selectedAnalysis,
+        ),
+      );
+      expect(selectedResult.electronSummary.ipc).toMatchObject({
+        paired_renderer_transmissions: 0,
+        ambiguous_renderer_transmissions: 1,
+      });
     });
   } finally {
     await reader.close();
@@ -569,17 +576,15 @@ it("keeps IPC pairings uncertain when source examination is incomplete", async (
     const hiddenSource = analysis.files.find(
       ({ file }) => file.path === hidden.path,
     );
-    if (hiddenSource?.javascript?.analysis_coverage === undefined)
-      throw new Error("Missing hidden source coverage");
+    if (hiddenSource?.javascript == null)
+      throw new Error("Missing hidden source analysis");
     const hiddenStatic = hiddenSource.javascript;
-    const { analysis_coverage: _ignoredCoverage, ...historicalStatic } =
-      hiddenStatic;
     const limitedStatic = {
       ...hiddenStatic,
       analysis_coverage: {
-        ...hiddenStatic.analysis_coverage!,
+        ...hiddenStatic.analysis_coverage,
         examination: {
-          ...hiddenStatic.analysis_coverage!.examination,
+          ...hiddenStatic.analysis_coverage.examination,
           status: "limited" as const,
           semantic_resource_limits: ["alias-selections" as const],
         },
@@ -588,19 +593,15 @@ it("keeps IPC pairings uncertain when source examination is incomplete", async (
     const wrapperLimitedStatic = {
       ...hiddenStatic,
       analysis_coverage: {
-        ...hiddenStatic.analysis_coverage!,
+        ...hiddenStatic.analysis_coverage,
         examination: {
-          ...hiddenStatic.analysis_coverage!.examination,
+          ...hiddenStatic.analysis_coverage.examination,
           status: "limited" as const,
           electron_call_paths_limited: true,
         },
       },
     };
-    for (const javascript of [
-      historicalStatic,
-      limitedStatic,
-      wrapperLimitedStatic,
-    ]) {
+    for (const javascript of [limitedStatic, wrapperLimitedStatic]) {
       const partialAnalysis = {
         ...analysis,
         files: analysis.files.map((item) =>
@@ -642,7 +643,7 @@ it("keeps IPC pairings uncertain when source examination is incomplete", async (
           parse_status: "partial" as const,
           parse_error_count: 1,
           analysis_coverage: {
-            ...hiddenStatic.analysis_coverage!,
+            ...hiddenStatic.analysis_coverage,
             syntax: { status: "recovered" as const, error_count: 1 },
           },
         },
@@ -721,7 +722,7 @@ it("does not pair IPC when the Electron wrapper walk hits its depth limit", asyn
     const limited = analysis.files.find(
       ({ file }) => file.path === "limited.js",
     );
-    expect(limited?.javascript?.analysis_coverage?.examination).toMatchObject({
+    expect(limited?.javascript?.analysis_coverage.examination).toMatchObject({
       electron_call_paths_limited: true,
       semantic_resource_limits: [],
     });
@@ -1261,8 +1262,12 @@ it("reports semantic value resource limits in application graph coverage", async
         }),
       ]),
     );
-    expect(graph.limitations).toContain(
-      "Primitive candidate budget exceeded (maximum 256 alternatives).",
+    expect(graph.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Primitive candidate budget exceeded (maximum 256 alternatives).",
+        ),
+      ]),
     );
     expect(graph.limitations).toEqual(
       expect.arrayContaining([

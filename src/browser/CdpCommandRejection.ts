@@ -17,3 +17,15 @@ export class CdpCommandRejection extends BrowserObservationError {
     });
   }
 }
+
+/**
+ * CDP confirmed that the command's flat session no longer exists. The target
+ * is gone, so nothing REA installed through that session remains to restore.
+ */
+export const isCdpSessionGoneRejection = (cause: unknown): boolean =>
+  cause instanceof CdpCommandRejection &&
+  (cause.code === -32_001 ||
+    (cause.reportedMessage !== null &&
+      /no session with given id|session with given id not found/iu.test(
+        cause.reportedMessage,
+      )));

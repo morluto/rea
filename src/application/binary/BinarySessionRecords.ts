@@ -11,9 +11,11 @@ import {
   AnalysisSnapshotMismatchError,
 } from "../../domain/evidenceErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { InvestigationStatistics } from "../../domain/investigationLifecycle.js";
 import {
   AnalysisCapabilityUnavailableError,
-  type AnalysisInputError,
+  cancelledBy,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
@@ -32,12 +34,14 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   RetainedResourceScope,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindRegularFileCleanup } from "../RegularFileRead.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
+import { bindRegularFileCleanup } from "../../process/RegularFileRead.js";
 import {
   writeAnalysisSnapshot as writeSnapshotFile,
   readAnalysisSnapshot as readSnapshotFile,
@@ -46,7 +50,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { workflowAnalysisProfile } from "../WorkflowAnalysisProfile.js";
 import {
   hasOnlyProfilelessNativeDispatchEntries,
-  isProfilelessNativeDispatchSnapshot,
+  profilelessSnapshotMismatch,
 } from "./ProfilelessNativeWorkflowSnapshot.js";
 
 const SNAPSHOT_MUTATION_RECOVERY =
@@ -102,6 +106,7 @@ export abstract class BinarySessionRecords {
   }
   readonly #snapshot = new AnalysisSnapshotCache();
   #snapshotInvalidated = false;
+  #investigationDisposed = false;
   readonly #snapshotListeners = new Set<() => void | Promise<void>>();
 
   constructor(records: InvestigationRecords = new InvestigationRecords()) {
@@ -116,10 +121,23 @@ export abstract class BinarySessionRecords {
 
   recordEvidence(
     evidence: Evidence,
-  ): Result<"added" | "duplicate", EvidenceIntegrityError> {
+  ): Result<"added" | "duplicate", AnalysisError> {
+    if (this.#investigationDisposed)
+      return err(cancelledBy("record_evidence", OwnerCancellation.ownerClosed));
     const recorded = this.#records.recordEvidence(evidence);
     if (recorded.ok && recorded.value === "added") this.#emitSnapshotChanged();
     return recorded;
+  }
+
+  admitRecoveryObservation(
+    input: unknown,
+    operation: string,
+    additional: {
+      readonly valueBytes: number;
+      readonly serializedUtf16Bytes: number;
+    },
+  ): Result<void, AnalysisError> {
+    return this.#records.admitRecoveryObservation(input, operation, additional);
   }
 
   hasEvidence(evidenceId: string): boolean {
@@ -183,10 +201,11 @@ export abstract class BinarySessionRecords {
 
   importEvidenceBundle(
     bundle: unknown,
-  ): Result<
-    EvidenceImportReceipt,
-    EvidenceIntegrityError | AnalysisInputError
-  > {
+  ): Result<EvidenceImportReceipt, AnalysisError> {
+    if (this.#investigationDisposed)
+      return err(
+        cancelledBy("import_evidence_bundle", OwnerCancellation.ownerClosed),
+      );
     const imported = this.#records.mergeEvidenceBundle(bundle);
     if (!imported.ok) return imported;
     this.#snapshot.refreshEvidenceMetadata(imported.value.replacements);
@@ -194,7 +213,7 @@ export abstract class BinarySessionRecords {
     return ok({
       recordsAdded: imported.value.recordsAdded,
       unknownsAdded: imported.value.unknownsAdded,
-      totalRecords: this.#records.immutableEvidenceBundle().records.length,
+      totalRecords: this.#records.statistics().evidenceRecords,
     });
   }
 
@@ -251,6 +270,10 @@ export abstract class BinarySessionRecords {
   importAnalysisSnapshot(
     snapshot: AnalysisSnapshot,
   ): Result<number, AnalysisError> {
+    if (this.#investigationDisposed)
+      return err(
+        cancelledBy("import_analysis_snapshot", OwnerCancellation.ownerClosed),
+      );
     const active = this.activeAnalysisBinding();
     if (active !== undefined && this.#snapshotInvalidated)
       return err(
@@ -262,16 +285,20 @@ export abstract class BinarySessionRecords {
         ),
       );
     const profile = active?.profile ?? active?.profilelessWorkflowProfile;
-    if (
-      active?.profile === null &&
-      (profile === undefined ||
-        !isProfilelessNativeDispatchSnapshot(snapshot, active.target, profile))
-    )
-      return err(
-        new AnalysisSnapshotMismatchError(
-          "Analysis snapshot profile_mismatch: the snapshot is not bound to the active native dispatch reader",
-        ),
+    if (active?.profile === null) {
+      const mismatch = profilelessSnapshotMismatch(
+        snapshot,
+        active.target,
+        profile,
       );
+      if (mismatch !== undefined)
+        return err(
+          new AnalysisSnapshotMismatchError(
+            "Analysis snapshot is not bound to the active native dispatch reader",
+            mismatch,
+          ),
+        );
+    }
     const imported = this.#snapshot.import(
       snapshot,
       active === undefined
@@ -290,11 +317,11 @@ export abstract class BinarySessionRecords {
     return imported;
   }
 
-  protected matchesSnapshot(
+  protected snapshotMismatch(
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | null,
-  ): boolean {
-    return this.#snapshot.matches(target, profile ?? undefined);
+  ) {
+    return this.#snapshot.mismatch(target, profile ?? undefined);
   }
 
   protected selectSnapshot(
@@ -314,14 +341,16 @@ export abstract class BinarySessionRecords {
     >,
   ): AnalysisExecution | undefined {
     if (this.#snapshotInvalidated) return undefined;
-    return this.#snapshot.lookup(target, profile, operation, parameters);
+    return this.#snapshot.lookup(target, profile, operation, parameters, (id) =>
+      this.evidenceForAnalysis(id),
+    );
   }
 
   protected recordSnapshot(
     input: Parameters<AnalysisSnapshotCache["record"]>[0],
   ): void {
     if (this.#snapshotInvalidated) return;
-    this.#snapshot.record(input);
+    this.#snapshot.record(input, (id) => this.evidenceForAnalysis(id));
     this.#emitSnapshotChanged();
   }
 
@@ -391,11 +420,35 @@ export abstract class BinarySessionRecords {
     this.#emitSnapshotChanged();
   }
 
-  protected clearSessionRecords(): void {
-    this.#records.clear();
+  /** Clear replay and engine invalidation state when the engine is retired. */
+  protected clearEngineRecords(): void {
     this.#snapshot.clear();
     this.#snapshotInvalidated = false;
     this.#emitSnapshotChanged();
+  }
+
+  /** End investigation history without making mutated engine state replayable again. */
+  protected clearInvestigationRecords(): void {
+    this.#records.clear();
+    this.clearSnapshot();
+  }
+
+  /** Terminal runtime disposal also seals direct record-port writes. */
+  protected disposeInvestigationRecords(): void {
+    this.#investigationDisposed = true;
+    this.clearInvestigationRecords();
+  }
+
+  protected investigationStatistics(): InvestigationStatistics {
+    const statistics = this.#records.statistics();
+    return {
+      evidence_records: statistics.evidenceRecords,
+      unknown_revisions: statistics.unknownRevisions,
+      unknown_heads: statistics.unknownHeads,
+      retained_representation_bytes: statistics.retainedRepresentationBytes,
+      maximum_representation_bytes: statistics.maximumRepresentationBytes,
+      persistence: "memory",
+    };
   }
 
   #emitSnapshotChanged(): void {
@@ -418,6 +471,8 @@ export abstract class BinarySessionRecords {
   recordUnknown(
     input: RecordUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
+    if (this.#investigationDisposed)
+      return err(cancelledBy("record_unknown", OwnerCancellation.ownerClosed));
     const target = this.activeAnalysisBinding()?.target;
     const recorded = this.#records.recordUnknown(input, target);
     if (recorded.ok) this.#emitSnapshotChanged();
@@ -428,6 +483,13 @@ export abstract class BinarySessionRecords {
     evidence: Evidence,
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
+    if (this.#investigationDisposed)
+      return err(
+        cancelledBy(
+          "record_evidence_with_unknown",
+          OwnerCancellation.ownerClosed,
+        ),
+      );
     const recorded = this.#records.recordEvidenceWithUnknown(evidence, input);
     if (recorded.ok) this.#emitSnapshotChanged();
     return recorded;
@@ -436,6 +498,8 @@ export abstract class BinarySessionRecords {
   updateUnknown(
     input: UpdateUnknownInput,
   ): Result<ResidualUnknown, AnalysisError> {
+    if (this.#investigationDisposed)
+      return err(cancelledBy("update_unknown", OwnerCancellation.ownerClosed));
     const target = this.activeAnalysisBinding()?.target;
     const updated = this.#records.updateUnknown(input, target);
     if (updated.ok) this.#emitSnapshotChanged();

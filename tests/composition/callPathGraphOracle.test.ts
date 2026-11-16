@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { z } from "zod";
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import { traceCallPath } from "../../src/application/CallPathTracing.js";
 import { ok } from "../../src/domain/result.js";
 
@@ -66,7 +66,15 @@ it("matches a simple-path oracle for every three-node directed graph in both dir
               createAnalysisExecution(
                 [...related, ...related],
                 { id: "oracle", name: "Oracle", version: null },
-                { relationshipCoverage: { status: "complete" } },
+                {
+                  relationshipCoverage: {
+                    status: "complete",
+                    discovery: {
+                      callers: { status: "complete" },
+                      callees: { status: "complete" },
+                    },
+                  },
+                },
               ),
             );
           },

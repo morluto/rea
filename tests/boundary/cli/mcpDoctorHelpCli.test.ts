@@ -2,7 +2,45 @@ import { describe, expect } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
+describe("MCP doctor output routing boundary", () => {
+  workspaceCliTest(
+    "keeps output options from selecting the CLI-derived MCP doctor",
+    async ({ cli }) => {
+      for (const arguments_ of [
+        ["mcp", "doctor", "--json"],
+        ["--json", "mcp", "doctor"],
+        ["mcp", "--json", "doctor"],
+        ["--format", "json", "mcp", "doctor"],
+        ["mcp", "--format", "json", "doctor"],
+        ["--format=json", "mcp", "doctor"],
+        ["mcp", "--format=json", "doctor"],
+        ["--full-output", "mcp", "--json", "doctor"],
+      ]) {
+        const result = await cli.run({
+          arguments: arguments_,
+          environment: { REA_MCP_DOCTOR_DEADLINE_MS: "0" },
+        });
+        expect(result.exitCode, arguments_.join(" ")).toBe(1);
+        const report = {
+          healthy: false,
+          adapter: "production-stdio",
+          checks: [
+            expect.objectContaining({
+              name: "REA_MCP_DOCTOR_DEADLINE_MS",
+              ok: false,
+            }),
+          ],
+        };
+        expect(result.json).toMatchObject(
+          arguments_.includes("--full-output")
+            ? { ok: false, error: report }
+            : report,
+        );
+        expect(result.stderr).toBe("");
+      }
+    },
+  );
+});
 
 describe("MCP doctor help boundary", () => {
   workspaceCliTest(
@@ -29,7 +67,6 @@ describe("MCP doctor help boundary", () => {
         expect(result.stderr).toBe("");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -47,7 +84,6 @@ describe("MCP doctor help boundary", () => {
         expect(result.stdout).not.toContain("healthy");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -64,7 +100,6 @@ describe("MCP doctor help boundary", () => {
         expect(result.stdout).not.toContain("Usage: rea mcp doctor");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -85,7 +120,6 @@ describe("MCP doctor help boundary", () => {
           'code: VALIDATION_ERROR\nmessage: "Invalid output format: bogus"\n',
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -115,9 +149,10 @@ describe("MCP doctor help boundary", () => {
         });
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
+});
 
+describe("MCP doctor timing boundary", () => {
   workspaceCliTest(
     "reports doctor timing on stderr while preserving JSON output",
     async ({ cli }) => {
@@ -137,7 +172,6 @@ describe("MCP doctor help boundary", () => {
       expect(Number.isFinite(duration)).toBe(true);
       expect(duration).toBeGreaterThanOrEqual(0);
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -150,6 +184,32 @@ describe("MCP doctor help boundary", () => {
       expect(result.stdout).toContain("Invalid output format: --timings");
       expect(result.stderr).toBe("");
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
+
+workspaceCliTest(
+  "accepts the same timing spellings as the ordinary CLI",
+  async ({ cli }) => {
+    for (const [flag, enabled] of [
+      ["--no-timings", false],
+      ["--timings=false", false],
+      ["--timings=true", true],
+      ["--timings=other", false],
+      ["--timings=", false],
+    ] as const) {
+      const result = await cli.run({
+        arguments: ["mcp", "doctor", "--json", flag],
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        healthy: true,
+        adapter: "production-stdio",
+      });
+      if (enabled)
+        expect(JSON.parse(result.stderr)).toMatchObject({
+          rea_timings: { version: 1, command_ms: expect.any(Number) },
+        });
+      else expect(result.stderr).toBe("");
+    }
+  },
+);

@@ -8,7 +8,7 @@ export interface UnityFsMember {
   readonly size?: number;
 }
 
-export interface UnityFsOptions {
+interface UnityFsOptions {
   readonly formatVersion?: number;
   readonly playerVersion?: string;
   readonly engineVersion?: string;
@@ -29,7 +29,7 @@ const cstring = (value: string): Buffer =>
 const align16 = (value: number): number => (value + 15) & ~15;
 
 /** One final LZ4 literal sequence; separate sequences require intervening matches. */
-export const lz4LiteralBlock = (data: Buffer): Buffer => {
+const lz4LiteralBlock = (data: Buffer): Buffer => {
   const head = [Math.min(data.length, 15) << 4];
   if (data.length >= 15) {
     let extra = data.length - 15;

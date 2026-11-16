@@ -8,7 +8,7 @@ import { afterAll, expect } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 afterAll(() => disposeMdItInstance());
 
@@ -45,9 +45,10 @@ cliTest.for([
       const invocation = {
         arguments: ["inspect-keyed-archive", path, ...args],
       };
-      return label === "high" || label === "pair"
-        ? cli.run(invocation)
-        : runFileCli(cli, invocation);
+      return cli.run({
+        ...invocation,
+        freshProcess: label === "high" || label === "pair",
+      });
     };
     for (const format of ["json", "yaml"] as const) {
       const output = await run(["--format", format]);
@@ -120,9 +121,7 @@ cliTest(
         const invocation = {
           arguments: ["inspect-keyed-archive", path, ...args],
         };
-        return label === "nul"
-          ? cli.run(invocation)
-          : runFileCli(cli, invocation);
+        return cli.run({ ...invocation, freshProcess: label === "nul" });
       };
       const json = await run(["--json"]);
       expect(json.exitCode, json.stderr).toBe(0);

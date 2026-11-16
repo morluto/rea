@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 import {
   createAnalysisExecution,
@@ -14,7 +15,7 @@ import {
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -27,22 +28,22 @@ import { err, ok } from "../../../src/domain/result.js";
 
 type DeclaredOperation = Exclude<AnalysisOperation, "health">;
 
-describe("target-bound provider routing", () => {
-  it("rejects provider identity and operation-family collisions at composition", () => {
-    const alpha = deepProvider("alpha");
-    const registry = new AnalysisProviderRegistry([alpha.provider]);
-    expect(() =>
-      SessionProviderRouter.selectable(registry, [auxiliaryProvider("alpha")]),
-    ).toThrow(/Duplicate configured provider ID: alpha/u);
-    expect(() =>
-      SessionProviderRouter.selectable(registry, [
-        auxiliaryProvider("auxiliary", "address_name"),
-      ]),
-    ).toThrow(
-      /Deep and auxiliary providers both declare operation address_name/u,
-    );
-  });
+it("rejects provider identity and operation-family collisions at composition", () => {
+  const alpha = deepProvider("alpha");
+  const registry = new AnalysisProviderRegistry([alpha.provider]);
+  expect(() =>
+    SessionProviderRouter.selectable(registry, [auxiliaryProvider("alpha")]),
+  ).toThrow(/Duplicate configured provider ID: alpha/u);
+  expect(() =>
+    SessionProviderRouter.selectable(registry, [
+      auxiliaryProvider("auxiliary", "address_name"),
+    ]),
+  ).toThrow(
+    /Deep and auxiliary providers both declare operation address_name/u,
+  );
+});
 
+describe("target-bound provider routing", () => {
   it("binds one overlapping provider, preserves provenance, and never falls back", async () => {
     const target = await databaseTarget();
     const alpha = deepProvider("alpha");
@@ -128,33 +129,50 @@ describe("target-bound provider routing", () => {
     expect(beta.clients[0]?.closed).toBe(true);
   });
 
-  it("preserves the active client when a provider switch is cancelled while draining", async () => {
+  it("preserves the active client when a provider switch is cancelled with a call in flight", async () => {
     const target = await databaseTarget();
     const alpha = deepProvider("alpha");
     const beta = deepProvider("beta");
-    const pending = deferred<ReturnType<typeof successfulExecution>>();
-    alpha.pending = pending.promise;
+    const call = phaseGate<void, ReturnType<typeof successfulExecution>>();
+    const profileResolution = phaseArrival();
+    alpha.pending = () => call.hold();
+    beta.onProfile = () => profileResolution.arrive();
     const session = selectableSession([alpha.provider, beta.provider]);
-    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
-    const running = session.execute("address_name", { address: "0x1" });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-
     const controller = new AbortController();
-    const switching = session.open(target, {
+    const reason = new Error("cancel provider switch");
+    let running: Promise<unknown> | undefined;
+    let switching: ReturnType<typeof session.open> | undefined;
+    onTestFinished(async () => {
+      controller.abort(reason);
+      call.release(successfulExecution("alpha"));
+      await Promise.allSettled([
+        ...(running === undefined ? [] : [running]),
+        ...(switching === undefined ? [] : [switching]),
+      ]);
+      expect(await session.close()).toEqual(ok(null));
+    });
+    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
+    running = session.execute("address_name", { address: "0x1" });
+    await call.reached(running, "provider call");
+
+    switching = session.open(target, {
       providerId: "beta",
       signal: controller.signal,
     });
-    while (beta.profileResolutions === 0)
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    controller.abort();
-    pending.resolve(successfulExecution("alpha"));
+    await profileResolution.reached(switching, "provider profile resolution");
+    expect(alpha.clients[0]?.closed).toBe(false);
+    controller.abort(reason);
+    call.release(successfulExecution("alpha"));
 
     expect(await running).toMatchObject({ ok: true });
     const cancelled = await switching;
-    expect(cancelled).toEqual({
+    expect(cancelled).toMatchObject({
       ok: false,
-      error: new AnalysisCancelledError("open_binary"),
+      error: new AnalysisCancelledError("open_binary", { cause: reason }),
+      targetAtCompletion: expect.objectContaining({ path: target }),
+      selection: { kind: "binary", path: target, sha256: expect.any(String) },
     });
+    if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);
     expect(alpha.clients[0]?.closed).toBe(false);
     expect(beta.clients).toHaveLength(0);
     expect(await bindingStatus(session)).toMatchObject({
@@ -165,7 +183,7 @@ describe("target-bound provider routing", () => {
     const retained = await session.execute("address_name", { address: "0x2" });
     expect(retained.ok && retained.value.provider.id).toBe("alpha");
     expect(alpha.clients).toHaveLength(1);
-    await session.close();
+    expect(await session.close()).toEqual(ok(null));
     expect(alpha.clients[0]?.closed).toBe(true);
   });
 });
@@ -251,8 +269,9 @@ interface DeepProviderFixture {
   readonly clients: ClientState[];
   available: boolean;
   fail: boolean;
-  profileResolutions: number;
-  pending: Promise<ReturnType<typeof successfulExecution>> | undefined;
+  onProfile: (() => void) | undefined;
+  /** Holds each call while set. */
+  pending: (() => Promise<ReturnType<typeof successfulExecution>>) | undefined;
 }
 
 const deepProvider = (id: string): DeepProviderFixture => {
@@ -265,7 +284,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
     clients: [],
     available: true,
     fail: false,
-    profileResolutions: 0,
+    onProfile: undefined,
     pending: undefined,
   };
   const provider: AnalysisProviderCandidate = {
@@ -283,6 +302,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
             status: "unavailable",
             code: "runtime_missing",
             reason: `${id} runtime is unavailable`,
+            remediation: "Repair the fixture provider.",
             diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
           },
     inspectTargetSupport: () => ({
@@ -292,7 +312,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
       diagnostics: {},
     }),
     resolveAnalysisProfile: () => {
-      fixture.profileResolutions += 1;
+      fixture.onProfile?.();
       return Promise.resolve(
         ok({
           profile: createAnalysisProfile(
@@ -314,7 +334,7 @@ const deepProvider = (id: string): DeepProviderFixture => {
             return Promise.resolve(
               err(new ProviderAdapterError(id, operation)),
             );
-          if (fixture.pending !== undefined) return fixture.pending;
+          if (fixture.pending !== undefined) return fixture.pending();
           return Promise.resolve(successfulExecution(id, profile?.provider));
         },
         close: () => {
@@ -417,21 +437,3 @@ const bindingStatus = async (session: BinarySession) =>
     })
     .passthrough()
     .parse(await session.status());
-
-interface Deferred<Value> {
-  readonly promise: Promise<Value>;
-  resolve(value: Value): void;
-}
-
-const deferred = <Value>(): Deferred<Value> => {
-  let resolvePromise: ((value: Value) => void) | undefined;
-  const promise = new Promise<Value>((resolve) => {
-    resolvePromise = resolve;
-  });
-  return {
-    promise,
-    resolve(value) {
-      resolvePromise?.(value);
-    },
-  };
-};

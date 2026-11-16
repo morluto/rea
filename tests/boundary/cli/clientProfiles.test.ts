@@ -33,7 +33,6 @@ cliTest(
           USERPROFILE: home,
           CLAUDE_CONFIG_DIR: "",
         },
-        timeoutMs: 20_000,
       });
     const setup = (flags: readonly string[] = []) =>
       run(["setup", "--client", "claude_code", ...flags, "--json"]);
@@ -151,7 +150,6 @@ for (const policy of [{ excluded: ["rea"] }, { allowed: ["other"] }]) {
           arguments: arguments_,
           cwd: home,
           environment: { HOME: home, USERPROFILE: home },
-          timeoutMs: 20_000,
         });
       const setup = await run([
         "setup",
@@ -221,7 +219,6 @@ cliTest(
         arguments: arguments_,
         cwd: home,
         environment: { HOME: home, USERPROFILE: home },
-        timeoutMs: 20_000,
       });
     const before = await run(["doctor", "--client", "opencode", "--json"]);
     expect(before.exitCode).toBe(1);
@@ -391,7 +388,6 @@ cliTest(
     const home = await createTestTempDirectory("rea-gemini-case-");
     const system = join(home, "system.json");
     const defaults = join(home, "defaults.json");
-    await writeFile(system, JSON.stringify({ mcp: { allowed: ["REA"] } }));
     const environment = {
       HOME: home,
       USERPROFILE: home,
@@ -404,20 +400,20 @@ cliTest(
         cwd: home,
         environment,
       });
-    // The intersection compares names case-insensitively, so the spelling that
-    // survives must not decide the outcome: the same pair of policies in
-    // either arrangement has to consolidate to the same decision.
+    // Keep another server in both policies. Without normalized matching the
+    // intersection would then exclude REA rather than become an unrestricted
+    // empty allowlist, so each ordering independently detects that regression.
     for (const [systemSpelling, defaultSpelling] of [
       ["REA", "rea"],
       ["rea", "REA"],
     ]) {
       await writeFile(
         system,
-        JSON.stringify({ mcp: { allowed: [systemSpelling] } }),
+        JSON.stringify({ mcp: { allowed: [systemSpelling, "other"] } }),
       );
       await writeFile(
         defaults,
-        JSON.stringify({ mcp: { allowed: [defaultSpelling] } }),
+        JSON.stringify({ mcp: { allowed: [defaultSpelling, "other"] } }),
       );
       const result = await run();
       expect(result.exitCode, `${systemSpelling}+${defaultSpelling}`).toBe(0);

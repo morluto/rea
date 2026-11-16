@@ -1,5 +1,6 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -20,26 +21,22 @@ import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contract
 import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/javascript/JavaScriptRuntimeObservationEvidence.js";
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/providerIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 describe("JavaScript runtime observation MCP tools", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
-  const temporary: string[] = [];
 
   afterEach(async () => {
     await Promise.all(resources.splice(0).map((item) => item.close()));
-    await Promise.all(
-      temporary
-        .splice(0)
-        .map((path) => rm(path, { recursive: true, force: true })),
-    );
   });
 
   registerRuntimeParameterContract(resources);
   registerRuntimeMetadataContract();
-  registerRetainedRuntimeEvidence(resources, temporary);
+  registerRetainedRuntimeEvidence(resources);
 });
 
 function registerRuntimeParameterContract(
@@ -50,7 +47,10 @@ function registerRuntimeParameterContract(
       throw new Error("No provider expected");
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "runtime-parameter-test", version: "1" });
+    const client = new Client(
+      { name: "runtime-parameter-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     resources.push(client, server, session);
     await server.connect(st);
@@ -81,6 +81,7 @@ function registerRuntimeParameterContract(
       scripts: {
         items: [],
         observed_total: 0,
+        parse_failed_total: 0,
         excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
       },
       execution_contexts: [],
@@ -188,6 +189,7 @@ function registerRuntimeMetadataContract(): void {
         scripts: {
           items: [],
           observed_total: 0,
+          parse_failed_total: 0,
           excluded: {
             unsupported_location: 0,
             invalid_protocol_value: 0,
@@ -205,11 +207,9 @@ function registerRuntimeMetadataContract(): void {
 
 function registerRetainedRuntimeEvidence(
   resources: Array<{ close(): Promise<unknown> }>,
-  temporary: string[],
 ): void {
   test("lists and observes one target as retained Evidence", async () => {
     const root = await createTestTempDirectory("rea-v8-mcp-");
-    temporary.push(root);
     const { entry, inspector, client } = await createObservationClient(
       root,
       resources,
@@ -271,6 +271,14 @@ function registerRetainedRuntimeEvidence(
       },
     });
     const evidenceId = evidenceIdFrom(observedRuntime.structuredContent);
+    const bundle = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(bundle.isError).not.toBe(true);
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(
+      observedRuntime.structuredContent,
+    );
     expect(observedRuntime.structuredContent).toMatchObject({
       evidence_id: evidenceId,
       operation: "observe_javascript_runtime",
@@ -279,8 +287,10 @@ function registerRetainedRuntimeEvidence(
     expect(new Set(inspector.commands.map(({ method }) => method))).toEqual(
       new Set(["Runtime.enable", "Debugger.enable"]),
     );
-    const direct = await observeDirectly(inspector);
-    expect(direct.ok).toBe(true);
+    const provider = new V8InspectorProvider();
+    resources.push(provider);
+    const direct = await observeDirectly(inspector, provider);
+    expect(direct.ok, direct.ok ? undefined : direct.error.message).toBe(true);
     if (direct.ok) expect(evidenceId).toBe(direct.value.evidence_id);
   });
 }
@@ -292,10 +302,12 @@ const assertSdkObservationSchema = async (
   const observeTool = (await client.listTools()).tools.find(
     ({ name }) => name === "observe_javascript_runtime",
   );
-  if (observeTool?.outputSchema === undefined)
+  if (observeTool === undefined)
     throw new Error("Missing Inspector observation output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const schema: Record<string, unknown> = observeTool.outputSchema;
+  const schema: Record<string, unknown> = canonicalOutputSchema(
+    observeTool.name,
+  );
   expect(ajv.validateSchema(schema)).toBe(true);
   expect(ajv.validate(schema, content), JSON.stringify(ajv.errors)).toBe(true);
 };
@@ -324,7 +336,10 @@ const createObservationClient = async (
       }),
     },
   );
-  const client = new Client({ name: "v8-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "v8-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);
@@ -335,9 +350,10 @@ const createObservationClient = async (
 
 const observeDirectly = (
   inspector: Awaited<ReturnType<typeof startFakeV8Inspector>>,
+  provider: V8InspectorProvider,
 ) =>
   observeJavaScriptRuntime(
-    new V8InspectorProvider(),
+    provider,
     observeJavaScriptRuntimeInputSchema.parse({
       inspector_endpoint: inspector.endpoint,
       target_id: inspector.targetId,

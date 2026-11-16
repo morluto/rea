@@ -283,7 +283,7 @@ it("excludes declared binary lengths through CLI, MCP and retained capture pages
       });
     }
   }
-}, 60_000);
+});
 
 it("reads actual upstream HAR packages in an owned process and retains selected producer order", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-history-har-"));
@@ -291,19 +291,24 @@ it("reads actual upstream HAR packages in an owned process and retains selected 
   const fixture = historicalHar();
   const first = fixture.log.entries[0];
   if (first === undefined) throw new Error("fixture missing");
-  fixture.log.entries.push(structuredClone(first));
+  const second = structuredClone(first);
+  second.request.url = "https://example.test/b";
+  fixture.log.entries.push(second);
   const text = JSON.stringify(fixture);
   const path = join(root, "capture.har");
   await writeFile(path, text);
   const called = await cli(path, "har", ["--record", "1", "--record", "0"]);
   expect(called.ok, called.stdout).toBe(true);
   const result = { value: parseEvidence(JSON.parse(called.stdout)) };
-  expect(result.value.subject?.digest).toMatchObject({
+  expect(result.value.subject?.identity).toMatchObject({
     sha256: createHash("sha256").update(text).digest("hex"),
   });
   expect(result.value.normalized_result).toMatchObject({
     total_records: 2,
-    records: [{ ordinal: 1 }, { ordinal: 0 }],
+    records: [
+      { ordinal: 1, reported: { request: { url: second.request.url } } },
+      { ordinal: 0, reported: { request: { url: first.request.url } } },
+    ],
     runtime_attribution: "unknown",
   });
 });
@@ -344,7 +349,7 @@ it("reports the actual HAR decoder nesting constraint as a typed selected-input 
     details: {
       issues: [
         {
-          path: ["capture_path", expect.stringMatching(/^\/_extension\/child/)],
+          path: ["capturePath", expect.stringMatching(/^\/_extension\/child/)],
           reason: "out_of_range",
           expected: { maximum_capture_nesting: 64 },
         },

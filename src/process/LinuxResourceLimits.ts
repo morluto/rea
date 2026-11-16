@@ -1,8 +1,10 @@
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { open } from "node:fs/promises";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  withArtifactFileHandle,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 
 /** Per-process ceilings inherited by an owned Linux producer. */
 export interface LinuxResourceLimits {
@@ -14,16 +16,6 @@ const rows = {
   address_space_bytes: "Max address space",
   file_bytes: "Max file size",
   cpu_seconds: "Max cpu time",
-} as const;
-
-/** Bound the resident input copy and retained text before allocation/collection. */
-export const BOUNDED_PRODUCER_LIMITS = {
-  input_bytes: 32 * 1024 * 1024,
-  output_bytes: 4 * 1024 * 1024,
-  command_timeout_ms: 30_000,
-  address_space_bytes: 1024 * 1024 * 1024,
-  file_bytes: 64 * 1024 * 1024,
-  cpu_seconds: 30,
 } as const;
 
 /**

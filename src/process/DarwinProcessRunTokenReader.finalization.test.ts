@@ -172,7 +172,7 @@ it("decodes a successful native snapshot absence as a distinct identity fact", a
     environment: {},
   });
   try {
-    const operation = reader.identities([
+    const processes = [
       {
         pid: 123,
         parentPid: 1,
@@ -180,7 +180,8 @@ it("decodes a successful native snapshot absence as a distinct identity fact", a
         state: "S",
         command: "fixture",
       },
-    ]);
+    ];
+    const operation = reader.identities(processes);
     await command.waitUntilStarted();
     command.release();
     await expect(operation).resolves.toEqual(
@@ -211,26 +212,17 @@ it.each(["read", "identities"] as const)(
       await Promise.allSettled([operation, closing, reader.close()]);
     });
 
+    const processes = [
+      {
+        pid: 123,
+        parentPid: 1,
+        processGroupId: 123,
+        state: "S",
+        command: "fixture",
+      },
+    ];
     operation =
-      mode === "read"
-        ? reader.read([
-            {
-              pid: 123,
-              parentPid: 1,
-              processGroupId: 123,
-              state: "S",
-              command: "fixture",
-            },
-          ])
-        : reader.identities([
-            {
-              pid: 123,
-              parentPid: 1,
-              processGroupId: 123,
-              state: "S",
-              command: "fixture",
-            },
-          ]);
+      mode === "read" ? reader.read(processes) : reader.identities(processes);
     await command.waitUntilStarted();
 
     let closeSettled = false;
@@ -273,25 +265,7 @@ it.each(["read", "identities"] as const)(
       ]),
     );
     await expect(
-      mode === "read"
-        ? reader.read([
-            {
-              pid: 123,
-              parentPid: 1,
-              processGroupId: 123,
-              state: "S",
-              command: "fixture",
-            },
-          ])
-        : reader.identities([
-            {
-              pid: 123,
-              parentPid: 1,
-              processGroupId: 123,
-              state: "S",
-              command: "fixture",
-            },
-          ]),
+      mode === "read" ? reader.read(processes) : reader.identities(processes),
     ).rejects.toThrow("closed");
   },
 );
