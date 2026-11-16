@@ -20,6 +20,15 @@ import {
 } from "./commandManifests.js";
 import { cliCommands, type CliCommandEntry } from "./commandRegistry.js";
 import { suggestCommand } from "./commandSuggestion.js";
+import { unknownCommandReply } from "./unknownCommandReply.js";
+import { renderFailure } from "./outputEnvelope.js";
+import {
+  availableUpdate,
+  refreshUpdateCache,
+  UPDATE_CHECK_FLAG,
+  updateNoticeCta,
+  type UpdateEnvironment,
+} from "./updateNotice.js";
 import {
   formatCommandHelp,
   formatCommandListHelp,
@@ -156,9 +165,8 @@ const llmsAnswer = (
 };
 
 /**
- * `--schema` for a command, or the error for an unknown one. Markdown stays
- * with the dispatcher: it renders the document without Markdown escaping,
- * unlike REA's renderer, and that difference awaits a decision (#11654).
+ * `--schema` for a command, or the error for an unknown one. Known-command
+ * Markdown stays with the dispatcher until the remaining execution migration.
  */
 const schemaAnswer = (
   cli: CliInstance,
@@ -171,10 +179,13 @@ const schemaAnswer = (
       name,
       cliCommands(cli).map((command) => command.name),
     );
-    return answer(
-      `Error: '${name}' is not a command for '${cli.name}'.${suggestion === undefined ? "" : ` Did you mean '${suggestion}'?`}`,
-      1,
-    );
+    const { failure } = unknownCommandReply({
+      name: cli.name,
+      global,
+      commandIndex: 0,
+      suggestion,
+    });
+    return answer(`Error: ${failure.message}`, 1);
   }
   const { format, formatExplicit } = readCliOutputArguments(global);
   if (formatExplicit && format === "md") return undefined;
@@ -186,27 +197,86 @@ const schemaAnswer = (
   );
 };
 
+/** Facts about one invocation's process that discovery output depends on. */
+interface Invocation {
+  readonly environment: UpdateEnvironment;
+  readonly stdoutIsTerminal: boolean;
+  /** `performance.now()` when the dispatcher received the invocation. */
+  readonly started: number;
+}
+
+/**
+ * An unknown command: the closest command name, the corrected invocation and
+ * the help command. On a terminal without an explicit format the error is
+ * text, followed by the update notice when one is due.
+ */
+const unknownCommandAnswer = (
+  cli: CliInstance,
+  global: CliGlobalArguments,
+  { environment, stdoutIsTerminal, started }: Invocation,
+): DiscoveryAnswer | undefined => {
+  const controls = readCliOutputArguments(global);
+  const format = controls.formatExplicit ? controls.format : "toon";
+  if (format === "csv" || format === "tsv") return undefined;
+  const human = stdoutIsTerminal && !controls.formatExplicit;
+  const unknown = global.command[0]!;
+  const suggestion = suggestCommand(unknown, [
+    ...cliCommands(cli).map(({ name }) => name),
+    "completions",
+    "mcp",
+  ]);
+  const update = human
+    ? availableUpdate(cli.name, PRODUCT_IDENTITY.packageVersion, environment)
+    : undefined;
+  const notice =
+    update === undefined ? [] : updateNoticeCta(cli.name, update).commands;
+  const { command, cta, failure } = unknownCommandReply({
+    name: cli.name,
+    global,
+    commandIndex: 0,
+    suggestion,
+    additionalCommands: notice,
+  });
+  return answer(
+    renderFailure(
+      failure,
+      {
+        command,
+        duration: `${Math.round(performance.now() - started)}ms`,
+      },
+      cta,
+      {
+        format,
+        human,
+        fullOutput: controls.fullOutput,
+        tokenCount: controls.tokenCount,
+        tokenLimit: controls.tokenLimit,
+        tokenOffset: controls.tokenOffset,
+      },
+    ),
+    1,
+  );
+};
+
 /**
  * The document an invocation asks for instead of running a command, or
- * undefined. Precedence: the update check, `--update` without help and
- * `--mcp` stay with the dispatcher; the LLM manifests answer next; then the
+ * undefined. Precedence (after the detached update refresh): `--update`
+ * without help and `--mcp` stay with the dispatcher; the LLM manifests answer
+ * next; then the
  * integrations (`completions` shows its page for help or without a shell,
  * `mcp` shows its page without a subcommand); then `--version` without help;
  * then the root page for no command; then a command's page for help (help
- * after an unknown command shows the root page); then `--schema`.
+ * after an unknown command shows the root page); then `--schema`; then the
+ * unknown-command error.
  */
 const discoveryAnswer = (
   cli: CliInstance,
   global: CliGlobalArguments,
+  invocation: Invocation,
 ): DiscoveryAnswer | undefined => {
   const { command, flags } = global;
   const help = flags.has("--help") || flags.has("-h");
-  if (
-    flags.has("--incur-update-check") ||
-    (flags.has("--update") && !help) ||
-    flags.has("--mcp")
-  )
-    return undefined;
+  if ((flags.has("--update") && !help) || flags.has("--mcp")) return undefined;
   if (flags.has("--llms") || flags.has("--llms-full"))
     return llmsAnswer(cli, global, flags.has("--llms-full"));
   const completions = integrationIndex(command, cli.name, "completions");
@@ -265,27 +335,42 @@ const discoveryAnswer = (
     );
   }
   if (flags.has("--schema")) return schemaAnswer(cli, global);
-  return undefined;
+  if (cliCommands(cli).some(({ name }) => name === command[0]))
+    return undefined;
+  return unknownCommandAnswer(cli, global, invocation);
 };
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 
 /**
- * Answer help, `--version`, `--schema` and the LLM manifests, reading the
- * arguments as the command dispatcher receives them. Returns false when the
- * invocation asks for something else.
+ * Answer the detached update refresh, help, `--version`, `--schema`, the
+ * LLM manifests and unknown commands, reading the arguments as the command dispatcher receives
+ * them. Returns undefined when the invocation asks for something else.
  */
 export const serveDiscovery = (
   cli: CliInstance,
   arguments_: readonly string[],
   options: ServeOptions,
-): boolean => {
-  const result = discoveryAnswer(cli, parseCliGlobalArguments(arguments_));
-  if (result === undefined) return false;
+  environment: UpdateEnvironment,
+): Promise<void> | undefined => {
+  const global = parseCliGlobalArguments(arguments_);
+  // The refresh writes nothing and answers before every other flag.
+  if (global.flags.has(UPDATE_CHECK_FLAG))
+    return refreshUpdateCache(
+      cli.name,
+      PRODUCT_IDENTITY.packageVersion,
+      environment,
+    );
+  const result = discoveryAnswer(cli, global, {
+    environment,
+    stdoutIsTerminal: process.stdout.isTTY === true,
+    started: performance.now(),
+  });
+  if (result === undefined) return undefined;
   (options.stdout ?? ((text: string) => process.stdout.write(text)))(
     result.text,
   );
   if (result.exitCode !== 0)
     (options.exit ?? ((code: number) => process.exit(code)))(result.exitCode);
-  return true;
+  return Promise.resolve();
 };
