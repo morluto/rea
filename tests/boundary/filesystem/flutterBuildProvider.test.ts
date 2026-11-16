@@ -1102,6 +1102,12 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     expect(projected.code).toBe("resource_constraint");
     expect(projected.retryable).toBe(false);
     expect(projected.remediation.action).toContain("APK snapshot allowance");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "input",
+      limit: 2 * 1024 ** 3,
+      unit: "bytes",
+    });
     expect(projected.remediation.action).not.toMatch(/evidence reply/u);
     expect(result.error).toMatchObject({
       operation,
@@ -1268,6 +1274,11 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       reportedLimits: { max_metadata_read_bytes: 8 * 1024 ** 2 },
     });
     expect(result.error.message).toContain("ZIP metadata read requires");
+    expect(projectAnalysisError(result.error).details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      limit: 8 * 1024 ** 2,
+      unit: "bytes",
+    });
   },
 );
 
@@ -1467,15 +1478,26 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
   },
 );
 
-it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
-  "%s refuses ABI metadata expansion before opening empty libraries",
-  async (operation) => {
+it.each([
+  ["identify_flutter_build", "ABI", 32, "ABIs"],
+  ["inspect_dart_aot", "ABI", 32, "ABIs"],
+  ["identify_flutter_build", "path", 1024, "bytes"],
+] as const)(
+  "%s refuses %s metadata expansion before opening empty libraries",
+  async (operation, shape, limit, unit) => {
     const path = await buildApk(
       "many-abis.apk",
-      Array.from({ length: 33 }, (_, index) => ({
-        path: `lib/abi_${String(index)}/libapp.so`,
-        bytes: Buffer.alloc(0),
-      })),
+      shape === "ABI"
+        ? Array.from({ length: 33 }, (_, index) => ({
+            path: `lib/abi_${String(index)}/libapp.so`,
+            bytes: Buffer.alloc(0),
+          }))
+        : [
+            {
+              path: `lib/${"a".repeat(1024)}/libapp.so`,
+              bytes: Buffer.alloc(0),
+            },
+          ],
     );
     const extract = vi.spyOn(ZipArtifactReader.prototype, "open");
     onTestFinished(() => extract.mockRestore());
@@ -1483,7 +1505,14 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     onTestFinished(() => provider.close());
     const result = await provider.execute({ operation, input: { path } });
     if (result.ok) throw new Error("ABI expansion must be refused");
-    expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit,
+      unit,
+    });
     expect(extract).not.toHaveBeenCalled();
   },
 );
@@ -1697,7 +1726,13 @@ it("refuses truncated hash-candidate evidence and includes five-character tokens
     input: { path },
   });
   if (result.ok) throw new Error("Incomplete candidate set must be explicit");
-  expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe("resource_constraint");
+  expect(projected.details?.refusal).toMatchObject({
+    kind: "fixed_ceiling",
+    limit: 64,
+    unit: "candidates",
+  });
 });
 
 it.each([
