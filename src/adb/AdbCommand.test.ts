@@ -51,7 +51,7 @@ it("classifies the complete diagnostic before shortening its displayed reason", 
     error: {
       _tag: "AnalysisUnsupportedTargetError",
       path: localPath,
-      reason: stderr.slice(0, 512),
+      reason: `${stderr.slice(0, 512)}…`,
     },
   });
 });
