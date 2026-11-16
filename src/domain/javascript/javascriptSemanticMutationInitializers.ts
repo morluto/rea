@@ -83,6 +83,7 @@ interface InitializerPositionCache {
     readonly t.Statement[],
     {
       readonly reads: WeakMap<t.FunctionDeclaration, number | null>;
+      readonly localReads: WeakMap<t.FunctionDeclaration, number | null>;
       readonly memberEffectsComplete: boolean;
       readonly opaquePositions: WeakMap<t.Node, number | null>;
       opaqueSitesIndexed: number;
@@ -707,6 +708,49 @@ const directMutationPosition = (
   return computed;
 };
 
+/** Distinguish known local activation from unobserved external export use. */
+export const semanticLocalFunctionActivationAt = (
+  read: t.Node,
+  effect: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | { readonly kind: "observed"; readonly relation: "before" | "after" }
+  | { readonly kind: "unobserved" | "unknown" } => {
+  const fn = bindingEnclosingFunction(read, state.parentsByNode);
+  const position = directMutationPosition(effect, state.parentsByNode);
+  if (!t.isFunctionDeclaration(fn) || position === null)
+    return { kind: "unknown" };
+  const index = moduleFunctionFirstRead(
+    fn,
+    position.owner.body,
+    state.parentsByNode,
+    state,
+  );
+  if (index === Infinity) return { kind: "unobserved" };
+  // main records an exported function's first local read as null: it has no
+  // local activation, so a module-level store is observed by every external
+  // call. Treating that as unknown would reject every stored literal.
+  if (index === null) return { kind: "unobserved" };
+  return index === undefined
+    ? { kind: "unknown" }
+    : {
+        kind: "observed",
+        relation: index <= position.index ? "before" : "after",
+      };
+};
+
+/** An unconditional store in the program's one non-repeating activation. */
+export const semanticUnconditionalTopLevelEffect = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const direct = directMutationPosition(node, parents);
+  const topLevel = topLevelStatementPosition(node, parents);
+  return (
+    direct !== null && topLevel !== null && direct.owner === topLevel.owner
+  );
+};
+
 /** Prove that an unconditional member replacement precedes this read. */
 export const semanticDefiniteEffectPrecedesReference = (
   effect: t.Node,
@@ -1048,8 +1092,10 @@ const moduleFunctionFirstRead = (
     retained = undefined;
   if (retained === undefined) {
     const reads = new WeakMap<t.FunctionDeclaration, number | null>();
+    const localReads = new WeakMap<t.FunctionDeclaration, number | null>();
     retained = {
       reads,
+      localReads,
       memberEffectsComplete,
       opaquePositions: new WeakMap(),
       opaqueSitesIndexed: 0,
@@ -1069,12 +1115,17 @@ const moduleFunctionFirstRead = (
       const node = exported ? statement.declaration : statement;
       if (!t.isFunctionDeclaration(node)) continue;
       reads.set(node, exported ? null : Infinity);
+      localReads.set(node, Infinity);
       if (node.id == null) continue;
       const name = node.id.name;
       if (functions.has(name)) {
         const previous = functions.get(name);
-        if (previous != null) reads.set(previous, null);
+        if (previous != null) {
+          reads.set(previous, null);
+          localReads.set(previous, null);
+        }
         reads.set(node, null);
+        localReads.set(node, null);
         functions.set(name, null);
       } else functions.set(name, node);
     }
@@ -1405,6 +1456,9 @@ const moduleFunctionFirstRead = (
     ): void => {
       const fn = functions.get(name);
       if (fn == null || active.has(fn)) return;
+      const local = localReads.get(fn);
+      if (!t.isExportSpecifier(parent) && local !== null && local !== undefined)
+        localReads.set(fn, active.size > 0 ? null : Math.min(local, index));
       const current = indexedReads.get(fn);
       if (current === null || current === undefined) return;
       // Indirect activations and live exports have no proven module timing.
@@ -1519,6 +1573,12 @@ const moduleFunctionFirstRead = (
               state !== undefined &&
               semanticResolutionBlocked(state, node, node.name)
             ) {
+              const local = localReads.get(candidate);
+              if (local !== null && local !== undefined)
+                localReads.set(
+                  candidate,
+                  active.size > 0 ? null : Math.min(local, index),
+                );
               const current = indexedReads.get(candidate);
               if (current !== null && current !== undefined)
                 indexedReads.set(
@@ -1598,6 +1658,14 @@ const moduleFunctionFirstRead = (
     // Unknown global keys share one timing fact across the module functions.
     for (const fn of functions.values()) {
       if (fn == null) continue;
+      const local = localReads.get(fn);
+      if (local !== null && local !== undefined)
+        localReads.set(
+          fn,
+          unknownPropertyRead === null
+            ? null
+            : Math.min(local, unknownPropertyRead),
+        );
       const current = indexedReads.get(fn);
       if (current !== null && current !== undefined)
         indexedReads.set(

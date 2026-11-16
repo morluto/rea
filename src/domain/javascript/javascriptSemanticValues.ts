@@ -1,7 +1,12 @@
 import type { JavaScriptSemanticPrecision } from "./javascriptSemanticPrecision.js";
 import {
   applySemanticBindingReferenceEffects,
+  bindingHasMemberWrites,
+  semanticEffectMayFollow,
+  semanticEffectMayPrecede,
+  semanticMemberWrites,
   opaqueCodeMayRebindBinding,
+  retainSemanticInactiveMemberWrites,
 } from "./javascriptSemanticEffectLog.js";
 import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
@@ -16,12 +21,20 @@ import {
   semanticCapturePosition,
   semanticBindingPrecedesCapture,
   semanticBindingAtRead,
+  semanticUnconditionalTopLevelEffect,
+  semanticLocalFunctionActivationAt,
 } from "./javascriptSemanticMutationInitializers.js";
 
 import {
   semanticSlotAtPath,
   semanticContainer,
 } from "./javascriptSemanticSlots.js";
+
+import {
+  invalidateSemanticEscapedPath,
+  invalidateSemanticMutationPaths,
+  storeSemanticLiteralContainer,
+} from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
 import type {
@@ -34,6 +47,7 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import { readSemanticRequireOriginCandidate } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -190,6 +204,20 @@ const capturedBindingValuesByState = new WeakMap<
   JavaScriptSemanticAnalysisState,
   CapturedBindingValues
 >();
+
+// The lexical reference owner supplies actual read sites once; graph projection never infers ordering.
+const bindingReadsByState = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  ReadonlyMap<string, readonly t.Node[]>
+>();
+
+export const retainSemanticValueReadSites = (
+  state: JavaScriptSemanticAnalysisState,
+  reads: ReadonlyMap<string, readonly t.Node[]>,
+): void => {
+  bindingReadsByState.set(state, reads);
+  clearSemanticValueCaches(state);
+};
 
 /** Discard every state-owned value derived before the effects boundary changed. */
 export const clearSemanticValueCaches = (
@@ -540,6 +568,7 @@ const evaluateBinding = (
   let callerIndependent = false;
   let depthDependent = false;
   let evaluated: MemoizedEvaluation<JavaScriptSemanticValue>;
+  let retainedStores: ReadonlySet<JavaScriptSemanticMemberEffect> = new Set();
   try {
     evaluated = collectEvaluationDependencies(binding, context, () => {
       const nested = nestedContext(context);
@@ -560,7 +589,16 @@ const evaluateBinding = (
           if (isPrimitive(captured)) value = captured;
         }
       }
-      return value;
+      const stored = retainStoredContainers(binding, value, nested);
+      retainedStores = stored.effects;
+      // A stored literal is the write's confirmed value: it must not later be
+      // invalidated by the same write when the reference's effects are read.
+      const inactiveNodes = [...stored.effects].flatMap((effect) =>
+        effect.node === undefined ? [] : [effect.node],
+      );
+      if (inactiveNodes.length > 0)
+        retainSemanticInactiveMemberWrites(nested.state, inactiveNodes);
+      return stored.value;
     });
     value = evaluated.value;
     // A cycle among bindings this one reads is part of its value. A cycle
@@ -994,6 +1032,121 @@ const evaluateArray = (
         unknownItems: false,
         omittedItems: 0,
       };
+};
+
+/** Use the mutation owner's receiver, capture and effect facts to retain literal stores. */
+const retainStoredContainers = (
+  binding: JavaScriptSemanticBindingState,
+  initial: JavaScriptSemanticValue,
+  context: EvaluationContext,
+): {
+  readonly value: JavaScriptSemanticValue;
+  readonly effects: ReadonlySet<JavaScriptSemanticMemberEffect>;
+} => {
+  const effects = new Set<JavaScriptSemanticMemberEffect>();
+  const reads = bindingReadsByState.get(context.state)?.get(binding.bindingId);
+  if (
+    reads === undefined ||
+    !bindingHasMemberWrites(binding) ||
+    (initial.status !== "object" &&
+      initial.status !== "array" &&
+      !(initial.status === "unknown" && definitelyDefinedValues.has(initial)))
+  )
+    return { value: initial, effects };
+  // Prefix counts reject intersecting writers without rescanning all effects per candidate.
+  const prefixes = new Map<string, number>();
+  const exact = new Map<string, number>();
+  for (const effect of semanticMemberWrites(binding)) {
+    if (
+      effect.path.length === 0 ||
+      effect.path.some((key) => key === null || typeof key === "object")
+    )
+      return { value: initial, effects };
+    const path = effect.path.map(String);
+    for (let depth = 1; depth <= path.length; depth++) {
+      const key = JSON.stringify(path.slice(0, depth));
+      prefixes.set(key, (prefixes.get(key) ?? 0) + 1);
+    }
+    const key = JSON.stringify(path);
+    exact.set(key, (exact.get(key) ?? 0) + 1);
+  }
+  let value: JavaScriptSemanticValue =
+    initial.status === "unknown"
+      ? {
+          status: "object",
+          properties: [],
+          unknownProperties: false,
+          omittedProperties: 0,
+        }
+      : initial;
+  for (const effect of semanticMemberWrites(binding)) {
+    const node = effect.node;
+    if (
+      !t.isAssignmentExpression(node, { operator: "=" }) ||
+      effect.receiverIdentity !== "definite" ||
+      !semanticUnconditionalTopLevelEffect(node, context.state.parentsByNode)
+    )
+      continue;
+    const path = effect.path.map(String);
+    const overlapping =
+      (prefixes.get(JSON.stringify(path)) ?? 0) +
+      path
+        .slice(0, -1)
+        .reduce(
+          (sum, _, index) =>
+            sum + (exact.get(JSON.stringify(path.slice(0, index + 1))) ?? 0),
+          0,
+        );
+    if (overlapping !== 1) continue;
+    // A single final-state slot must not attribute a later store to an earlier read.
+    if (
+      reads.some((read) => {
+        // Proven-later stores do not reach this slot; an unresolved ordering
+        // falls back to the activation relation.
+        if (!semanticEffectMayPrecede(context.state, read, node)) return true;
+        if (!semanticEffectMayFollow(context.state, read, node)) return false;
+        const activation = semanticLocalFunctionActivationAt(
+          read,
+          node,
+          context.state,
+        );
+        return (
+          activation.kind === "unknown" ||
+          (activation.kind === "observed" && activation.relation === "before")
+        );
+      })
+    )
+      continue;
+    // The store must be proven to run before the capture.
+    if (
+      context.capturePoint !== undefined &&
+      semanticEffectMayFollow(context.state, context.capturePoint, node)
+    )
+      continue;
+    const source =
+      effect.assignedSources?.length === 1
+        ? effect.assignedSources[0]
+        : undefined;
+    if (source === undefined || source.projection.length !== 0) continue;
+    const expression = unwrapJavaScriptExpression(source.node).node;
+    if (!t.isObjectExpression(expression) && !t.isArrayExpression(expression))
+      continue;
+    const assigned = evaluateCapturedExpression(
+      expression,
+      nestedContext(context),
+    );
+    if (assigned.status !== "object" && assigned.status !== "array") continue;
+    const stored = storeSemanticLiteralContainer(value, path, assigned);
+    if (stored !== undefined) {
+      value = stored;
+      effects.add(effect);
+    }
+  }
+  if (effects.size === 0) return { value: initial, effects };
+  // A function's retained own stores do not enumerate its callable/native properties.
+  if (initial.status === "unknown" && value.status === "object")
+    value = { ...value, unknownProperties: true, omittedProperties: null };
+  return { value, effects };
 };
 
 const evaluateMember = (

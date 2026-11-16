@@ -21,6 +21,7 @@ import {
 } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
+  retainSemanticValueReadSites,
   evaluateSemanticExpression,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
@@ -194,6 +195,7 @@ export function* collectSemanticReferencesSteps(
 ): Generator<void, JavaScriptSemanticReference[]> {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
+  const reads = new Map<string, t.Node[]>();
   yield* traverseJavaScriptValueAstSteps(program, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       if (
@@ -224,6 +226,26 @@ export function* collectSemanticReferencesSteps(
         const blocked =
           binding === undefined &&
           semanticResolutionBlocked(state, node, node.name);
+        if (binding !== undefined && resolvedRole === "read") {
+          let selected: t.Node = node;
+          let owner = state.parentsByNode.get(selected);
+          while (
+            (t.isMemberExpression(owner) ||
+              t.isOptionalMemberExpression(owner)) &&
+            owner.object === selected
+          ) {
+            selected = owner;
+            owner = state.parentsByNode.get(selected);
+          }
+          if (
+            owner === undefined ||
+            semanticWriteSiteTarget(owner) !== selected
+          ) {
+            const sites = reads.get(binding.bindingId) ?? [];
+            sites.push(node);
+            reads.set(binding.bindingId, sites);
+          }
+        }
         output.push({
           name: node.name,
           role: resolvedRole,
@@ -239,6 +261,7 @@ export function* collectSemanticReferencesSteps(
       }
     },
   });
+  if (name === undefined) retainSemanticValueReadSites(state, reads);
   return output;
 }
 
