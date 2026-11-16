@@ -16,7 +16,10 @@ vi.mock("../../src/adb/AdbProcess.js", async (importOriginal) => ({
 }));
 // A running adb server makes `adb start-server` a successful no-op.
 vi.mock("../../src/adb/AdbServer.js", () => ({
-  startAdbServer: async () => ({ ok: true, value: undefined }),
+  startAdbServer: async () => ({
+    ok: true,
+    value: { daemonStarted: false },
+  }),
 }));
 
 it.each(["start_adb_app", "start_adb_activity"] as const)(

@@ -5,7 +5,10 @@ import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  primaryAnalysisError,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -58,8 +61,10 @@ class AdbProtocolError extends AnalysisProtocolError {
 /** The completed run behind a nonzero adb exit reported here. */
 export const adbExitedRunOf = (
   error: AnalysisError,
-): AdbExitedRun | undefined =>
-  error instanceof AdbProtocolError ? error.run : undefined;
+): AdbExitedRun | undefined => {
+  const primary = primaryAnalysisError(error);
+  return primary instanceof AdbProtocolError ? primary.run : undefined;
+};
 
 /** adb joins shell operands into a remote POSIX command; quote at that boundary. */
 const quoteShellOperand = (value: string): string =>
@@ -105,18 +110,26 @@ export const runAdbCapture = async (
   arguments_: readonly string[],
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
+  classifyExit: (run: AdbExitedRun) => AnalysisError | undefined = (run) =>
+    run.exitCode === 0 ? undefined : adbExitFailure(operation, target, run),
 ): Promise<Result<{ stdout: Buffer; stderr: string }, AnalysisError>> => {
   if (signal?.aborted === true) return err(cancelledBy(operation, signal));
+  const started = await host.startServer?.();
+  if (started !== undefined && !started.ok) return started;
   const outcome = await runAdbProcess(host, arguments_, limits, signal);
   if (!outcome.ok)
     return err(
       adbRunFailureError(operation, host, outcome.failure, (failure) =>
-        adbRunFailure(operation, host, limits, failure),
+        failure.exited === undefined
+          ? adbRunFailure(operation, host, limits, failure)
+          : classifyExit(failure.exited),
       ),
     );
   const { run } = outcome;
-  if (run.exitCode === 0) return ok({ stdout: run.stdout, stderr: run.stderr });
-  return err(adbExitFailure(operation, target, run));
+  const exitFailure = classifyExit(run);
+  if (exitFailure === undefined)
+    return ok({ stdout: run.stdout, stderr: run.stderr });
+  return err(exitFailure);
 };
 
 /** adb did not exit on its own: it ran out of time or capture, or never started. */
@@ -176,7 +189,7 @@ const adbRunFailure = (
 };
 
 /** Read adb's verdict from a run that exited nonzero. */
-const adbExitFailure = (
+export const adbExitFailure = (
   operation: string,
   target: AdbCommandTarget,
   run: AdbExitedRun,
@@ -231,12 +244,28 @@ const adbExitFailure = (
         : (target.path ?? target.device);
     return new AnalysisUnsupportedTargetError(operation, path, excerpt, detail);
   }
-  return new AdbProtocolError(
+  const protocolError = new AdbProtocolError(
     excerpt === ""
       ? `adb exited with code ${String(run.exitCode)} for ${operation}`
       : excerpt,
     run,
   );
+  if (
+    operation === "install_adb_package" ||
+    operation === "uninstall_adb_package"
+  ) {
+    const reason = packageChangeFailureReason(
+      `${run.capturedOutput.stdout}\n${run.stderr}`,
+    );
+    if (reason !== null)
+      return new AnalysisUnsupportedTargetError(
+        operation,
+        target.device,
+        reason,
+        { cause: protocolError },
+      );
+  }
+  return protocolError;
 };
 
 /** Decode textual adb protocols after the shared byte capture and error boundary. */
@@ -266,10 +295,10 @@ export const packageChangeRefusal = (
   serial: string,
   error: AnalysisError,
 ): Result<never, AnalysisError> | undefined => {
-  if (!(error instanceof AdbProtocolError)) return undefined;
-  const { run } = error;
+  const run = adbExitedRunOf(error);
+  if (run === undefined) return undefined;
   const reason = packageChangeFailureReason(
-    `${run.stdout.toString("utf8")}\n${run.stderr}`,
+    `${run.capturedOutput.stdout}\n${run.stderr}`,
   );
   return reason === null
     ? undefined
@@ -345,6 +374,7 @@ const probeAdbPath = async (
 ): Promise<Result<AdbPathProbe, AnalysisError>> => {
   const fact =
     predicate === "-d" ? "destination_directory" : "destination_existence";
+  let exitCode = 0;
   const probed = await runAdbCapture(
     operation,
     { device: serial, path },
@@ -352,43 +382,32 @@ const probeAdbPath = async (
     adbArguments(serial, ["shell", "test", predicate, path]),
     { ...limits, volatileOutput: true },
     signal,
-  );
-  if (probed.ok) {
-    const { stderr } = probed.value;
-    if (probed.value.stdout.length === 0 && recognizedProbeStderr(stderr))
-      return ok(completedAdbPathProbe(true, stderr));
-    return err(
-      new AnalysisProtocolError(
-        `The ADB path ${predicate === "-d" ? "directory" : "existence"} probe returned unexpected output; destination status is unknown`,
-        {
-          diagnostics: { [fact]: "unknown" },
-          capturedOutput: {
-            stdout: probed.value.stdout.toString("utf8"),
-            stderr,
-            stdout_bytes: probed.value.stdout.length,
-            stderr_bytes: Buffer.byteLength(stderr),
-            exit_code: 0,
-            signal: null,
-            truncated: false,
+    (run) => {
+      exitCode = run.exitCode;
+      if (
+        (run.exitCode === 0 || run.exitCode === 1) &&
+        run.stdout.length === 0 &&
+        recognizedProbeStderr(run.stderr)
+      )
+        return undefined;
+      if (run.exitCode === 0)
+        return new AnalysisProtocolError(
+          `The ADB path ${predicate === "-d" ? "directory" : "existence"} probe returned unexpected output; destination status is unknown`,
+          {
+            diagnostics: { [fact]: "unknown" },
+            capturedOutput: run.capturedOutput,
           },
-        },
-      ),
-    );
-  }
-  const error = probed.error;
-  if (!(error instanceof AdbProtocolError)) return probed;
-  const { run } = error;
-  if (
-    run.exitCode === 1 &&
-    run.stdout.length === 0 &&
-    recognizedProbeStderr(run.stderr)
-  )
-    return ok(completedAdbPathProbe(false, run.stderr));
-  return err(
-    new AnalysisProtocolError(error.message, {
-      cause: error,
-      diagnostics: { [fact]: "unknown" },
-      capturedOutput: run.capturedOutput,
-    }),
+        );
+      const failure = adbExitFailure(operation, { device: serial, path }, run);
+      return !(failure instanceof AdbProtocolError)
+        ? failure
+        : new AnalysisProtocolError(failure.message, {
+            cause: failure,
+            diagnostics: { [fact]: "unknown" },
+            capturedOutput: run.capturedOutput,
+          });
+    },
   );
+  if (!probed.ok) return probed;
+  return ok(completedAdbPathProbe(exitCode === 0, probed.value.stderr));
 };

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { probeAdbPathExistence, runAdbCapture } from "./AdbCommand.js";
 import type { AdbCommandHost } from "./AdbProcess.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -397,3 +398,89 @@ it.each([
     });
   },
 );
+
+it("keeps a completed adb refusal primary when post-exit cleanup fails or is cancelled", async () => {
+  const localResources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const cancelledResult = await runAdbCapture(
+    "install_adb_package",
+    { device: "emulator-5554" },
+    {
+      ...selection,
+      resources: localResources,
+      launcher: async (input) => {
+        const launched = await spawnOwnedProviderProcess({
+          ...input,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            "process.stderr.write('Failure [INSTALL_FAILED_INVALID_APK]\\n'); process.exitCode = 1;",
+          ],
+        });
+        return {
+          ...launched,
+          cleanup: async () => {
+            controller.abort("late abort during sweep");
+            return { cleaned: true, signaled: false };
+          },
+        };
+      },
+    },
+    [],
+    { timeoutMs: 10_000, maxOutputBytes: 1024 },
+    controller.signal,
+  );
+  if (cancelledResult.ok) throw new Error("Expected refusal");
+  expect(primaryAnalysisError(cancelledResult.error)).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "emulator-5554",
+    reason: "INSTALL_FAILED_INVALID_APK",
+  });
+  expect(cancelledResult.error.secondaryFailures).toMatchObject([
+    { _tag: "AnalysisCancelledError", cause: "late abort during sweep" },
+  ]);
+
+  let attempts = 0;
+  const cleanupResult = await runAdbCapture(
+    "install_adb_package",
+    { device: "emulator-5554" },
+    {
+      ...selection,
+      resources: localResources,
+      launcher: async (input) => {
+        const launched = await spawnOwnedProviderProcess({
+          ...input,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            "process.stderr.write('Failure [INSTALL_FAILED_INVALID_APK]\\n'); process.exitCode = 1;",
+          ],
+        });
+        return {
+          ...launched,
+          cleanup: async () => {
+            attempts += 1;
+            return attempts === 1
+              ? { cleaned: false, reason: "sweep temporarily blocked" }
+              : { cleaned: true, signaled: false };
+          },
+        };
+      },
+    },
+    [],
+    { timeoutMs: 10_000, maxOutputBytes: 1024 },
+    undefined,
+  );
+  if (cleanupResult.ok) throw new Error("Expected refusal with cleanup error");
+  expect(primaryAnalysisError(cleanupResult.error)).toMatchObject({
+    _tag: "AnalysisUnsupportedTargetError",
+    path: "emulator-5554",
+    reason: "INSTALL_FAILED_INVALID_APK",
+  });
+  expect(projectAnalysisError(cleanupResult.error)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { execution_failure: "unsupported_target" },
+  });
+  await localResources.close();
+  expect(attempts).toBe(2);
+});

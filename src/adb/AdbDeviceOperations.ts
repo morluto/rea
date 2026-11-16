@@ -48,6 +48,8 @@ export const inspectAdbClientOperation = (
 export const listAdbDevicesOperation = async (
   context: AdbCommandContext,
 ): Promise<Result<AnalysisExecution, AnalysisError>> => {
+  const started = await context.selection.startServer?.();
+  if (started !== undefined && !started.ok) return started;
   const ran = await runAdb(
     context.operation,
     { device: "adb-devices" },
@@ -78,7 +80,8 @@ export const listAdbDevicesOperation = async (
       {
         client: context.client,
         devices,
-        may_have_started_adb_server: daemonStarted,
+        may_have_started_adb_server:
+          started?.value?.daemonStarted === true || daemonStarted,
       },
       context.provider,
       {

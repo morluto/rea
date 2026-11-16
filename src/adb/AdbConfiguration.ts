@@ -198,7 +198,9 @@ export const inspectAdbClient = async (
     )
       throw adbLaunchRefusal(host, launch, failure.cause);
     throw adbRunFailureError("inspect_adb_client", host, failure, () =>
-      versionProbeFailure(host, failure),
+      failure.exited === undefined
+        ? versionProbeFailure(host, failure)
+        : undefined,
     );
   }
   const { run } = outcome;

@@ -4,8 +4,13 @@ import {
   AnalysisError,
   type AnalysisCapturedOutput,
 } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisProtocolError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
@@ -38,6 +43,13 @@ import type { AdbBinarySelection } from "./AdbConfiguration.js";
  */
 export interface AdbCommandHost extends AdbBinarySelection {
   readonly resources: ArtifactResourceScope;
+  /** Ensures the shared adb server is running before a device command. */
+  readonly startServer?: () => Promise<
+    import("../domain/result.js").Result<
+      { readonly daemonStarted: boolean },
+      AnalysisError
+    >
+  >;
   /** Replaces the owned launcher, for tests that control process outcomes. */
   readonly launcher?: NonNullable<
     Parameters<typeof runOwnedCommand>[2]
@@ -80,20 +92,25 @@ const exitedRun = (
   snapshot: ProviderProcessSnapshot,
   stdout: Buffer,
   exitCode: number,
-): AdbExitedRun => ({
-  stdout,
-  stderr: snapshot.stderr.text,
-  exitCode,
-  capturedOutput: {
-    stdout: stdout.toString("utf8"),
+): AdbExitedRun => {
+  let capturedOutput: AnalysisCapturedOutput | undefined;
+  return {
+    stdout,
     stderr: snapshot.stderr.text,
-    stdout_bytes: stdout.byteLength,
-    stderr_bytes: snapshot.stderr.observedBytes,
-    exit_code: exitCode,
-    signal: null,
-    truncated: false,
-  },
-});
+    exitCode,
+    get capturedOutput(): AnalysisCapturedOutput {
+      return (capturedOutput ??= {
+        stdout: stdout.toString("utf8"),
+        stderr: snapshot.stderr.text,
+        stdout_bytes: stdout.byteLength,
+        stderr_bytes: snapshot.stderr.observedBytes,
+        exit_code: exitCode,
+        signal: null,
+        truncated: false,
+      });
+    },
+  };
+};
 
 /** Output an interrupted run left: stdout from the collector, stderr from the supervisor. */
 const failureOutput = (
@@ -141,7 +158,6 @@ export const runAdbProcess = async (
         arguments: arguments_,
         runId: `rea-adb-${randomUUID()}`,
         hostEnvironment: host.environment,
-        sweepTokenOwnedProcesses: true,
       },
       {
         timeoutMs: limits.timeoutMs,
@@ -177,31 +193,37 @@ export const runAdbProcess = async (
         launch:
           launcherFailureOf(command?.processError ?? cause) ??
           preparationHostCapacityFailure(cause),
-        capturedOutput: failureOutput(command, cause, stdout.bytes),
-        exited: command?.cleanupOwner === undefined ? undefined : exited,
+        capturedOutput:
+          exited === undefined
+            ? failureOutput(command, cause, stdout.bytes)
+            : exited.capturedOutput,
+        exited,
       },
     };
   }
 };
 
 /**
- * Report a failed adb run: caller cancellation and interrupted process
- * inspection first, then `classify` for the run's own failure. Process and
- * inspection owners whose cleanup failed move to the host's scope; when adb
- * had exited, that cleanup failure is the report and keeps adb's output.
+ * Report a failed adb run: a completed nonzero exit verdict stays primary
+ * before attaching late cancellation or cleanup failures; otherwise caller
+ * cancellation and interrupted process inspection come first, then `classify`
+ * for the run's own failure. Process and inspection owners whose cleanup
+ * failed move to the host's scope.
  */
 export const adbRunFailureError = (
   operation: string,
   host: AdbCommandHost,
   failure: AdbRunFailure,
-  classify: (failure: AdbRunFailure) => AnalysisError,
+  classify: (failure: AdbRunFailure) => AnalysisError | undefined,
 ): AnalysisError => {
   const { cause, command } = failure;
+  const completed =
+    failure.exited === undefined ? undefined : classify(failure);
   const cleanups = retainArtifactCommandCleanup(
     cause,
     host.resources,
     operation,
-    failure.exited === undefined
+    failure.exited === undefined || completed !== undefined
       ? undefined
       : { capturedOutput: failure.exited.capturedOutput },
   );
@@ -209,26 +231,33 @@ export const adbRunFailureError = (
     command === undefined || command.preparationFailure !== undefined
       ? processInspectionCancellationError(cause, operation)
       : undefined;
+  const commandCancellation =
+    command?.reason === "cancelled" && command.cancellation !== undefined
+      ? (inspectionCancellation ??
+        cancelledBy(
+          operation,
+          carriedReason(command.cancellation.reason),
+          failure.capturedOutput === undefined
+            ? {}
+            : { capturedOutput: failure.capturedOutput },
+        ))
+      : inspectionCancellation;
   let primary: AnalysisError;
-  if (command?.reason === "cancelled" && command.cancellation !== undefined)
+  if (completed !== undefined)
     primary =
-      inspectionCancellation ??
-      cancelledBy(
-        operation,
-        carriedReason(command.cancellation.reason),
-        failure.capturedOutput === undefined
-          ? {}
-          : { capturedOutput: failure.capturedOutput },
-      );
-  else if (inspectionCancellation !== undefined)
-    primary = inspectionCancellation;
+      commandCancellation === undefined
+        ? completed
+        : analysisErrorWithCancellation(completed, commandCancellation);
+  else if (commandCancellation !== undefined) primary = commandCancellation;
   // Ownership preparation reports its own analysis failure, such as cleanup
   // of an earlier preparation it must finish before admitting another launch.
   else if (command === undefined && cause instanceof AnalysisError)
     primary = cause;
-  else if (failure.exited !== undefined && cleanups[0] !== undefined)
-    primary = cleanups[0];
-  else primary = classify(failure);
+  else if (cleanups[0] !== undefined) primary = cleanups[0];
+  else
+    primary =
+      classify(failure) ??
+      new AnalysisProtocolError(`adb failed for ${operation}`, { cause });
   for (const cleanup of cleanups)
     if (cleanup !== primary)
       primary = analysisErrorWithCleanupDependencies(

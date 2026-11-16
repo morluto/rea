@@ -2755,3 +2755,45 @@ exit 0`,
     code: "ENOENT",
   });
 });
+
+it("retries retained cleanup in inspectAvailability before launching another probe", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "bugreport" ]; then
+  printf 'bugreport-bytes' > "$4/bugreport.zip"
+  printf 'Bug report copied to %s/bugreport.zip\\n' "$4"
+  exit 0
+fi
+exit 1`,
+  );
+  const provider = providerOver(binary);
+  let keepFailing = true;
+  adbTestHooks.bugreportCleanupFailure = new Error("directory still busy");
+  adbTestHooks.afterBugreportCleanup = () => {
+    if (keepFailing)
+      adbTestHooks.bugreportCleanupFailure = new Error("directory still busy");
+  };
+  onTestFinished(async () => {
+    keepFailing = false;
+    adbTestHooks.afterBugreportCleanup = undefined;
+    adbTestHooks.bugreportCleanupFailure = undefined;
+    await provider.close();
+  });
+  const first = await provider.execute({
+    operation: "collect_adb_bugreport",
+    input: {
+      serial: "emulator-5554",
+      output_directory: root,
+    },
+  });
+  expect(first.ok).toBe(false);
+  await expect(provider.inspectAvailability()).rejects.toMatchObject({
+    _tag: "ProviderAdapterError",
+    cleanupIncomplete: true,
+  });
+  keepFailing = false;
+  adbTestHooks.bugreportCleanupFailure = undefined;
+  await expect(provider.inspectAvailability()).resolves.toMatchObject({
+    status: "available",
+  });
+});

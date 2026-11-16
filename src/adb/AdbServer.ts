@@ -15,9 +15,15 @@ import {
 } from "../process/ExecFileOutput.js";
 import { launcherFailureOf } from "../process/launchFailure.js";
 import { ADB_BINARY_ENV, type AdbBinarySelection } from "./AdbConfiguration.js";
+import { isSuccessfulDaemonStartNotice } from "./AdbDeviceOutput.js";
 
 const START_SERVER_TIMEOUT_MS = 30_000;
 const START_SERVER_MAX_OUTPUT_BYTES = 64 * 1024;
+
+const hasSuccessfulDaemonStartNotice = (output: string): boolean =>
+  output
+    .split(/\r?\n/u)
+    .some((rawLine) => isSuccessfulDaemonStartNotice(rawLine.trimEnd()));
 
 /**
  * Make sure the adb server is running before device commands, with an
@@ -33,16 +39,24 @@ export const startAdbServer = async (
   operation: string,
   selection: AdbBinarySelection,
   signal: AbortSignal | undefined,
-): Promise<Result<void, AnalysisError>> => {
+): Promise<Result<{ readonly daemonStarted: boolean }, AnalysisError>> => {
   try {
-    await execFileOutput(selection.binary, ["start-server"], {
-      env: selection.environment,
-      timeout: START_SERVER_TIMEOUT_MS,
-      maxBuffer: START_SERVER_MAX_OUTPUT_BYTES,
-      stopSignal: "SIGTERM",
-      ...(signal === undefined ? {} : { signal }),
+    const { stdout, stderr } = await execFileOutput(
+      selection.binary,
+      ["start-server"],
+      {
+        env: selection.environment,
+        timeout: START_SERVER_TIMEOUT_MS,
+        maxBuffer: START_SERVER_MAX_OUTPUT_BYTES,
+        stopSignal: "SIGTERM",
+        ...(signal === undefined ? {} : { signal }),
+      },
+    );
+    return ok({
+      daemonStarted:
+        hasSuccessfulDaemonStartNotice(stdout) ||
+        hasSuccessfulDaemonStartNotice(stderr),
     });
-    return ok(undefined);
   } catch (cause: unknown) {
     const failure = execFileOutputFailure(cause);
     const observed = {

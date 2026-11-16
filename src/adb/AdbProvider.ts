@@ -100,6 +100,7 @@ import {
 } from "../domain/runtimeControlUnavailableError.js";
 import {
   adbExitedRunOf,
+  adbExitFailure,
   adbArguments,
   runAdb,
   runAdbCapture,
@@ -861,8 +862,12 @@ export class AdbProvider {
         "inspect_adb_client",
         isAborted(signal) ? signal : OwnerCancellation.ownerClosed,
       );
+    if (signal?.aborted === true)
+      throw cancelledBy("inspect_adb_client", signal);
     const release = this.#beginOperation();
     try {
+      const retried = await this.#retryPendingCleanup("inspect_adb_client", {});
+      if (!retried.ok) throw retried.error;
       const selection = await this.selection(signal);
       await inspectAdbClient(selection, signal);
       return {
@@ -1206,46 +1211,58 @@ export class AdbProvider {
       return err(cancelledBy(request.operation, OwnerCancellation.ownerClosed));
     const release = this.#beginOperation();
     try {
-      try {
-        await this.#resources.retryCleanup();
-      } catch (cause: unknown) {
-        const error = this.#cleanupError(
-          request.operation,
-          jsonObjectSchema.parse(request.input),
-          [cause],
-          this.#cleanupResources(cause, "ADB provider-owned resource"),
-        );
-        const leases =
-          cause instanceof ArtifactResourceRetryFailure
-            ? cause.cleanupLeases
-            : undefined;
-        if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
-        return err(error);
-      }
-      if (this.#pendingOutputDirectoryCleanup.size > 0) {
-        try {
-          await this.#retryOutputDirectoryCleanup();
-        } catch (cause: unknown) {
-          return err(
-            cause instanceof AnalysisError
-              ? cause
-              : new ProviderCleanupError(
-                  ADB_PROVIDER_IDENTITY.id,
-                  [...this.#pendingOutputDirectoryCleanup].map(
-                    ({ path }) => path,
-                  ),
-                  {
-                    reason: errorMessage(cause),
-                  },
-                  { operation: request.operation, cause },
-                ),
-          );
-        }
-      }
+      const retried = await this.#retryPendingCleanup(
+        request.operation,
+        jsonObjectSchema.parse(request.input),
+      );
+      if (!retried.ok) return retried;
       return await this.#executeOperation(request, options);
     } finally {
       release();
     }
+  }
+
+  async #retryPendingCleanup(
+    operation: AdbRequest["operation"],
+    input: Readonly<Record<string, JsonValue>>,
+  ): Promise<Result<null, AnalysisError>> {
+    try {
+      await this.#resources.retryCleanup();
+    } catch (cause: unknown) {
+      const error = this.#cleanupError(
+        operation,
+        input,
+        [cause],
+        this.#cleanupResources(cause, "ADB provider-owned resource"),
+      );
+      const leases =
+        cause instanceof ArtifactResourceRetryFailure
+          ? cause.cleanupLeases
+          : undefined;
+      if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
+      return err(error);
+    }
+    if (this.#pendingOutputDirectoryCleanup.size > 0) {
+      try {
+        await this.#retryOutputDirectoryCleanup();
+      } catch (cause: unknown) {
+        return err(
+          cause instanceof AnalysisError
+            ? cause
+            : new ProviderCleanupError(
+                ADB_PROVIDER_IDENTITY.id,
+                [...this.#pendingOutputDirectoryCleanup].map(
+                  ({ path }) => path,
+                ),
+                {
+                  reason: errorMessage(cause),
+                },
+                { operation, cause },
+              ),
+        );
+      }
+    }
+    return ok(null);
   }
 
   async #executeOperation(
@@ -1286,14 +1303,21 @@ export class AdbProvider {
       );
     }
     // Device operations reach the shared adb server, which REA may start
-    // but never stops; a device command then never forks it.
+    // once local inputs/outputs are admitted, and never stops.
+    let serverStarted:
+      | Promise<Result<{ readonly daemonStarted: boolean }, AnalysisError>>
+      | undefined;
     if (request.operation !== "inspect_adb_client") {
-      const started = await startAdbServer(
-        request.operation,
-        selection,
-        signal,
-      );
-      if (!started.ok) return started;
+      const baseSelection = selection;
+      selection = {
+        ...baseSelection,
+        startServer: () =>
+          (serverStarted ??= startAdbServer(
+            request.operation,
+            baseSelection,
+            signal,
+          )),
+      };
     }
     const client = clientIdentityResult(selection, identity);
     const provider: AdbProviderIdentity = {
@@ -2861,6 +2885,34 @@ export class AdbProvider {
     resultFields: Record<string, unknown>,
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const buildActivityObservation = (
+      verdict: ReturnType<typeof parseAmStartOutput>,
+    ): {
+      readonly result: Record<string, unknown>;
+      readonly partialObservation: AdbActivityStartPartialObservation;
+    } => {
+      const result = {
+        ...resultFields,
+        started_activity: verdict.startedActivity,
+        reported_activity: verdict.activity,
+        reported_status: verdict.reportedStatus,
+      };
+      return {
+        result,
+        partialObservation:
+          operation === "start_adb_app"
+            ? {
+                provider_id: "adb",
+                operation,
+                result: adbResultSchemas.start_adb_app.parse(result),
+              }
+            : {
+                provider_id: "adb",
+                operation,
+                result: adbResultSchemas.start_adb_activity.parse(result),
+              },
+      };
+    };
     const started = await runAdb(
       operation,
       { device: serial },
@@ -2868,49 +2920,38 @@ export class AdbProvider {
       adbArguments(serial, ["shell", "am", "start", "-W", ...arguments_]),
       { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: PM_PATH_MAX_OUTPUT_BYTES },
       signal,
+      (run) => {
+        if (run.exitCode === 0) return undefined;
+        const failure = adbExitFailure(operation, { device: serial }, run);
+        // AOSP ActivityManagerShellCommand returns 1 for class-not-found and
+        // emits its refusal report on stdout. Other exits remain command errors.
+        if (adbExitedRunOf(failure) === undefined || run.exitCode !== 1)
+          return failure;
+        // Stderr carries adb transport diagnostics, not the Activity Manager
+        // report, so it cannot establish a target refusal on this path.
+        const verdict = parseAmStartOutput(run.capturedOutput.stdout);
+        if (verdict.status !== "refused" || verdict.startedActivity === null)
+          return failure;
+        const { partialObservation } = buildActivityObservation(verdict);
+        return new AnalysisUnsupportedTargetError(
+          operation,
+          serial,
+          verdict.reason ?? "am start refused the intent",
+          { capturedOutput: run.capturedOutput, partialObservation },
+        );
+      },
     );
-    let stdout: string;
-    let stderr: string;
-    let capturedOutput: AnalysisCapturedOutput;
-    let verdict: ReturnType<typeof parseAmStartOutput>;
-    if (started.ok) {
-      stdout = started.value.stdout;
-      stderr = started.value.stderr;
-      capturedOutput = { stdout, stderr, truncated: false };
-      verdict = parseAmStartOutput(stdout, stderr);
-    } else {
-      const exited = adbExitedRunOf(started.error);
-      // AOSP ActivityManagerShellCommand returns 1 for class-not-found and
-      // emits its refusal report on stdout. Other exits remain command errors.
-      if (exited === undefined || exited.exitCode !== 1) return started;
-      stdout = exited.stdout.toString("utf8");
-      stderr = exited.stderr;
-      capturedOutput = exited.capturedOutput;
-      // Stderr carries adb transport diagnostics, not the Activity Manager
-      // report, so it cannot establish a target refusal on this path.
-      verdict = parseAmStartOutput(stdout);
-      if (verdict.status !== "refused" || verdict.startedActivity === null)
-        return started;
-    }
-    const result = {
-      ...resultFields,
-      started_activity: verdict.startedActivity,
-      reported_activity: verdict.activity,
-      reported_status: verdict.reportedStatus,
+    if (!started.ok) return started;
+    const stdout = started.value.stdout;
+    const stderr = started.value.stderr;
+    const capturedOutput: AnalysisCapturedOutput = {
+      stdout,
+      stderr,
+      truncated: false,
     };
+    const verdict = parseAmStartOutput(stdout, stderr);
+    const { result, partialObservation } = buildActivityObservation(verdict);
     if (verdict.status === "refused") {
-      const partialObservation: AdbActivityStartPartialObservation =
-        operation === "start_adb_app"
-          ? {
-              provider_id: "adb",
-              operation,
-              result: adbResultSchemas.start_adb_app.parse(result),
-            }
-          : {
-              provider_id: "adb",
-              operation,
-              result: adbResultSchemas.start_adb_activity.parse(result),
-            };
       return err(
         new AnalysisUnsupportedTargetError(
           operation,

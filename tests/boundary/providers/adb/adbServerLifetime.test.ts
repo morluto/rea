@@ -33,9 +33,9 @@ const { spawn } = require("node:child_process");
 const args = process.argv.slice(2);
 const root = ${JSON.stringify(root)};
 appendFileSync(root + "/argv.log", args.join(" ") + "\\n");
-const detached = (name) => {
+const spawnBackground = (name, isDetached) => {
   const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
-    detached: true,
+    detached: isDetached,
     stdio: "ignore",
   });
   writeFileSync(root + "/" + name + ".pid", String(child.pid));
@@ -43,10 +43,15 @@ const detached = (name) => {
 };
 if (args[0] === "version")
   process.stdout.write("Android Debug Bridge version 1.0.41\\nVersion 35.0.2-fixture\\n");
-else if (args[0] === "start-server") detached("server");
-else if (args[0] === "devices")
+else if (args[0] === "start-server") {
+  process.stderr.write("* daemon not running; starting now at tcp:5037\\n* daemon started successfully\\n");
+  spawnBackground("server", true);
+} else if (args[0] === "devices")
   process.stdout.write("List of devices attached\\nemulator-5554 device transport_id:1\\n");
-else if (args.includes("spawn-child")) detached("descendant");
+else if (args.includes("auto-restart-server")) {
+  process.stderr.write("* daemon not running; starting now at tcp:5037\\n* daemon started successfully\\n");
+  spawnBackground("replacement-server", true);
+} else if (args.includes("spawn-child")) spawnBackground("descendant", false);
 else if (args.includes("hold")) {
   process.on("SIGTERM", () => {
     writeFileSync(root + "/stopped-by", "SIGTERM");
@@ -67,7 +72,7 @@ const fixture = async () => {
   const provider = new AdbProvider({ environment: { REA_ADB_PATH: adb } });
   onTestFinished(async () => {
     await provider.close();
-    for (const name of ["server", "descendant"])
+    for (const name of ["server", "replacement-server", "descendant"])
       try {
         process.kill(
           Number(await readFile(join(root, `${name}.pid`), "utf8")),
@@ -89,6 +94,9 @@ posix(
       input: {},
     });
     if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      may_have_started_adb_server: true,
+    });
     expect(
       (await readFile(join(root, "argv.log"), "utf8")).split("\n"),
     ).toEqual(["version", "start-server", "devices -l", ""]);
@@ -98,6 +106,21 @@ posix(
     expect(alive(server)).toBe(true);
     await provider.close();
     expect(alive(server)).toBe(true);
+  },
+);
+
+posix(
+  "does not kill a replacement server auto-started by a device command",
+  async () => {
+    const { root, provider } = await fixture();
+    await provider.execute({
+      operation: "inspect_adb_package",
+      input: { serial: "emulator-5554", package: "auto-restart-server" },
+    });
+    const replacement = Number(
+      await readFile(join(root, "replacement-server.pid"), "utf8"),
+    );
+    expect(alive(replacement)).toBe(true);
   },
 );
 
