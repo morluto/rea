@@ -10,8 +10,11 @@ import {
 import type { RpmPackagePort } from "../ports/rpm/RpmPackagePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import {
   MAX_INSPECT_RPM_PACKAGE_FILE_BYTES,
   MAX_INSPECT_RPM_PACKAGE_FILES,
@@ -65,19 +68,16 @@ const budgetFailure = (
   details: AnalysisErrorOptions,
 ) => {
   const remediationAction = inputBudgetRemediation(cause, input);
-  return new AnalysisResourceConstraintError(
+  const limit =
+    cause instanceof RpmPackageCapacityFailure
+      ? { name: cause.resource, maximum: cause.maximum }
+      : { name: "max_file_bytes", maximum: input.max_file_bytes };
+  return parseLimitConstraint(
     OPERATION,
     cause.boundary ?? "memory",
-    cause.message,
-    {
-      max_file_bytes: input.max_file_bytes,
-      max_header_index_entries: input.max_header_index_entries,
-      max_files: input.max_files,
-      max_script_bytes: input.max_script_bytes,
-    },
+    decodeLimit("rpm", cause.message, limit, { cause }),
     {
       ...details,
-      cause,
       ...(remediationAction === undefined
         ? {}
         : { retryable: false, remediationAction }),
