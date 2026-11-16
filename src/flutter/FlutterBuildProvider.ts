@@ -245,24 +245,8 @@ const mapInputFailure = (
     return new AnalysisAccessDeniedError(operation, path, cause.code, {
       cause,
     });
-  // A reader limit that names its own ceiling (such as the ZIP decoder window)
-  // keeps it; only the unnamed metadata read refusal is this provider's budget.
   if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return cause.fixedAllowance === undefined
-      ? new AnalysisResourceConstraintError(
-          operation,
-          "memory",
-          cause.message,
-          { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
-          { cause, ...FLUTTER_ALLOWANCES.apkMetadataRead },
-        )
-      : new AnalysisResourceConstraintError(
-          operation,
-          cause.boundary === "file-size" ? "file-size" : "memory",
-          cause.message,
-          null,
-          { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
-        );
+    return readerLimitFailure(operation, cause);
   return new AnalysisInputError(operation, { cause }, [
     {
       path: ["path"],
@@ -270,6 +254,52 @@ const mapInputFailure = (
       message: inputFailureMessage(path, cause),
     },
   ]);
+};
+
+/**
+ * Report the ZIP reader ceiling that refused the APK. A ceiling the reader
+ * names (the Zstandard decoder window) keeps its name. The archive expansion
+ * budget is derived from the APK's size, and Flutter offers no control that
+ * raises it, so it is fixed for this request. The ZIP reader's remaining limit
+ * is the metadata read budget this provider selects.
+ */
+const readerLimitFailure = (
+  operation: string,
+  cause: ArtifactReaderFailure,
+): AnalysisError => {
+  if (cause.fixedAllowance !== undefined)
+    return new AnalysisResourceConstraintError(
+      operation,
+      cause.boundary === "file-size" ? "file-size" : "memory",
+      cause.message,
+      null,
+      { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
+    );
+  if (cause.readerLimit !== undefined) {
+    const { effective_value: limit, required_value: required } =
+      cause.readerLimit;
+    return new AnalysisResourceConstraintError(
+      operation,
+      "memory",
+      `The APK's declared member sizes${required === undefined ? "" : ` (${String(required)} bytes)`} exceed its ${String(limit)}-byte expansion allowance.`,
+      { max_expanded_bytes: limit },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          "The Flutter APK expansion allowance (derived from the APK size)",
+          "parser",
+          { limit, unit: cause.readerLimit.unit },
+        ),
+      },
+    );
+  }
+  return new AnalysisResourceConstraintError(
+    operation,
+    "memory",
+    cause.message,
+    { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
+    { cause, ...FLUTTER_ALLOWANCES.apkMetadataRead },
+  );
 };
 
 /** Name a missing or non-file selection instead of blaming package bytes. */

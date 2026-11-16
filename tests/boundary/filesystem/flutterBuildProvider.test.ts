@@ -1287,6 +1287,40 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
 );
 
 it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s names the APK expansion allowance, not the metadata read allowance, for oversized declared members",
+  async (operation) => {
+    const root = await createTestTempDirectory("rea-flutter-expansion-");
+    const path = join(root, "declared.apk");
+    // A small archive declaring a 300 MiB member exceeds the 256 MiB floor
+    // of its size-derived expansion budget while its metadata fits.
+    await writeFile(
+      path,
+      zstandardZipFixture(Buffer.from("x"), {
+        method: 0,
+        compressed: Buffer.from("x"),
+        declaredSize: 300 * 1024 ** 2,
+        name: "assets/declared.bin",
+      }),
+    );
+    const provider = new FlutterBuildProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.execute({ operation, input: { path } });
+    if (result.ok) throw new Error("expected an expansion refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit: 256 * 1024 ** 2,
+      unit: "bytes",
+    });
+    expect(projected.details?.reported_limits).toEqual({
+      max_expanded_bytes: 256 * 1024 ** 2,
+    });
+  },
+);
+
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
   "%s names the ZIP decoder window, not the metadata read allowance, for a large-window library",
   async (operation) => {
     const root = await createTestTempDirectory("rea-flutter-zstd-");
