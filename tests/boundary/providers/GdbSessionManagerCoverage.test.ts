@@ -34,6 +34,7 @@ import {
   stopOwnedDebuggerProcess,
   type OwnedDebuggerStopResult,
 } from "../../../src/process/ownedDebuggerSession.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import {
   answerFakeGdbStartup,
@@ -833,15 +834,21 @@ it.each(["close", "retryCleanupFailures"] as const)(
 );
 
 it.each([
-  { name: "single inferior without TTY", verifiedTty: false, inferiorCount: 1 },
+  {
+    name: "single inferior without TTY",
+    verifiedTty: false,
+    inferiorCount: 1,
+    reason: "no-durable-output-sink",
+  },
   {
     name: "multiple inferiors with verified TTY",
     verifiedTty: true,
     inferiorCount: 2,
+    reason: "multiple-inferiors",
   },
 ])(
   "allows explicit inferior remediation before destructive cleanup: $name",
-  async ({ verifiedTty, inferiorCount }) => {
+  async ({ verifiedTty, inferiorCount, reason }) => {
     const tty = "/dev/pts/42";
     const remainingInferiors = new Set(
       Array.from({ length: inferiorCount }, (_, index) => index + 1),
@@ -889,7 +896,19 @@ it.each([
     expect(manager.status(id)?.state).toBe("ready");
     expect(refused).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisCapabilityUnavailableError", retryable: true },
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        retryable: true,
+        diagnostics: {
+          inferior_disposition_required: reason,
+          live_inferiors: inferiorCount,
+        },
+      },
+    });
+    if (refused.ok) throw new Error("Expected a disposition refusal");
+    expect(projectAnalysisError(refused.error).details?.diagnostics).toEqual({
+      inferior_disposition_required: reason,
+      live_inferiors: inferiorCount,
     });
     expect(stopCalls).toBe(0);
     expect(commands).not.toContain("-target-detach");
@@ -1955,6 +1974,61 @@ it("uses a fallback message when the process launcher rejects without an Error",
   }
   expect(attempts).toBe(2);
 });
+
+it.each([
+  {
+    code: "EAGAIN",
+    tag: "AnalysisResourceConstraintError",
+    projected: { code: "resource_constraint", retryable: true },
+    boundary: "host-capacity",
+  },
+  {
+    code: "E2BIG",
+    tag: "AnalysisResourceConstraintError",
+    // GDB's arguments are fixed, so the repair names the environment.
+    projected: { code: "resource_constraint", retryable: false },
+    boundary: "provider-launch",
+    facts: { oversized_launch_input: "environment" },
+  },
+  {
+    code: "EIO",
+    tag: "AnalysisCapabilityUnavailableError",
+    projected: {
+      code: "capability_unavailable",
+      remediation: { action: expect.stringContaining("REA_GDB_COMMAND") },
+    },
+    boundary: "provider-launch",
+  },
+])(
+  "classifies a $code launch failure once without retrying another MI dialect",
+  async ({ code, tag, projected, boundary, facts }) => {
+    let attempts = 0;
+    const manager = managerWithFakeSpawner(async () => {
+      attempts += 1;
+      throw spawnFailure(code, "fake-gdb");
+    });
+
+    const started = await manager.start();
+
+    expect(attempts).toBe(1);
+    expect(started.ok).toBe(false);
+    if (!started.ok) {
+      expect(started.error._tag).toBe(tag);
+      expect(projectAnalysisError(started.error)).toMatchObject({
+        ...projected,
+        details: {
+          diagnostics: {
+            boundary,
+            system_code: code,
+            syscall: "spawn fake-gdb",
+            command: "fake-gdb",
+            ...facts,
+          },
+        },
+      });
+    }
+  },
+);
 
 it("returns startup timeout when the MI prompt never arrives", async () => {
   const provider = await createProvider(

@@ -11,7 +11,7 @@ import {
   type RpcError,
   type StateIntake,
 } from "./stateIntake.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** One data-plane method's outcome; undefined from a method table means the method is not served. */
 export type RpcOutcome =

@@ -21,7 +21,7 @@ import {
 import { err } from "../../../src/domain/result.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { HopperProcessError } from "../../../src/domain/hopperErrors.js";
+import { HopperProcessError } from "../../../src/hopper/HopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -37,6 +37,7 @@ import type {
   IncompleteProcessCaptureObservations,
   ProcessCaptureCleanupReport,
 } from "../../../src/domain/process/processCapture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
@@ -152,10 +153,13 @@ describe("completed partial process capture MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-error-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-error-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -292,10 +296,13 @@ describe("incomplete partial process observations MCP projection", () => {
       toolRegistrationOptions(captureContract),
       async () => delivery.toCallToolResult(err(failure), captureContract),
     );
-    const client = new Client({
-      name: "process-partial-observations-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "process-partial-observations-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

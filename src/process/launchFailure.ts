@@ -80,7 +80,7 @@ export const classifyLaunchErrno = (code: unknown): LaunchFailure => {
 };
 
 /** Classify a spawn errno; undefined when it is not a launch refusal. */
-export const classifyLaunchFailureCode = (
+const classifyLaunchFailureCode = (
   code: unknown,
 ): LaunchRefusal | undefined => {
   if (typeof code !== "string" || !Object.hasOwn(LAUNCH_REFUSALS, code))
@@ -88,14 +88,6 @@ export const classifyLaunchFailureCode = (
   const kind = LAUNCH_REFUSALS[code];
   return kind === undefined ? undefined : { kind, code };
 };
-
-/** Classify a spawn failure; undefined when it was not a launch refusal. */
-export const classifyLaunchFailure = (
-  cause: unknown,
-): LaunchRefusal | undefined =>
-  cause instanceof Error && "code" in cause
-    ? classifyLaunchFailureCode(cause.code)
-    : undefined;
 
 /**
  * Name the executable on an errno Node threw synchronously from `spawn`.

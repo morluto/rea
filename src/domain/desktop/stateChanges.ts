@@ -4,7 +4,7 @@ import type { DesktopStateFormat } from "./stateFormats.js";
 import { holdsTagOnly, pairMembers } from "./memberPairing.js";
 import { memberLookup } from "./viewPointer.js";
 import { zipEntryAt, zipLeavesOut } from "./zipView.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 import { boundedList, type BoundedList } from "../boundedList.js";
 
 const MAX_LISTED = 100;

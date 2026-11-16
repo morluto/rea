@@ -3,7 +3,6 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerReverseEngineeringTools } from "../../../src/server/registerReverseEngineeringTools.js";
 import {
   registerServiceTools,
   type GdbToolOptions,
@@ -19,6 +18,7 @@ import { inspectAnalysisView } from "../../../src/application/analysisView/Analy
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
 import { ownedOutput } from "../../support/reverseEngineeringCompositionFixtures.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const capture = {
@@ -85,27 +85,23 @@ const connect = async (retain = true) => {
   );
   const service = new TestReverseEngineeringService({ runOwned: run });
   const logger = pino({ enabled: false });
-  registerReverseEngineeringTools(
-    server,
-    service,
-    logger,
-    delivery,
-    retain ? record : undefined,
-    undefined,
-    undefined,
-    undefined,
-    retain ? lookup : undefined,
-  );
   registerServiceTools(
     server,
-    { analysisView: {}, gdb: { manager, session: undefined } },
+    {
+      analysisView: {},
+      gdb: { manager, session: undefined },
+      reverseEngineering: { service, session: undefined },
+    },
     {
       logger,
       evidenceById: retain ? lookup : undefined,
       recordEvidence: retain ? record : undefined,
     },
   );
-  const client = new Client({ name: "command-view-client", version: "1" });
+  const client = new Client(
+    { name: "command-view-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

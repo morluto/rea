@@ -1,4 +1,4 @@
-import { Cli, Completions, z } from "incur";
+import { z } from "zod";
 
 import {
   CLI_COMPLETION_SHELLS,
@@ -10,13 +10,18 @@ import {
   splitIncurBuiltinArguments,
 } from "../cliBuiltinArguments.js";
 import { CLI_OUTPUT_FORMATS, parseCliOutputArguments } from "../cliOutput.js";
-import { bashCompletionScript } from "./bashCompletionRegistration.js";
+import {
+  completeWords,
+  completionScript,
+  formatCompletions,
+  type CompletionCommand,
+} from "./completionProtocol.js";
+import { cliCommands } from "./commandRegistry.js";
 import { MCP_SUBCOMMANDS } from "./mcpBuiltinCommands.js";
+import type { CliInstance } from "./types.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
 
-type Commands = Parameters<typeof Completions.complete>[0];
-type CompletionCli = Parameters<typeof Cli.toCommands.get>[0];
-type ServeOptions = NonNullable<Parameters<CompletionCli["serve"]>[1]>;
+type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);
 
 /** Supplement Incur's built-in setup instructions without replacing its help. */
@@ -80,9 +85,20 @@ const standardGlobals = (root: boolean): z.ZodObject =>
     ]),
   );
 
-/** Pinned Incur builtins are not exported in its registered command map. */
-const completionCommands = (cli: CompletionCli): Commands => {
-  const commands: Commands = new Map(Cli.toCommands.get(cli));
+/** Registered commands in registration order, then the builtin groups. */
+const completionCommands = (
+  cli: CliInstance,
+): ReadonlyMap<string, CompletionCommand> => {
+  const commands = new Map<string, CompletionCommand>(
+    cliCommands(cli).map(({ name, definition }) => [
+      name,
+      {
+        description: definition.description,
+        options: definition.options,
+        alias: definition.alias,
+      },
+    ]),
+  );
   commands.set("mcp", {
     _group: true,
     description: "Register as MCP server",
@@ -97,15 +113,13 @@ const completionCommands = (cli: CompletionCli): Commands => {
   return commands;
 };
 
-/** One tree owns command scope; the framework retains option/enum binding and shell formatting. */
+/** One tree owns command scope; completionProtocol owns candidates and shell encoding. */
 export const createCliCompletions = (
-  cli: CompletionCli,
+  cli: CliInstance,
   environment: Readonly<NodeJS.ProcessEnv>,
 ) => {
   const script = (shell: (typeof CLI_COMPLETION_SHELLS)[number]) =>
-    shell === "bash"
-      ? bashCompletionScript(cli.name)
-      : Completions.register(shell, cli.name);
+    completionScript(shell, cli.name);
   return (arguments_: readonly string[], options: ServeOptions): boolean => {
     const write =
       options.stdout ?? ((text: string) => process.stdout.write(text));
@@ -129,9 +143,8 @@ export const createCliCompletions = (
       if (before.includes("--")) return true;
       const input = [cli.name, ...before, words[index] ?? ""];
       const doctor = before[0] === "mcp" && before[1] === "doctor";
-      const candidates = Completions.complete(
+      const candidates = completeWords(
         completionCommands(cli),
-        undefined,
         input,
         input.length - 1,
         {
@@ -142,7 +155,7 @@ export const createCliCompletions = (
           alias: doctor ? MCP_DOCTOR_ALIAS : { help: "h" },
         },
       );
-      const result = Completions.format(shell, candidates);
+      const result = formatCompletions(shell, candidates);
       if (result !== "") write(result);
       return true;
     }

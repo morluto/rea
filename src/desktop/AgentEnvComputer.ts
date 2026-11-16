@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { getHeapStatistics } from "node:v8";
 
@@ -26,6 +26,7 @@ import { DRAWN_WAIT_MS, drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -536,10 +537,7 @@ export class AgentEnvComputer implements ControlledComputer {
     )?.file?.bytes;
     const bytes =
       encoded === undefined ? undefined : Buffer.from(encoded, "base64");
-    if (
-      bytes?.length !== segment.bytes ||
-      createHash("sha256").update(bytes).digest("hex") !== segment.sha256
-    )
+    if (bytes?.length !== segment.bytes || sha256Hex(bytes) !== segment.sha256)
       throw new Error(
         `Recording segment ${segment.path} is missing or differs from its manifest.`,
       );

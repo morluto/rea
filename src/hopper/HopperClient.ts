@@ -41,13 +41,13 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import {
   providerRetryAction,
   sharedProviderFailureStage,
@@ -75,7 +75,7 @@ import {
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
-import { retainProcessInspectionOwners } from "../providers/OwnedCommandCleanup.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
@@ -109,6 +109,7 @@ import {
 import {
   HopperRequestQueue,
   type HopperRequestActivity,
+  type HopperRequestFailure,
 } from "./HopperRequestQueue.js";
 import {
   type HopperBridgeEvent,
@@ -707,7 +708,7 @@ export class HopperClient<
       } catch (cause: unknown) {
         // The identity stays unavailable; descriptors the read left open stay
         // owned until session cleanup releases them.
-        retainProcessInspectionOwners(
+        retainArtifactCommandCleanup(
           cause,
           this.#resources.inspections,
           "open_binary",
@@ -1479,7 +1480,7 @@ export class HopperClient<
     this.#socket?.destroy();
   }
 
-  #failAll(error: HopperError): void {
+  #failAll(error: HopperRequestFailure): void {
     this.#requests.failAll(error);
   }
 
@@ -1496,7 +1497,7 @@ export class HopperClient<
   }
 
   #retainRequestHealth(
-    result: Result<JsonValue, HopperError>,
+    result: Result<JsonValue, AnalysisError>,
     requestId: number,
     operation: string,
   ): void {

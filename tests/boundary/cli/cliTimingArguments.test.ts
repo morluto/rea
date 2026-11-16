@@ -1,5 +1,6 @@
 import { it, expect } from "vitest";
-import { Parser, z } from "incur";
+import { Parser } from "incur";
+import { z } from "zod";
 import {
   splitCliTimingArguments,
   normalizeCliArguments,

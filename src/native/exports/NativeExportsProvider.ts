@@ -29,6 +29,7 @@ import { err, ok } from "../../domain/result.js";
 import { NATIVE_EXPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   BinaryResourceFailure,
+  binaryResourceCeiling,
   binaryResourceAllowance,
 } from "../../domain/binaryContainer.js";
 import {
@@ -86,8 +87,9 @@ export class NativeExportsProvider implements NativeExportsPort {
 /** Recovery for one exhausted allowance, chosen from the parser's structured tag. */
 const limitRecovery = (
   limit: NativeExportLimit | null,
-  maximum: number,
+  cause: BinaryResourceFailure,
 ): ResourceConstraintRecovery => {
+  const maximum = cause.maximum_bytes;
   switch (limit) {
     case "rows":
       return fixedAllowanceOptions(
@@ -105,6 +107,7 @@ const limitRecovery = (
       return fixedAllowanceOptions(
         "The native export structural decoding allowance",
         "parser",
+        binaryResourceCeiling(cause),
       );
   }
 };
@@ -132,7 +135,7 @@ const nativeExportsFailurePrimary = (
         cause,
         ...limitRecovery(
           binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
-          cause.maximum_bytes,
+          cause,
         ),
       },
     );

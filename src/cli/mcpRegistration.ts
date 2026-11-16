@@ -1,7 +1,8 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { Writable } from "node:stream";
 
-import { Help, z } from "incur";
+import { Help } from "incur";
+import { z } from "zod";
 
 import {
   mcpClientRegistrationWritten,

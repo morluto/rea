@@ -12,6 +12,8 @@ import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
 import { describe, expect, it, afterEach } from "vitest";
 import { probeGhidraJava, parseGhidraJavaOutput } from "./GhidraJavaProbe.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 let resources = createInspectionResources();
 afterEach(async () => {
   await resources.close();
@@ -52,7 +54,7 @@ describe("Ghidra Java prerequisite process facts", () => {
   ])(
     "keeps %s distinct from other runtime failures",
     async (code, expected) => {
-      const error = Object.assign(new Error(`controlled ${code}`), { code });
+      const error = spawnFailure(code, "/selected/bin/java");
       const result = await probeGhidraJava(
         "/selected/bin/java",
         {},
@@ -73,6 +75,57 @@ describe("Ghidra Java prerequisite process facts", () => {
         },
       });
       expect(result.ok ? null : result.error).not.toHaveProperty("output");
+    },
+  );
+
+  it("does not read an errno from outside the launcher as a missing runtime", async () => {
+    const result = await probeGhidraJava(
+      "/selected/bin/java",
+      {},
+      {
+        resourceOwner: resources.owner,
+        launcher: async () => {
+          throw Object.assign(new Error("read failed"), { code: "ENOENT" });
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "GhidraJavaProbeFailure", code: "runtime_unavailable" },
+    });
+  });
+
+  it.each([
+    ["EAGAIN", true],
+    ["E2BIG", false],
+  ])(
+    "reports a host launch constraint %s as a resource constraint, not a runtime fault",
+    async (code, retryable) => {
+      const result = await probeGhidraJava(
+        "/selected/bin/java",
+        {},
+        {
+          resourceOwner: resources.owner,
+          launcher: async () => {
+            throw spawnFailure(code, "/selected/bin/java");
+          },
+        },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(AnalysisError);
+      if (!(result.error instanceof AnalysisError)) return;
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "resource_constraint",
+        retryable,
+        details: {
+          diagnostics: {
+            system_code: code,
+            command: "/selected/bin/java",
+            java_executable: "/selected/bin/java",
+          },
+        },
+      });
     },
   );
 

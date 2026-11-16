@@ -20,7 +20,10 @@ import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { CallToolResult } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  ServerContext,
+} from "@modelcontextprotocol/server";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -47,6 +50,11 @@ import {
 } from "./contractToolHandler.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
+import {
+  createProviderOperationToolHandler,
+  type ProviderOperation,
+  type ProviderOperationOptions,
+} from "./providerOperationToolHandler.js";
 import {
   createExternalMutationToolHandler,
   type ExternalMutation,
@@ -100,6 +108,7 @@ type EvidenceBinding<Input = unknown> = (
       readonly analyze?: never;
       readonly mutation?: never;
       readonly query?: never;
+      readonly provider?: never;
     }
   | {
       readonly admission: "application";
@@ -112,6 +121,7 @@ type EvidenceBinding<Input = unknown> = (
       readonly analyze?: never;
       readonly mutation?: never;
       readonly query?: never;
+      readonly provider?: never;
     }
 ) & {
   /**
@@ -140,6 +150,11 @@ type ValueOperation<Input> = (
  */
 type ValueBinding<Input = unknown> = {
   readonly admitted?: true;
+  /**
+   * Rewrite every response this tool delivers, its refusals included, such
+   * as replacing secrets the caller typed with their handles.
+   */
+  readonly presentResult?: (result: CallToolResult) => CallToolResult;
 } & (
   | {
       readonly admission: "sdk";
@@ -152,6 +167,7 @@ type ValueBinding<Input = unknown> = {
       readonly analyze?: never;
       readonly mutation?: never;
       readonly query?: never;
+      readonly provider?: never;
     }
   | {
       readonly admission: "application";
@@ -164,6 +180,7 @@ type ValueBinding<Input = unknown> = {
       readonly analyze?: never;
       readonly mutation?: never;
       readonly query?: never;
+      readonly provider?: never;
     }
 );
 
@@ -190,6 +207,30 @@ interface QueryBinding<Input> {
   readonly workflow?: never;
   readonly analyze?: never;
   readonly mutation?: never;
+  readonly provider?: never;
+}
+
+/**
+ * Run the named provider operation on the analysis admission grants and
+ * deliver its observation as atomic Evidence (see
+ * `createProviderOperationToolHandler`). A server that admits no analysis
+ * refuses the binding at startup.
+ */
+interface ProviderBinding<Operation extends ProviderOperation> {
+  readonly admission: "sdk";
+  readonly provider: ProviderOperationOptions & {
+    /** The contract's own name: a binding runs only its named operation. */
+    readonly operation: Operation;
+  };
+  readonly run?: never;
+  readonly summary?: never;
+  readonly value?: never;
+  readonly derive?: never;
+  readonly acquire?: never;
+  readonly workflow?: never;
+  readonly analyze?: never;
+  readonly mutation?: never;
+  readonly query?: never;
 }
 
 /**
@@ -218,6 +259,7 @@ type DerivedBinding = {
   readonly analyze?: never;
   readonly mutation?: never;
   readonly query?: never;
+  readonly provider?: never;
 } & (
   | {
       readonly derive: (
@@ -256,6 +298,7 @@ interface RetainedSummaryBinding<Input> {
   readonly analyze?: never;
   readonly mutation?: never;
   readonly query?: never;
+  readonly provider?: never;
 }
 
 /**
@@ -280,6 +323,7 @@ interface ApplicationWorkflowBinding<Input> {
   readonly analyze?: never;
   readonly mutation?: never;
   readonly query?: never;
+  readonly provider?: never;
 }
 
 /** An application-admitted workflow validates the raw request itself. */
@@ -305,6 +349,7 @@ type AnalysisBinding<Input> = {
   readonly view?: never;
   readonly mutation?: never;
   readonly query?: never;
+  readonly provider?: never;
 } & (Input extends { readonly detail: "complete" | "summary" }
   ? {
       readonly detail: "delivery";
@@ -337,6 +382,7 @@ interface ExternalMutationBinding<Input> {
   readonly workflow?: never;
   readonly analyze?: never;
   readonly query?: never;
+  readonly provider?: never;
 }
 
 /** How one named contract runs over MCP; only summary-capable contracts take `summary`. */
@@ -350,6 +396,8 @@ export type ContractToolBinding<Name extends CatalogToolName> =
   | AnalysisBinding<ContractInput<Name>>
   | ExternalMutationBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
   | QueryBinding<ContractInput<Name>>
+  // Only a provider operation binds a provider, and only to its own name.
+  | (Name extends ProviderOperation ? ProviderBinding<Name> : never)
   | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
@@ -484,9 +532,11 @@ export const registerContractTools = (
           readonly run?: never;
           readonly mutation?: never;
           readonly query?: never;
+          readonly provider?: never;
         }
       | ExternalMutationBinding<unknown>
       | QueryBinding<unknown>
+      | ProviderBinding<ProviderOperation>
       | RetainedSummaryBinding<Readonly<Record<string, unknown>>>
       | undefined
     >
@@ -497,6 +547,13 @@ export const registerContractTools = (
     const binding = table[contract.name];
     if (binding === undefined) continue;
     unbound.delete(contract.name);
+    if (
+      binding.provider !== undefined &&
+      binding.provider.operation !== contract.name
+    )
+      throw invariantViolation(
+        `MCP tool ${contract.name} binds provider operation ${binding.provider.operation}`,
+      );
     const registration =
       binding.admission === "sdk"
         ? toolRegistrationOptions(contract)
@@ -504,79 +561,103 @@ export const registerContractTools = (
     const handler =
       binding.run !== undefined && binding.unavailable !== undefined
         ? unavailableToolHandler(server, contract, binding.unavailable)
-        : binding.mutation !== undefined
-          ? createExternalMutationToolHandler(
+        : binding.provider !== undefined
+          ? createProviderOperationToolHandler(
               server,
-              binding.session,
-              binding.mutation,
-              logger,
-              retention,
+              binding.provider.operation,
+              binding.provider,
+              {
+                logger,
+                recordEvidence,
+                evidenceById,
+                withAdmittedAnalysis: requiredAdmission(
+                  withAdmittedAnalysis,
+                  contract.name,
+                ),
+              },
             )(contract)
-          : binding.analyze !== undefined
-            ? createAnalysisToolHandler(
+          : binding.mutation !== undefined
+            ? createExternalMutationToolHandler(
                 server,
-                binding.analyze,
+                binding.session,
+                binding.mutation,
                 logger,
                 retention,
-                requiredAdmission(withAdmittedAnalysis, contract.name),
-                binding.detail === "delivery",
               )(contract)
-            : binding.query !== undefined
-              ? createValueToolHandler(
+            : binding.analyze !== undefined
+              ? createAnalysisToolHandler(
                   server,
-                  analysisQuery(binding.query, contract.name),
+                  binding.analyze,
                   logger,
+                  retention,
                   requiredAdmission(withAdmittedAnalysis, contract.name),
-                  recordEvidence,
+                  binding.detail === "delivery",
                 )(contract)
-              : binding.value !== undefined
+              : binding.query !== undefined
                 ? createValueToolHandler(
                     server,
-                    binding.value,
+                    analysisQuery(binding.query, contract.name),
                     logger,
-                    binding.admitted === true
-                      ? withAdmittedAnalysis
-                      : undefined,
+                    requiredAdmission(withAdmittedAnalysis, contract.name),
                     recordEvidence,
                   )(contract)
-                : binding.workflow !== undefined
-                  ? createApplicationToolHandler(
+                : binding.value !== undefined
+                  ? createValueToolHandler(
                       server,
-                      binding,
+                      binding.value,
                       logger,
-                      {
-                        recordEvidence,
-                        recordEvidenceWithUnknown,
-                        evidenceById,
-                      },
-                      withAdmittedAnalysis,
+                      binding.admitted === true
+                        ? withAdmittedAnalysis
+                        : undefined,
+                      recordEvidence,
                     )(contract)
-                  : binding.derive !== undefined ||
-                      binding.acquire !== undefined
-                    ? createDerivedToolHandler(
+                  : binding.workflow !== undefined
+                    ? createApplicationToolHandler(
                         server,
-                        binding.session,
-                        derivedAcquisition(binding),
+                        binding,
                         logger,
-                      )(contract)
-                    : binding.run !== undefined
-                      ? createEvidenceToolHandler(
-                          server,
-                          binding.run,
-                          logger,
+                        {
                           recordEvidence,
-                          withAdmittedAnalysis,
-                          binding.viewSource,
-                        )(contract)
-                      : createRetainedSummaryToolHandler(
+                          recordEvidenceWithUnknown,
+                          evidenceById,
+                        },
+                        withAdmittedAnalysis,
+                      )(contract)
+                    : binding.derive !== undefined ||
+                        binding.acquire !== undefined
+                      ? createDerivedToolHandler(
                           server,
-                          contract as SummaryContract,
-                          binding.summary,
+                          binding.session,
+                          derivedAcquisition(binding),
                           logger,
-                          retention,
-                          withAdmittedAnalysis,
-                        );
-    server.registerTool(contract.name, registration, handler);
+                        )(contract)
+                      : binding.run !== undefined
+                        ? createEvidenceToolHandler(
+                            server,
+                            binding.run,
+                            logger,
+                            recordEvidence,
+                            withAdmittedAnalysis,
+                            binding.viewSource,
+                          )(contract)
+                        : createRetainedSummaryToolHandler(
+                            server,
+                            contract as SummaryContract,
+                            binding.summary,
+                            logger,
+                            retention,
+                            withAdmittedAnalysis,
+                          );
+    const present =
+      binding.value === undefined ? undefined : binding.presentResult;
+    server.registerTool(
+      contract.name,
+      registration,
+      present === undefined
+        ? handler
+        : async (input: unknown, context: ServerContext) =>
+            present(await handler(input, context)),
+    );
   }
   if (unbound.size > 0)
     throw invariantViolation(

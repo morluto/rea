@@ -14,6 +14,7 @@ import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
@@ -63,7 +64,10 @@ const exerciseDeliveryFailure = async (
       content: [{ type: "text", text: "still connected" }],
     }),
   );
-  const client = new Client({ name: "oversized-error-client", version: "1" });
+  const client = new Client(
+    { name: "oversized-error-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -199,7 +203,10 @@ it("retains an oversized failed-open receipt with its original error", async () 
       false,
     ),
   );
-  const client = new Client({ name: "oversized-open-client", version: "1" });
+  const client = new Client(
+    { name: "oversized-open-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -253,7 +260,10 @@ it("delivers an error whose text fits although structured and text copies would 
   server.registerTool("mid_failure", { inputSchema: z.object({}) }, async () =>
     failureWithName(nameBytes),
   );
-  const client = new Client({ name: "mid-sized-error-client", version: "1" });
+  const client = new Client(
+    { name: "mid-sized-error-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -304,7 +314,10 @@ it("keeps the untrusted target-content marker on an oversized error's replacemen
     { inputSchema: z.object({ required: z.string() }) },
     async (): Promise<CallToolResult> => ({ content: [] }),
   );
-  const client = new Client({ name: "oversized-target-client", version: "1" });
+  const client = new Client(
+    { name: "oversized-target-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -382,7 +395,10 @@ it.each([false, true])(
       async () =>
         failureWithName(fittingName + 1, targetContent, boundaryDelivery),
     );
-    const client = new Client({ name: "error-budget-client", version: "1" });
+    const client = new Client(
+      { name: "error-budget-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

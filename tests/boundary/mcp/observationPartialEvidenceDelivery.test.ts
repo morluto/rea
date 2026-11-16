@@ -10,6 +10,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 const operations = [
@@ -111,10 +112,13 @@ it.each(operations)(
         },
       },
     );
-    const client = new Client({
-      name: "partial-observation-delivery",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "partial-observation-delivery",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(client, server, session);
