@@ -122,7 +122,9 @@ describe("DWARF dumper comparison", () => {
       },
     ]);
   });
+});
 
+describe("DWARF dumper format handling", () => {
   it("reads readelf indexed strings and ignores unit markers inside values", () => {
     expect(
       parseDumperUnits(

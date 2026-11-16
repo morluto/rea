@@ -6,6 +6,7 @@ import {
   MAX_DWARF_DECOMPRESSED_SECTION_BYTES,
   type DwarfSectionRole,
 } from "../../domain/native/dwarfUnits.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import {
   BinaryFormatFailure,
@@ -41,17 +42,23 @@ const DUPLICATE_SECTION =
   "Duplicate section; the first file-backed copy was read";
 
 /** A debug section's decompressed size exceeds the fixed allowance. */
-export class DwarfSectionAllowanceFailure extends Error {
-  override readonly name = "DwarfSectionAllowanceFailure";
-
+export class DwarfSectionAllowanceFailure extends ParseFailureError<"limit"> {
   constructor(
     readonly section: string,
     readonly requiredBytes: bigint,
     readonly maximumBytes: number,
   ) {
-    super(
-      `${section} decompresses to ${requiredBytes.toString()} bytes, above the ${String(maximumBytes)}-byte DWARF section allowance`,
-    );
+    super({
+      kind: "limit",
+      format: "dwarf",
+      detail: `${section} decompresses to ${requiredBytes.toString()} bytes, above the ${String(maximumBytes)}-byte DWARF section allowance`,
+      limit: {
+        name: "decompressed_section_bytes",
+        maximum: maximumBytes,
+        required: requiredBytes,
+      },
+    });
+    this.name = "DwarfSectionAllowanceFailure";
   }
 }
 

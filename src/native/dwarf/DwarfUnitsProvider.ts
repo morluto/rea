@@ -11,7 +11,10 @@ import {
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
 } from "../../resources/index.js";
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -247,36 +250,21 @@ const dwarfUnitsFailurePrimary = (
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
   if (cause instanceof DwarfSectionAllowanceFailure)
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       "memory",
-      cause.message,
-      {
-        section: cause.section,
-        required_bytes: cause.requiredBytes.toString(),
-        maximum_bytes: cause.maximumBytes,
-      },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          DWARF_DECOMPRESSED_SECTION_ALLOWANCE,
-          "parser",
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(DWARF_DECOMPRESSED_SECTION_ALLOWANCE, "parser"),
     );
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       "memory",
-      cause.message,
-      { maximum_bytes: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The native structural decoding allowance",
-          "parser",
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(
+        "The native structural decoding allowance",
+        "parser",
+      ),
     );
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
