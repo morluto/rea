@@ -67,7 +67,8 @@ const ZIP_ZSTANDARD_WINDOW_ALLOWANCE = `${String(2 ** (ZIP_ZSTANDARD_WINDOW_LOG_
 /** A frame above the window cap is a deliberate resource refusal, not damage. */
 const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt.`;
 
-const ZIP_ZSTANDARD_WINDOW_CEILING: FixedAllowance = {
+/** The fixed method-93 decoder window ceiling, with the request change that fits it. */
+export const ZIP_ZSTANDARD_WINDOW_CEILING: FixedAllowance = {
   name: "The ZIP Zstandard decoder window allowance",
   kind: "parser",
   limit: 2 ** ZIP_ZSTANDARD_WINDOW_LOG_MAX,

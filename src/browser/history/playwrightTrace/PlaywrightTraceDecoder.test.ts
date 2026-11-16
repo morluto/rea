@@ -15,6 +15,8 @@ import {
   zstandardZipFixture,
 } from "../../../../tests/fixtures/zipZstandard.js";
 import { join } from "node:path";
+import { analysisRefusalRemediation } from "../../../domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../resources/ZipArtifactReader.js";
 
 it("imports real v10 recorder text with per-stream identity and resource presence, preserving source bytes", async () => {
   const fixture = await playwrightTraceFixture({ resources: true });
@@ -503,7 +505,14 @@ it("names the ZIP decoder window for a large-window recorder stream", async () =
       allowance: "The ZIP Zstandard decoder window allowance",
       limit: 2 ** 27,
     });
-    expect(projected.remediation.action).not.toContain("recorder chunk");
+    // The recovery is the reader's ceiling through the refusal formatter.
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_playwright_trace",
+        ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+      }),
+    );
   } finally {
     await resources.close();
   }

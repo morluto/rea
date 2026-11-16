@@ -11,6 +11,8 @@ import {
   zstandardZipFixture,
 } from "../../fixtures/zipZstandard.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 
 const expectRefusal = (diagnostic: unknown, large: boolean): void => {
   expect(diagnostic).toMatchObject({
@@ -26,11 +28,20 @@ const expectRefusal = (diagnostic: unknown, large: boolean): void => {
       details: {
         refusal: {
           kind: "fixed_ceiling",
-          allowance: "The ZIP Zstandard decoder window allowance",
+          allowance: ZIP_ZSTANDARD_WINDOW_CEILING.name,
           limit: 2 ** 27,
           unit: "bytes",
-          narrowing: expect.stringContaining("Recompress the member"),
+          narrowing: ZIP_ZSTANDARD_WINDOW_CEILING.narrowing,
         },
+      },
+      // The recovery is the reader's ceiling through the refusal formatter.
+      remediation: {
+        action: analysisRefusalRemediation({
+          kind: "fixed_ceiling",
+          operation: (diagnostic as { details: { operation: string } }).details
+            .operation,
+          ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+        }),
       },
     });
     expect(JSON.stringify(diagnostic)).not.toContain("fresh copy");

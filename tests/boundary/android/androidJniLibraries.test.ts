@@ -25,6 +25,7 @@ import {
 } from "../../../src/domain/android/androidJniBindings.js";
 import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 import {
   zstandardWindowFrameFixture,
   zstandardZipFixture,
@@ -235,7 +236,7 @@ it("keeps the ZIP decoder window's recompression advice in the library failure",
   const result = await read({ snapshot, apkSha256: digest(bytes), resources });
   expect(result.libraries[0]?.failure).toMatchObject({
     kind: "limit",
-    message: expect.stringContaining("Recompress the member"),
+    message: expect.stringContaining(ZIP_ZSTANDARD_WINDOW_CEILING.narrowing!),
   });
 });
 

@@ -47,6 +47,8 @@ import {
   realRm,
 } from "../../fixtures/flutterCleanup.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 import {
   zstandardWindowFrameFixture,
   zstandardZipFixture,
@@ -1346,7 +1348,14 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       limit: 128 * 1024 ** 2,
       unit: "bytes",
     });
-    expect(projected.remediation.action).not.toContain("metadata read");
+    // The recovery is the reader's ceiling through the refusal formatter.
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation,
+        ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+      }),
+    );
   },
 );
 
