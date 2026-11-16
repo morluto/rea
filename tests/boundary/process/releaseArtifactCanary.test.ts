@@ -19,6 +19,9 @@ const preparationBudget =
   process.platform === "darwin" ? resolveSwiftcCompileTimeoutMs() : 0;
 
 async function prepareController(controller: string, version: string) {
+  const rootPackage = JSON.parse(await readFile("package.json", "utf8")) as {
+    readonly imports?: unknown;
+  };
   // The verifier loads its production-owned TypeScript source graph at runtime.
   // Keep that graph in the isolated controller so imports cannot drift from a hand-maintained list.
   await mkdir(join(controller, "scripts"), { recursive: true });
@@ -39,7 +42,14 @@ async function prepareController(controller: string, version: string) {
   });
   await writeFile(
     join(controller, "package.json"),
-    JSON.stringify({ name: "rea-agents", version, type: "module" }),
+    JSON.stringify({
+      name: "rea-agents",
+      version,
+      type: "module",
+      ...(rootPackage.imports === undefined
+        ? {}
+        : { imports: rootPackage.imports }),
+    }),
   );
   await symlink(
     resolve("node_modules"),
