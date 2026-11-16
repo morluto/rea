@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
@@ -188,7 +189,7 @@ it.each([
       truncated: true,
     },
     partialObservation: createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: null },
       {
         operation: "inspect",
@@ -324,12 +325,12 @@ it("preserves recovery and secondary failures owned by an intermediate cleanup",
 
 it("prefers the outer publication source over the nested primary observation", () => {
   const provider = { id: "fixture", name: "Fixture", version: null };
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "source",
     parameters: {},
     result: "source",
   });
-  const nested = createEvidence(undefined, provider, {
+  const nested = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "nested",
     parameters: {},
     result: "nested",
@@ -412,7 +413,7 @@ it("retains an observation attached to the composite after the primary failed", 
     cleanup,
   ).bindCleanupDependencies([primary, cleanup]);
   const observation = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: null },
     {
       operation: "inspect",

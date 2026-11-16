@@ -1,4 +1,15 @@
-import { artifactOperationCause } from "./ArtifactFileOperation.js";
+import {
+  artifactOperationCause,
+  ArtifactReaderFailure,
+  copyArtifactEntry,
+  assertProducedEntry,
+  type ArtifactEntry,
+  type ArtifactReader,
+  type ArtifactTraversalOptions,
+  readArtifactFileChunks,
+  streamChunkToBuffer,
+  abortIfNeeded,
+} from "../resources/index.js";
 import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
 import { Transform, pipeline, type Readable } from "node:stream";
 import {
@@ -14,17 +25,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import {
-  ArtifactReaderFailure,
-  copyArtifactEntry,
-  assertProducedEntry,
-  type ArtifactEntry,
-  type ArtifactReader,
-  type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
-import { streamChunkToBuffer } from "./StreamBytes.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 
 export const INES_LIMITATION =
   "Classic iNES file regions are observed; mapper execution, CPU bank mappings, CHR-RAM contents, 6502 analysis and emulator behavior are not observed. Trailing bytes are retained without interpretation. NES 2.0 and UNIF are unsupported.";

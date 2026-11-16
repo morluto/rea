@@ -6,9 +6,8 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { FitArtifactReader } from "./FitArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as fitStructure from "./fit/FitStructure.js";
 import * as fileChunks from "../filesystem/readFileHandleChunks.js";
@@ -22,10 +21,11 @@ import {
 import {
   cells,
   devicetreeFixture,
-} from "../firmware/devicetree/Devicetree.fixture.js";
+} from "../domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const MIB = 1024 * 1024;
 
@@ -544,15 +544,10 @@ it("preserves a final validation failure when cancellation overlaps it", async (
     await writeFit("final-validation.itb", FIT_EXTERNAL),
   );
   const controller = new AbortController();
-  let acknowledge = (): void => undefined;
-  let resume = (): void => undefined;
-  const entered = new Promise<void>((resolve) => {
-    acknowledge = resolve;
+  const finalValidation = phaseGate();
+  const failure = new ArtifactReaderFailure("integrity", "carrier changed", {
+    integrityCheck: "container-identity",
   });
-  const released = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
-  const failure = new ArtifactReaderFailure("integrity", "carrier changed");
   const read = ArtifactFileSource.prototype.read;
   const readChunks = fileChunks.readFileHandleChunks;
   let owner: ArtifactFileSource | undefined;
@@ -568,8 +563,7 @@ it("preserves a final validation failure when cancellation overlaps it", async (
         // Only this reader's open/validation receives this caller signal.
         if (signal === controller.signal) owner ??= this;
         if (this === owner && imageEnded) {
-          acknowledge();
-          await released;
+          await finalValidation.hold();
           throw failure;
         }
         return read.call(this, signal);
@@ -590,15 +584,15 @@ it("preserves a final validation failure when cancellation overlaps it", async (
         /* drain */
       }
     })();
-    await awaitAcknowledgement(entered, consumed, "FIT final validation");
+    await finalValidation.reached(consumed, "FIT final validation");
     controller.abort({ stage: "final validation" });
-    resume();
+    finalValidation.release();
     await expect(consumed).rejects.toBe(failure);
     await reader.close();
     expect(stream.closed).toBe(true);
     expect(getEventListeners(controller.signal, "abort")).toEqual([]);
   } finally {
-    resume();
+    finalValidation.release();
     await consumed?.catch(() => undefined);
     chunksObserver?.mockRestore();
     observer?.mockRestore();

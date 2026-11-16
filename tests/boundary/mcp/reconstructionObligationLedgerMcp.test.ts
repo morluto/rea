@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { reconstructionProofApplicabilityCases } from "../../fixtures/reconstructionProofApplicability.js";
 import { reconstructionObligationLedgerSchema } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
 import type { ReconstructionObligationManifest } from "../../../src/domain/reconstructionObligationLedgerSchemas.js";
@@ -15,6 +16,7 @@ import {
 import {
   createEvidence,
   evidenceSchema,
+  evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import {
@@ -30,6 +32,7 @@ import {
   reviewedObligation,
 } from "../../../src/application/ReconstructionObligationLedger.fixture.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 type LedgerRequest = (
   evidenceBundle: unknown,
@@ -45,7 +48,10 @@ const withLedgerClient = async (
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "obligation-ledger-test", version: "1" });
+  const client = new Client(
+    { name: "obligation-ledger-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -94,7 +100,7 @@ describe("reconstruction obligation ledger residual graph input", () => {
       relationships: [],
     });
     const mutation = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         predicateType: "rea.residual-unknown-mutation",
@@ -140,7 +146,7 @@ describe("reconstruction obligation ledger residual graph input", () => {
             : [],
       });
       const mutation = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           predicateType: "rea.residual-unknown-mutation",
@@ -206,14 +212,18 @@ describe("reconstruction obligation ledger process provider admission", () => {
     "preserves process provider admission for %s",
     async (_, provider, admitted) => {
       const source = processEvidence();
-      const record = createEvidence(undefined, provider, {
-        predicateType: source.predicate_type,
-        operation: source.operation,
-        parameters: source.parameters,
-        result: source.normalized_result,
-        confidence: source.confidence,
-        authority: source.authority,
-      });
+      const record = createEvidence(
+        evidenceSubjectInput(source.subject),
+        provider,
+        {
+          predicateType: source.predicate_type,
+          operation: source.operation,
+          parameters: source.parameters,
+          result: source.normalized_result,
+          confidence: source.confidence,
+          authority: source.authority,
+        },
+      );
       await withLedgerClient(async (request) => {
         const response = await request(createEvidenceBundle([record]));
         expect(response.isError).not.toBe(true);
@@ -276,7 +286,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
   it("rejects noncanonical source bundles before ledger generation", async () => {
     const records = ["first", "second"].map((label) =>
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         {
           operation: "observe",
@@ -291,7 +301,10 @@ describe("reconstruction obligation ledger MCP parity", () => {
       close: () => Promise.resolve(resultOk(null)),
     }));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "obligation-ledger-test", version: "1" });
+    const client = new Client(
+      { name: "obligation-ledger-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -328,7 +341,7 @@ describe("reconstruction obligation ledger MCP parity", () => {
 
   it("distinguishes corrupt source bundles from missing caller-selected review references", async () => {
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "observe", parameters: {}, result: {} },
     );
@@ -383,7 +396,10 @@ describe("reconstruction obligation ledger MCP parity", () => {
       close: () => Promise.resolve(resultOk(null)),
     }));
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "obligation-ledger-test", version: "1" });
+    const client = new Client(
+      { name: "obligation-ledger-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

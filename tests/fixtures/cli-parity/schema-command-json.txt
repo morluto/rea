@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy --schema --format json
+exit: 0
+--- stdout
+{"args":{"type":"object","properties":{"path":{"type":"string","minLength":1,"pattern":"^[^\\x00]*$","description":"Local file"}},"required":["path"],"additionalProperties":false},"options":{"type":"object","properties":{"blockSize":{"default":4096,"anyOf":[{"type":"integer","minimum":256,"maximum":65536},{"type":"string","pattern":"^[0-9]+$"}],"description":"Power-of-two block size from 256 to 65536 bytes"},"offset":{"default":0,"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"string","pattern":"^[0-9]+$"}],"description":"Window start as a decimal file byte offset"},"length":{"anyOf":[{"type":"integer","minimum":0,"maximum":9007199254740991},{"type":"string","pattern":"^[0-9]+$"}],"description":"Window length in bytes; omit to extend through EOF"}},"additionalProperties":false},"globals":{"type":"object","properties":{"timings":{"default":false,"description":"Write measured command timing to stderr.","type":"boolean"}},"required":["timings"],"additionalProperties":false}}
+<end>
+--- stderr
+<end>

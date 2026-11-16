@@ -89,10 +89,6 @@ export const webSourceLocationSummaryDeliveryShape = {
   detail: z.literal("summary"),
   view: webSourceLocationViewRequestSchema.exactOptional(),
 };
-export const webSourceLocationDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(webSourceLocationCompleteDeliveryShape),
-  z.strictObject(webSourceLocationSummaryDeliveryShape),
-]);
 const readReport = createAnalysisViewResultReader(
   webSourceLocationResultSchema,
 );

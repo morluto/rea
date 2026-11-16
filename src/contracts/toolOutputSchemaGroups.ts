@@ -101,7 +101,7 @@ import {
   analysisInputErrorProjectionSchema,
   analysisResourceErrorProjectionSchema,
   evidenceIntegrityErrorProjectionSchema,
-} from "./errorSchemas.js";
+} from "../domain/analysisErrorProjectionSchema.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";

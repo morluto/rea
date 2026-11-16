@@ -84,10 +84,10 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   await runMcpHttpEntrypoint(args.slice(1));
 } else if (isMcpDoctorMode) {
   guardClosedStdout();
-  // Doctor runs outside Incur, so handle its global timing flag here. Keep a
-  // token consumed by --format as a value, even when it looks like a flag.
-  const { arguments: doctorCliArguments, enabled: timingRequested } =
-    builtinArguments.splitCliTimingArguments(doctorArguments);
+  // Doctor runs outside the command dispatcher, so the launcher measures its
+  // timing global, which the global argument reader has taken out.
+  const { arguments: doctorCliArguments, timings: timingRequested } =
+    doctorArguments;
   const started = performance.now();
   try {
     const { runProductionMcpDoctorCli } =

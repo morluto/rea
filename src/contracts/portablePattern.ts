@@ -4,6 +4,7 @@ import {
   INVALID_BASE64_PADDING_PATTERN,
   INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
 } from "../domain/stringPatterns.js";
+import { byteToHex } from "../kernel/byteToHex.js";
 
 /**
  * An advertised `pattern` re-emitted into the portable regex grammar.
@@ -44,7 +45,7 @@ const LITERAL_IN_CLASS = new Set("!#%&,:;<=>@`~'\" _.+*?$");
 const ESCAPED_IN_CLASS = new Set("^$\\.*+?()[]{}|/-");
 const MAX_REPEAT = 1000;
 
-const hex = (code: number) => `\\x${code.toString(16).padStart(2, "0")}`;
+const hex = (code: number) => `\\x${byteToHex(code)}`;
 
 const emitOutside = (code: number): string => {
   const character = String.fromCodePoint(code);

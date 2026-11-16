@@ -5,7 +5,7 @@ import { buffer } from "node:stream/consumers";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   materializeArtifactInventory,

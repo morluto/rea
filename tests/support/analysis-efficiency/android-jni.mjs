@@ -597,7 +597,7 @@ async function qualifyRetainedRemoval(invoke) {
       detail: "complete",
     });
     assert.equal(parent.operation, "inspect_android_jni_bindings");
-    assert.equal(parent.subject.digest.sha256, targetSha);
+    assert.equal(parent.subject.identity.sha256, targetSha);
     assert.equal(parent.normalized_result.apk.path, ownedCopy);
     const report = parent.normalized_result;
     (values.variant === "conscrypt" ? checkConscrypt : checkFixture)(
@@ -883,7 +883,7 @@ try {
           ? "inspect_analysis_view"
           : "inspect_android_jni_bindings",
       );
-      assert.equal(evidence.subject.digest.sha256, targetSha);
+      assert.equal(evidence.subject.identity.sha256, targetSha);
       const parent = {
         id:
           values.detail === "summary"
@@ -927,7 +927,7 @@ try {
         );
         assert.ok(parent, "Complete source Evidence must remain exportable");
         assert.equal(parent.operation, "inspect_android_jni_bindings");
-        assert.equal(parent.subject.digest.sha256, targetSha);
+        assert.equal(parent.subject.identity.sha256, targetSha);
         if (report !== undefined)
           assert.deepEqual(parent.normalized_result, report);
         report = parent.normalized_result;

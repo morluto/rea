@@ -435,6 +435,41 @@ it("rejects altered v4 commitments and accepts canonical key reordering", () => 
   ).toThrow("executable_identity");
 });
 
+it("withholds the root process identity exactly when PID normalization is selected", () => {
+  const capture = emptyCapture();
+  const observed = {
+    state: "observed",
+    pid: 4242,
+    start_time: "linux-starttime:1",
+  } as const;
+  const withPids = (pids: boolean, root_process: object) =>
+    parseProcessCapture({
+      ...capture,
+      normalization: { ...capture.normalization, pids },
+      manifest: {
+        ...capture.manifest,
+        root_process,
+        normalization_sha256: digestProcessCommitment({
+          ...capture.normalization,
+          pids,
+        }),
+      },
+    });
+
+  expect(
+    () => withPids(true, observed),
+    "a normalized capture never commits the raw root PID",
+  ).toThrow("root_process");
+  expect(
+    () => withPids(false, { state: "withheld-by-caller" }),
+    "an identity is withheld only by the caller's normalization",
+  ).toThrow("root_process");
+  expect(
+    withPids(false, observed).manifest.root_process,
+    "an unnormalized capture keeps the observed root",
+  ).toEqual(observed);
+});
+
 it("requires producer coverage accounting in every parsed capture", () => {
   const capture = emptyCapture();
   const { truncation_details: _details, ...missingCoverage } = capture;

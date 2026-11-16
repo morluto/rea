@@ -1,9 +1,13 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { inspectAnalysisViewInputSchema } from "../../../src/domain/analysisView/analysisViewRequest.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -13,6 +17,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const procedureRows = [
   {
@@ -121,7 +126,7 @@ it("shares complete/summary source identity and advertised contracts across all 
       : {};
     const completeReply = await harness.mcp.callTool(
       { name: operation, arguments: parameters },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     if (completeReply.isError) throw new Error(JSON.stringify(completeReply));
     const complete = parseEvidence(
@@ -137,7 +142,7 @@ it("shares complete/summary source identity and advertised contracts across all 
     expect(complete.parameters).not.toHaveProperty("detail");
     const summaryReply = await harness.mcp.callTool(
       { name: operation, arguments: { ...parameters, detail: "summary" } },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     if (summaryReply.isError) throw new Error(JSON.stringify(summaryReply));
     const summary = parseEvidence(
@@ -181,7 +186,7 @@ it("shares complete/summary source identity and advertised contracts across all 
             view: { kind: "native-inventory", offset, limit: 1 },
           },
         },
-        { toolDefinition: viewTool },
+        { toolDefinition: withCanonicalOutputSchema(viewTool) },
       );
       if (pageReply.isError) throw new Error(JSON.stringify(pageReply));
       const page = toolContract("inspect_analysis_view").outputSchema.parse(
@@ -273,10 +278,13 @@ it("refuses summary before provider work when no retaining session is configured
       },
     },
   });
-  const client = new Client({
-    name: "unretained-native-summary",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "unretained-native-summary",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -309,7 +317,7 @@ it("projects imported inventories with an unknown artifact without inventing a p
     throw new Error("Retained views must not open a provider");
   });
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "borrowed.native", name: "Borrowed engine", version: "1" },
     {
       operation: "list_procedures",
@@ -323,7 +331,10 @@ it("projects imported inventories with an unknown artifact without inventing a p
   const recorded = session.recordEvidence(source);
   if (!recorded.ok) throw recorded.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unbound-native-views", version: "1" });
+  const client = new Client(
+    { name: "unbound-native-views", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -348,7 +359,9 @@ it("projects imported inventories with an unknown artifact without inventing a p
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence).toMatchObject({
-      subject: null,
+      subject: {
+        identity: { kind: "unknown", reason: "derived-from-linked-evidence" },
+      },
       locations: [],
       evidence_links: [source.evidence_id],
       normalized_result: {
