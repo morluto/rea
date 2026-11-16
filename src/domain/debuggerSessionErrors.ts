@@ -83,6 +83,57 @@ export const stoppedDebuggerSessionError = (
     },
   );
 
+/**
+ * Why REA could not confirm an owned debugger process stopped, so it retains
+ * the session for cleanup retry:
+ * - `output-unsettled`: the process leader exited, but inherited output
+ *   streams (or the Windows Job Object) did not settle or could not be checked.
+ * - `detach-pending`: an inferior detach was still running when the debugger exited.
+ * - `inferior-disposition-unverified`: the debugger exited before the inferior
+ *   was detached or confirmed absent, and no owner proof shows it ended.
+ * - `inferior-identity-unverified`: the inferior's process identity could not
+ *   be read after the debugger exited.
+ * - `windows-stop-unsafe`: stopping the debugger on Windows could also end its inferior.
+ * - `detach-unsupported`: the provider has no detach capability.
+ * - `detach-timeout`: detach did not complete within its fixed allowance.
+ * - `detach-unconfirmed`: the provider confirmed neither no inferior nor a
+ *   detach with a durable output sink.
+ * - `inferior-state-unknown`: the debugger could not report a complete,
+ *   synchronized inferior list.
+ * - `multiple-inferiors`: automatic detach supports only one inferior.
+ * - `no-durable-output-sink`: no durable inferior output sink was verified, so
+ *   detaching the live inferior is refused.
+ * - `inferior-tty-changed`: the debugger no longer reports the caller-selected inferior TTY.
+ * - `detach-failed`: the detach request failed or was not confirmed.
+ * - `process-did-not-exit`: the debugger did not exit after direct termination.
+ * - `stop-failed`: the stop attempt itself failed.
+ */
+export const DEBUGGER_CLEANUP_INCOMPLETE_CODES = [
+  "output-unsettled",
+  "detach-pending",
+  "inferior-disposition-unverified",
+  "inferior-identity-unverified",
+  "windows-stop-unsafe",
+  "detach-unsupported",
+  "detach-timeout",
+  "detach-unconfirmed",
+  "inferior-state-unknown",
+  "multiple-inferiors",
+  "no-durable-output-sink",
+  "inferior-tty-changed",
+  "detach-failed",
+  "process-did-not-exit",
+  "stop-failed",
+] as const;
+export type DebuggerCleanupIncompleteCode =
+  (typeof DEBUGGER_CLEANUP_INCOMPLETE_CODES)[number];
+
+/** A debugger stop REA could not confirm: its code and explanation. */
+export interface DebuggerCleanupIncomplete {
+  readonly code: DebuggerCleanupIncompleteCode;
+  readonly reason: string;
+}
+
 export const RIZIN_DEBUG_SESSION_TOOLS = {
   providerId: "rizin",
   name: "Rizin",

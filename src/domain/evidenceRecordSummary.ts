@@ -241,6 +241,7 @@ export const selectEvidenceRecords = (
     readonly limit?: number | undefined;
   } = {},
 ): EvidenceRecordSelection => {
+  // optional-fact-default: a request default for paging, not an observed fact.
   const offset = page.offset ?? 0;
   const limit = page.limit ?? EVIDENCE_RECORD_SELECTION_LIMIT;
   const records: Evidence[] = [];
@@ -346,23 +347,26 @@ export const inspectEvidenceLinks = (
 ): EvidenceLinkInspection => {
   const traversal = options.traversal ?? "direct";
   const linkStatus = options.linkStatus ?? "missing";
+  // optional-fact-default: a request default for paging, not an observed fact.
   const offset = options.offset ?? 0;
   const limit = options.limit ?? EVIDENCE_LINK_INSPECTION_LIMIT;
   const retained = new Map(
     bundle.records.map((record) => [record.evidence_id, record]),
   );
   const examined = new Set<string>();
-  const pending: string[] = [];
+  const pending: Evidence[] = [];
   for (const { evidence } of matchingEvidenceRecords(bundle, filters))
-    pending.push(evidence.evidence_id);
+    pending.push(evidence);
   const matching = pending.length;
   while (pending.length > 0) {
-    const id = pending.pop();
-    if (id === undefined || examined.has(id)) continue;
-    examined.add(id);
+    const record = pending.pop();
+    if (record === undefined || examined.has(record.evidence_id)) continue;
+    examined.add(record.evidence_id);
     if (traversal === "direct") continue;
-    for (const link of retained.get(id)?.evidence_links ?? [])
-      if (retained.has(link) && !examined.has(link)) pending.push(link);
+    for (const link of record.evidence_links) {
+      const linked = retained.get(link);
+      if (linked !== undefined && !examined.has(link)) pending.push(linked);
+    }
   }
   const rows: EvidenceLinkInspection["rows"] = [];
   const counts = { total: 0, retained: 0, missing: 0 };

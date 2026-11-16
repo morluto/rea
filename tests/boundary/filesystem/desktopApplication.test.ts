@@ -36,12 +36,12 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
   const service = createDesktopApplicationService();

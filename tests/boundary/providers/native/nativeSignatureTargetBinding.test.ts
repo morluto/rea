@@ -95,10 +95,11 @@ const registerSignatureObservationCases = () => {
       signed: true,
       identifier: "com.example.fixture",
       designated_requirement: "identifier com.example.fixture",
-      limitations: expect.arrayContaining([
-        "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined.",
-        expect.stringContaining("Partial signature coverage:"),
-      ]),
+      slices: {
+        architectures: target.availableArchitectures,
+        checked: target.availableArchitectures,
+        unsigned: [],
+      },
     });
   });
 

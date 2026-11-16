@@ -23,6 +23,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { RAW_ONLY_ARCHITECTURES } from "../../../src/domain/binaryTargetTypes.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const connect = async (
   provider: AnalysisProvider = createCacheProvider([]),
@@ -32,7 +33,10 @@ const connect = async (
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "raw-binary-mcp", version: "1" });
+  const client = new Client(
+    { name: "raw-binary-mcp", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

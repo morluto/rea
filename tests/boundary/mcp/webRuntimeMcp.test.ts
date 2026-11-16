@@ -125,7 +125,10 @@ it("reports provider progress for observe_web_execution to the MCP caller", asyn
       }),
     },
   );
-  const client = new Client({ name: "web-runtime-progress", version: "1" });
+  const client = new Client(
+    { name: "web-runtime-progress", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

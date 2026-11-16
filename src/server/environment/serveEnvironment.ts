@@ -65,7 +65,7 @@ import {
   bufferedJsonParts,
   jsonParts,
 } from "../../domain/jsonSerialization.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Where the environment card is served. */
 export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";

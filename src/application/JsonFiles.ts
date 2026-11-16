@@ -1,11 +1,11 @@
 import { EvidenceFileError } from "../domain/evidenceErrors.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   AnalysisCancelledError,
   type AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
-  type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
@@ -216,8 +216,7 @@ const jsonFileReadFailure = (
       cause: cause.physicalCause,
       path,
     });
-  if (isJsonReadCancellation(cause, signal))
-    return cancelledBy(operation, signal);
+  if (isAbortOf(cause, signal)) return cancelledBy(operation, signal);
   return new EvidenceFileError(
     "read",
     cause instanceof NonRegularFileReadError
@@ -271,19 +270,4 @@ const jsonFileCleanupError = <Value>(
   }).bindCleanupDependencies([primary, cleanup]);
   if (!primary.cleanupIncomplete) rememberJsonReadCleanup(combined, failure);
   return combined;
-};
-
-const isJsonReadCancellation = (
-  cause: unknown,
-  signal?: AbortSignal,
-): signal is AbortedSignal => {
-  if (signal?.aborted !== true) return false;
-  if (cause === signal.reason) return true;
-  return (
-    cause instanceof Error &&
-    cause.name === "AbortError" &&
-    "code" in cause &&
-    cause.code === "ABORT_ERR" &&
-    cause.cause === signal.reason
-  );
 };

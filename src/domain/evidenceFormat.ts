@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { isRecord } from "./isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { ParseFailureError, unsupportedInput } from "./parseFailure.js";
 
 /**

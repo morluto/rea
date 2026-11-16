@@ -25,6 +25,7 @@ export const cutterCommandInputSchema = z.strictObject({
 export const cutterCommandResultSchema = z.strictObject({
   command: z.string(),
   output: jsonValueSchema.nullable(),
+  // lifecycle-state: how far the bridge command ran, not coverage of its output.
   execution_state: z.enum(["not_started", "complete", "failed", "unknown"]),
   error: z.string().nullable(),
   message: z.string().nullable(),

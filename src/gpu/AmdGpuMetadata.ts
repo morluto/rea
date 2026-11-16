@@ -5,6 +5,7 @@ import {
   BinaryFormatFailure,
 } from "../domain/binaryContainer.js";
 import { rejectGpu } from "./GpuSource.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export const AMD_METADATA_BYTES = 8 * 1024 * 1024;
 const AMD_METADATA_DEPTH = 32;
@@ -192,9 +193,7 @@ export const readAmdMetadata = (bytes: Buffer): unknown => {
   }
 };
 export const amdRecord = (value: unknown): Record<string, unknown> | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  isRecord(value) ? (value as Record<string, unknown>) : null;
 export const amdCount = (value: unknown): number | null => {
   if (typeof value === "bigint")
     return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)

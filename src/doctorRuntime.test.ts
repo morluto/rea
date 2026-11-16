@@ -472,7 +472,7 @@ it("shares one parsed IDA registration between timeout-budget and doctor project
   const registration = join(root, "registration.json");
   await writeFile(
     registration,
-    JSON.stringify({ command: "fixture", protocol: "legacy", timeoutMs: 3210 }),
+    JSON.stringify({ command: "fixture", protocol: "native", timeoutMs: 3210 }),
   );
   const host = createSystemDoctorHost({ REA_IDA_MCP_CONFIG: registration });
   try {

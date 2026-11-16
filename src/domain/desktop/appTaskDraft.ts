@@ -36,7 +36,7 @@ import {
 import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
 import { DRAFT_VIEW_CHARS } from "./valueCuts.js";
 import { resolvePointer } from "./viewPointer.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -352,6 +352,7 @@ const valueSuggestions = (
     valuesCut: cut,
     // The count guard sits outside the cap, as for XML.
     guards: [
+      // generation-cap: suggested checks an author picks among
       ...recordGuards(file, suggested.slice(0, MAX_SUGGESTIONS), ends, added),
       ...counts.guards,
     ],
@@ -399,6 +400,7 @@ const suggestedChecks = (
           : valueSuggestions(file, baseline, final, document);
   return {
     ...content,
+    // generation-cap: suggested checks an author picks among
     suggested: [...created, ...content.suggested].slice(0, MAX_SUGGESTIONS),
   };
 };

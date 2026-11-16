@@ -41,3 +41,18 @@ b305b82a1a1d76b42fc5e4a7c29cf6d024729a56
 
 # refactor(domain): move the .NET metadata readers into src/domain/managed (#11544)
 412d621fd16f2803c59755ef52b294c84f849ca6
+
+# refactor(compression): move the raw LZ4 block decoder into src/compression (#11492)
+79abe4e5fa1b7bf39390411ed0940872675d9f9c
+
+# refactor(resources): move the directory artifact reader into src/resources (#11520)
+af0db0960574a6e93ab33c5db088dc256d1355ff
+
+# refactor(domain): move retained web-script capture selection into domain and script publication into application (#11576)
+44071f9b9717dae7a3889091380ed4056172963a
+
+# refactor(resources): move the selected-file target error projection into src/resources (#11489)
+d3350d81fd6ef673c79fde68cdab1e7e17f772d5
+
+# refactor(domain): move the Frida capture-limit and input-error builders into src/domain (#11575)
+d9f5e9cf7dd5cca60a9be6249c186784e8e85eaa

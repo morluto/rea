@@ -16,7 +16,6 @@ import { randomUUID } from "node:crypto";
 
 import {
   checkpointNameRefusal,
-  type DesktopCaptureEvent,
   type DesktopSession,
 } from "../domain/desktop/desktopCapture.js";
 import { ownedCommandResources } from "../process/OwnedCommand.js";
@@ -37,78 +36,20 @@ import {
   sampleProcesses,
   sampleTokenCarriers,
   trackProcess,
-  type WindowMatching,
 } from "./DesktopSessionObservations.js";
-import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
+import {
+  DesktopSessionCleanupError,
+  type CheckpointTrigger,
+  type DesktopSessionOutcome,
+  type DesktopSessionPlan,
+  type DesktopWindowObserver,
+  type UnresolvedCleanup,
+  type WindowSample,
+} from "../ports/DesktopApplicationSession.js";
 
 /** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
-
-/** A cleanup that could not be confirmed, and the exact owners that can retry it. */
-export interface UnresolvedCleanup {
-  readonly reason: string;
-  readonly leases: readonly AnalysisCleanupLease[];
-  /** Failure-time facts remain available after the lease releases its owners. */
-  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
-}
-
-/** The session record and, when cleanup was not verified, what remains owned. */
-export interface DesktopSessionOutcome {
-  readonly session: DesktopSession;
-  readonly unreleased: UnresolvedCleanup | undefined;
-  /** Samples whose window list could not be read; their windows are unknown. */
-  readonly unreadableWindowSamples: number;
-}
-
-/** A session failed, and the processes it launched could not all be removed. */
-export class DesktopSessionCleanupError extends Error {
-  constructor(
-    readonly primary: unknown,
-    readonly cleanup: UnresolvedCleanup,
-  ) {
-    super(`desktop session cleanup is incomplete: ${cleanup.reason}`, {
-      cause: primary,
-    });
-    this.name = "DesktopSessionCleanupError";
-  }
-}
-
-/** A line the person or driver sent while the session runs. */
-export type SessionRequest =
-  | { readonly kind: "checkpoint"; readonly name: string | undefined }
-  | { readonly kind: "stop" };
-
-type CheckpointTrigger = "request" | "stop" | "exit";
-
-/** Everything the session loop needs from its caller. */
-export interface DesktopSessionPlan {
-  readonly argv: readonly string[];
-  readonly workingDirectory: string;
-  readonly environment: NodeJS.ProcessEnv;
-  readonly windows: X11WindowObserver;
-  readonly windowMatching: WindowMatching;
-  readonly roots: readonly string[];
-  readonly maxDurationMs: number;
-  readonly pollIntervalMs: number;
-  readonly nextRequest: () => SessionRequest | undefined;
-  /** Record a checkpoint, given the files the app holds open and the titles its windows have shown so far. */
-  readonly checkpoint: (
-    name: string,
-    trigger: CheckpointTrigger,
-    atMs: number,
-    seen: {
-      readonly openedFiles: ReadonlySet<string>;
-      readonly titles: readonly string[];
-    },
-  ) => Promise<void>;
-  /** Progress text, with the event a driver waits on when there is one. */
-  readonly report: (
-    message: string,
-    event?: DesktopCaptureEvent,
-  ) => Promise<void>;
-  readonly signal: AbortSignal | undefined;
-}
 
 /**
  * Windows that already match the application by name before it is launched,
@@ -117,7 +58,7 @@ export interface DesktopSessionPlan {
  * state would sit outside the baseline.
  */
 export const runningApplicationWindows = async (
-  windows: X11WindowObserver,
+  windows: DesktopWindowObserver,
   names: ReadonlySet<string>,
   signal?: AbortSignal,
 ): Promise<WindowSample> => {

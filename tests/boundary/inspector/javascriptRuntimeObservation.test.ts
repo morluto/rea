@@ -576,7 +576,7 @@ describe("undeclared V8 runtime role", () => {
 });
 
 describe("V8 Inspector script retention", () => {
-  test("retains authorized script locations longer than the former byte ceiling", async () => {
+  test("retains an authorized script location of more than 20,000 characters", async () => {
     const longUrl = `https://example.test/${"a".repeat(20_000)}`;
     const fake = await startFakeV8Inspector({
       targetUrl: longUrl,
@@ -599,7 +599,7 @@ describe("V8 Inspector script retention", () => {
     }
   });
 
-  test("returns every authorized script beyond the former collection ceiling", async () => {
+  test("returns every authorized script of a target with 2,005 scripts", async () => {
     const fixture = await runtimeFixture();
     const scriptUrls = [
       pathToFileURL(fixture.entry).href,

@@ -5,7 +5,10 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import type { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 
-import type { ArtifactReader } from "./ArtifactReader.js";
+import type {
+  ArtifactReader,
+  ArtifactReaderFailureOptions,
+} from "./ArtifactReader.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
@@ -89,7 +92,7 @@ export class ArtifactResourceRetryFailure extends ArtifactReaderFailure {
       readonly lease: AnalysisCleanupLease;
     }[],
     message: string,
-    options: ConstructorParameters<typeof ArtifactReaderFailure>[2],
+    options?: ArtifactReaderFailureOptions,
   ) {
     super("unavailable", message, options);
     this.failedOwners = failures.map(({ owner }) => owner);

@@ -394,10 +394,6 @@ export class BinarySession
     return routeAllowsSnapshotReplay(this.#active?.route, operation);
   }
 
-  invalidateSnapshotForExternalMutation(): void {
-    this.invalidateSnapshot();
-  }
-
   /** Return the selected immutable profile, optionally scoped to an operation. */
   analysisProfile(
     operation?: AnalysisOperation,

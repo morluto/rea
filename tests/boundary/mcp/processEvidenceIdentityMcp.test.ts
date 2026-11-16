@@ -29,6 +29,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { verifyReconstruction } from "../../../src/domain/reconstructionVerification.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const providerNames = [
   "REA process capture",
   "REA deterministic process harness",
@@ -61,10 +62,13 @@ const connectedComparison = async () => {
     throw new Error("Process comparison must not launch a provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "process-evidence-identity",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "process-evidence-identity",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   });

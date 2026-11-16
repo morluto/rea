@@ -36,7 +36,7 @@ const reobservesExternallyMutableState = async (): Promise<void> => {
   const path = join(root, "registration.json");
   await writeFile(
     path,
-    JSON.stringify({ command: "fixture", protocol: "legacy" }),
+    JSON.stringify({ command: "fixture", protocol: "native" }),
   );
   const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
   if (!config.ok) throw config.error;
@@ -94,7 +94,7 @@ const reobservesExternallyMutableState = async (): Promise<void> => {
   const second = await session.execute("procedure_pseudo_code", query);
   expect(second.ok && second.value.result).toContain("99");
   expect(
-    producer.calls.filter(({ name }) => name === "decompile_function"),
+    producer.calls.filter(({ name }) => name === "decompile"),
   ).toHaveLength(2);
   await session.close();
   expect(producer.closes).toBe(1);
@@ -203,7 +203,7 @@ describe("IDA provider selection cancellation", () => {
     const path = join(first.root, "registration.json");
     await writeFile(
       path,
-      JSON.stringify({ command: "first-server", protocol: "legacy" }),
+      JSON.stringify({ command: "first-server", protocol: "native" }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;
@@ -235,7 +235,7 @@ describe("IDA provider selection cancellation", () => {
     ).toBe(true);
     await writeFile(
       path,
-      JSON.stringify({ command: "replacement-server", protocol: "legacy" }),
+      JSON.stringify({ command: "replacement-server", protocol: "native" }),
     );
     cancelWhenPreviousCloses = true;
     const replacement = await session.open(second.target.path, {
@@ -327,11 +327,11 @@ describe("IDA universal Mach-O target identity", () => {
 
   it.each([
     {
-      profile: "legacy attached",
-      registration: { command: "fixture", protocol: "legacy" },
+      profile: "native stdio attached",
+      registration: { command: "fixture", protocol: "native" },
     },
     {
-      profile: "native attached",
+      profile: "native HTTP attached",
       registration: {
         url: "http://127.0.0.1:13337/mcp",
         mode: "attached",
@@ -378,7 +378,7 @@ describe("IDA binary_overview execution", () => {
     const path = join(root, "registration.json");
     await writeFile(
       path,
-      JSON.stringify({ command: "fixture", protocol: "legacy" }),
+      JSON.stringify({ command: "fixture", protocol: "native" }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;

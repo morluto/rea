@@ -397,8 +397,9 @@ export class JadxSession {
               "External DEX reference metadata exceeds the bounded transport representation allowance.",
               { stage: failure.stage, limit_bytes: failure.limit_bytes },
               fixedAllowanceOptions(
-                `The external DEX ${failure.stage} representation allowance of ${String(failure.limit_bytes)} bytes`,
+                `The external DEX ${failure.stage} representation allowance`,
                 "report",
+                { limit: failure.limit_bytes, unit: "bytes" },
               ),
             );
           if (name === "load_apk" && failure.kind === "jvm-memory-failure")

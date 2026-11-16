@@ -90,6 +90,7 @@ import {
   javaScriptRoutesViewSummarySchema,
 } from "./javascriptRoutesView.js";
 import {
+  webBundleViewSourceUnknownsSchema,
   webBundleViewRequestSchema,
   webBundleViewItemsSchema,
   webBundleSummarySchema,
@@ -849,7 +850,7 @@ export const webBundleSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
   target_origin: recordedBrowserOriginSchema.nullable(),
-  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  source_unknowns: webBundleViewSourceUnknownsSchema,
   summary: webBundleSummarySchema,
 });
 
@@ -860,7 +861,7 @@ export const webBundlePageViewResultSchema = z.strictObject({
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
   target_origin: recordedBrowserOriginSchema.nullable(),
-  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  source_unknowns: webBundleViewSourceUnknownsSchema,
   view: webBundleViewRequestSchema,
   completeness: webBundleAnalysisSchema.shape.completeness,
   items: webBundleViewItemsSchema,
@@ -1066,8 +1067,9 @@ export const nativeFunctionSummarySchema = z.strictObject({
     available: z.boolean(),
     truncated: z
       .boolean()
+      .nullable()
       .describe(
-        "True only when value-flow is available and the provider truncated it; false when value-flow is unavailable (see available).",
+        "Whether the provider truncated available value-flow; null when value-flow is unavailable (see available).",
       ),
   }),
   facet_availability: functionFacetAvailabilitySchema

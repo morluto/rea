@@ -1,10 +1,29 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { createEvidence } from "../dist/domain/evidence.js";
-import { unknownTarget } from "../dist/domain/targetIdentity.js";
+import { createEvidence } from "#dist/domain/evidence.js";
+import {
+  createEvidenceBundle,
+  serializeEvidenceBundle,
+} from "#dist/domain/evidenceBundle.js";
+import { unknownTarget } from "#dist/domain/targetIdentity.js";
 
-/** Round-trip historical reference import and evidence bundles. */
+/**
+ * Round-trip historical reference import and evidence bundles.
+ * @param {{
+ *   readonly commands: {
+ *     run(
+ *       command: string,
+ *       arguments_: readonly string[],
+ *       environment?: NodeJS.ProcessEnv,
+ *     ): Promise<string>;
+ *   };
+ *   readonly cli: string;
+ *   readonly evidenceRoot: string;
+ *   readonly referenceRoot: string;
+ *   readonly environment: NodeJS.ProcessEnv;
+ * }} options
+ */
 export async function verifyPackageEvidence({
   commands,
   cli,
@@ -26,9 +45,6 @@ export async function verifyPackageEvidence({
     JSON.stringify(referenceImport).includes("PACKAGE_SECRET_SENTINEL")
   )
     throw new Error("packaged historical reference import CLI failed");
-  const { createEvidenceBundle, serializeEvidenceBundle } = await import(
-    new URL("../dist/domain/evidenceBundle.js", import.meta.url)
-  );
   const sourceBundle = createEvidenceBundle([
     createEvidence(
       unknownTarget("not-observed"),
