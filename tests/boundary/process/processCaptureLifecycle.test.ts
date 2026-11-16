@@ -1033,6 +1033,11 @@ itWithCaptureCapability(
       signal: async () => "signaled" as const,
     };
     const resources = new ProcessCaptureResourceScope();
+    // A failed assertion must still release the capture's retained resources.
+    onTestFinished(async () => {
+      file.allow();
+      await resources.close();
+    });
     const result = await captureProcessScenario(
       processScenarioSchema.parse({
         executable: process.execPath,
@@ -1064,7 +1069,6 @@ itWithCaptureCapability(
     expect(file.handle.fd, "a cleanup retry closes it").toBe(-1);
     expect(result.error.cleanupIncomplete).toBe(false);
   },
-  15_000,
 );
 
 itWithCaptureCapability(
@@ -1081,6 +1085,11 @@ itWithCaptureCapability(
       },
     };
     const resources = new ProcessCaptureResourceScope();
+    // A failed assertion must still release the capture's retained resources.
+    onTestFinished(async () => {
+      file.allow();
+      await resources.close();
+    });
     const result = await captureProcessScenario(
       processScenarioSchema.parse({
         executable: process.execPath,
@@ -1130,7 +1139,6 @@ itWithCaptureCapability(
     expect(file.handle.fd, "a cleanup retry closes it").toBe(-1);
     expect(result.error.cleanupIncomplete).toBe(false);
   },
-  15_000,
 );
 
 itWithCaptureCapability(
