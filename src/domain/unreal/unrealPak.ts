@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 /** Footer layouts in the order a reader tries them, newest first. */
 export const UNREAL_PAK_FOOTER_LAYOUTS = [
@@ -26,7 +26,7 @@ const hex = (bytes: number) =>
 
 /** One explicit local .pak file; detail selects delivery, never decoding coverage. */
 export const inspectUnrealPakInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an Unreal Engine .pak file",
   ),
   detail: z
