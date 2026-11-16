@@ -574,17 +574,21 @@ describe("Unreal pak record and resource guards", () => {
     ).toEqual({ reason: "paths-too-large", kind: "resource" });
   });
 
-  it("lists a large path-hash-only index", async () => {
-    const files = Array.from({ length: 200_000 }, (_, at) => ({
-      path: `D/${at}`,
-      size: 0,
-    }));
-    const pak = await read(
-      createPakFixture({ layout: "v11", files, directoryIndex: false }).bytes,
-      { ...LIMITS, entries: 300_000, regionBytes: 64 << 20 },
-    );
-    expect(pak.entries).toHaveLength(200_000);
-  }, 60_000);
+  it(
+    "lists a large path-hash-only index",
+    { tags: ["long-running"] },
+    async () => {
+      const files = Array.from({ length: 200_000 }, (_, at) => ({
+        path: `D/${at}`,
+        size: 0,
+      }));
+      const pak = await read(
+        createPakFixture({ layout: "v11", files, directoryIndex: false }).bytes,
+        { ...LIMITS, entries: 300_000, regionBytes: 64 << 20 },
+      );
+      expect(pak.entries).toHaveLength(200_000);
+    },
+  );
 
   it("reads the pruned directory index stored after the path hashes", async () => {
     const pak = await read(createPakFixture({ layout: "v11" }).bytes);
@@ -681,19 +685,23 @@ describe("Unreal pak listings checked against each other", () => {
     expect(seen).not.toContain(0);
   });
 
-  it("reports no compression slot issue for records no listing references", async () => {
-    const { bytes } = createPakFixture({
-      layout: "v11",
-      files: [],
-      declaredEntries: 0,
-      unreferencedRecords: 50_000,
-    });
-    // Clear slot 1 (Zlib), which every unreferenced record names.
-    bytes.fill(0, bytes.length - 160, bytes.length - 128);
-    const pak = await read(bytes, { ...LIMITS, entries: 100_000 });
-    expect(pak.entries).toEqual([]);
-    expect(pak.issues).toEqual([]);
-  }, 60_000);
+  it(
+    "reports no compression slot issue for records no listing references",
+    { tags: ["long-running"] },
+    async () => {
+      const { bytes } = createPakFixture({
+        layout: "v11",
+        files: [],
+        declaredEntries: 0,
+        unreferencedRecords: 50_000,
+      });
+      // Clear slot 1 (Zlib), which every unreferenced record names.
+      bytes.fill(0, bytes.length - 160, bytes.length - 128);
+      const pak = await read(bytes, { ...LIMITS, entries: 100_000 });
+      expect(pak.entries).toEqual([]);
+      expect(pak.issues).toEqual([]);
+    },
+  );
 
   it("bounds the index regions held at once by one shared byte budget", async () => {
     const { bytes, indexSize } = createPakFixture({ layout: "v11" });

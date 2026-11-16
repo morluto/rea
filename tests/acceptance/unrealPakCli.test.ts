@@ -3,7 +3,7 @@ import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { readEvidenceBundle } from "../../src/application/EvidenceBundleFiles.js";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { UNREAL_TOOL_CONTRACTS } from "../../src/contracts/unreal/unrealToolContracts.js";
 import {
   analysisViewResultSchema,
   unrealPakSummaryViewResultSchema,
@@ -16,6 +16,10 @@ import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+const inspectUnrealPak = UNREAL_TOOL_CONTRACTS.find(
+  (contract) => contract.name === "inspect_unreal_pak",
+)!;
+
 cliTest(
   "returns identical complete pak indexes through CLI and MCP and pages a retained summary after removal",
   async ({ cli }) => {
@@ -27,9 +31,7 @@ cliTest(
       arguments: ["inspect-unreal-pak", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_unreal_pak").outputSchema.parse(
-      result.json,
-    );
+    const evidence = inspectUnrealPak.outputSchema.parse(result.json);
     const report = unrealPakSchema.parse(evidence.normalized_result);
     expect(report.artifact).toEqual({
       path,
@@ -145,7 +147,6 @@ cliTest(
     expect(parseMcpToolError(invalid).error.code).toBe("invalid_request");
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -209,8 +210,7 @@ cliTest(
     expect(encrypted.exitCode, encrypted.stderr).toBe(0);
     expect(
       unrealPakSchema.parse(
-        toolContract("inspect_unreal_pak").outputSchema.parse(encrypted.json)
-          .normalized_result,
+        inspectUnrealPak.outputSchema.parse(encrypted.json).normalized_result,
       ),
     ).toMatchObject({
       footer: { index_encrypted: true },
@@ -219,7 +219,6 @@ cliTest(
     });
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
@@ -295,7 +294,6 @@ cliTest(
       parent_evidence_id: evidence.evidence_id,
     });
   },
-  30000,
 );
 
 cliTest(
@@ -320,8 +318,7 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const report = unrealPakSchema.parse(
-      toolContract("inspect_unreal_pak").outputSchema.parse(result.json)
-        .normalized_result,
+      inspectUnrealPak.outputSchema.parse(result.json).normalized_result,
     );
     expect(report.index).toMatchObject({ entry_count: null });
     expect(report.entries.map((entry) => entry.path)).toEqual([
@@ -367,7 +364,6 @@ cliTest(
     });
     await client.ping();
   },
-  30000,
 );
 
 cliTest(
