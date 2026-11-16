@@ -5,7 +5,6 @@ import {
   admitRawBinary,
   parseRawBinaryEntryPoint,
   rawBinarySelectionError,
-  validateRawBinaryLength,
 } from "./rawBinary.js";
 
 describe("headerless format hints", () => {
@@ -97,7 +96,6 @@ describe("raw-binary admission", () => {
     });
   });
   it("rejects an empty file as a target refusal while naming the extent", () => {
-    expect(validateRawBinaryLength(0).ok).toBe(false);
     const result = admitRawBinary({
       architecture: "x86",
       entryPoint: "0x1000",

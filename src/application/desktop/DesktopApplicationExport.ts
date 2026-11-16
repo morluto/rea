@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { DesktopViewPolicyInput } from "../../domain/desktop/desktopViewPolicy.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DownloadInstall } from "../../domain/desktop/appDownloadInstall.js";
@@ -78,6 +79,7 @@ import {
   type TaskSummary,
 } from "./DesktopTaskExport.js";
 import { taskReads } from "./DesktopExportReaders.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
@@ -135,11 +137,6 @@ export interface DesktopExportResult {
   /** Withheld files seeded all the same, with the person's consent. */
   readonly consented_files: readonly string[];
 }
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** The application's dconf groups at the seed, as a dconf key file with the identity scrubbed from its strings. */
 const seedDconf = (
@@ -581,46 +578,50 @@ export const exportDesktopApplication = async (
       copyCompletion,
       copyFailure,
     } = await runExport(request, readers, signal);
-    const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
-      predicateType: "rea.desktop-application-export",
-      operation: OPERATION,
-      parameters: {
-        capture_evidence_id: captureEvidenceId,
-        named: request.name !== undefined,
-        tasks: request.tasks.length,
-        task_ends: [...(request.taskEnds ?? [])],
-        package_url: request.packageUrl !== undefined,
-        download_install: request.downloadInstall !== undefined,
-        extra_packages: [...(request.extraPackages ?? [])],
-        seed_checkpoint: request.seedCheckpoint ?? null,
-        end_checkpoint: request.endCheckpoint ?? null,
-        synthetic_seed: request.syntheticSeed === true,
-        withhold_from: request.withhold?.from ?? null,
-        withhold_to: request.withhold?.to ?? null,
-        withhold_paths: [...(request.withhold?.paths ?? [])],
-        seed_withheld: request.seedWithheld === true,
-        ...(request.viewPolicy === undefined
-          ? {}
-          : { view_policy: { ...request.viewPolicy } }),
-      },
-      result: {
-        ...result,
-        checkpoints: { ...result.checkpoints },
-        paths: [...result.paths],
-        seed_files: [...result.seed_files],
-        unseeded_files: [...result.unseeded_files],
-        scrubbed_files: [...result.scrubbed_files],
-        recompressed_files: [...result.recompressed_files],
-        unscrubbed_files: [...result.unscrubbed_files],
-        files: [...result.files],
+    const evidence = createEvidence(
+      unknownTarget("not-observed"),
+      DESKTOP_PROVIDER,
+      {
+        predicateType: "rea.desktop-application-export",
+        operation: OPERATION,
+        parameters: {
+          capture_evidence_id: captureEvidenceId,
+          named: request.name !== undefined,
+          tasks: request.tasks.length,
+          task_ends: [...(request.taskEnds ?? [])],
+          package_url: request.packageUrl !== undefined,
+          download_install: request.downloadInstall !== undefined,
+          extra_packages: [...(request.extraPackages ?? [])],
+          seed_checkpoint: request.seedCheckpoint ?? null,
+          end_checkpoint: request.endCheckpoint ?? null,
+          synthetic_seed: request.syntheticSeed === true,
+          withhold_from: request.withhold?.from ?? null,
+          withhold_to: request.withhold?.to ?? null,
+          withhold_paths: [...(request.withhold?.paths ?? [])],
+          seed_withheld: request.seedWithheld === true,
+          ...(request.viewPolicy === undefined
+            ? {}
+            : { view_policy: { ...request.viewPolicy } }),
+        },
+        result: {
+          ...result,
+          checkpoints: { ...result.checkpoints },
+          paths: [...result.paths],
+          seed_files: [...result.seed_files],
+          unseeded_files: [...result.unseeded_files],
+          scrubbed_files: [...result.scrubbed_files],
+          recompressed_files: [...result.recompressed_files],
+          unscrubbed_files: [...result.unscrubbed_files],
+          files: [...result.files],
+          limitations: [...result.limitations],
+          withheld_files: result.withheld_files.map((file) => ({ ...file })),
+          consented_files: [...result.consented_files],
+        },
+        confidence: "derived",
+        authority: "analyst-inference",
         limitations: [...result.limitations],
-        withheld_files: result.withheld_files.map((file) => ({ ...file })),
-        consented_files: [...result.consented_files],
       },
-      confidence: "derived",
-      authority: "analyst-inference",
-      limitations: [...result.limitations],
-    });
+    );
     return (
       publishedExportFailure(
         request,

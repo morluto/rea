@@ -7,8 +7,9 @@ import { artifactExtractionResultSchema } from "../../../src/domain/artifactGrap
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { buildWxapkg, wxapkgEncryptedBytes } from "../../fixtures/wxapkg.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "retains wxapkg facts and encrypted coverage through compiled MCP (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-wxapkg-mcp-");
@@ -83,5 +84,33 @@ it.each(["full", "compact"] as const)(
         await rm(outputRoot, { recursive: true, force: true });
     }
   },
-  60_000,
 );
+
+it("refuses a wxapkg member table above its fixed allowance with a typed refusal through compiled MCP", async () => {
+  const root = await createTestTempDirectory("rea-wxapkg-mcp-table-");
+  const path = join(root, "package.wxapkg");
+  const declaredTableBytes = 17 * 1024 * 1024;
+  const header = buildWxapkg([{ path: "a", data: "x" }]);
+  header.writeUInt32BE(declaredTableBytes, 5);
+  const file = Buffer.alloc(18 + declaredTableBytes);
+  header.copy(file);
+  await writeFile(path, file);
+  const { call } = await connectLocalToolsMcp({});
+  expect((await call("open_binary", { path })).isError).not.toBe(true);
+  const reply = await call("extract_artifact", {});
+  expect(reply.isError, JSON.stringify(reply)).toBe(true);
+  const { error } = parseMcpToolError(reply);
+  expect(error).toMatchObject({
+    retryable: false,
+    details: {
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "parser",
+        limit: 16 * 1024 * 1024,
+        unit: "bytes",
+      },
+    },
+  });
+  expect(error.remediation.action).toContain("The allowance is 16777216 bytes");
+  await call("close_binary", {});
+});

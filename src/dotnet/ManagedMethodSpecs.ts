@@ -1,4 +1,4 @@
-import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { createHash } from "node:crypto";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
@@ -8,18 +8,21 @@ import {
   type SignatureTypeName,
   type DecodedMethod,
   type MemberCore,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   decodeMetadataCodedIndex,
   type MetadataTokenFact,
   metadataRowCursor,
   readMetadataBlob,
-} from "./ManagedMetadataHeaps.js";
-import { managedFailure, readManagedValue } from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedMetadataHeaps.js";
+import {
+  managedFailure,
+  readManagedValue,
+} from "../domain/managed/managedReaderFailure.js";
 
 /**
  * A MethodSpec row's Method column and instantiation blob: the generic
@@ -135,7 +138,12 @@ const readMethodSpec = (
   // A MethodSpec instantiates a method, so a field target never lends it a
   // name, even to a field operand.
   if (target !== undefined && target.kind !== "field")
-    members.set(token, { ...target, token, identitySha256: null });
+    members.set(token, {
+      ...target,
+      token,
+      rowResolved: false,
+      identitySha256: null,
+    });
   const instantiationFacts = specSignatureFacts(
     layout,
     readMetadataBlob(bytes, layout, instantiation, layout.blob?.size ?? 0),
@@ -171,17 +179,21 @@ const readMethodSpec = (
   if (
     target !== undefined &&
     target.kind === "method" &&
-    target.identitySha256 != null &&
+    (target.identitySha256 != null || target.rowResolved === true) &&
     instantiationFacts.resolvedSha256 !== null
   )
     members.set(token, {
       ...target,
       token,
-      identitySha256: createHash("sha256")
-        .update("managed-method-instantiation-v1\0")
-        .update(Buffer.from(target.identitySha256, "hex"))
-        .update(Buffer.from(instantiationFacts.resolvedSha256, "hex"))
-        .digest("hex"),
+      rowResolved: true,
+      identitySha256:
+        target.identitySha256 == null
+          ? null
+          : createHash("sha256")
+              .update("managed-method-instantiation-v1\0")
+              .update(Buffer.from(target.identitySha256, "hex"))
+              .update(Buffer.from(instantiationFacts.resolvedSha256, "hex"))
+              .digest("hex"),
     });
 };
 

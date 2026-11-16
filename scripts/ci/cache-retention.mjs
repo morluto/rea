@@ -22,7 +22,7 @@ const PREFIX_PATTERNS = [
 ];
 
 /** Reject prefixes that could match npm downloads or another platform. */
-export function assertRetentionPrefix(prefix) {
+function assertRetentionPrefix(prefix) {
   if (
     typeof prefix !== "string" ||
     !PREFIX_PATTERNS.some((pattern) => pattern.test(prefix))

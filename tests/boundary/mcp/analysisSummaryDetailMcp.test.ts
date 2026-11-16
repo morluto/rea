@@ -1,6 +1,6 @@
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { byteEntropySummaryViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,6 +15,7 @@ import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/la
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const contract = toolContract("analyze_javascript_application");
 
@@ -38,7 +39,10 @@ const connect = async (
         },
     binaryLayout === undefined ? {} : { binaryLayout },
   );
-  const client = new Client({ name: "analysis-summary-detail", version: "1" });
+  const client = new Client(
+    { name: "analysis-summary-detail", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

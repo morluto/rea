@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../domain/jsonPointer.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -48,6 +49,27 @@ const dialectOf = (
       : schema.$schema === "https://json-schema.org/draft/2020-12/schema"
         ? "draft-2020-12"
         : undefined;
+
+/**
+ * The fragment of a reference into the current resource: a bare fragment, or
+ * a URI whose resolution against the resource's absolute base names that same
+ * resource. Other resources are external.
+ */
+const sameResourceFragment = (
+  reference: string,
+  baseUri: string | undefined,
+): string | undefined => {
+  if (reference.startsWith("#")) return reference.slice(1);
+  if (baseUri === undefined || !URL.canParse(reference, baseUri))
+    return undefined;
+  const resource = new URL(reference, baseUri);
+  const base = new URL(baseUri);
+  resource.hash = "";
+  base.hash = "";
+  if (resource.href !== base.href) return undefined;
+  const hash = reference.indexOf("#");
+  return hash === -1 ? "" : reference.slice(hash + 1);
+};
 
 /** Per-projection scope ownership; no external resource loading or dynamic-reference evaluation. */
 export class JsonSchemaReferences {
@@ -216,11 +238,11 @@ export class JsonSchemaReferences {
   ): LocalReference {
     if (scope === undefined || this.enter(scope.root, scope) === undefined)
       return { kind: "unresolved", reason: "scope" };
-    if (!reference.startsWith("#"))
-      return { kind: "unresolved", reason: "external" };
+    const local = sameResourceFragment(reference, scope.baseUri);
+    if (local === undefined) return { kind: "unresolved", reason: "external" };
     let fragment: string;
     try {
-      fragment = decodeURIComponent(reference.slice(1));
+      fragment = decodeURIComponent(local);
     } catch {
       return { kind: "unresolved", reason: "fragment" };
     }
@@ -231,7 +253,7 @@ export class JsonSchemaReferences {
     for (const token of fragment.slice(1).split("/")) {
       if (/~(?:[^01]|$)/u.test(token))
         return { kind: "unresolved", reason: "pointer" };
-      const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+      const key = unescapeJsonPointerToken(token);
       if (
         value === null ||
         typeof value !== "object" ||

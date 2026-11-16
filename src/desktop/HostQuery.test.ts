@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { runHostQuery } from "./HostQuery.js";
 
 it("returns an inert Node query's actual output and status", async () => {

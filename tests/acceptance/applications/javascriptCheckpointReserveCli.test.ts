@@ -60,7 +60,6 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
   { laterSources: 1, heapMb: 448, methodsCount: 600, retainGraph: false },
 ])(
   "preserves evidence with $laterSources later checkpoints and a $heapMb MiB parent heap",
-  { timeout: 90_000 },
   async ({ laterSources, heapMb, methodsCount, retainGraph }, { cli }) => {
     const root = await createTestTempDirectory("rea-js-checkpoint-reserve-");
     const source = Array.from(
@@ -85,7 +84,6 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
       environment: {
         NODE_OPTIONS: `--max-old-space-size=${String(heapMb)} --max-semi-space-size=8`,
       },
-      timeoutMs: 60_000,
     });
     expect(response.exitCode).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -173,7 +171,6 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
 
 cliTest.skipIf(process.versions.bun !== undefined)(
   "keeps every source's static facts after semantic results use the parent result budget",
-  { timeout: 90_000 },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-js-static-capacity-");
     // Plain functions produce semantic graphs large enough to use the result
@@ -203,7 +200,6 @@ cliTest.skipIf(process.versions.bun !== undefined)(
       environment: {
         NODE_OPTIONS: "--max-old-space-size=640 --max-semi-space-size=8",
       },
-      timeoutMs: 75_000,
     });
     expect(response.stderr).not.toMatch(/FATAL ERROR:.*heap/iu);
     expect(

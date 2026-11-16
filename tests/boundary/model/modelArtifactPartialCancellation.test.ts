@@ -89,7 +89,7 @@ it.each([undefined, 64])(
       expect(arrayBytesObserved).toBeLessThan(count);
       expect(result.error.cause).toBe(reason);
       const evidence = parseEvidence(result.error.partialObservation);
-      expect(evidence.subject).toBeNull();
+      expect(evidence.subject.identity.kind).toBe("unknown");
       expect(evidence.operation).toBe("inspect_model_artifact");
       expect(evidence.normalized_result).toMatchObject({
         kind: "model-artifact-partial",

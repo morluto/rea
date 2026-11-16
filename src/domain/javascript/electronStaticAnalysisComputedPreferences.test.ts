@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 describe("computed Electron web preference keys", () => {
   it("retains exact string, numeric, and empty literal keys", () => {
@@ -15,7 +15,7 @@ describe("computed Electron web preference keys", () => {
     `);
 
     expect(analysis.parse_status).toBe("partial");
-    expect(analysis.analysis_coverage?.syntax).toEqual({
+    expect(analysis.analysis_coverage.syntax).toEqual({
       status: "complete",
       error_count: 0,
     });

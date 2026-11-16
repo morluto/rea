@@ -963,6 +963,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
+  const bytes = cubinFixture();
+  const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
+  expect(symbolName).toBeGreaterThanOrEqual(0);
+  bytes[symbolName + 1] = 0xff;
+  const result = await inspect(bytes);
+  if (!result.ok) throw result.error;
+  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+});
+
 it.each([9, 10])(
   "preserves parameters and register coverage for text count %d",
   async (textRegisters) => {
@@ -1018,7 +1028,10 @@ it("rejects out-of-range bundle entries without guessing a payload", async () =>
   const result = await inspect(bytes);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "BinaryTargetError" },
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    },
   });
 });
 
@@ -1237,7 +1250,10 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
     bytes.writeBigUInt64LE(count, 24);
     const result = await inspect(bytes, { analysis: "inventory" });
     if (result.ok) throw new Error("Expected malformed directory");
-    expect(result.error._tag).toBe("BinaryTargetError");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [{ path: ["path"], reason: "invalid_format" }],
+    });
   }
   const framed = Buffer.alloc(32 + 65537 * 25);
   Buffer.from("__CLANG_OFFLOAD_BUNDLE__").copy(framed);

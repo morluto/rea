@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Writable } from "node:stream";
 
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { parse as parseYaml } from "yaml";
 import { expect, it } from "vitest";
 
@@ -10,7 +11,7 @@ import {
   createCliResultOutput,
   streamCliCommandResults,
 } from "../../../src/cli/cliResultOutput.js";
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { silentLogger } from "../../../src/logger.js";
 
@@ -58,11 +59,8 @@ const expectMissingInputFailureText = (text: string, path: string): void => {
   for (const value of [
     "invalid_request",
     "invalid_input",
-    "Read the declared input schema or CLI usage",
     "trace-application-feature",
     "tools/list",
-    "Correct the listed fields, then retry.",
-    "Do not repeat the unchanged call.",
     "inspect_input_contract",
     path,
     "read-failed",

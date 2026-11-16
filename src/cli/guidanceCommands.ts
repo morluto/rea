@@ -1,5 +1,5 @@
-import { z } from "incur";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { z } from "zod";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -9,12 +9,14 @@ import {
   searchGuidanceLimitSchema,
   searchGuidanceInputSchema,
 } from "../contracts/guidanceContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField } from "./options.js";
+import { ownCliProcessResource } from "./cliResources.js";
 
 /** Guidance descriptors owned by one CLI host. */
 export class CliGuidanceResources {
@@ -42,13 +44,15 @@ export const closeCliGuidanceResources = (
   resources: CliGuidanceResources = processGuidanceResources,
 ): Promise<void> => resources.close();
 
+ownCliProcessResource("guidance", () => closeCliGuidanceResources());
+
 /** Register offline search and retrieval for the installed REA guide bundle. */
 export const registerGuidanceCommands = (
   cli: CliInstance,
   logger: Logger,
   resources: CliGuidanceResources = processGuidanceResources,
 ): void => {
-  cli.command(CLI_COMMANDS.guidance, {
+  registerCliCommand(cli, CLI_COMMANDS.guidance, {
     description: "Search or read the installed REA workflow guidance",
     args: z.object({}),
     options: z

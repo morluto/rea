@@ -9,13 +9,11 @@ import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComp
 import { safeParseEvidence } from "../../../src/domain/evidenceValidation.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 it.each([
   { profile: "compact", preexisting: false },
   { profile: "compact", preexisting: true },
-  { profile: "full", preexisting: false },
-  { profile: "full", preexisting: true },
 ] as const)(
   "preserves the completed comparison on atomic retention failure ($profile schema, preexisting: $preexisting)",
   async ({ profile, preexisting }) => {

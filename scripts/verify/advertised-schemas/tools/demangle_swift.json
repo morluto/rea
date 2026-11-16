@@ -1,0 +1,9 @@
+{
+  "schemas": {
+    "input compact": "ce0ed2a63eb8849e",
+    "output compact": "4bda7c3651bfc579"
+  },
+  "patterns": {
+    "input": ["^[^\\x0a]*$"]
+  }
+}

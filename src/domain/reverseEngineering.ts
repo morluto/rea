@@ -1,13 +1,14 @@
+import { timerDurationMsSchema } from "./analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
 import { z } from "zod";
 import { constants as bufferConstants } from "node:buffer";
 import { commandEvidenceDetailSchema } from "./commandObservation.js";
 import { localPathStringSchema } from "./localPath.js";
 import { RAW_BINARY_ENTRY_POINT } from "./rawBinary.js";
+import { rejectUnpairedSurrogates } from "./stringPatterns.js";
 
 /** Omitted one-shot objdump/rizin wall clock. Preflight shares it; the command gets it again. */
 export const DEFAULT_REVERSE_COMMAND_TIMEOUT_MS = 120_000;
-/** Node timer ceiling. Larger deadlines would be clamped instead of honored. */
-export const MAX_REVERSE_COMMAND_TIMEOUT_MS = 2_147_483_647;
 
 /** Combined stdout/stderr admission, before UTF-8 decoding and Evidence expansion. */
 export const DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -15,7 +16,23 @@ export const DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 export const MAX_REVERSE_COMMAND_OUTPUT_BYTES = Math.floor(
   (bufferConstants.MAX_STRING_LENGTH - 1024 * 1024) / (2 * 6),
 );
-export const reverseCommandOutputBytesSchema = z
+/**
+ * The per-call control that bounded a one-shot command's captured output,
+ * named by its contract field; each adapter names the option that sets it.
+ */
+export const reverseCommandOutputLimit = (
+  bytes: number,
+): AnalysisControlLimit => ({
+  control_kind: "parameter",
+  parameter: "max_output_bytes",
+  effective_value: bytes,
+  unit: "bytes",
+  minimum: 1,
+  maximum: MAX_REVERSE_COMMAND_OUTPUT_BYTES,
+  default_value: DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+  applies_at: "next_call",
+});
+const reverseCommandOutputBytesSchema = z
   .number()
   .int()
   .min(1)
@@ -26,11 +43,7 @@ export const reverseCommandOutputBytesSchema = z
   );
 
 /** Per-call deadline for one-shot objdump and rizin commands. */
-export const reverseCommandTimeoutSchema = z
-  .number()
-  .int()
-  .min(1)
-  .max(MAX_REVERSE_COMMAND_TIMEOUT_MS)
+const reverseCommandTimeoutSchema = timerDurationMsSchema
   .exactOptional()
   .describe(
     "Wall-clock budget in milliseconds. Target preflight shares one budget across stat and digest, and the one-shot command receives that budget again (default 120000 each). Omitted means 120000. Applies on the next call. Output admission is separately controlled by max_output_bytes; does not raise Ghidra or Hopper startup deadlines or debugger session deadlines.",
@@ -62,15 +75,13 @@ const objdumpArtifactInputSchema = z
 
 const objdumpDisassemblyInputSchema = objdumpArtifactInputSchema.extend({
   operation: z.literal("disassemble"),
-  symbol: z
-    .string()
-    .min(1)
-    .regex(/^[^\x00]*$/u)
-    // Keep UTF-16 checks out of patterns consumed by scalar Unicode engines.
-    .refine(
-      (symbol) => !/[\uD800-\uDFFF]/u.test(symbol),
-      "Symbol must be well-formed Unicode.",
-    )
+  symbol: rejectUnpairedSurrogates(
+    z
+      .string()
+      .min(1)
+      .regex(/^[^\x00]*$/u),
+    "Symbol must be well-formed Unicode.",
+  )
     .describe(
       "Native symbol to disassemble, expressed as well-formed Unicode. Matching and symbol boundaries follow the selected executable; omitted means all code sections.",
     )

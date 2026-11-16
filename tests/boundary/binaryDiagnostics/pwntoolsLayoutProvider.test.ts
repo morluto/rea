@@ -80,7 +80,7 @@ it.runIf(!unsupportedHost).each([
     expect(result.error.message).toContain(
       failure === "EFBIG"
         ? "exact write failure cause is unknown"
-        : "exact signal cause is unknown",
+        : "exact cause is not independently established",
     );
     if (scenario !== "reported")
       expect(result.error.message).toContain("limit report unavailable");
@@ -138,7 +138,7 @@ it.runIf(!unsupportedHost)(
       capturedOutput: { truncated: true, stderr: "" },
       diagnostics: {
         primary_error: {
-          code: "unreadable_output",
+          code: "resource_constraint",
         },
         cleanup_error: {
           code: "cleanup_incomplete",
@@ -288,8 +288,14 @@ it.runIf(!unsupportedHost).each([
       if (result.ok)
         throw new Error("Excess diagnostics must not return partial success");
       expect(projectAnalysisError(result.error)).toMatchObject({
-        code: "unreadable_output",
-        details: { captured_output: { truncated: true } },
+        code: "resource_constraint",
+        details: {
+          captured_output: { truncated: true },
+          limit: {
+            parameter: "producer_limits.diagnostic_bytes",
+            effective_value: budget ?? 1048576,
+          },
+        },
       });
     }
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -400,14 +406,12 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
           scenario === "cancelled"
             ? "AnalysisCancelledError"
             : scenario === "output-limit"
-              ? "AnalysisOutputError"
+              ? "AnalysisResourceConstraintError"
               : "ProviderAdapterError",
         ...(scenario === "process"
           ? {
-              diagnostics: {
-                exit_code: 7,
-                stderr: "decoder exited unexpectedly",
-              },
+              diagnostics: { exit_code: 7 },
+              capturedOutput: { stderr: "decoder exited unexpectedly" },
             }
           : {}),
       },
