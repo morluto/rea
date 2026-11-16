@@ -1,9 +1,10 @@
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
+import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
@@ -343,7 +344,7 @@ it.each(["yaml", "toon"] as const)(
       cliControls,
     );
     expect(text).toBe(
-      `${Formatter.format(
+      `${formatCliOutput(
         {
           ok: true,
           data: partialResult(),
