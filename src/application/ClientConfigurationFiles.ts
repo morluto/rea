@@ -1,24 +1,36 @@
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileText } from "./RegularFileRead.js";
+import { readRegularFileText } from "../process/RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
+  clientConfigurationValuesEqual,
   type ClientConfigurationDocument,
   type ClientConfigurationFormat,
+  type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { isRecord } from "../domain/isRecord.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
-/** A parsed layer retains its path so rereading the write target replaces only that layer. */
-export interface ClientConfigurationSource extends ClientConfigurationDocument {
-  readonly sourcePath: string;
-}
+/**
+ * A parsed layer retains its path so rereading the write target replaces only
+ * that layer. An inline layer has no path, so nothing can select it for writing.
+ */
+export type ClientConfigurationSource = ClientConfigurationDocument &
+  (
+    | { readonly sourcePath: string; readonly inlineOrigin?: undefined }
+    | {
+        readonly sourcePath?: undefined;
+        readonly inlineOrigin: ClientInlineConfiguration["origin"];
+      }
+  );
 
 const invalidEnvironment = (
   path: string,
@@ -78,7 +90,7 @@ export const readConfigurationText = async (
     return err({
       kind: "unreadable",
       path,
-      detail: `Configuration ${path} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `Configuration ${path} could not be read: ${errorMessage(cause)}`,
       ...(cause instanceof RegularFileCleanupFailure
         ? { cleanupFailure: cause }
         : {}),
@@ -104,7 +116,7 @@ export const readConfigurationFile = async (
     return err({
       kind: "malformed",
       path,
-      detail: `Configuration ${path} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `Configuration ${path} is malformed: ${errorMessage(cause)}`,
     });
   }
 };
@@ -112,12 +124,21 @@ export const readConfigurationFile = async (
 /** Read each layer; setup may validate its writable layer with proposed overrides. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
-  resources?: ArtifactResourceScope,
-  platform: NodeJS.Platform = process.platform,
+  resources: ArtifactResourceScope | undefined,
+  platform: NodeJS.Platform,
   writeOverrides?: Readonly<Record<string, string>>,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
+  // An unresolved location is evidence only: its path may be relative to
+  // REA's own folder, so reading it would inspect a file the client never
+  // loads.
+  if (client.configPathError !== undefined)
+    return err({
+      kind: "unreadable",
+      path: client.configPath,
+      detail: client.configPathError,
+    });
   const documents: ClientConfigurationSource[] = [];
   for (const path of client.configPaths ?? [client.configPath]) {
     const document = await readConfigurationFile(
@@ -126,13 +147,19 @@ export const readClientConfigurationFiles = async (
       resources,
     );
     if (!document.ok) return document;
-    if (document.value !== undefined) {
+    // A read-only lower layer's environment can be replaced as a whole map
+    // by a later layer (Goose), so only the effective view is validated.
+    const validatesLayer =
+      client.readOnlyLowerLayers !== true || path === client.configPath;
+    if (document.value !== undefined && !validatesLayer)
+      documents.push({ ...document.value, sourcePath: path });
+    else if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
         client,
+        platform,
         path === client.configPath ? writeOverrides : undefined,
         "fragment",
-        platform,
       );
       if (!environment.ok)
         return err(
@@ -146,12 +173,19 @@ export const readClientConfigurationFiles = async (
       documents.push({ ...document.value, sourcePath: path });
     }
   }
+  // The inline layer is read-only and may replace a lower environment map,
+  // so like a read-only lower layer only the effective view is validated.
+  if (client.inlineConfiguration !== undefined)
+    documents.push({
+      ...client.inlineConfiguration.parsed,
+      inlineOrigin: client.inlineConfiguration.origin,
+    });
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
     client,
+    platform,
     writeOverrides,
     "effective",
-    platform,
   );
   if (!environment.ok)
     return err(
@@ -167,7 +201,7 @@ export const readClientConfigurationFiles = async (
 
 /** OpenCode merges server objects in file order, replacing arrays and scalar values. */
 const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
-  if (!isObject(previous) || !isObject(next)) return next;
+  if (!isRecord(previous) || !isRecord(next)) return next;
   return Object.fromEntries(
     [...new Set([...Object.keys(previous), ...Object.keys(next)])].map(
       (key) => [
@@ -179,8 +213,6 @@ const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
     ),
   );
 };
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Native OpenCode dialect applies across all selected configuration layers. */
 export const clientWriteDialect = (
@@ -218,31 +250,149 @@ export const clientConfigurationForWrite = (
 /** Project a client's effective user registration without modifying its source files. */
 export const effectiveClientConfiguration = (
   sources: readonly ClientConfigurationSource[],
-  target?: {
-    readonly client: Pick<SetupClient, "configPath" | "configPaths">;
-    readonly document: ClientConfigurationDocument | undefined;
-  },
-  platform: NodeJS.Platform = process.platform,
+  target:
+    | {
+        readonly client: Pick<SetupClient, "configPath" | "configPaths">;
+        readonly document: ClientConfigurationDocument | undefined;
+      }
+    | undefined,
+  platform: NodeJS.Platform,
 ): ClientConfigurationDocument | undefined => {
   const documents =
     target === undefined
       ? sources
-      : (target.client.configPaths ?? [target.client.configPath]).flatMap(
-          (path) => {
-            const document =
-              path === target.client.configPath
-                ? target.document
-                : sources.find(({ sourcePath }) => sourcePath === path);
-            return document === undefined ? [] : [document];
-          },
-        );
+      : [
+          ...(target.client.configPaths ?? [target.client.configPath]).flatMap(
+            (path) => {
+              const document =
+                path === target.client.configPath
+                  ? target.document
+                  : sources.find(({ sourcePath }) => sourcePath === path);
+              return document === undefined ? [] : [document];
+            },
+          ),
+          ...sources.filter(({ inlineOrigin }) => inlineOrigin !== undefined),
+        ];
   return mergeClientConfigurationDocuments(documents, platform);
+};
+
+/** The client's read-only inline layers that set REA's entry. */
+export const inlineRegistrationOrigins = (
+  client: Pick<SetupClient, "inlineConfiguration">,
+): readonly ClientInlineConfiguration["origin"][] => {
+  const inline = client.inlineConfiguration;
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  return inline !== undefined &&
+    (Object.hasOwn(inline.parsed.servers, name) ||
+      Object.hasOwn(inline.parsed.legacyServers, name))
+    ? [inline.origin]
+    : [];
+};
+
+/**
+ * The inline layer that would change the REA registration setup writes as
+ * `desired` into the write target, which setup cannot edit around.
+ */
+export const inlineRegistrationOverride = (
+  client: Pick<SetupClient, "configPath" | "configPaths">,
+  sources: readonly ClientConfigurationSource[],
+  desired: unknown,
+  platform: NodeJS.Platform,
+): ClientInlineConfiguration["origin"] | undefined => {
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const inline = sources.filter(
+    ({ inlineOrigin }) => inlineOrigin !== undefined,
+  );
+  const declaring = inline.find(
+    (layer) =>
+      Object.hasOwn(layer.servers, name) ||
+      Object.hasOwn(layer.legacyServers, name),
+  );
+  if (declaring?.inlineOrigin === undefined) return undefined;
+  const files = sources.filter(({ sourcePath }) => sourcePath !== undefined);
+  const written = effectiveClientConfiguration(
+    files,
+    {
+      client,
+      document: {
+        ...declaring,
+        servers: { [name]: desired },
+        legacyServers: {},
+      },
+    },
+    platform,
+  );
+  const effective = mergeClientConfigurationDocuments(
+    [...(written === undefined ? [] : [written]), ...inline],
+    platform,
+  );
+  const launched = (entry: unknown): unknown =>
+    launchedRegistrationEntry(entry, declaring.environmentKey, platform);
+  return clientConfigurationValuesEqual(
+    launched(written?.servers[name]),
+    launched(effective?.servers[name]),
+  )
+    ? undefined
+    : declaring.inlineOrigin;
+};
+
+/**
+ * The string settings the inline layer declares in REA's entry environment,
+ * or an empty record when no inline layer sets REA's entry.
+ */
+export const inlineRegistrationEnvironment = (
+  sources: readonly ClientConfigurationSource[],
+): Readonly<Record<string, string>> => {
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const declaring = sources.find(
+    (layer) =>
+      layer.inlineOrigin !== undefined &&
+      (Object.hasOwn(layer.servers, name) ||
+        Object.hasOwn(layer.legacyServers, name)),
+  );
+  if (declaring === undefined) return {};
+  const entry = Object.hasOwn(declaring.servers, name)
+    ? declaring.servers[name]
+    : declaring.legacyServers[name];
+  const environment = isRecord(entry)
+    ? entry[declaring.environmentKey]
+    : undefined;
+  return isRecord(environment)
+    ? Object.fromEntries(
+        Object.entries(environment).filter(
+          (setting): setting is [string, string] =>
+            typeof setting[1] === "string",
+        ),
+      )
+    : {};
+};
+
+/**
+ * An entry as the client launches it: Windows environment names are one name
+ * whatever their case, so `PATH` and an equal `Path` start the same server.
+ */
+export const launchedRegistrationEntry = (
+  entry: unknown,
+  environmentKey: string,
+  platform: NodeJS.Platform,
+): unknown => {
+  if (platform !== "win32" || !isRecord(entry)) return entry;
+  const environment = entry[environmentKey];
+  if (!isRecord(environment)) return entry;
+  return {
+    ...entry,
+    [environmentKey]: Object.fromEntries(
+      Object.entries(mergeEnvironmentOverrides({}, environment, platform)).map(
+        ([key, value]) => [key.toUpperCase(), value],
+      ),
+    ),
+  };
 };
 
 /** Merge admitted layers without re-reading or changing their source documents. */
 export const mergeClientConfigurationDocuments = (
   documents: readonly ClientConfigurationDocument[],
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): ClientConfigurationDocument | undefined => {
   const last = documents.at(-1);
   if (last === undefined) return undefined;
@@ -256,16 +406,24 @@ export const mergeClientConfigurationDocuments = (
     for (const name of names) {
       const previous = servers[name];
       const next = effectiveClientServer(document, name);
-      const merged = mergeConfigurationValue(previous, next);
+      // Goose overlays each extension one field deep (`merge_nested_entries`),
+      // replacing nested values such as `envs` whole.
+      const goose = document.dialect === "goose";
+      const merged = goose
+        ? isRecord(previous) && isRecord(next)
+          ? { ...previous, ...next }
+          : next
+        : mergeConfigurationValue(previous, next);
       const key = document.environmentKey;
       if (
+        !goose &&
         name === PRODUCT_IDENTITY.mcpServerKey &&
-        isObject(merged) &&
-        isObject(merged[key])
+        isRecord(merged) &&
+        isRecord(merged[key])
       ) {
         const before =
-          isObject(previous) && isObject(previous[key]) ? previous[key] : {};
-        const after = isObject(next) && isObject(next[key]) ? next[key] : {};
+          isRecord(previous) && isRecord(previous[key]) ? previous[key] : {};
+        const after = isRecord(next) && isRecord(next[key]) ? next[key] : {};
         servers[name] = {
           ...merged,
           [key]: mergeEnvironmentOverrides(before, after, platform),
@@ -284,8 +442,8 @@ export const mergeClientConfigurationDocuments = (
 /** Read the configuration ZCode will load, preserving its same-scope fallback rule. */
 export const readEffectiveClientRegistrationConfiguration = async (
   client: SetupClient,
-  resources?: ArtifactResourceScope,
-  platform: NodeJS.Platform = process.platform,
+  resources: ArtifactResourceScope | undefined,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<
     {

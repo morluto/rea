@@ -1,25 +1,25 @@
 import { createHash } from "node:crypto";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
+import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   KERNEL_MODULE_VERSION_ENTRY_BYTES,
-  DEFAULT_KERNEL_MODULE_KEY_BYTES,
+  kernelModuleModinfoLimit,
   MAX_KERNEL_MODULE_RAW_BYTES,
   MAX_KERNEL_MODULE_SECTION_NAME_BYTES,
-  DEFAULT_KERNEL_MODULE_VALUE_BYTES,
-  MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
   MODULE_SIGNATURE_INFO_BYTES,
   MODULE_SIGNATURE_MAGIC,
   MODULE_SIGNATURE_PKCS7_ID_TYPE,
   type KernelModule,
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import type {
   ImageSection,
   BinaryContainer,
-} from "../metadata/BinaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+} from "../../domain/binaryContainer.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
@@ -155,11 +155,6 @@ interface SectionUse {
   readonly limitations: Limitations;
 }
 
-const sectionsNamed = (
-  sections: readonly ElfSection[],
-  name: string,
-): readonly ElfSection[] => sections.filter((section) => section.name === name);
-
 const parseModinfo = (
   bytes: Buffer,
   section: ElfSection | undefined,
@@ -251,24 +246,17 @@ const parseModinfo = (
     if (!terminated) break;
     at = end + 1;
   }
-  for (const [field, selected, required, defaultBytes] of [
-    [
-      "key",
-      input.max_modinfo_key_bytes,
-      largestKeyBytes,
-      DEFAULT_KERNEL_MODULE_KEY_BYTES,
-    ],
-    [
-      "value",
-      input.max_modinfo_value_bytes,
-      largestValueBytes,
-      DEFAULT_KERNEL_MODULE_VALUE_BYTES,
-    ],
+  const omissionLimits: AnalysisParameterLimit[] = [];
+  for (const [field, selected, required] of [
+    ["key", input.max_modinfo_key_bytes, largestKeyBytes],
+    ["value", input.max_modinfo_value_bytes, largestValueBytes],
   ] as const) {
-    if (required > selected)
+    if (required > selected) {
+      omissionLimits.push(kernelModuleModinfoLimit(field, selected));
       use.limitations.push(
-        `.modinfo ${field} text exceeds max_modinfo_${field}_bytes=${String(selected)} bytes (request budget; default ${String(defaultBytes)}, minimum 1, maximum ${String(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)}). Omitted fields keep their source range and digest; omission does not establish malformed syntax. Retry inspect_kernel_module with max_modinfo_${field}_bytes at least ${String(required)}, or --max-modinfo-${field}-bytes on the CLI. Applies on the next call without a REA restart; input, entry and raw-hex budgets do not change.`,
+        `.modinfo ${field} text exceeds max_modinfo_${field}_bytes=${String(selected)} bytes. Omitted fields keep their source range and digest; omission does not establish malformed syntax. Retry inspect_kernel_module with max_modinfo_${field}_bytes at least ${String(required)}; modinfo.omission_limits records the control. Applies on the next call without a REA restart; input, entry and raw-hex budgets do not change.`,
       );
+    }
   }
   return {
     status: "present",
@@ -276,6 +264,7 @@ const parseModinfo = (
     sha256: sha256(stored),
     entries,
     reason: null,
+    ...(omissionLimits.length === 0 ? {} : { omission_limits: omissionLimits }),
   };
 };
 
@@ -542,15 +531,19 @@ export const parseKernelModule = (
   const use = { namesComplete, limitations };
   const examined = { count: 0 };
   let duplicateSections = false;
+  const byName = keyedBy(sections, ({ name }) => name);
   const firstNamedSection = (name: string): ElfSection | undefined => {
-    const found = sectionsNamed(sections, name);
-    if (found.length > 1) {
+    if (allKeyed(byName, name).length > 1) {
       duplicateSections = true;
       limitations.push(
         `Multiple ${name} sections are declared; the first is examined.`,
       );
     }
-    return found[0];
+    return firstKeyed(
+      byName,
+      name,
+      "Linux's module loader (find_sec) reads the first section with the name.",
+    );
   };
   const modinfo = parseModinfo(
     bytes,

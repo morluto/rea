@@ -1,13 +1,14 @@
 import { projectPeBinaryFailure } from "./PeBinaryFailure.js";
-import { projectArtifactCloseFailure } from "../../artifacts/StableArtifactFailure.js";
 import {
+  projectArtifactCloseFailure,
+  imageFileSizeRemediation,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { PeImportsPort } from "../../application/binaryDiagnostics/PeImportsPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  assertArtifactReadActive,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { PeImportsPort } from "../../ports/binaryDiagnostics/PeImportsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { ResourceConstraintRecovery } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
@@ -22,7 +23,7 @@ import { err, ok } from "../../domain/result.js";
 import { PE_IMPORTS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   parsePeImports,
-  PeImportLimitFailure,
+  PE_IMPORT_LIMITS,
   type PeImportLimit,
 } from "./PeImportParser.js";
 
@@ -76,11 +77,6 @@ export class PeImportsProvider implements PeImportsPort {
   }
 }
 
-const fileSizeRemediation = (input: InspectPeImportsInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_PE_IMPORT_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_PE_IMPORT_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override. Select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
 const dllRemediation = (input: InspectPeImportsInput): string =>
   input.max_dlls >= MAX_INSPECT_PE_IMPORT_DLLS
     ? `The image exceeds the ${String(MAX_INSPECT_PE_IMPORT_DLLS)}-entry import-descriptor ceiling this operation accepts; select a smaller artifact.`
@@ -128,9 +124,12 @@ const peImportsFailure = (
     {
       operation: OPERATION,
       providerId: PE_IMPORTS_PROVIDER.id,
-      fileSizeRemediation: () => fileSizeRemediation(input),
-      limit: (failure) =>
-        failure instanceof PeImportLimitFailure ? failure.limit : null,
+      fileSizeRemediation: () =>
+        imageFileSizeRemediation(
+          input.max_file_bytes,
+          MAX_INSPECT_PE_IMPORT_FILE_BYTES,
+        ),
+      limits: PE_IMPORT_LIMITS,
       limitRecovery: (limit) => limitRecovery(limit, input),
     },
     snapshot,

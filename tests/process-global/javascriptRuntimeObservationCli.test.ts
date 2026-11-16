@@ -6,7 +6,7 @@ import { Cli } from "incur";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { observeJavaScriptRuntime } from "../../src/application/javascript/JavaScriptRuntimeObservationService.js";
-import type { JavaScriptRuntimeObservationPort } from "../../src/application/javascript/JavaScriptRuntimeObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../../src/ports/javascript/JavaScriptRuntimeObservationPort.js";
 import { V8InspectorProvider } from "../../src/inspector/V8InspectorProvider.js";
 import { observeJavaScriptRuntimeInputSchema } from "../../src/domain/javascript/javascriptRuntimeObservation.js";
 import { startFakeV8Inspector } from "../fixtures/inspector/fakeV8Inspector.js";
@@ -28,8 +28,6 @@ vi.mock("../../src/composition/javascriptRuntimeObservation.js", () => ({
     return runtimeFactory.provider;
   },
 }));
-
-const TIMEOUT_MS = 20_000;
 
 describe("JavaScript runtime observation CLI parity", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -114,7 +112,6 @@ describe("JavaScript runtime observation CLI parity", () => {
         await provider.close();
       }
     },
-    TIMEOUT_MS,
   );
 
   test("waits for provider cleanup and retains completed Evidence on failure", async () => {

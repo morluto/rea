@@ -5,6 +5,7 @@ import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
 import { elfNote, elfNoteFixture } from "../../native/elf/ElfNotes.fixture.js";
 import {
@@ -12,17 +13,14 @@ import {
   MAX_INSPECT_ELF_NOTE_FILE_BYTES,
 } from "../../domain/native/elfNotes.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../../domain/native/peResources.js";
-import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactPathRegistry } from "../ArtifactPaths.js";
+import { ArtifactPathRegistry } from "../../resources/ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
-import {
-  locateDenoStandalone,
-  MAX_DENO_INTEL_TRAILER_SENTINELS,
-} from "./DenoStandaloneLocation.js";
+import { locateDenoStandalone } from "./DenoStandaloneLocation.js";
 import {
   buildDenoSection,
   DENO_FIXTURE_SECTION_MAGIC,
@@ -34,8 +32,10 @@ import {
   denoUniversal,
   machOWithSegment,
 } from "./DenoStandalone.fixture.js";
-import { MAX_DENO_PATH_COMPONENT_BYTES } from "./DenoVirtualFs.js";
+
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
+
+const MAX_DENO_PATH_COMPONENT_BYTES = 255;
 
 it("keeps a confirmed Deno inventory when another pack recognizer is limited", async () => {
   const original = denoElf();
@@ -1071,7 +1071,7 @@ it("rejects packed Intel sentinels without rereading a chunk per sentinel", asyn
 it("leaves an x64 Mach-O absent when sentinels pass the allowance", async () => {
   const packed = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS + 1),
+    rejectedIntelSentinels(65),
   ]);
   let readBytes = 0;
   const probe = await locateDenoStandalone(
@@ -1307,7 +1307,7 @@ it("accepts side-by-side Intel trailers with identical bytes", async () => {
 it("refuses a confirmed Intel trailer when the allowance ends the outer search", async () => {
   const bytes = Buffer.concat([
     denoMachO([], { architecture: "x64" }),
-    rejectedIntelSentinels(MAX_DENO_INTEL_TRAILER_SENTINELS),
+    rejectedIntelSentinels(64),
     intelTrailerRecord(buildDenoSection()),
   ]);
   await expect(
@@ -1844,14 +1844,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
     const observed = await open(path, "r");
     const prototype = Object.getPrototypeOf(observed) as FileHandle;
     const read = prototype.read;
-    let enter!: () => void;
-    let release!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const artifactRead = phaseGate();
     let firstRead = true;
     const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
       this: FileHandle,
@@ -1860,8 +1853,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
       const result = await read.apply(this, args);
       if (firstRead) {
         firstRead = false;
-        enter();
-        await gate;
+        await artifactRead.hold();
         if (scenario === "physical failure") throw physicalFailure;
       }
       return result;
@@ -1876,7 +1868,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         (cause: unknown) => cause,
       );
       pending.push(failure);
-      await entered;
+      await artifactRead.reached(first, "Deno artifact read");
       const concurrent =
         scenario === "independent caller"
           ? collect(reader.entries())
@@ -1886,7 +1878,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         void concurrent.catch(() => undefined);
       }
       controller.abort(reason);
-      release();
+      artifactRead.release();
       const rejected = await failure;
       if (scenario === "physical failure")
         expect(rejected).toMatchObject({ reason: "io" });
@@ -1900,7 +1892,7 @@ it.each(["retry", "independent caller", "physical failure"] as const)(
         "source",
       );
     } finally {
-      release();
+      artifactRead.release();
       await Promise.allSettled(pending);
       spy.mockRestore();
       await observed.close();

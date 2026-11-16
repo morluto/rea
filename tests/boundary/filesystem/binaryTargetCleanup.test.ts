@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
-import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import type { AnalysisOperation } from "../../../src/ports/AnalysisProvider.js";
+import { RetainedRegularFileCleanupFailure } from "../../../src/process/RegularFileRead.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -19,6 +19,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 it.each(
   [true, false].flatMap((supported) =>
@@ -163,7 +164,7 @@ it("retries target and provider owners independently through the same MCP connec
     execute,
     close: async () => {
       if (!providerAllowed) return err(providerFailure);
-      providerFailure.resolveCleanup();
+      releaseOwnedCleanup(providerFailure);
       return ok(null);
     },
   }));

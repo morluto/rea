@@ -1,0 +1,7 @@
+{
+  "src/adb/AdbCommand.ts": 1,
+  "src/apktool/ApktoolProvider.ts": 1,
+  "src/application/environment/environmentReplay.ts": 1,
+  "src/desktop/DesktopSessionObservations.ts": 1,
+  "src/domain/desktop/appTaskDraft.ts": 2
+}

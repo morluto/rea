@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../../../domain/jsonPointer.js";
 import { captureBudgets } from "../CaptureBudgets.js";
 import { isAbsolute } from "node:path";
 import { CaptureFormatError } from "../CaptureFormatError.js";
@@ -6,13 +7,15 @@ import {
   isCaptureCredentialHeaderBytes,
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
-import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
+import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactResourceScope,
+} from "../../../resources/index.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
 } from "../CaptureFailures.js";
-import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
@@ -63,10 +66,7 @@ const excludeBody = (
           sha256: null,
         },
   );
-  const parts = pointer
-    .split("/")
-    .slice(1)
-    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+  const parts = pointer.split("/").slice(1).map(unescapeJsonPointerToken);
   let parent: JsonValue | undefined = record.reported;
   for (const part of parts.slice(0, -1)) {
     if (
@@ -423,7 +423,7 @@ export const prepareCaptureProtobuf = async (
           Math.ceil(captureBudgets().inputBytes / 3) * 4
       )
         throw new CaptureFormatError(
-          "limit",
+          { name: "protobuf-body", maximum: captureBudgets().inputBytes },
           `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
         );
       const body = Buffer.from(field.content_base64, "base64");

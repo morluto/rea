@@ -4,7 +4,7 @@ import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
@@ -12,15 +12,18 @@ import {
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "./PeCertificates.fixture.js";
 import {
-  ASN1_NODE_BUDGET,
-  MAX_DECODED_NAME_BYTES,
-  MAX_OID_ARC_BYTES,
-  MAX_OID_BYTES,
   parseCertificate,
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
 import { parsePeCertificates } from "./PeCertificateParser.js";
+
+// Independent boundary examples: changing an allowance requires reviewing
+// both the admitted and rejected certificate shapes.
+const ASN1_NODE_BUDGET = 16_384;
+const MAX_OID_BYTES = 256;
+const MAX_OID_ARC_BYTES = 32;
+const MAX_DECODED_NAME_BYTES = 65_536;
 
 const defaults = inspectPeCertificatesInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -101,6 +104,27 @@ it("reports unsigned attribute OIDs and incomplete nested coverage", () => {
     ).toBeNull();
     expect(control.coverage.status).toBe("complete");
   }
+});
+
+// The parser always reports the field (null when absent), so a report that
+// omits it is refused at that field rather than read as unknown.
+it("refuses a signer that omits unsigned_attribute_oids", () => {
+  const report = parse(peCertificateFixture(false));
+  const [entry] = report.entries;
+  const [signer] = entry?.pkcs7?.signers ?? [];
+  if (entry?.pkcs7 === undefined || entry.pkcs7 === null || !signer)
+    throw new Error("Fixture has no PKCS#7 signer");
+  const { unsigned_attribute_oids: _omitted, ...withoutField } = signer;
+  const refused = peCertificatesSchema.safeParse({
+    ...report,
+    entries: [{ ...entry, pkcs7: { ...entry.pkcs7, signers: [withoutField] } }],
+  });
+  expect(refused.success).toBe(false);
+  expect(refused.error?.issues).toContainEqual(
+    expect.objectContaining({
+      path: ["entries", 0, "pkcs7", "signers", 0, "unsigned_attribute_oids"],
+    }),
+  );
 });
 
 it.each([false, true])(

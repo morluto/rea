@@ -1,4 +1,9 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
   apiSurfaceHar,
   environmentManifestHar,
 } from "../../fixtures/historicalHar.js";
@@ -7,16 +12,14 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 import {
   analysisViewLayoutEvidence,
@@ -92,13 +95,48 @@ cliTest(
 );
 
 cliTest(
+  "summarizes an independent fresh decompile with the analysis it selected",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-fresh-pseudocode-view-");
+    const parent = createEvidence(
+      { path: "/fixtures/program", format: "elf", sha256: "a".repeat(64) },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "procedure_pseudo_code",
+        parameters: { procedure: "main", analysis: "independent_fresh" },
+        result: "int main(void) { return 0; }",
+      },
+    );
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "summary" },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode, response.stdout).toBe(0);
+    expect(parseEvidence(response.json).normalized_result).toMatchObject({
+      kind: "summary",
+      summary: {
+        selection: { procedure: "main", analysis: "independent_fresh" },
+        pseudocode: { available: true, code_units: 28 },
+      },
+    });
+  },
+);
+
+cliTest(
   "reads selected batch rows and one body from a saved bundle without a provider",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-batch-view-cli-");
     const path = join(root, "bundle.json");
     const body = "int main(void) { return 0; }";
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "batch_decompile",
@@ -120,7 +158,7 @@ cliTest(
     );
     await writeFile(path, JSON.stringify(createEvidenceBundle([parent])));
     const inspect = async (view: JsonValue) => {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({
@@ -178,7 +216,7 @@ cliTest(
     ]);
     const original = JSON.stringify(bundle);
     await writeFile(path, original);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: [
         "inspect-analysis-view",
         JSON.stringify(request),
@@ -217,13 +255,26 @@ cliTest(
           "--json",
         ],
       };
-      const rejected =
-        source.kind === "inline"
-          ? await cli.run(invocation)
-          : await runFileCli(cli, invocation);
+      const rejected = await cli.run({
+        ...invocation,
+        freshProcess: source.kind === "inline",
+      });
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
+      // The service names the field it refuses; option spellings belong to
+      // the CLI layer.
+      if (source.kind === "inline")
+        expect(rejected.json).toMatchObject({
+          details: {
+            issues: [
+              {
+                path: ["source", "kind"],
+                message: expect.not.stringContaining("--"),
+              },
+            ],
+          },
+        });
     }
     for (const [contents, expectedCode, freshProcess] of [
       [JSON.stringify(parent), "invalid_request", false],
@@ -252,9 +303,10 @@ cliTest(
       };
       // Keep a fresh-process integrity check for the altered bundle while the
       // worker must reread the same path for the other invalid inputs.
-      const rejected = freshProcess
-        ? await cli.run(invocation)
-        : await runFileCli(cli, invocation);
+      const rejected = await cli.run({
+        ...invocation,
+        freshProcess: freshProcess,
+      });
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
@@ -281,7 +333,7 @@ cliTest(
         view: { kind: "native", facet: "callees", offset: 0, limit: 1 },
       }),
     );
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: ["inspect-analysis-view", request, "--json"],
     });
     expect(response.exitCode).toBe(0);
@@ -320,7 +372,7 @@ cliTest(
     const expected = await inspectAnalysisView(input);
     if (!expected.ok) throw expected.error;
     await writeFile(request, JSON.stringify(input));
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: ["inspect-analysis-view", request, "--json"],
     });
     expect(response.exitCode).toBe(0);
@@ -361,7 +413,7 @@ cliTest(
         view: { kind: "api-surface", include_query_parameter_names: true },
       }),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode).toBe(0);
@@ -391,7 +443,7 @@ cliTest(
     await writer.add("main.js", new TextReader("console.log('portable');\n"));
     await writeFile(archive, await writer.close());
     const bundlePath = join(root, "inspection-bundle.json");
-    const inspected = await runFileCli(cli, {
+    const inspected = await cli.run({
       arguments: [
         "inspect-artifact",
         archive,
@@ -441,7 +493,7 @@ cliTest(
       view: { kind: "page", collection: "sections", offset: 0, limit: 20 },
     };
     await writeFile(unsupportedRequest, JSON.stringify(unsupportedInput));
-    const unsupported = await runFileCli(cli, {
+    const unsupported = await cli.run({
       arguments: ["inspect-analysis-view", unsupportedRequest, "--json"],
     });
     expect(unsupported.exitCode).toBe(1);
@@ -469,7 +521,7 @@ cliTest(
         },
       }),
     );
-    const projected = await runFileCli(cli, {
+    const projected = await cli.run({
       arguments: ["inspect-analysis-view", request, "--json"],
     });
     expect(projected.exitCode).toBe(0);
@@ -480,7 +532,10 @@ cliTest(
         parent_evidence_id: parent.evidence_id,
         kind: "inventory",
         source_complete: true,
-        artifact: { path: archive, sha256: parent.subject?.digest.sha256 },
+        artifact: {
+          path: archive,
+          sha256: fileIdentity(parent.subject).sha256,
+        },
         items: [expect.objectContaining({ logical_path: "main.js" })],
         coverage: { total: 1, exhausted: true, next_offset: null },
       },
@@ -498,7 +553,7 @@ cliTest(
     const writer = new ZipWriter(new Uint8ArrayWriter());
     await writer.add("main.js", new TextReader("console.log(1);\n"));
     await writeFile(archive, await writer.close());
-    const inspected = await runFileCli(cli, {
+    const inspected = await cli.run({
       arguments: ["inspect-artifact", archive, "--json"],
     });
     expect(inspected.exitCode).toBe(0);
@@ -508,12 +563,12 @@ cliTest(
     ).substeps[0]!.evidence;
     const path = join(root, "view.json");
     const reseal = (carrier: Evidence, result: JsonValue) => {
-      const subject = carrier.subject!;
+      const subject = carrier.subject;
       return createEvidence(
         {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
+          path: fileSubjectDisplay(subject).local_path,
+          sha256: fileIdentity(subject).sha256,
+          format: fileIdentity(subject).format,
         },
         carrier.provider,
         { operation: carrier.operation, parameters: {}, result },
@@ -542,10 +597,10 @@ cliTest(
         };
         // Exercise a valid and a malformed parent in fresh processes as well
         // as the shared worker's repeated reads of the rewritten input path.
-        const reply =
-          group === "manifest" && variant !== "missing"
-            ? await cli.run(invocation)
-            : await runFileCli(cli, invocation);
+        const reply = await cli.run({
+          ...invocation,
+          freshProcess: group === "manifest" && variant !== "missing",
+        });
         expect(reply.stderr).toBe("");
         if (variant === "valid") {
           expect(application.ok).toBe(true);
@@ -600,7 +655,7 @@ cliTest(
       ],
     });
     await writeFile(path, JSON.stringify(request));
-    const refused = await runFileCli(cli, {
+    const refused = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(refused.exitCode).toBe(1);
@@ -649,7 +704,7 @@ cliTest(
         view: { kind: "api-surface" },
       }),
     );
-    const refused = await runFileCli(cli, {
+    const refused = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
       environment,
     });
@@ -680,7 +735,7 @@ cliTest(
         view: { kind: "api-surface" },
       }),
     );
-    const response = await runFileCli(cli, {
+    const response = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
       environment,
     });
@@ -717,7 +772,7 @@ cliTest(
       detail: "summary" as const,
       filters: { evidence_id: parent.evidence_id },
     };
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, ...options }),
@@ -752,7 +807,7 @@ cliTest(
       });
     }
     // The same shared owner selects the complete record from the portable file.
-    const records = await runFileCli(cli, {
+    const records = await cli.run({
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
@@ -769,7 +824,7 @@ cliTest(
       records: [parent],
       missing_evidence_links: [],
     });
-    const complete = await runFileCli(cli, {
+    const complete = await cli.run({
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path }),
@@ -789,7 +844,7 @@ cliTest(
     const path = join(root, "partial.json");
     const absent = analysisViewLayoutEvidence();
     const linked = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "trace_feature",
@@ -804,7 +859,7 @@ cliTest(
       detail: "links",
       traversal: "retained-closure",
     } as const;
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: [
         "inspect-evidence-bundle",
         JSON.stringify({ path, ...options }),
@@ -873,7 +928,7 @@ cliTest(
     };
 
     {
-      const json = await runFileCli(cli, {
+      const json = await cli.run({
         arguments: [
           "inspect-analysis-view",
           input,
@@ -892,7 +947,7 @@ cliTest(
       ).toHaveLength(rowCount);
     }
 
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [
         "inspect-analysis-view",
         input,
@@ -931,7 +986,7 @@ cliTest(
     const input = join(root, "view.json");
     await mkdir(root, { recursive: true });
     await writeFile(input, JSON.stringify(request));
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
       environment: {
         HOME: root,
@@ -957,7 +1012,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-empty-layout-view-cli-");
     const empty = analysisViewLayoutEvidence(binaryLayoutFixture());
     for (const collection of ["sections", "symbols"] as const) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({
@@ -988,7 +1043,7 @@ cliTest(
       expect(result.json).not.toHaveProperty("details.issues.0.minimum");
       expect(result.json).not.toHaveProperty("details.issues.0.maximum");
     }
-    const populated = await runFileCli(cli, {
+    const populated = await cli.run({
       arguments: [
         "inspect-analysis-view",
         JSON.stringify({
@@ -1045,7 +1100,7 @@ cliTest(
         view: { kind: "native", facet: "pseudocode", offset: 0, limit: 12 },
       }),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
       environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
@@ -1088,7 +1143,7 @@ cliTest(
       { kind: "summary" },
       { kind: "evm", facet: "bytecode_hex", offset: 0, limit: 4 },
     ]) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [
           "inspect-analysis-view",
           JSON.stringify({
@@ -1110,7 +1165,7 @@ cliTest(
 
 cliTest("rejects malformed JSON before projection", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-analysis-view-cli-bad-");
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-analysis-view", "{", "--json"],
     environment: {
       HOME: root,
@@ -1122,7 +1177,7 @@ cliTest("rejects malformed JSON before projection", async ({ cli }) => {
   expect(result.json).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
-    details: { operation: "inspect-analysis-view" },
+    details: { operation: "inspect_analysis_view" },
   });
 });
 
@@ -1130,7 +1185,7 @@ cliTest("rejects a request that omits source", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-analysis-view-cli-missing-");
   const input = join(root, "missing-source.json");
   await writeFile(input, JSON.stringify({ view: { kind: "summary" } }));
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-analysis-view", input, "--json"],
     environment: {
       HOME: root,
@@ -1165,7 +1220,7 @@ for (const [view, reason] of [
           view,
         }),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-analysis-view", input, "--json"],
         environment: {
           HOME: root,
@@ -1218,13 +1273,13 @@ cliTest(
       XDG_CACHE_HOME: root,
     };
     await writeFile(capturePath, bytes);
-    const capture = await runFileCli(cli, {
+    const capture = await cli.run({
       arguments: ["inspect-web-network-capture", capturePath, "har", "--json"],
       environment,
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
     const parent = parseEvidence(capture.json);
-    expect(parent.subject?.digest.sha256).toBe(
+    expect(fileIdentity(parent.subject).sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
     expect(JSON.stringify(parent)).not.toContain("password");
@@ -1235,7 +1290,7 @@ cliTest(
         view: { kind: "api-surface" },
       }),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
       environment,
     });
@@ -1289,7 +1344,7 @@ cliTest(
         view,
       }),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", requestPath, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1335,7 +1390,7 @@ cliTest(
         },
       }),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1371,7 +1426,7 @@ cliTest(
         view: { kind: "environment-manifest" },
       }),
     );
-    const refused = await runFileCli(cli, {
+    const refused = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(refused.exitCode).toBe(1);
@@ -1406,7 +1461,7 @@ cliTest(
         },
       }),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1480,7 +1535,7 @@ cliTest.for([
       view: { kind: "environment-state" },
     });
     await writeFile(path, request);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", path, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1508,7 +1563,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-manifest-chain-cli-");
     const capturePath = join(root, "capture.har");
     await writeFile(capturePath, JSON.stringify(environmentManifestHar()));
-    const capture = await runFileCli(cli, {
+    const capture = await cli.run({
       arguments: ["inspect-web-network-capture", capturePath, "har", "--json"],
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
@@ -1521,7 +1576,7 @@ cliTest(
         view: { kind: "environment-manifest" },
       }),
     );
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
     });
     expect(result.exitCode, result.stdout).toBe(0);
@@ -1533,7 +1588,10 @@ cliTest(
         name: "grafana-example",
         templated_groups: 6,
         coverage: { total: 22, exhausted: true },
-        artifact: { path: capturePath, sha256: parent.subject?.digest.sha256 },
+        artifact: {
+          path: capturePath,
+          sha256: fileIdentity(parent.subject).sha256,
+        },
         records: expect.arrayContaining([
           {
             ordinal: 3,

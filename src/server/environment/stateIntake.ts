@@ -5,7 +5,7 @@ import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { paddedBase64ByteLength } from "../../domain/paddedBase64.js";
@@ -19,6 +19,8 @@ import {
   RegularFileCleanupFailure,
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { isRecord } from "../../domain/isRecord.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =
@@ -125,9 +127,6 @@ const fileFailure = (cause: unknown): IntakeFailure =>
     ? FILE_FAILURES.get(String(cause.code))
     : undefined) ?? "read-failed";
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const MAX_INLINE_BASE64_CHARACTERS =
   Math.ceil(STATE_INTAKE_LIMIT_BYTES / 3) * 4;
 
@@ -135,7 +134,8 @@ const MAX_INLINE_BASE64_CHARACTERS =
 const parseDocumentBytes = (bytes: Uint8Array): Result<unknown, RpcError> => {
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // A user-saved JSON document may carry a BOM signature (RFC 8259 8.1).
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return err(invalidParams("the file is not UTF-8 text"));
   }

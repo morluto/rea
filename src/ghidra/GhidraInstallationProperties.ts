@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   artifactFileCompletion,
   mapArtifactFileFailure,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   RegularFileCapacityError,
@@ -19,7 +19,7 @@ import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 
 /** Metadata admission budget, not a Java Properties format limit. */
-export const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
+const MAX_GHIDRA_INSTALLATION_PROPERTIES_BYTES = 1024 * 1024;
 export interface GhidraInstallationFileOptions {
   readonly resourceOwner: RetainedResourceScope;
   readonly signal?: AbortSignal;

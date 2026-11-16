@@ -7,9 +7,10 @@ import { expect, it, vi } from "vitest";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { answerFakeGdbStartup } from "../providers/gdbTestHelpers.js";
 
 const registerGdbCommand = (
   createManager: () => GdbSessionManager,
@@ -250,6 +251,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         requests++;
         const token = match[1] ?? "";
         const tail = match[2] ?? "";
+        if (answerFakeGdbStartup(child.stdout, token, tail)) continue;
         const reply = modeledGdbReplies.get(tail);
         if (reply === undefined) unmodeled.push(line);
         child.stdout.write(
@@ -277,6 +279,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         if (mode === "incomplete" && !recovering)
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "synthetic stop remains pending",
           };
         child.kill("SIGTERM");

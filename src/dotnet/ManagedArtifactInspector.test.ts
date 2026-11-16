@@ -9,8 +9,8 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 
 const metadataLayoutFor = (bytes: Buffer) => {
   const pe = readManagedPeLayout(bytes);
@@ -580,7 +580,7 @@ describe("managed artifact coded indexes", () => {
         (attribute) => attribute.type_name === "Fixture.LookupAttribute",
       ),
     ).toBe(true);
-  }, 30_000);
+  });
 });
 
 it.each([false, true])(

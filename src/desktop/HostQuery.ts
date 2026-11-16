@@ -1,4 +1,4 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   execFileOutput,
   execFileOutputFailure,

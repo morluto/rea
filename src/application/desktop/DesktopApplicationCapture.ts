@@ -1,9 +1,11 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { processInspectionCleanupFailures } from "../../process/ProcessInspectionCleanup.js";
 import { samplingInspectionFailures } from "../../process/capture/ProcessSamplingObservation.js";
 import type { DesktopLibraryPolicyInput } from "../../domain/desktop/libraryPolicy.js";
-import { arch, hostname, userInfo } from "node:os";
+import { hostname, userInfo } from "node:os";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   bindProcessInspectionCancellations,
   retainProcessInspectionCleanup,
@@ -172,7 +174,7 @@ const captureEvidence = (
   request: DesktopCaptureRequest,
   capture: DesktopApplicationCapture,
 ): Evidence =>
-  createEvidence(undefined, DESKTOP_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-capture",
     operation: DESKTOP_OPERATION,
     parameters: {
@@ -190,9 +192,9 @@ const captureEvidence = (
     confidence: "observed",
     authority: "controlled-replay",
     environment: {
-      id: `linux-${arch()}`,
+      id: `linux-${HOST_PLATFORM.architecture}`,
       platform: "linux",
-      architecture: arch(),
+      architecture: HOST_PLATFORM.architecture,
       isolation: "none",
     },
     limitations: capture.limitations,
@@ -230,10 +232,7 @@ const admit = async (
       request.desktopEntry === undefined ? "executable" : "desktop_entry",
       running.windows,
     );
-  if (signal?.aborted === true)
-    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
-    });
+  if (signal?.aborted === true) throw cancelledBy(DESKTOP_OPERATION, signal);
   const prepared = await prepareOutputDirectory(request.output);
   if ("refusal" in prepared)
     throw outputRefusal(request.output, prepared.refusal);
@@ -316,7 +315,7 @@ const recordCapture = async (
   const capture: DesktopApplicationCapture = {
     host: {
       platform: "linux",
-      architecture: arch(),
+      architecture: HOST_PLATFORM.architecture,
       display: admitted.display,
       home,
       ...hostIdentity(),
@@ -423,8 +422,7 @@ const runCapture = async (
   if (cleanup !== undefined) throw cleanup;
   // A cancellation that arrives during publication must not read as success.
   if (signal?.aborted === true && session.end_reason !== "cancelled")
-    throw new AnalysisCancelledError(DESKTOP_OPERATION, {
-      cause: signal.reason,
+    throw cancelledBy(DESKTOP_OPERATION, signal, {
       partialObservation: evidence,
     });
   return evidence;

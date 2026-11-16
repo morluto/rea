@@ -1,9 +1,9 @@
 import { captureBudgets } from "./CaptureBudgets.js";
-import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../artifacts/ArtifactReader.js";
+  ZipArtifactReader,
+} from "../../resources/index.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
@@ -45,7 +45,7 @@ export const decodeSazCapture = async (
       const sourcePath = entry.sourcePath ?? entry.path;
       if (paths.has(entry.path))
         throw new CaptureFormatError(
-          "format",
+          "malformed",
           "SAZ contains duplicate archive member names.",
         );
       paths.add(entry.path);
@@ -61,12 +61,15 @@ export const decodeSazCapture = async (
         );
       if (entry.declaredSize !== null) {
         if (!Number.isSafeInteger(entry.declaredSize) || entry.declaredSize < 0)
-          throw new CaptureFormatError("format", "SAZ member size is invalid.");
+          throw new CaptureFormatError(
+            "malformed",
+            "SAZ member size is invalid.",
+          );
         declaredBytes += entry.declaredSize;
       }
       if (declaredBytes > captureBudgets().inputBytes)
         throw new CaptureFormatError(
-          "expanded-limit",
+          { name: "expanded-input", maximum: captureBudgets().inputBytes },
           `SAZ expanded members exceed max_input_bytes (${String(captureBudgets().inputBytes)} bytes); raise that per-call allowance and retry.`,
         );
       inventory.push({
@@ -103,7 +106,7 @@ export const decodeSazCapture = async (
     }
     if (groups.size === 0)
       throw new CaptureFormatError(
-        "format",
+        "malformed",
         "Archive contains no SAZ session members.",
       );
     const records: WebNetworkCaptureRecord[] = [];
@@ -125,20 +128,20 @@ export const decodeSazCapture = async (
         for await (const chunk of stream) {
           if (!Buffer.isBuffer(chunk))
             throw new CaptureFormatError(
-              "format",
+              "malformed",
               "SAZ member stream returned non-byte data.",
             );
           length += chunk.length;
           if (length > (entry.declaredSize ?? 0))
             throw new CaptureFormatError(
-              "format",
+              "malformed",
               "SAZ member exceeds its declared size.",
             );
           chunks.push(chunk);
         }
         if (length !== entry.declaredSize)
           throw new CaptureFormatError(
-            "format",
+            "malformed",
             "SAZ member does not match its declared size.",
           );
         const bytes = Buffer.concat(chunks, length);
@@ -190,11 +193,11 @@ export const decodeSazCapture = async (
     if (cause instanceof CaptureFormatError) throw cause;
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
       throw new CaptureFormatError(
-        "expanded-limit",
+        { name: "expanded-input", maximum: captureBudgets().inputBytes },
         "SAZ archive exceeds the ZIP reader's resource budget.",
       );
     throw new CaptureFormatError(
-      "format",
+      "malformed",
       "SAZ archive or session data is malformed or fails ZIP integrity validation.",
     );
   } finally {

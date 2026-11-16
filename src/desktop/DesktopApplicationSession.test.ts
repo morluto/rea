@@ -14,7 +14,7 @@ import * as sessionObservations from "./DesktopSessionObservations.js";
 import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
 import * as runTokenObservations from "../process/ProcessRunTokenObservations.js";
 import { isProcessOwnershipInspectionCancellation } from "../process/ProcessInspectionCancellation.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import {
   runDesktopSession,
   type DesktopSessionPlan,
@@ -157,7 +157,7 @@ describe.skipIf(process.platform !== "linux")("runDesktopSession", () => {
     await expect(runDesktopSession(plan)).rejects.toBe(failure);
     expect(checkpoints).toEqual(["stop", "exit"]);
     expect(vi.mocked(terminateTokenOwnedProcesses)).toHaveBeenCalledTimes(1);
-  }, 30_000);
+  });
 
   it("launches the application without the agent environment's variables", async () => {
     const root = await createTestTempDirectory("desktop-session-env-");
@@ -184,7 +184,7 @@ describe.skipIf(process.platform !== "linux")("runDesktopSession", () => {
         "REA_PROCESS_RUN_ID",
       ]),
     );
-  }, 30_000);
+  });
 });
 
 describe.skipIf(process.platform !== "linux")(
@@ -209,7 +209,7 @@ describe.skipIf(process.platform !== "linux")(
             entry.pid !== outcome.session.launch_pid,
         ).length,
       ).toBeGreaterThan(0);
-    }, 30_000);
+    });
 
     it("does not take samples whose window list was unreadable as the application having exited", async () => {
       const root = await createTestTempDirectory("desktop-session-unread-");
@@ -230,7 +230,7 @@ describe.skipIf(process.platform !== "linux")(
       expect(outcome.session.end_reason).toBe("application_exited");
       expect(outcome.unreadableWindowSamples).toBe(4);
       expect(samples).toBeGreaterThanOrEqual(6);
-    }, 30_000);
+    });
   },
 );
 
@@ -385,7 +385,7 @@ describe.skipIf(process.platform === "win32")(
       expect(stderr).not.toContain("runtime 0 of 400");
       expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(8 * 1024);
       expect(stderr_truncated).toBe(true);
-    }, 30_000);
+    });
 
     it("gives each checkpoint the titles the app's own windows have shown so far", async () => {
       const root = await createTestTempDirectory("desktop-session-titles-");
@@ -422,7 +422,7 @@ describe.skipIf(process.platform === "win32")(
       });
 
       expect(seen.at(-1)).toEqual(["today.txt - Notes"]);
-    }, 30_000);
+    });
 
     it("launches the app with glibc's fatal errors sent to its stderr, not its terminal", async () => {
       const root = await createTestTempDirectory("desktop-session-libc-");
@@ -435,6 +435,6 @@ describe.skipIf(process.platform === "win32")(
       );
 
       expect(outcome.session.stderr).toContain("LIBC_FATAL_STDERR_=1");
-    }, 30_000);
+    });
   },
 );

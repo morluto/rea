@@ -1,3 +1,4 @@
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import {
   createJavaScriptSemanticGraph,
   sealTransferredJavaScriptSemanticGraphSteps,
@@ -137,13 +138,20 @@ export interface JavaScriptSemanticGraphProjection {
     ir: JavaScriptSemanticIr,
     paths?: readonly ElectronCallPath[],
   ) => Generator<void, void>;
+  /**
+   * Seal the graph. `precisionControls` are the `semantic_precision`
+   * budgets that limited its sources; coverage records them beside the
+   * retention ceilings that stopped it.
+   */
   readonly finish: (
     rootArtifactSha256: string,
     applicationGraph: ApplicationGraph,
+    precisionControls?: readonly AnalysisParameterLimit[],
   ) => JavaScriptSemanticGraph;
   readonly finishImmutableSteps: (
     rootArtifactSha256: string,
     applicationGraph: ApplicationGraph,
+    precisionControls?: readonly AnalysisParameterLimit[],
   ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
@@ -250,7 +258,8 @@ export const createJavaScriptSemanticGraphProjection = (
       unknownCeiling,
       unknownsBefore + fileUnknownCeiling,
     );
-    fingerprints.push(...(yield* projectFileSteps(file, ir, state, paths)));
+    for (const fingerprint of yield* projectFileSteps(file, ir, state, paths))
+      fingerprints.push(fingerprint);
     // Nodes were dropped only if the budget actually blocked creation. A file
     // that exactly fills its share ends with a zero budget without dropping
     // anything, so the remaining budget alone cannot decide truncation.
@@ -275,6 +284,7 @@ export const createJavaScriptSemanticGraphProjection = (
     factory: (input: unknown) => Value,
     rootArtifactSha256: string,
     applicationGraph: ApplicationGraph,
+    precisionControls: readonly AnalysisParameterLimit[] = [],
   ): Value => {
     bindSemanticGraphApplicationNodes(state, applicationGraph);
     if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
@@ -312,6 +322,11 @@ export const createJavaScriptSemanticGraphProjection = (
             nodeCeilingsReached,
           )
         : undefined;
+    const controls = [
+      ...(unknownCeilingCoverage?.controls ?? []),
+      ...(nodeCeilingCoverage?.controls ?? []),
+      ...precisionControls,
+    ];
     const graph = factory({
       schema: "JavaScriptSemanticRelationGraph",
       root_artifact_sha256: rootArtifactSha256,
@@ -341,6 +356,7 @@ export const createJavaScriptSemanticGraphProjection = (
           ...(unknownCeilingCoverage?.limits ?? []),
           ...(nodeCeilingCoverage?.limits ?? []),
         ],
+        ...(controls.length === 0 ? {} : { controls }),
         families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
           family,
           status: semanticFamilyStatus(family),
@@ -427,7 +443,8 @@ export const createJavaScriptSemanticGraphProjection = (
       for (const unknown of newUnknowns)
         state.unknowns.set(unknown.unknown_id, unknown);
       for (const root of projection.roots) state.roots.add(root);
-      fingerprints.push(...projection.fingerprints);
+      for (const fingerprint of projection.fingerprints)
+        fingerprints.push(fingerprint);
       if (projection.nodesTruncated) {
         truncatedFiles += 1;
         noteSemanticCeilingReached(
@@ -519,17 +536,23 @@ export const createJavaScriptSemanticGraphProjection = (
       while (steps.next().done !== true);
     },
     projectFileSteps: projectSourceSteps,
-    finish: (rootArtifactSha256, applicationGraph) =>
+    finish: (rootArtifactSha256, applicationGraph, precisionControls) =>
       finishWith(
         createJavaScriptSemanticGraph,
         rootArtifactSha256,
         applicationGraph,
+        precisionControls,
       ),
-    finishImmutableSteps: (rootArtifactSha256, applicationGraph) =>
+    finishImmutableSteps: (
+      rootArtifactSha256,
+      applicationGraph,
+      precisionControls,
+    ) =>
       finishWith(
         sealTransferredJavaScriptSemanticGraphSteps,
         rootArtifactSha256,
         applicationGraph,
+        precisionControls,
       ),
   };
 };

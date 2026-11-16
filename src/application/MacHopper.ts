@@ -19,7 +19,7 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
-import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
+import { macHopperUserApplicationPath } from "../hopperPaths/MacHopperPaths.js";
 import {
   downloadHopperPackage,
   isHopperRequestCancellation,
@@ -523,7 +523,7 @@ export const systemMacHopperInstallHost = (
     async minimumSystemVersion(appPath) {
       const plist = posix.join(appPath, "Contents", "Info.plist");
       const declared = minimumSystemVersionSchema.safeParse(
-        decodeInfoPlistValue(await readFile(plist)),
+        decodeInfoPlistValue(await readFile(plist), ["LSMinimumSystemVersion"]),
       );
       if (!declared.success)
         throw new TypeError(

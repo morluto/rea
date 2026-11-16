@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { execFile } from "node:child_process";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -46,7 +47,7 @@ it("keeps overall replay verification unknown when capture divergence is unknown
       readonly exitCode?: number;
     } = {},
   ) =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: { side },
@@ -413,7 +414,7 @@ it("rejects OS-invalid local inputs through the real advertised MCP contracts", 
       ],
     },
   });
-}, 60_000);
+});
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },
@@ -583,9 +584,6 @@ captureTest(
       },
     });
   },
-  // 22 malformed requests plus two filesystem errors each start a fresh CLI.
-  // Cache compilation, but allow for startup at the bounded fanout of two.
-  120_000,
 );
 
 captureTest.each(["untruncated", "truncated"] as const)(
