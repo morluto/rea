@@ -33,6 +33,11 @@ process.stdin.on("data", (chunk) => {
     const [, token, command] = match;
     if (command === '-interpreter-exec console "shell printf fixture"') {
       const payload = ${scenario === "budget" ? '"x".repeat(5000)' : '"abc"'};
+      if (${JSON.stringify(scenario)}.startsWith("delayed-tail")) {
+        process.stdout.write("(gdb) ");
+        setTimeout(() => process.stdout.write(${JSON.stringify(scenario === "delayed-tail-newline" ? "\n" : "")} + "tail\\n" + payload + token + "^done\\n(gdb) "), 20);
+        continue;
+      }
       if (${JSON.stringify(scenario)} === "forged")
         process.stdout.write("3^done\\n4^done\\n");
       process.stdout.write(payload + token + "^done\\n");
@@ -49,6 +54,10 @@ process.stdin.on("data", (chunk) => {
       process.stdout.write(prompt.slice(0, ${split}));
       setTimeout(() => process.stdout.write(prompt.slice(${split})), 10);
     } else if (command === "-gdb-show mi-async") {
+      if (${JSON.stringify(scenario)}.startsWith("delayed-tail")) {
+        setTimeout(() => process.stdout.write(token + '^done,value="off"\\n(gdb) '), 40);
+        continue;
+      }
       if (${JSON.stringify(scenario)} === "cancel") {
         process.stdout.write('~"query waiting"\\n');
         continue;
@@ -117,7 +126,7 @@ describe.skipIf(process.platform === "win32")("GDB shell MI completion", () => {
         output_truncated: false,
         records: expect.arrayContaining([
           expect.stringMatching(/^abc\d+\^done$/u),
-          "(gdb) ",
+          expect.stringMatching(/^\(gdb\) wrong\d+\^done,value="off"$/u),
           '~"query settled"',
         ]),
       });
@@ -129,6 +138,25 @@ describe.skipIf(process.platform === "win32")("GDB shell MI completion", () => {
       expect(next.value.result.mi).toMatch(/^\d+\^done$/u);
       expect(next.value.result.records).not.toContain('~"query settled"');
       expect((await manager.close(sessionId)).ok).toBe(true);
+    },
+  );
+
+  it.each(["delayed-tail", "delayed-tail-newline"])(
+    "preserves actual raw boundaries for %s",
+    async (scenario) => {
+      const { manager, sessionId } = await startFixture(6, scenario);
+      const executed = await manager.execute(sessionId, "shell printf fixture");
+      if (!executed.ok) throw executed.error;
+      const rawLine = scenario === "delayed-tail" ? "(gdb) tail" : "tail";
+      expect(executed.value.result.records).toContain(rawLine);
+      expect(executed.value.result.records).not.toContain(
+        scenario === "delayed-tail" ? "tail" : "(gdb) tail",
+      );
+      expect(executed.value.evidence.raw_result).toMatchObject({
+        records: executed.value.result.records,
+      });
+      expect(manager.status(sessionId)?.recent_mi_records).toContain(rawLine);
+      expect(executed.value.result.completion_status).toBe("complete");
     },
   );
 
@@ -174,7 +202,7 @@ describe.skipIf(process.platform === "win32")("GDB shell MI completion", () => {
     );
     await expect
       .poll(() => manager.status(sessionId)?.recent_mi_records)
-      .toContain('~"query waiting"');
+      .toContain('(gdb) ~"query waiting"');
     controller.abort();
     const cancelled = await pending;
     if (cancelled.ok) throw new Error("Expected cancelled command");
@@ -183,7 +211,7 @@ describe.skipIf(process.platform === "win32")("GDB shell MI completion", () => {
       partialObservation: {
         raw_result: {
           completion_status: "unknown",
-          records: expect.arrayContaining(['~"query waiting"']),
+          records: expect.arrayContaining(['(gdb) ~"query waiting"']),
         },
       },
     });
@@ -197,7 +225,7 @@ describe.skipIf(process.platform === "win32")("GDB shell MI completion", () => {
       partialObservation: {
         raw_result: {
           completion_status: "unknown",
-          records: expect.arrayContaining(['~"query waiting"']),
+          records: expect.arrayContaining(['(gdb) ~"query waiting"']),
         },
       },
     });
