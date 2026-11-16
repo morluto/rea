@@ -3,7 +3,6 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerReverseEngineeringTools } from "../../../src/server/registerReverseEngineeringTools.js";
 import {
   registerServiceTools,
   type GdbToolOptions,
@@ -85,20 +84,13 @@ const connect = async (retain = true) => {
   );
   const service = new TestReverseEngineeringService({ runOwned: run });
   const logger = pino({ enabled: false });
-  registerReverseEngineeringTools(
-    server,
-    service,
-    logger,
-    delivery,
-    retain ? record : undefined,
-    undefined,
-    undefined,
-    undefined,
-    retain ? lookup : undefined,
-  );
   registerServiceTools(
     server,
-    { analysisView: {}, gdb: { manager, session: undefined } },
+    {
+      analysisView: {},
+      gdb: { manager, session: undefined },
+      reverseEngineering: { service, session: undefined },
+    },
     {
       logger,
       evidenceById: retain ? lookup : undefined,

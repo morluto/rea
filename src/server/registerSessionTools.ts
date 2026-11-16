@@ -5,38 +5,29 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
-import { toolContract } from "../contracts/toolContracts.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
-import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
-import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
+import type { SessionLifecycleOptions } from "./sessionLifecycle.js";
+import type { SessionStatusToolOptions } from "./sessionStatusTool.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
-export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes {
-  readonly server: EvidenceMcpServer;
-  readonly session: BinarySessionPort;
-  readonly logger: Logger;
-  readonly closeContract: ReturnType<typeof toolContract<"close_binary">>;
-  readonly startedAt: string;
-  readonly availabilityPolicy: () => AvailabilityPolicy;
-  readonly artifactResources: ArtifactResourceScope;
-  readonly closeProcessResources: () => Promise<Result<null, AnalysisError>>;
-}
+/** What the lifecycle and status tools of one session need. */
+interface LifecycleToolRegistration
+  extends SessionStatusToolOptions, SessionLifecycleOptions {}
 
+/** Close, reset and status run outside analysis admission; the session orders them. */
 const registerLifecycleTools = (
   registration: LifecycleToolRegistration,
 ): void => {
-  registerCloseLifecycleTool(registration);
-  registerResetInvestigationTool(registration);
   registerServiceTools(
     registration.server,
-    { sessionStatus: registration },
+    { sessionLifecycle: registration, sessionStatus: registration },
     { logger: registration.logger },
   );
 };
@@ -58,14 +49,12 @@ export const registerSessionTools = (
   logger: Logger,
   options: SessionToolOptions,
 ): void => {
-  const closeContract = toolContract("close_binary");
   const processResources = new ProcessCaptureResourceScope();
   registerLifecycleTools({
     ...options,
     server,
     session,
     logger,
-    closeContract,
     startedAt: options.startedAt ?? new Date().toISOString(),
     availabilityPolicy: sessionAvailabilityPolicy(
       options.availabilityPolicy,
