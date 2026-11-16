@@ -2,7 +2,7 @@ import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { DEFAULT_CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../dist/contracts/catalog/catalogIdentity.js";
 
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";

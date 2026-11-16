@@ -1,14 +1,12 @@
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import {
-  HopperCancelledError,
-  HopperStartError,
-} from "../domain/hopperErrors.js";
+import { HopperCancelledError, HopperStartError } from "./HopperErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface HopperImageCopyFileSystem {
   readonly open: typeof open;
@@ -242,10 +240,7 @@ const hopperImageCopyFailure = (options: {
       "hopper",
       [attempt.owner.resource],
       {
-        reason:
-          attempt.cause instanceof Error
-            ? attempt.cause.message
-            : String(attempt.cause),
+        reason: errorMessage(attempt.cause),
       },
       { cause: attempt.cause },
     );

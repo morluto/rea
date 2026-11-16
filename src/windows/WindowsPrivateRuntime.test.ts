@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 const nativeCall = vi.hoisted(() => vi.fn());

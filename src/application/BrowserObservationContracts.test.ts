@@ -17,7 +17,7 @@ import {
 import { ok, err } from "../domain/result.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { parseEvidence } from "../domain/evidence.js";
-import type { BrowserObservationPort } from "./BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import * as service from "./BrowserObservationService.js";
 
 const pageProvider = (

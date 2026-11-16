@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createPythonPycService } from "../composition/pythonPyc.js";
 import { PYTHON_PYC_TOOL_CONTRACTS } from "../contracts/python/pythonPycToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -20,7 +19,6 @@ export const registerPythonPycCommands = (
     logger,
     contractNamed(PYTHON_PYC_TOOL_CONTRACTS, "inspect_python_pyc"),
     {
-      command: CLI_COMMANDS.inspectPythonPyc,
       description:
         "Inspect a supported CPython 3.7–3.15 pyc header and marshal code objects without executing bytecode",
       positionals: ["path"],

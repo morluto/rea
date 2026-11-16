@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { expect, it } from "vitest";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -1204,11 +1205,15 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
   );
   forgedHeaderReport.objects[1]!.cuda_target_header!.location.container_id =
     forgedHeaderReport.objects[0]!.id;
-  const forgedHeader = createEvidence(undefined, parent.provider, {
-    operation: parent.operation,
-    parameters: parent.parameters,
-    result: forgedHeaderReport,
-  });
+  const forgedHeader = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      result: forgedHeaderReport,
+    },
+  );
   expect(
     parseMcpToolError(
       await call("inspect_analysis_view", {
@@ -1218,11 +1223,15 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
     ).error,
   ).toMatchObject({ code: "invalid_request" });
   report.objects[1]!.id = report.objects[0]!.id;
-  const forged = createEvidence(undefined, parent.provider, {
-    operation: "inspect_gpu_code_objects",
-    parameters: parent.parameters,
-    result: report,
-  });
+  const forged = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: "inspect_gpu_code_objects",
+      parameters: parent.parameters,
+      result: report,
+    },
+  );
   const failure = parseMcpToolError(
     await call("inspect_analysis_view", {
       source: { kind: "inline", evidence: forged },

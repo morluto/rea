@@ -62,6 +62,7 @@ const discoveryTimeout = (
   return new BrowserObservationError(operation, "timeout", {
     detail: recovery.userMessage,
     remediationAction: recovery.remediationAction,
+    limit: recovery.limit,
   });
 };
 

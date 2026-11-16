@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MachoSliceArchitecture } from "../../domain/apple/machoTargetSelection.js";
 import { machoArm64Initializers } from "../initializers/NativeInitializers.fixture.js";
-import { selectMachoSlice } from "./MachoSliceSelection.js";
+import { selectMachoSlice } from "../../domain/apple/machoSliceSelection.js";
 
 const selectNativeImage = (
   bytes: Buffer,

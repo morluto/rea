@@ -1,9 +1,9 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
+  type AnalysisCleanupLease,
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
@@ -25,6 +25,7 @@ import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { firmwareDeadlineElapsed } from "./FirmwareDeadline.js";
 import { z } from "zod";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Fixed firmware allowance. analysis_timeout_ms does not raise it. */
 export const firmwareLimitRecovery = (allowance: string): string =>
@@ -229,7 +230,7 @@ export const firmwareFailureDialect = (
         ...details,
         cause,
         diagnostics: {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         },
       }),
   };

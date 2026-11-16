@@ -90,6 +90,7 @@ import {
   javaScriptRoutesViewSummarySchema,
 } from "./javascriptRoutesView.js";
 import {
+  webBundleViewSourceUnknownsSchema,
   webBundleViewRequestSchema,
   webBundleViewItemsSchema,
   webBundleSummarySchema,
@@ -177,6 +178,7 @@ import {
   nativeInventoryOperationSchema,
 } from "../native/nativeInventory.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   browserScenarioSummarySchema,
   browserScenarioViewContextSchema,
@@ -848,7 +850,7 @@ export const webBundleSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
   target_origin: recordedBrowserOriginSchema.nullable(),
-  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  source_unknowns: webBundleViewSourceUnknownsSchema,
   summary: webBundleSummarySchema,
 });
 
@@ -859,7 +861,7 @@ export const webBundlePageViewResultSchema = z.strictObject({
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
   target_origin: recordedBrowserOriginSchema.nullable(),
-  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  source_unknowns: webBundleViewSourceUnknownsSchema,
   view: webBundleViewRequestSchema,
   completeness: webBundleAnalysisSchema.shape.completeness,
   items: webBundleViewItemsSchema,
@@ -1065,8 +1067,9 @@ export const nativeFunctionSummarySchema = z.strictObject({
     available: z.boolean(),
     truncated: z
       .boolean()
+      .nullable()
       .describe(
-        "True only when value-flow is available and the provider truncated it; false when value-flow is unavailable (see available).",
+        "Whether the provider truncated available value-flow; null when value-flow is unavailable (see available).",
       ),
   }),
   facet_availability: functionFacetAvailabilitySchema
@@ -1492,7 +1495,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("pcap"),
     view: pcapViewRequestSchema,
     page: pcapViewPageSchema,
-    source_coverage: z.enum(["complete", "partial"]),
+    source_coverage: knownCoverageStatusSchema,
     ...viewResultBase,
     parent_operation: z.literal("inspect_pcap_capture"),
   }),

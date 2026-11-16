@@ -6,7 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { DEFAULT_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,

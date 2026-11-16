@@ -1,8 +1,8 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -23,6 +23,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** What closing the work's owner established. */
 export type CleanupOutcome =
@@ -186,7 +187,7 @@ const closeFailure = (
           options.fallbackResource ?? `${options.operation} resources`,
         )
       : {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           resources: [],
         };
   return new ProviderCleanupError(

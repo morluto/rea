@@ -1,3 +1,5 @@
+import { UnclassifiedProviderFailure } from "../../../src/domain/unclassifiedProviderFailure.js";
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { z } from "zod";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -9,7 +11,6 @@ import {
 } from "../../../src/pcap/PcapCommand.js";
 import {
   AnalysisCancelledError,
-  AnalysisProtocolError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -39,6 +40,7 @@ const ownedCommand = (
 ) =>
   runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", code],
     redactHttpTransportCredentials: true,
@@ -72,8 +74,13 @@ it("preserves producer failure facts while excluding HTTP credentials", async ()
   const failure: unknown = await ownedCommand(
     `${print}process.exitCode = 7;`,
   ).catch((cause: unknown) => cause);
-  expect(failure).toBeInstanceOf(AnalysisProtocolError);
-  if (!(failure instanceof AnalysisProtocolError)) throw failure;
+  expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+  if (!(failure instanceof UnclassifiedProviderFailure)) throw failure;
+  expect(failure.examined).toMatchObject({
+    failure_kind: "exited",
+    exit_code: 7,
+  });
+  expect(projectAnalysisError(failure).code).toBe("execution_failure");
   expect(failure.capturedOutput).toMatchObject({
     exit_code: 7,
     truncated: false,
@@ -117,6 +124,7 @@ it("retains safe cleanup observations and retries their original owner", async (
   let retained = false;
   const output = await runPcapCommand({
     operation: "inspect_pcap_capture",
+    platform: HOST_PLATFORM.platform,
     command: process.execPath,
     arguments: ["-e", print],
     redactHttpTransportCredentials: true,
@@ -160,6 +168,7 @@ const nativeOptions = (
   path: string,
 ): Omit<Parameters<typeof runPcapCommand>[0], "limits"> => ({
   operation: "inspect_pcap_capture",
+  platform: HOST_PLATFORM.platform,
   command: "/usr/bin/tshark",
   arguments: [
     "-n",

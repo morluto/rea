@@ -8,7 +8,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
 import { constants as fsConstants } from "node:fs";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
   snapshotGhidraAnalysisSeeds,
@@ -48,7 +48,7 @@ import {
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
 import { utf8HeadExcerpt } from "../domain/utf8HeadExcerpt.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import {
   cleanupOwnedProcessGroup,
   type ProcessCleanupResult,
@@ -74,6 +74,7 @@ import {
   inspectGhidraPspExtension,
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
@@ -517,12 +518,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         environment,
         onStderr: (mode, stderr) => {
           if (stderr === "") return;
-          const bytes = Buffer.byteLength(stderr);
-          const redacted = redactCapturedTransportCredential(
-            { text: stderr, bytes, observedBytes: bytes },
-            session.token,
-            "[REDACTED]",
-          );
+          const redacted = redactExplicitText(stderr, [session.token]);
           const bounded = utf8HeadExcerpt(
             redacted,
             GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
@@ -530,7 +526,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           launchSupport.push({
             mode,
             stderr: bounded.text,
-            stderr_bytes: bytes,
+            stderr_bytes: Buffer.byteLength(stderr),
             stderr_truncated: bounded.truncated,
           });
         },
@@ -655,7 +651,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         const primaryMessage =
           cancellation !== undefined
             ? cancellation.message
-            : `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+            : `Ghidra headless launch failed: ${errorMessage(cause)}`;
         return err(
           new GhidraLaunchError(
             `${primaryMessage}; process cleanup remains incomplete`,

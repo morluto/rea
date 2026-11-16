@@ -1,4 +1,9 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
   apiSurfaceHar,
   environmentManifestHar,
 } from "../../fixtures/historicalHar.js";
@@ -7,10 +12,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -91,13 +94,48 @@ cliTest(
 );
 
 cliTest(
+  "summarizes an independent fresh decompile with the analysis it selected",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-fresh-pseudocode-view-");
+    const parent = createEvidence(
+      { path: "/fixtures/program", format: "elf", sha256: "a".repeat(64) },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "procedure_pseudo_code",
+        parameters: { procedure: "main", analysis: "independent_fresh" },
+        result: "int main(void) { return 0; }",
+      },
+    );
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "summary" },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode, response.stdout).toBe(0);
+    expect(parseEvidence(response.json).normalized_result).toMatchObject({
+      kind: "summary",
+      summary: {
+        selection: { procedure: "main", analysis: "independent_fresh" },
+        pseudocode: { available: true, code_units: 28 },
+      },
+    });
+  },
+);
+
+cliTest(
   "reads selected batch rows and one body from a saved bundle without a provider",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-batch-view-cli-");
     const path = join(root, "bundle.json");
     const body = "int main(void) { return 0; }";
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "batch_decompile",
@@ -223,6 +261,19 @@ cliTest(
       expect(rejected.exitCode).toBe(1);
       expect(rejected.json).toMatchObject({ code: expectedCode });
       expect(rejected.json).not.toHaveProperty("evidence_id");
+      // The service names the field it refuses; option spellings belong to
+      // the CLI layer.
+      if (source.kind === "inline")
+        expect(rejected.json).toMatchObject({
+          details: {
+            issues: [
+              {
+                path: ["source", "kind"],
+                message: expect.not.stringContaining("--"),
+              },
+            ],
+          },
+        });
     }
     for (const [contents, expectedCode, freshProcess] of [
       [JSON.stringify(parent), "invalid_request", false],
@@ -480,7 +531,10 @@ cliTest(
         parent_evidence_id: parent.evidence_id,
         kind: "inventory",
         source_complete: true,
-        artifact: { path: archive, sha256: parent.subject?.digest.sha256 },
+        artifact: {
+          path: archive,
+          sha256: fileIdentity(parent.subject).sha256,
+        },
         items: [expect.objectContaining({ logical_path: "main.js" })],
         coverage: { total: 1, exhausted: true, next_offset: null },
       },
@@ -508,12 +562,12 @@ cliTest(
     ).substeps[0]!.evidence;
     const path = join(root, "view.json");
     const reseal = (carrier: Evidence, result: JsonValue) => {
-      const subject = carrier.subject!;
+      const subject = carrier.subject;
       return createEvidence(
         {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
+          path: fileSubjectDisplay(subject).local_path,
+          sha256: fileIdentity(subject).sha256,
+          format: fileIdentity(subject).format,
         },
         carrier.provider,
         { operation: carrier.operation, parameters: {}, result },
@@ -767,7 +821,7 @@ cliTest(
     const path = join(root, "partial.json");
     const absent = analysisViewLayoutEvidence();
     const linked = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "trace_feature",
@@ -1202,7 +1256,7 @@ cliTest(
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
     const parent = parseEvidence(capture.json);
-    expect(parent.subject?.digest.sha256).toBe(
+    expect(fileIdentity(parent.subject).sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
     expect(JSON.stringify(parent)).not.toContain("password");
@@ -1511,7 +1565,10 @@ cliTest(
         name: "grafana-example",
         templated_groups: 6,
         coverage: { total: 22, exhausted: true },
-        artifact: { path: capturePath, sha256: parent.subject?.digest.sha256 },
+        artifact: {
+          path: capturePath,
+          sha256: fileIdentity(parent.subject).sha256,
+        },
         records: expect.arrayContaining([
           {
             ordinal: 3,

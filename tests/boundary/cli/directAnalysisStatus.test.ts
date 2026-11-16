@@ -1,4 +1,4 @@
-import { createCatalogIdentity } from "../../../src/catalogIdentity.js";
+import { createCatalogIdentity } from "../../../src/contracts/catalog/catalogIdentity.js";
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
 import { promptsForToolFamilies } from "../../../src/contracts/promptToolFamilyScope.js";
 import { Cli } from "incur";

@@ -1,7 +1,7 @@
 import {
   BinaryFormatFailure,
   mappedFileOffset,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import {
   isMapped,

@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { Budget } from "../budget.js";
 import {
   staticObjectPropertyReader,
   readExactJavaScriptLiteral,
@@ -122,7 +123,7 @@ export class JavaScriptSymbolicBindings {
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
   }> = [];
-  #remainingEvaluations: number;
+  readonly #wrapperVisits: Budget;
   #depth = 0;
   readonly resourceLimits = new Set<"wrapper_visits" | "wrapper_depth">();
 
@@ -138,7 +139,7 @@ export class JavaScriptSymbolicBindings {
       indexJavaScriptElectronIdentitySteps(program, state),
     ),
   ) {
-    this.#remainingEvaluations = state.precision.wrapper_visits;
+    this.#wrapperVisits = new Budget(state.precision.wrapper_visits);
     this.#electronIdentity = electronIdentity;
     const shapes = createSemanticExpressionShapeResolver(state);
     const defineProperty = createGlobalReferenceReader(state, [
@@ -229,16 +230,20 @@ export class JavaScriptSymbolicBindings {
 
   /** Shared admission; cache hits keep their existing depth-free fast path. */
   #admitEvaluation(): boolean {
-    if (
-      --this.#remainingEvaluations < 0 ||
-      this.#depth >= this.state.precision.wrapper_depth
-    ) {
-      this.resourceLimits.add(
-        this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
-      );
+    if (!this.#spendWrapperVisits(1)) return false;
+    if (this.#depth >= this.state.precision.wrapper_depth) {
+      this.resourceLimits.add("wrapper_depth");
       return false;
     }
     return true;
+  }
+
+  /** Spend `cost` wrapper visits; past the allowance, spend the rest and record the limit. */
+  #spendWrapperVisits(cost: number): boolean {
+    if (this.#wrapperVisits.tryCharge(cost)) return true;
+    this.#wrapperVisits.tryCharge(this.#wrapperVisits.remaining);
+    this.resourceLimits.add("wrapper_visits");
+    return false;
   }
 
   evaluate(
@@ -282,12 +287,8 @@ export class JavaScriptSymbolicBindings {
         (conditions.length
           ? conditions.length + (variant.conditions?.length ?? 0)
           : 0);
-      if (cost > this.#remainingEvaluations) {
-        this.#remainingEvaluations = 0;
-        this.resourceLimits.add("wrapper_visits");
+      if (!this.#spendWrapperVisits(cost))
         return symbolicUnknown("symbolic condition resource limit");
-      }
-      this.#remainingEvaluations -= cost;
     }
     return symbolicUnion(
       variants.map((variant) => ({
@@ -333,12 +334,7 @@ export class JavaScriptSymbolicBindings {
     const group =
       first === undefined ? undefined : this.#completionGroups.get(first);
     if (group === undefined || group.members.size !== values.length) return [];
-    if (values.length > this.#remainingEvaluations) {
-      this.resourceLimits.add("wrapper_visits");
-      this.#remainingEvaluations = 0;
-      return [];
-    }
-    this.#remainingEvaluations -= values.length;
+    if (!this.#spendWrapperVisits(values.length)) return [];
     // Only the complete, original partition proves an unconditional fact.
     // Added predicates or a subset of exits cannot borrow this proof.
     if (!values.every((value) => group.members.has(value))) return [];
@@ -1000,10 +996,7 @@ export class JavaScriptSymbolicBindings {
       current;
       current = current.parent
     ) {
-      if (--this.#remainingEvaluations < 0) {
-        this.resourceLimits.add("wrapper_visits");
-        return false;
-      }
+      if (!this.#spendWrapperVisits(1)) return false;
       if (current.activation === activation) return true;
     }
     return false;
@@ -1019,10 +1012,7 @@ export class JavaScriptSymbolicBindings {
       current.caller !== undefined;
       current = current.caller
     ) {
-      if (--this.#remainingEvaluations < 0) {
-        this.resourceLimits.add("wrapper_visits");
-        return undefined;
-      }
+      if (!this.#spendWrapperVisits(1)) return undefined;
       const point = current.point;
       if (
         point !== undefined &&
@@ -1050,7 +1040,7 @@ export class JavaScriptSymbolicBindings {
     const completedAt = value.environment.completedAt;
     const boundary =
       read === undefined ? undefined : this.#namespaceReadBoundary(value, read);
-    if (this.#remainingEvaluations <= 0) {
+    if (this.#wrapperVisits.remaining === 0) {
       this.resourceLimits.add("wrapper_visits");
       return undefined;
     }
@@ -1069,12 +1059,7 @@ export class JavaScriptSymbolicBindings {
     const commonThrough = value.environment.commonThrough?.end;
     const changed = new Set<string>();
     if (commonThrough != null) {
-      if (writes.length > this.#remainingEvaluations) {
-        this.#remainingEvaluations = 0;
-        this.resourceLimits.add("wrapper_visits");
-        return undefined;
-      }
-      this.#remainingEvaluations -= writes.length;
+      if (!this.#spendWrapperVisits(writes.length)) return undefined;
       for (const write of writes) {
         if (write.site.end == null) return undefined;
         if (
@@ -1234,11 +1219,7 @@ export class JavaScriptSymbolicBindings {
             !variant.conditionUnresolved,
         )
       ) {
-        if (variants.length > this.#remainingEvaluations) {
-          this.#remainingEvaluations = 0;
-          this.resourceLimits.add("wrapper_visits");
-        } else {
-          this.#remainingEvaluations -= variants.length;
+        if (this.#spendWrapperVisits(variants.length)) {
           const exits = variants as readonly SymbolicNamespace[];
           let first = exits[0]!.environment.completedAt!;
           let last = first;
@@ -1366,13 +1347,9 @@ export class JavaScriptSymbolicBindings {
         ...(unresolvedFallthrough ? { conditionUnresolved: true } : {}),
       });
     for (const statement of statements) {
-      if (
-        --this.#remainingEvaluations < 0 ||
-        depth >= this.state.precision.wrapper_depth
-      ) {
-        this.resourceLimits.add(
-          this.#remainingEvaluations < 0 ? "wrapper_visits" : "wrapper_depth",
-        );
+      const visited = this.#spendWrapperVisits(1);
+      if (!visited || depth >= this.state.precision.wrapper_depth) {
+        if (visited) this.resourceLimits.add("wrapper_depth");
         return {
           values: [...possible, symbolicUnknown("symbolic resource limit")],
           fallsThrough: false,
