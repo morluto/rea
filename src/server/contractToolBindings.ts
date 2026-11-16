@@ -20,7 +20,10 @@ import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { CallToolResult } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  ServerContext,
+} from "@modelcontextprotocol/server";
 import {
   optionalProviderUnavailable,
   type OptionalProviderLoadFailure,
@@ -147,6 +150,11 @@ type ValueOperation<Input> = (
  */
 type ValueBinding<Input = unknown> = {
   readonly admitted?: true;
+  /**
+   * Rewrite every response this tool delivers, its refusals included, such
+   * as replacing secrets the caller typed with their handles.
+   */
+  readonly presentResult?: (result: CallToolResult) => CallToolResult;
 } & (
   | {
       readonly admission: "sdk";
@@ -640,7 +648,16 @@ export const registerContractTools = (
                             retention,
                             withAdmittedAnalysis,
                           );
-    server.registerTool(contract.name, registration, handler);
+    const present =
+      binding.value === undefined ? undefined : binding.presentResult;
+    server.registerTool(
+      contract.name,
+      registration,
+      present === undefined
+        ? handler
+        : async (input: unknown, context: ServerContext) =>
+            present(await handler(input, context)),
+    );
   }
   if (unbound.size > 0)
     throw invariantViolation(
