@@ -1,6 +1,7 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import pino from "pino";
-import { Cli } from "incur";
 import { z } from "zod";
 import { afterEach, expect, it, vi } from "vitest";
 import { rm } from "node:fs/promises";
@@ -570,15 +571,16 @@ it.each([false, true])(
       expect.any(AbortSignal),
     );
 
-    const parserCli = Cli.create("rea-test", { version: "1.0.0", sync: false });
+    const parserCli = createCommandCli();
     registerReverseEngineeringCommands(
       parserCli as unknown as CliInstance,
       pino({ enabled: false }),
       {},
     );
-    const commandContract = Cli.toCommands
-      .get(parserCli)
-      ?.get(CLI_COMMANDS.debugWithRizin);
+    const commandContract = cliCommand(
+      parserCli,
+      CLI_COMMANDS.debugWithRizin,
+    )?.definition;
     expect(commandContract).toBeDefined();
     const argsSchema =
       commandContract === undefined

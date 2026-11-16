@@ -1,4 +1,8 @@
-import { Cli, Errors } from "incur";
+import {
+  registerCliCommand,
+  cliCommand,
+} from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
 import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
 import { estimateTokenCount } from "tokenx";
@@ -6,14 +10,12 @@ import { createMarkdownRenderer, disposeMdItInstance } from "vitepress";
 import { afterAll, expect, it } from "vitest";
 
 import {
-  encodeCliArgumentErrors,
-  presentCliArgumentErrors,
+  redactCliCommandFailure,
+  renderCliCommandFailure,
 } from "../../../src/cli/argumentErrors.js";
-import {
-  excludeDeclaredSensitiveArguments,
-  explicitSensitiveValueOptions,
-} from "../../../src/cli/explicitSensitiveArguments.js";
+import { explicitSensitiveValueOptions } from "../../../src/cli/explicitSensitiveArguments.js";
 
+import { readCliOutputArguments } from "../../../src/cliOutput.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -143,6 +145,50 @@ cliTest(
   },
 );
 
+// Exercise literal field facts at the presentation boundary; shipped schemas
+// cannot manufacture all punctuation/whitespace combinations as issue fields.
+const fixtureDiagnostic = (
+  value: string,
+  secret: string,
+  format: string,
+  sensitive: boolean,
+): string => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "inspect", {
+    options: z.object({ ...explicitSensitiveValueOptions }),
+    run: () => undefined,
+  });
+  const entry = cliCommand(cli, "inspect")!;
+  return renderCliCommandFailure(
+    redactCliCommandFailure(
+      {
+        code: "VALIDATION_ERROR",
+        message: "fixture",
+        fieldErrors: [
+          {
+            code: "invalid_value",
+            missing: false,
+            path: "input",
+            expected: "",
+            received: value,
+            message: `Value ${value} is invalid`,
+          },
+        ],
+      },
+      sensitive ? [secret] : [],
+    ),
+    {
+      cli: cli.name,
+      entry,
+      duration: "0ms",
+      stdoutIsTerminal: false,
+      controls: readCliOutputArguments(
+        parseCliGlobalArguments(["--format", format]),
+      ),
+    },
+  );
+};
+
 it("redacts Markdown punctuation in validation fields before presentation", async () => {
   for (const secret of [
     "left|right",
@@ -150,54 +196,8 @@ it("redacts Markdown punctuation in validation fields before presentation", asyn
     "left\\right",
     "<tag>&value",
   ]) {
-    const cli = Cli.create("sensitive-fixture", { sync: false });
-    cli.command("inspect", {
-      options: z.object({ ...explicitSensitiveValueOptions }),
-      run: () => {
-        throw new Errors.ValidationError({
-          message: "fixture",
-          fieldErrors: [
-            {
-              code: "invalid_value",
-              missing: false,
-              path: "input",
-              expected: "",
-              received: secret,
-              message: `Value ${secret} is invalid`,
-            },
-          ],
-        });
-      },
-    });
-    presentCliArgumentErrors(cli);
-    const declared = excludeDeclaredSensitiveArguments(cli);
-    encodeCliArgumentErrors(cli);
-    const original = cli.serve.bind(cli);
-    const run = async (format: string, sensitive: boolean) => {
-      let stdout = "";
-      let exitCode = 0;
-      const global = parseCliGlobalArguments([
-        "inspect",
-        ...(sensitive ? ["--sensitive-value", secret] : []),
-        "--format",
-        format,
-      ]);
-      await declared(
-        global,
-        {
-          env: {},
-          stdout: (text) => {
-            stdout += text;
-          },
-          exit: (code) => {
-            exitCode = code;
-          },
-        },
-        (options) => original([...global.arguments], options),
-      );
-      expect(exitCode).toBe(1);
-      return stdout;
-    };
+    const run = (format: string, sensitive: boolean) =>
+      fixtureDiagnostic(secret, secret, format, sensitive);
     const md = await run("md", true);
     const json = JSON.parse(await run("json", true));
     const control = JSON.parse(await run("json", false));
@@ -217,54 +217,8 @@ it("redacts Markdown punctuation in validation fields before presentation", asyn
 it("retains upstream Markdown literal-cell protections after redaction", async () => {
   const value = "\u00a0\t:smile: secret|token # {x}\t\u202f";
   const secret = "secret|token";
-  const cli = Cli.create("literal-validation-fixture", { sync: false });
-  cli.command("inspect", {
-    options: z.object({ ...explicitSensitiveValueOptions }),
-    run: () => {
-      throw new Errors.ValidationError({
-        message: "fixture",
-        fieldErrors: [
-          {
-            code: "invalid_value",
-            missing: false,
-            path: "input",
-            expected: "",
-            received: value,
-            message: `Value ${value} is invalid`,
-          },
-        ],
-      });
-    },
-  });
-  presentCliArgumentErrors(cli);
-  const declared = excludeDeclaredSensitiveArguments(cli);
-  encodeCliArgumentErrors(cli);
-  const original = cli.serve.bind(cli);
-  const run = async (format: string, sensitive: boolean) => {
-    let stdout = "";
-    let exitCode = 0;
-    const global = parseCliGlobalArguments([
-      "inspect",
-      ...(sensitive ? ["--sensitive-value", secret] : []),
-      "--format",
-      format,
-    ]);
-    await declared(
-      global,
-      {
-        env: {},
-        stdout: (text) => {
-          stdout += text;
-        },
-        exit: (code) => {
-          exitCode = code;
-        },
-      },
-      (options) => original([...global.arguments], options),
-    );
-    expect(exitCode).toBe(1);
-    return stdout;
-  };
+  const run = (format: string, sensitive: boolean) =>
+    fixtureDiagnostic(value, secret, format, sensitive);
   const md = await run("md", false);
   const redactedMd = await run("md", true);
   const json = JSON.parse(await run("json", false));

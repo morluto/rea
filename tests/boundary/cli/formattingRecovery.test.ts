@@ -1,13 +1,11 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli } from "incur";
 import { describe, expect, it } from "vitest";
 
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
@@ -97,7 +95,7 @@ it.each([
     if (output === undefined) throw new Error("Missing output owner");
     await withCliEvidencePublication(async () => {
       recordCliEvidencePublication(receipt);
-      expect(await output.write({ value }, { ...metadata, format })).toBe(true);
+      expect(await output.write({ value }, metadata)).toBe(true);
     });
     expect(output.error).toMatchObject({
       code: "invalid_request",
@@ -108,36 +106,6 @@ it.each([
 );
 
 describe("CLI formatting stage admission", () => {
-  it("preserves native CTA sentinel output", async () => {
-    const replies: string[] = [];
-    for (const wrapped of [false, true]) {
-      const cli = Cli.create("rea-output-test", { sync: false });
-      cli.command("fixture", {
-        run: (context) =>
-          context.ok(
-            { value: 42 },
-            { cta: { commands: [{ command: "next" }] } },
-          ),
-      });
-      const output = createCliResultOutput(
-        parseCliOutputArguments(["fixture"]),
-        new Writable(),
-      );
-      if (output === undefined) throw new Error("Missing output owner");
-      if (wrapped) streamCliCommandResults(cli, output);
-      let reply = "";
-      await cli.serve(["fixture"], {
-        stdout: (text) => {
-          reply += text;
-        },
-      });
-      expect(output.handled).toBe(false);
-      replies.push(reply);
-    }
-    expect(replies[1]).toBe(replies[0]);
-    expect(replies[0]).toContain("next");
-  });
-
   it("captures thrown integrity failures without re-reading diagnostics during recovery", async () => {
     const previousExitCode = process.exitCode;
     try {
@@ -188,19 +156,18 @@ describe("CLI formatting stage admission", () => {
     expect(output?.handled).toBe(false);
   });
 
-  it("leaves command RangeErrors under Incur's command failure protocol", async () => {
-    const cli = Cli.create("rea-output-test", { sync: false });
-    cli.command("fixture", {
-      run: () => {
-        throw new RangeError("Invalid string length");
-      },
-    });
+  it("keeps command RangeErrors distinct from post-result formatting capacity failures", async () => {
     const output = createCliResultOutput(
       parseCliOutputArguments([]),
       new Writable(),
     );
     if (output === undefined) throw new Error("Missing output owner");
-    streamCliCommandResults(cli, output);
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "fixture", {
+      run: () => {
+        throw new RangeError("Invalid string length");
+      },
+    });
     let text = "";
     let status = 0;
     await cli.serve(["fixture"], {
@@ -240,9 +207,7 @@ describe("CLI formatting recovery outcomes", () => {
       },
     );
 
-    expect(await output?.write(value, { ...metadata, format: "md" })).toBe(
-      true,
-    );
+    expect(await output?.write(value, { ...metadata })).toBe(true);
     expect(output?.error).toMatchObject({ code: "resource_constraint" });
     const text = Buffer.concat(chunks).toString("utf8");
     expect(text).toContain("resource_constraint");
@@ -278,7 +243,7 @@ describe("CLI formatting recovery outcomes", () => {
       }),
     );
     await expect(
-      output?.write({ result: "completed" }, { ...metadata, format: "json" }),
+      output?.write({ result: "completed" }, { ...metadata }),
     ).rejects.toBe(cause);
     expect(output?.handled).toBe(true);
     expect(output?.failed).toBe(true);

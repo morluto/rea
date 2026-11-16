@@ -32,12 +32,11 @@ const countFor = async (
   const handled = await output.write(value, {
     command: "fixture",
     duration: "0ms",
-    format,
   });
   return { handled, text: Buffer.concat(chunks).toString("utf8") };
 };
 
-describe("full-output token counts for delegated formats", () => {
+describe("full-output token counts", () => {
   it.each(["toon", "yaml"] as const)(
     "counts the emitted envelope, not just the selected data (%s)",
     async (format) => {
@@ -59,7 +58,5 @@ describe("full-output token counts for delegated formats", () => {
     },
   );
 
-  // Bare counts stay delegated to Incur and are covered by the CLI replay
-  // (bare toon/yaml report the selected result before and after this fix);
-  // this boundary owns only the full-output envelope count.
+  // The public CLI replay also covers bare counts for these formats.
 });

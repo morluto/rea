@@ -28,7 +28,6 @@ it("refuses TOON values or keys that UTF-8 cannot preserve", async () => {
       await output.write(value, {
         command: "fixture",
         duration: "1ms",
-        format: "toon",
       }),
     ).toBe(true);
     expect(output.error).toMatchObject({ code: "invalid_request" });
@@ -65,7 +64,6 @@ it.each([false, true])(
         await output.write(value, {
           command: "fixture",
           duration: "1ms",
-          format: "toon",
         }),
       ).toBe(true);
       expect(output.error).toMatchObject({
@@ -99,7 +97,7 @@ it("keeps valid supplementary characters and an authored replacement character",
   expect(
     await output.write(
       { value: "😀�" },
-      { command: "fixture", duration: "1ms", format: "toon" },
+      { command: "fixture", duration: "1ms" },
     ),
   ).toBe(false);
 });
@@ -119,7 +117,7 @@ it("only refuses malformed code units in selected TOON output", async () => {
   expect(
     await output.write(
       { safe: "retained", other: "\ud800" },
-      { command: "fixture", duration: "1ms", format: "toon" },
+      { command: "fixture", duration: "1ms" },
     ),
   ).toBe(true);
   expect(output.error).toBeUndefined();
@@ -141,7 +139,7 @@ it("refuses malformed code units retained in a TOON token window", async () => {
   expect(
     await output.write(
       { value: "\ud800" },
-      { command: "fixture", duration: "1ms", format: "toon" },
+      { command: "fixture", duration: "1ms" },
     ),
   ).toBe(true);
   expect(output.error).toMatchObject({ code: "invalid_request" });
@@ -168,10 +166,7 @@ it.each(["\ud800", "\u0000"])(
     );
     if (output === undefined) throw new Error("invalid output settings");
     expect(
-      await output.write(
-        { value },
-        { command: "fixture", duration: "1ms", format: "md" },
-      ),
+      await output.write({ value }, { command: "fixture", duration: "1ms" }),
     ).toBe(true);
     expect(output.error).toMatchObject({ code: "invalid_request" });
     expect(Buffer.concat(chunks).toString("utf8")).not.toContain("�");

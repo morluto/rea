@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import pino from "pino";
 import { expect, it, vi } from "vitest";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
@@ -8,7 +8,7 @@ const registry = () => {
     ok: false as const,
     error: { code: "invalid_request", message: "Admitted query control" },
   }));
-  const cli = Cli.create("byte-admission", { sync: false });
+  const cli = createCommandCli();
   registerCoreNativeCommands(cli, pino({ enabled: false }), run);
   return { cli, run };
 };
