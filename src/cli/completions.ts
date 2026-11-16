@@ -1,15 +1,15 @@
 import { z } from "zod";
 
 import {
+  CLI_BUILTIN_FLAGS,
   CLI_COMPLETION_SHELLS,
   cliCompletionShell,
-  INCUR_BUILTIN_FLAGS,
   OUTPUT_SWITCHES,
   VALUED_OUTPUT_FLAGS,
-  normalizeCliArguments,
-  splitIncurBuiltinArguments,
+  parseCliGlobalArguments,
+  type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
-import { CLI_OUTPUT_FORMATS, parseCliOutputArguments } from "../cliOutput.js";
+import { CLI_OUTPUT_FORMATS, readCliOutputArguments } from "../cliOutput.js";
 import {
   completeWords,
   completionScript,
@@ -26,11 +26,10 @@ const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);
 
 /** Supplement Incur's built-in setup instructions without replacing its help. */
 export const completionHelpNote = (
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
 ): string | undefined => {
-  const split = splitIncurBuiltinArguments(arguments_);
   const words =
-    split.command[0] === "rea" ? split.command.slice(1) : split.command;
+    global.command[0] === "rea" ? global.command.slice(1) : global.command;
   if (words[0] !== "completions") return undefined;
   const rest = words.slice(1);
   if (
@@ -41,8 +40,8 @@ export const completionHelpNote = (
       ))
   )
     return undefined;
-  const values = new Set(split.outputValues.map(({ index }) => index));
-  const flags = arguments_.filter((_, index) => !values.has(index));
+  const values = new Set(global.outputValues.map(({ index }) => index));
+  const flags = global.arguments.filter((_, index) => !values.has(index));
   if (
     flags.some((word) =>
       [
@@ -73,7 +72,7 @@ const standardGlobals = (root: boolean): z.ZodObject =>
               : z.string().optional(),
           ] as const,
       ),
-      ...[...INCUR_BUILTIN_FLAGS]
+      ...[...CLI_BUILTIN_FLAGS]
         .filter(
           (flag) =>
             flag.startsWith("--") &&
@@ -113,77 +112,89 @@ const completionCommands = (
   return commands;
 };
 
-/** One tree owns command scope; completionProtocol owns candidates and shell encoding. */
+/**
+ * One tree owns command scope; completionProtocol owns candidates and shell
+ * encoding. `complete` answers the shell's completion protocol, whose words
+ * are transport data; `writeScript` answers `completions <shell>`.
+ */
 export const createCliCompletions = (
   cli: CliInstance,
   environment: Readonly<NodeJS.ProcessEnv>,
-) => {
+): {
+  complete(arguments_: readonly string[], options: ServeOptions): boolean;
+  writeScript(global: CliGlobalArguments, options: ServeOptions): boolean;
+} => {
   const script = (shell: (typeof CLI_COMPLETION_SHELLS)[number]) =>
     completionScript(shell, cli.name);
-  return (arguments_: readonly string[], options: ServeOptions): boolean => {
-    const write =
-      options.stdout ?? ((text: string) => process.stdout.write(text));
+  const writer = (options: ServeOptions) =>
+    options.stdout ?? ((text: string) => process.stdout.write(text));
+  const complete = (
+    arguments_: readonly string[],
+    options: ServeOptions,
+  ): boolean => {
     const shell = cliCompletionShell(environment);
-    if (shell !== undefined) {
-      const separator = arguments_.indexOf("--");
-      const words =
-        separator < 0 ? arguments_ : arguments_.slice(separator + 1);
-      if (words.length === 0) {
-        write(script(shell));
-        return true;
-      }
-      const index = Number(environment._COMPLETE_INDEX ?? words.length - 1);
-      if (!Number.isSafeInteger(index) || index < 0 || index > words.length)
-        return true;
-      // Consume global option values before scope resolution. A value named
-      // 'mcp' is still data; leave an unfinished flag for Incur's enum hints.
-      const before = splitIncurBuiltinArguments(
-        normalizeCliArguments(words.slice(1, index)),
-      ).command;
-      if (before.includes("--")) return true;
-      const input = [cli.name, ...before, words[index] ?? ""];
-      const doctor = before[0] === "mcp" && before[1] === "doctor";
-      const candidates = completeWords(
-        completionCommands(cli),
-        input,
-        input.length - 1,
-        {
-          schema: doctor
-            ? // The launcher consumes this global before doctor parses options.
-              MCP_DOCTOR_OPTIONS.extend({ timings: z.boolean().optional() })
-            : standardGlobals(before.length === 0),
-          alias: doctor ? MCP_DOCTOR_ALIAS : { help: "h" },
-        },
-      );
-      const result = formatCompletions(shell, candidates);
-      if (result !== "") write(result);
+    if (shell === undefined) return false;
+    const write = writer(options);
+    const separator = arguments_.indexOf("--");
+    const words = separator < 0 ? arguments_ : arguments_.slice(separator + 1);
+    if (words.length === 0) {
+      write(script(shell));
       return true;
     }
-    const normalized = normalizeCliArguments(arguments_);
-    const split = splitIncurBuiltinArguments(normalized);
-    const offset = split.command[0] === cli.name ? 1 : 0;
+    const index = Number(environment._COMPLETE_INDEX ?? words.length - 1);
+    if (!Number.isSafeInteger(index) || index < 0 || index > words.length)
+      return true;
+    // Consume global option values before scope resolution. A value named
+    // 'mcp' is still data; leave an unfinished flag for Incur's enum hints.
+    const before = parseCliGlobalArguments(words.slice(1, index)).command;
+    if (before.includes("--")) return true;
+    const input = [cli.name, ...before, words[index] ?? ""];
+    const doctor = before[0] === "mcp" && before[1] === "doctor";
+    const candidates = completeWords(
+      completionCommands(cli),
+      input,
+      input.length - 1,
+      {
+        schema: doctor
+          ? // The launcher consumes this global before doctor parses options.
+            MCP_DOCTOR_OPTIONS.extend({ timings: z.boolean().optional() })
+          : standardGlobals(before.length === 0),
+        alias: doctor ? MCP_DOCTOR_ALIAS : { help: "h" },
+      },
+    );
+    const result = formatCompletions(shell, candidates);
+    if (result !== "") write(result);
+    return true;
+  };
+  const writeScript = (
+    global: CliGlobalArguments,
+    options: ServeOptions,
+  ): boolean => {
+    const { command } = global;
+    const offset = command[0] === cli.name ? 1 : 0;
     const selected = CLI_COMPLETION_SHELLS.find(
-      (value) => value === split.command[offset + 1],
+      (value) => value === command[offset + 1],
     );
     if (
-      split.command[offset] !== "completions" ||
+      command[offset] !== "completions" ||
       selected === undefined ||
-      split.command.length !== offset + 2
+      command.length !== offset + 2
     )
       return false;
     // Help/manifests/schema/version and server controls keep framework precedence.
-    const values = new Set(split.outputValues.map(({ index }) => index));
+    const values = new Set(global.outputValues.map(({ index }) => index));
     if (
-      normalized.some(
+      global.arguments.some(
         (token, index) =>
           !values.has(index) &&
-          ((INCUR_BUILTIN_FLAGS.has(token) && !OUTPUT_SWITCHES.has(token)) ||
+          ((CLI_BUILTIN_FLAGS.has(token) && !OUTPUT_SWITCHES.has(token)) ||
             token === "--version"),
       )
     )
       return false;
-    if (!parseCliOutputArguments(normalized).validation.ok) return false;
-    write(`${script(selected)}\n`);
+    if (!readCliOutputArguments(global).validation.ok) return false;
+    writer(options)(`${script(selected)}\n`);
     return true;
   };
+  return { complete, writeScript };
 };
