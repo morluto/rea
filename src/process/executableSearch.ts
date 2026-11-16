@@ -108,6 +108,10 @@ const windowsPathEntries = (value: string): readonly string[] => {
 /** Image extensions Windows starts directly; anything else needs a host such as cmd.exe. */
 const WINDOWS_IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([".com", ".exe"]);
 
+/** A rooted path without a drive still depends on the working directory. */
+const hasIndependentWindowsRoot = (path: string): boolean =>
+  win32.isAbsolute(path) && win32.parse(path).root.length > 1;
+
 /** A PATHEXT entry that is not a filename extension, so the search is unknown. */
 export interface WindowsPathSearchFailure {
   readonly kind: "invalid_extension";
@@ -166,7 +170,7 @@ export const windowsPathCandidates = (
   return ok({
     *[Symbol.iterator]() {
       for (const name of located) {
-        const workingDirectory = win32.isAbsolute(name)
+        const workingDirectory = hasIndependentWindowsRoot(name)
           ? name
           : (search.cwd ?? currentDirectory());
         if (workingDirectory === undefined) continue;
@@ -179,14 +183,15 @@ export const windowsPathCandidates = (
       for (const directory of entries) {
         // Only an entry without a drive or UNC root reads the working
         // directory; a removed one holds nothing, and later entries count.
-        const workingDirectory = /^(?:[A-Za-z]:[\\/]|[\\/]{2})/u.test(directory)
-          ? directory
-          : (search.cwd ?? currentDirectory());
+        const relativeEntry = !hasIndependentWindowsRoot(directory);
+        const workingDirectory = relativeEntry
+          ? (search.cwd ?? currentDirectory())
+          : directory;
         if (workingDirectory === undefined) continue;
         for (const name of names)
           yield {
             path: win32.resolve(workingDirectory, directory, name),
-            relativeEntry: !win32.isAbsolute(directory),
+            relativeEntry,
           };
       }
     },

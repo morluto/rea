@@ -142,6 +142,25 @@ describe("windowsPathCandidates", () => {
     expect(paths("npm.cmd", environment, { cwd: "C:\\" })).toEqual([]);
   });
 
+  it("uses the selected working drive for a root-relative command", () => {
+    expect(
+      paths("\\bin\\tool", { PATHEXT: ".EXE" }, { cwd: "Z:\\work" }),
+    ).toEqual(["Z:\\bin\\tool.EXE"]);
+  });
+
+  it("marks a PATH entry without a drive as relative to the working drive", () => {
+    const search = windowsPathCandidates(
+      "tool.exe",
+      { PATH: "\\bin;D:\\tools" },
+      { cwd: "Z:\\work" },
+    );
+    if (!search.ok) throw new Error(search.error.extension);
+    expect([...search.value]).toEqual([
+      { path: "Z:\\bin\\tool.exe", relativeEntry: true },
+      { path: "D:\\tools\\tool.exe", relativeEntry: false },
+    ]);
+  });
+
   it("tries every launcher name in an entry before the next entry", () => {
     expect(
       paths(
