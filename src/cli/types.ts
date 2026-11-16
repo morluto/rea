@@ -1,3 +1,3 @@
-import { Cli } from "incur";
+import type { Cli } from "incur";
 
 export type CliInstance = ReturnType<typeof Cli.create>;

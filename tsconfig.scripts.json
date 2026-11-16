@@ -12,6 +12,7 @@
     "scripts/fixtures/managed/function-dossier.mjs",
     "scripts/fixtures/managed/pe.mjs",
     "scripts/lib/canonical-temporary-directory.mjs",
+    "scripts/lib/catalog-cli.mjs",
     "scripts/lib/mcp-verifier-results.mjs",
     "scripts/lib/real-ghidra-snapshot-lifecycle.mjs",
     "scripts/lib/verifier-artifact-scope.mjs",

@@ -1091,6 +1091,12 @@ Choose the guide for the target and intended interaction:
 Runtime requests name the target and actions. Launched targets run with your
 user permissions; consult the chosen guide for host requirements and effects.
 
+## Start the MCP server
+
+Start REA's MCP server with `rea mcp` (or `rea --mcp`). The per-command
+`rea <command> --mcp` entry has been removed; it returns `MCP_MODE_REMOVED`
+and points to `rea mcp`. This is a breaking change from the earlier CLI.
+
 ## Serve MCP over streamable HTTP
 
 `rea mcp` speaks stdio to the client that launched it. To serve the same MCP
