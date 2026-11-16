@@ -6,36 +6,39 @@ import { createEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import type { RizinDebugToolOptions } from "../../../src/server/serviceToolBindings.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
 import { rizinDebugMcpServer } from "../../fixtures/rizinDebugMcp.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 
+const COMMAND_RESULT = {
+  command: "dr",
+  output: "rip = 0x1000",
+  output_scope: "command_and_interleaved_session_output" as const,
+  output_truncated: false,
+  completion_status: "complete" as const,
+  backend: null,
+};
+
 const commandEvidence = (): Evidence =>
   createEvidence(
     unknownTarget("not-observed"),
     { id: "rizin", name: "Rizin", version: "fixture" },
     {
+      predicateType: "rea.debugger.command-observation",
       operation: "rizin_debug_command",
       parameters: { session_id: SESSION_ID, command: "dr" },
-      result: { output: "rip = 0x1000" },
+      result: COMMAND_RESULT,
     },
   );
 
 const commandResult = (evidence: Evidence) =>
-  ok({
-    result: {
-      command: "dr",
-      output: "rip = 0x1000",
-      output_scope: "command_and_interleaved_session_output" as const,
-      output_truncated: false,
-      completion_status: "complete" as const,
-      backend: null,
-    },
-    evidence,
-  });
+  ok({ result: COMMAND_RESULT, evidence });
 
 const unusedManager = (): RizinDebugToolOptions["manager"] => ({
   start: async () => ok({ session_id: SESSION_ID, backend: null }),
@@ -46,10 +49,12 @@ const unusedManager = (): RizinDebugToolOptions["manager"] => ({
 });
 
 /** Bind the Rizin tools under a real session's external-mutation admission. */
-const connect = async (manager: RizinDebugToolOptions["manager"]) => {
-  const session = createTestBinarySession(() => {
+const connect = async (
+  manager: RizinDebugToolOptions["manager"],
+  session = createTestBinarySession(() => {
     throw new Error("Rizin tools must not start a binary provider");
-  });
+  }),
+) => {
   const recorded: Evidence[] = [];
   const server = rizinDebugMcpServer(
     "rizin-lifecycle",
@@ -140,17 +145,28 @@ it("retries a failed debugger cleanup before the next command and keeps it owned
 });
 
 it("keeps a completed command's Evidence when cancellation arrives during final cleanup", async () => {
+  // A bound analysis target whose provider close (the retirement after the
+  // command) is held, so cancellation lands during final cleanup.
+  const [target] = await createBinarySessionTargets();
+  const retiring = phaseGate();
+  onTestFinished(() => retiring.release());
+  const session = createTestBinarySession(
+    () =>
+      ({
+        execute: async () => ok({ operation: "health", value: null }),
+        close: async () => {
+          await retiring.hold();
+          return ok(null);
+        },
+      }) as never,
+  );
+  expect((await session.open(target)).ok).toBe(true);
   const completed = commandEvidence();
-  const held = phaseGate();
-  onTestFinished(() => held.release());
-  const manager = {
-    ...unusedManager(),
-    execute: async () => {
-      await held.hold();
-      return commandResult(completed);
-    },
-  };
-  const { client, recorded } = await connect(manager);
+  const execute = vi.fn(async () => commandResult(completed));
+  const { client, recorded } = await connect(
+    { ...unusedManager(), execute },
+    session,
+  );
   const controller = new AbortController();
   const command = client
     .callTool(
@@ -161,17 +177,19 @@ it("keeps a completed command's Evidence when cancellation arrives during final 
       { signal: controller.signal },
     )
     .catch(() => undefined);
-  await held.reached(command, "Rizin command");
-  // The command completes after the caller cancelled; admission observes the
-  // cancellation while finishing and keeps the completed observation.
+  await retiring.reached(command, "analysis retirement close");
+  expect(execute).toHaveBeenCalledOnce();
   controller.abort();
-  held.release();
+  retiring.release();
   await command;
+  // Retirement still completes, and the completed command's Evidence is
+  // retained through the session writer as the cancellation's partial.
   await waitFor(() =>
     expect(recorded.map(({ evidence_id }) => evidence_id)).toContain(
       completed.evidence_id,
     ),
   );
+  expect(session.activeTarget()).toBeUndefined();
 });
 
 it("runs an owned close once when it is the cleanup blocking its own admission", async () => {
