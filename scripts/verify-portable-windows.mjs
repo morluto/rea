@@ -1,15 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import {
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -24,6 +16,7 @@ import {
   executePortableBatchHelp,
   executePortableCommand as execute,
 } from "./lib/portable-command.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const { values } = parseArgs({
   options: { directory: { type: "string" }, powershell: { type: "string" } },
@@ -47,7 +40,10 @@ for (const file of manifest.files) {
   assert.equal(observed.sha256, file.sha256, file.path);
 }
 
-const workspace = await mkdtemp(join(tmpdir(), "rea-portable-verification-"));
+const fixture = await VerifierFixture.open({
+  prefix: "rea-portable-verification-",
+});
+const workspace = fixture.path;
 const node = join(directory, "runtime/node.exe");
 const entry = join(directory, "app/scripts/rea.mjs");
 let complete = false;
@@ -351,11 +347,8 @@ if ($LASTEXITCODE -ne 0 -or -not $piped.healthy) { throw 'Piped doctor failed' }
   );
   complete = true;
 } finally {
-  if (complete) await rm(workspace, { recursive: true, force: true });
-  else
-    console.error(
-      `Verification did not complete; retained workspace: ${workspace}`,
-    );
+  if (complete) await fixture.release();
+  else await fixture.keep("portable verification did not complete");
 }
 console.log(
   JSON.stringify({
