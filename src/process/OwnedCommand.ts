@@ -21,6 +21,7 @@ import type {
   ProcessDiagnosticBudget,
   ProviderProcessStopResult,
   ProviderProcessInspectionCleanup,
+  ProcessTerminationPolicy,
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
@@ -120,6 +121,11 @@ interface OwnedCommandLimits {
    * stays authoritative; a failing stream is a collection failure.
    */
   readonly stdout?: Writable;
+  /**
+   * Ask the command to stop before owned cleanup kills its process group,
+   * for a command that rolls back work it started when signaled.
+   */
+  readonly termination?: ProcessTerminationPolicy;
 }
 
 /** Keep independently bounded macOS helper compilation outside a short command deadline.
@@ -485,7 +491,9 @@ const collectOwnedCommand = async (
   }
   // A finished sink ignores this; an unfinished one is destroyed.
   abandoned.abort(OwnerCancellation.noLongerNeeded);
-  const stopped = await supervisor.stop();
+  const stopped = await supervisor.stop(
+    limits.termination === undefined ? {} : { termination: limits.termination },
+  );
   const snapshot = supervisor.snapshot();
   // An input error can arrive after finish while process cleanup is still pending.
   if (failure === undefined && inputFailure !== undefined)

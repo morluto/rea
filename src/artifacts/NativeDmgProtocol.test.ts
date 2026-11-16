@@ -1,4 +1,4 @@
-import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { build } from "plist";
 import { expect, it, vi } from "vitest";
@@ -155,7 +155,9 @@ it("uses the typed command cancellation owner for injected hosts and preserves p
       code: "EIO",
     });
     const failureCause = cancelled
-      ? new ExecFileOutputCancelledError(reason)
+      ? new OwnedCommandFailure("cancelled", "Command cancelled.", null, null, {
+          cancellation: { reason },
+        })
       : physical;
     const reader = new NativeDmgArtifactReader(
       "/fixture/image.dmg",
