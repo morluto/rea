@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   isJSONRPCResultResponse,
   type JSONRPCMessage,
@@ -10,6 +8,7 @@ import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js"
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { canonicalJson } from "../domain/comparisonSemantics.js";
 import { isRecord } from "../domain/isRecord.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,
   type McpToolsListPageBudget,
@@ -64,7 +63,7 @@ const decodeToolListCursor = (raw: string): ToolListCursor | undefined => {
  * cursor even when the tool name is unchanged.
  */
 const toolListDigest = (tools: readonly unknown[]): string =>
-  createHash("sha256").update(canonicalJson(tools, "tools/list")).digest("hex");
+  sha256Hex(canonicalJson(tools, "tools/list"));
 
 const toolsListCursorError = (
   message: JSONRPCResultResponse,
