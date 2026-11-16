@@ -130,6 +130,22 @@ export const rejectedInputForIssues = (
   issues: readonly StandardSchemaV1.Issue[],
 ): unknown => rejectedInputs.get(issues);
 
+type StandardValidate = (
+  value: unknown,
+) =>
+  | StandardSchemaV1.Result<unknown>
+  | Promise<StandardSchemaV1.Result<unknown>>;
+
+/**
+ * The contract parser behind an application wrapper. The wrapper accepts every
+ * request, so only this parser can tell whether the caller's original bag was
+ * valid without decoding it.
+ */
+const applicationCanonicalValidators = new WeakMap<
+  StandardSchemaWithJSON,
+  StandardValidate
+>();
+
 /** Bound application registrations that recover their arguments in their own wrapper. */
 const enforceRecoveredArgumentCapacity = (
   schema: StandardSchemaWithJSON,
@@ -146,20 +162,14 @@ const enforceRecoveredArgumentCapacity = (
           !recoveredFitsAllowance(recoveredArguments, capacity)
         ) {
           // The decoded candidate exceeds the allowance. Keep the caller's
-          // original arguments when the validator falls back to them, and
-          // refuse when the decoded candidate was accepted.
-          const candidate = standard.validate(value);
-          const candidateResult =
-            candidate instanceof Promise
-              ? candidate
-              : Promise.resolve(candidate);
-          const candidateOutcome = await candidateResult;
-          const keptOriginal =
-            typeof candidateOutcome === "object" &&
-            candidateOutcome !== null &&
-            "value" in candidateOutcome &&
-            (candidateOutcome as { value: unknown }).value === value;
-          if (keptOriginal) return standard.validate(value);
+          // original arguments when the canonical parser accepts them, and
+          // refuse without validating the oversized decoded candidate when it
+          // does not.
+          const canonical = applicationCanonicalValidators.get(schema);
+          if (canonical !== undefined) {
+            const originalResult = await canonical(value);
+            if (originalResult.issues === undefined) return { value };
+          }
           throw inputCapacityRefusal(capacity);
         }
         if (recoveredArguments !== undefined)
@@ -204,20 +214,11 @@ export const acceptStringifiedStructuredArguments = (
           !recoveredFitsAllowance(recoveredArguments, capacity)
         ) {
           // The decoded candidate exceeds the allowance. Keep the caller's
-          // original arguments when the validator falls back to them, and
-          // refuse when the decoded candidate was accepted.
-          const candidate = standard.validate(value);
-          const candidateResult =
-            candidate instanceof Promise
-              ? candidate
-              : Promise.resolve(candidate);
-          const candidateOutcome = await candidateResult;
-          const keptOriginal =
-            typeof candidateOutcome === "object" &&
-            candidateOutcome !== null &&
-            "value" in candidateOutcome &&
-            (candidateOutcome as { value: unknown }).value === value;
-          if (keptOriginal) return standard.validate(value);
+          // original arguments when the canonical parser accepts them, and
+          // refuse without validating the oversized decoded candidate when it
+          // does not.
+          const originalResult = await standard.validate(value);
+          if (originalResult.issues === undefined) return originalResult;
           throw inputCapacityRefusal(capacity);
         }
         // Charge the decoded graph before the canonical parser sees it.
@@ -294,6 +295,9 @@ export const applicationToolRegistrationOptions = <
       },
     },
   };
+  applicationCanonicalValidators.set(inputSchema, (value) =>
+    standard.validate(value),
+  );
   return {
     ...registration,
     inputSchema: canReferenceInlineEvidence(registration.inputSchema)

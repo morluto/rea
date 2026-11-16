@@ -302,6 +302,66 @@ describe("stringified argument admission and diagnostics", () => {
     });
     expect(calls).toHaveLength(1);
   });
+});
+
+describe("stringified argument allowance keeps valid caller bags", () => {
+  it("keeps a valid caller bag when JSON text in a string field exceeds the allowance", async () => {
+    const jsonText = JSON.stringify(
+      Array.from({ length: 12 }, () => "comment"),
+    );
+    const { client, calls } = await connect((server, record) => {
+      server.registerTool(
+        "set_comment",
+        {
+          inputSchema: z.object({
+            address: z.string(),
+            comment: z.string(),
+          }),
+        },
+        (input) => {
+          record(input);
+          return { content: [] };
+        },
+      );
+    }, 8);
+
+    const result = await client.callTool({
+      name: "set_comment",
+      arguments: { address: "0x1000", comment: jsonText },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(calls[0]).toEqual({ address: "0x1000", comment: jsonText });
+  });
+
+  it("keeps a valid caller bag when JSON text in a string field exceeds an application allowance", async () => {
+    const jsonText = JSON.stringify(
+      Array.from({ length: 12 }, () => "comment"),
+    );
+    const { client, calls } = await connect((server, record) => {
+      const synthetic = {
+        ...contractNamed("inspect_web_network_capture"),
+        inputSchema: z.object({
+          address: z.string(),
+          comment: z.string(),
+        }),
+      };
+      const { outputSchema: _contractOutput, ...config } =
+        applicationToolRegistrationOptions(synthetic);
+      server.registerTool("set_comment", config, (input: unknown) => {
+        record(input);
+        return { content: [] };
+      });
+    }, 8);
+
+    const result = await client.callTool({
+      name: "set_comment",
+      arguments: { address: "0x1000", comment: jsonText },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(calls[0]).toEqual({ address: "0x1000", comment: jsonText });
+  });
 
   it("reports recovered-field failures against the rejected structure", async () => {
     const example = contractNamed("capture_browser_scenario").examples[0].input;
