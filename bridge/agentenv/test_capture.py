@@ -18,6 +18,9 @@ from bridge.agentenv import capture
 
 
 CONTROLLER = Path(__file__).with_name("capture.py")
+# The supervisor finds same-session members through /proc only. Desktop build
+# computers run Linux; other hosts cannot exercise that enumeration.
+PROC_AVAILABLE = Path("/proc/self/stat").exists()
 
 
 class CaptureListingTest(unittest.TestCase):
@@ -123,6 +126,9 @@ class LongRunTest(unittest.TestCase):
                             "AGENTENV_CONTROL_TOKEN": "not-for-the-child"}
         self.job = self.root / "job"
         self.output = self.root / "out.json"
+        # Runs before the folder is removed: a descendant that never saw its
+        # release file would otherwise poll a deleted path forever.
+        self.addCleanup(self.release_descendant)
 
     def command(self, name, command_timeout=10, **values):
         result = subprocess.run([sys.executable, str(CONTROLLER), name, json.dumps(values)],
@@ -140,6 +146,30 @@ class LongRunTest(unittest.TestCase):
                 return True
             time.sleep(0.02)
         return False
+
+    def release_descendant(self):
+        for name in ("release", "release.stderr"):
+            (self.root / name).touch()
+        pid_path = self.root / "release.pid"
+        if not pid_path.exists():
+            return
+        pid = int(pid_path.read_text())
+        # The test holds no live handle to this descendant, so a pid alone does
+        # not prove it is still ours; report a survivor rather than signal it.
+        # An unreaped zombie has exited too (a container init may not reap it).
+        exited = lambda: not self.process_exists(pid) or (  # noqa: E731
+            PROC_AVAILABLE and self.leader_has_exited(pid)
+        )
+        if not self.wait_until(exited, seconds=2):
+            self.fail(f"descendant pid {pid} did not exit after its release file appeared")
+
+    @staticmethod
+    def process_exists(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
 
     def leader_has_exited(self, pid):
         try:
@@ -264,6 +294,7 @@ class LongRunTest(unittest.TestCase):
         finally:
             release.touch()
 
+    @unittest.skipUnless(PROC_AVAILABLE, "same-session enumeration reads /proc")
     def test_cancel_after_leader_exit_kills_a_same_session_child_holding_stderr(self):
         release = self.root / "release"
         self.assertEqual(self.begin(["group", str(release)], timeout=30), {"started": True})
@@ -287,6 +318,7 @@ class LongRunTest(unittest.TestCase):
         finally:
             release.touch()
 
+    @unittest.skipUnless(PROC_AVAILABLE, "same-session enumeration reads /proc")
     def test_cancel_kills_a_same_session_child_that_closes_stderr(self):
         release = self.root / "release"
         stderr_release = self.root / "release.stderr"

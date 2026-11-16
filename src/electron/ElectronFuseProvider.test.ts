@@ -841,7 +841,15 @@ it("enforces the 32 sentinel boundary with typed and public limit details", asyn
         expect(projectAnalysisError(result.error)).toMatchObject({
           code: "resource_constraint",
           retryable: false,
-          details: { reported_limits: { maximum_sentinels_per_slice: 32 } },
+          details: {
+            reported_limits: { maximum_sentinels_per_slice: 32 },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance_kind: "count",
+              limit: 32,
+              unit: "sentinels per slice",
+            },
+          },
           remediation: {
             action: expect.stringContaining("sentinel inventory"),
           },
@@ -866,7 +874,15 @@ it("rejects a sparse artifact over 1 GiB before scanning", async () => {
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      details: { reported_limits: { maximum_input_bytes: 1024 * 1024 * 1024 } },
+      details: {
+        reported_limits: { maximum_input_bytes: 1024 * 1024 * 1024 },
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "input",
+          limit: 1024 * 1024 * 1024,
+          unit: "bytes",
+        },
+      },
       remediation: {
         action: expect.stringContaining("does not admit this input"),
       },

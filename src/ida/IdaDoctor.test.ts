@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { inspectIdaRegistration } from "./IdaDoctor.js";
 import { providerRegistrationEnvironment } from "../application/SetupRegistrationEnvironment.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 
 const resourceScope: RetainedResourceScope = {
   retain: () => undefined,

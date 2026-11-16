@@ -35,6 +35,7 @@ const INPUT_BYTES = 10 * 1024 * 1024;
 const paths = {
   parser: resolve(selectedRepo, "dist/domain/android/proguardMapping.js"),
   evidence: resolve(selectedRepo, "dist/domain/evidence.js"),
+  targetIdentity: resolve(selectedRepo, "dist/domain/targetIdentity.js"),
   ledger: resolve(
     selectedRepo,
     "dist/application/investigation/EvidenceLedger.js",
@@ -51,6 +52,9 @@ for (const [name, path] of Object.entries(paths)) {
 const { parseProguardMapping, resolveProguardClass, resolveProguardMethod } =
   await import(pathToFileURL(paths.parser).href);
 const { createEvidence } = await import(pathToFileURL(paths.evidence).href);
+const { unknownTarget } = await import(
+  pathToFileURL(paths.targetIdentity).href
+);
 const { EvidenceLedger } = await import(pathToFileURL(paths.ledger).href);
 
 // This explicit UTF-16 byte roundtrip owns new string storage. Concatenation,
@@ -159,7 +163,7 @@ function recordSelected(holder, detached, paddingBytes = INPUT_BYTES) {
   // Real production createEvidence -> immutable snapshot -> real ledger record.
   // There is no JSON stringify/parse inserted as an artificial detachment.
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     PROVIDER,
     {
       operation: "string-retention-probe",

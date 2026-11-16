@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -9,7 +9,7 @@ import {
   DarwinProcessOwnershipInspectionError,
   type DarwinCompilerOutcome,
 } from "../process/DarwinProcessRunTokenReader.js";
-import { NativeCommandFailure } from "./CommandRunner.js";
+import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 
 const preparationFailure = (
@@ -123,7 +123,6 @@ describe("translateNativeCommandFailure", () => {
     expect(projectAnalysisError(error).details?.limit).toEqual({
       control_kind: "parameter",
       parameter: "native_command_timeout_ms",
-      cli_flag: "--native-command-timeout-ms",
       effective_value: 60_000,
       unit: "ms",
       minimum: 1,

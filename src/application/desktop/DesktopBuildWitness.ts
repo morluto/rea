@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
@@ -34,13 +34,12 @@ import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
+} from "../../ports/ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
@@ -55,6 +54,8 @@ import {
   type EndedWitness,
   type WitnessRecord,
 } from "./DesktopBuildWitnessRecord.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const FRESH =
@@ -100,8 +101,7 @@ const refused = (userMessage: string, remediationAction: string) =>
     conformsToInputContract: true,
   });
 
-const taskDigest = (task: DesktopTask) =>
-  createHash("sha256").update(JSON.stringify(task)).digest("hex");
+const taskDigest = (task: DesktopTask) => sha256Hex(JSON.stringify(task));
 
 /** A retry cannot redirect an ended witness to another folder. */
 const recordDirectoryRefusal = (
@@ -313,7 +313,7 @@ export class DesktopBuildWitness {
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `Reading the app's state failed: ${errorText(cause)}`,
+              userMessage: `Reading the app's state failed: ${errorMessage(cause)}`,
               cause,
             }),
       );
@@ -586,7 +586,7 @@ export class DesktopBuildWitness {
     } catch (cause: unknown) {
       return err(
         new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-          userMessage: `The witness could not start its recording: ${errorText(cause)}`,
+          userMessage: `The witness could not start its recording: ${errorMessage(cause)}`,
           cause,
         }),
       );

@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -26,7 +27,7 @@ cliTest(
 
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-    expect(evidence.subject?.architecture).toBe("x86_64");
+    expect(fileIdentity(evidence.subject).architecture).toBe("x86_64");
     expect(evidence.normalized_result).toMatchObject({
       format: "elf",
       architecture: "amd64",

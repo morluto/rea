@@ -8,7 +8,7 @@ import { registerBrowserScenarioCommands } from "../../../src/cliBrowserScenario
 import { ok } from "../../../src/domain/result.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { PlaywrightBrowserScenarioProvider } from "../../../src/browser/PlaywrightBrowserScenarioProvider.js";
 import { scenarioCaptureFixture } from "../../fixtures/browserScenarioCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
