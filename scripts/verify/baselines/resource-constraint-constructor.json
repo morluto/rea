@@ -1,5 +1,5 @@
 {
-  "src/adb/AdbCommand.ts": 2,
+  "src/adb/AdbCommand.ts": 1,
   "src/adb/AdbConfiguration.ts": 1,
   "src/android/AndroidMappingFile.ts": 2,
   "src/android/JadxAnalysis.ts": 1,
@@ -29,7 +29,6 @@
   "src/application/wasm/WasmArtifactService.ts": 1,
   "src/artifacts/DesktopApplicationReader.ts": 1,
   "src/artifacts/ReleaseExposureReader.ts": 2,
-  "src/artifacts/apple/AppleAssetCatalogAnalysis.ts": 1,
   "src/browser/IsolatedWebBundleAnalyzer.ts": 2,
   "src/browser/WebBundleAnalysisWorker.ts": 5,
   "src/browser/WebSourceMapFetcher.ts": 1,
@@ -79,7 +78,7 @@
   "src/firmware/FirmwareFailures.ts": 1,
   "src/firmware/FirmwareFiles.ts": 2,
   "src/firmware/devicetree/DevicetreeProvider.ts": 2,
-  "src/flutter/FlutterBuildProvider.ts": 10,
+  "src/flutter/FlutterBuildProvider.ts": 12,
   "src/ghidra/GhidraExecutableHeader.ts": 1,
   "src/ghidra/GhidraFileArtifacts.ts": 1,
   "src/ghidra/GhidraInstallationProperties.ts": 1,
