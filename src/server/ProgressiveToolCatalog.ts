@@ -14,6 +14,48 @@ import {
   type CatalogIdentity,
 } from "../contracts/catalog/catalogDiscovery.js";
 
+/**
+ * Order in-scope tools for a discovery query. Tools matching every word come
+ * first, by words found in the name and then by name, so a query that matched
+ * under all-words search keeps the same leading results. Tools matching only
+ * some words follow, weighted by how rare each matched word is in the in-scope
+ * inventory: a query naming several attributes still finds each attribute's
+ * tool, while words that most descriptions contain carry little weight.
+ */
+const rankDiscoveryMatches = (
+  tools: ReadonlyMap<string, { readonly search: string }>,
+  words: readonly string[],
+): string[] => {
+  const candidates = [...tools].map(([name, { search }]) => ({
+    name,
+    matched: words.filter((word) => search.includes(word)),
+  }));
+  const rarity = new Map(
+    words.map((word) => {
+      const containing = candidates.filter(({ matched }) =>
+        matched.includes(word),
+      ).length;
+      return [word, Math.log((candidates.length + 1) / (containing + 1))];
+    }),
+  );
+  return candidates
+    .filter(({ matched }) => words.length === 0 || matched.length > 0)
+    .map(({ name, matched }) => ({
+      name,
+      complete: matched.length === words.length,
+      weight: matched.reduce((sum, word) => sum + rarity.get(word)!, 0),
+      inName: words.filter((word) => name.includes(word)).length,
+    }))
+    .sort(
+      (left, right) =>
+        Number(right.complete) - Number(left.complete) ||
+        right.weight - left.weight ||
+        right.inName - left.inName ||
+        (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
+    )
+    .map(({ name }) => name);
+};
+
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
   readonly identity: CatalogIdentity;
@@ -80,23 +122,10 @@ export class ProgressiveToolCatalog {
         ),
         false,
       );
-    const words = (input.query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
-    const matches =
-      names ??
-      [...this.tools]
-        .filter(([, tool]) => words.every((word) => tool.search.includes(word)))
-        .map(([name]) => name)
-        .sort((left, right) => {
-          const score = (name: string) =>
-            words.filter((word) => name.includes(word)).length;
-          return (
-            score(right) - score(left) ||
-            (left < right ? -1 : left > right ? 1 : 0)
-          );
-        });
+    const words = [
+      ...new Set((input.query ?? "").toLowerCase().split(/\s+/u)),
+    ].filter(Boolean);
+    const matches = names ?? rankDiscoveryMatches(this.tools, words);
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
     const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
@@ -123,7 +152,7 @@ export class ProgressiveToolCatalog {
       next_step:
         selected.length === 0
           ? matches.length === 0
-            ? "No matches. Try fewer or different task keywords, or browse without query."
+            ? "No matches. Try different task keywords, or browse without query."
             : "No remaining matches at this offset. Use offset 0 to restart this query, or select an earlier offset."
           : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
     };
