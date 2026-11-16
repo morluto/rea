@@ -105,6 +105,7 @@ const limitRecovery = (
       return fixedAllowanceOptions(
         "The native export structural decoding allowance",
         "parser",
+        { limit: maximum, unit: "bytes" },
       );
   }
 };

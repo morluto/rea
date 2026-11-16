@@ -119,8 +119,9 @@ const elfUnwindFailurePrimary = (
       {
         cause,
         ...fixedAllowanceOptions(
-          "The 16 MiB ELF structural decoding budget",
+          "The ELF structural decoding allowance",
           "parser",
+          { limit: cause.maximum_bytes, unit: "bytes" },
         ),
       },
     );
@@ -151,10 +152,12 @@ const elfUnwindFailurePrimary = (
           ...(cause.boundary === undefined
             ? {}
             : structural
-              ? fixedAllowanceOptions(
-                  "The ELF unwind structural decoding budget",
-                  "parser",
-                )
+              ? cause.fixedAllowance === undefined
+                ? {}
+                : {
+                    retryable: false as const,
+                    fixedAllowance: cause.fixedAllowance,
+                  }
               : {
                   retryable: false as const,
                   remediationAction: inputBudgetRemediation(

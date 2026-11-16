@@ -210,6 +210,10 @@ const failurePrimary = (
         ...fixedAllowanceOptions(
           "The native initializer structural allowance",
           "parser",
+          {
+            limit: cause.failure.limit.maximum,
+            ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+          },
         ),
       },
     );
@@ -224,6 +228,7 @@ const failurePrimary = (
         ...fixedAllowanceOptions(
           "The native initializer structural allowance",
           "parser",
+          { limit: cause.maximum_bytes, unit: "bytes" },
         ),
       },
     );

@@ -78,6 +78,7 @@ export class PeLoadConfigProvider implements PeLoadConfigPort {
 const limitRecovery = (
   limit: PeLoadConfigLimit | null,
   input: InspectPeLoadConfigInput,
+  maximum: number,
 ): ResourceConstraintRecovery =>
   limit === "callbacks"
     ? {
@@ -87,7 +88,10 @@ const limitRecovery = (
             ? `The image exceeds the ${String(MAX_INSPECT_PE_LOAD_CONFIG_CALLBACKS)}-callback ceiling; select a smaller artifact.`
             : `Raise max_callbacks above ${String(input.max_callbacks)} or select a smaller artifact.`,
       }
-    : fixedAllowanceOptions("The PE structural decoding allowance", "parser");
+    : fixedAllowanceOptions("The PE structural decoding allowance", "parser", {
+        limit: maximum,
+        unit: "bytes",
+      });
 
 const peLoadConfigFailure = (
   cause: unknown,
@@ -106,7 +110,7 @@ const peLoadConfigFailure = (
           MAX_INSPECT_PE_LOAD_CONFIG_FILE_BYTES,
         ),
       limits: PE_LOAD_CONFIG_LIMITS,
-      limitRecovery: (limit) => limitRecovery(limit, input),
+      limitRecovery: (limit, maximum) => limitRecovery(limit, input, maximum),
     },
     snapshot,
   );

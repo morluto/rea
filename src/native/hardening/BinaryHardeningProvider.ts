@@ -145,6 +145,7 @@ const binaryHardeningFailurePrimary = (
         ...fixedAllowanceOptions(
           "The binary hardening structural allowance",
           "parser",
+          { limit: cause.maximum_bytes, unit: "bytes" },
         ),
       },
     );

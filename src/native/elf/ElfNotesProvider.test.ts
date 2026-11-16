@@ -8,6 +8,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { analysisRefusalRemediation } from "../../domain/analysisRefusal.js";
 import { elfNotesSchema } from "../../domain/native/elfNotes.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -99,12 +100,22 @@ describe("ELF note provider failures", () => {
     expect(error.message).toMatch(/byte budget/u);
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
-    expect(projected.remediation.action).toContain(
-      "ELF note text, hash, and scan budget",
+    // The parser names the ceiling with the value it enforced.
+    const limit = Number(/(\d+)-byte budget/u.exec(error.message)?.[1]);
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit,
+      unit: "bytes",
+    });
+    expect(error.fixedAllowance).toBeDefined();
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_elf_notes",
+        ceiling: error.fixedAllowance!,
+      }),
     );
-    expect(projected.remediation.action).toMatch(/admitted image length/u);
-    expect(projected.remediation.action).toMatch(/do not raise it/u);
-    expect(projected.remediation.action).not.toMatch(/available host memory/u);
   });
 
   it("keeps a caller file-size budget distinct from host memory", async () => {
