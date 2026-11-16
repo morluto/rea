@@ -846,3 +846,28 @@ it("keeps directory and link-only symlink TOC records without heap bodies", asyn
     await reader.close();
   }
 });
+
+it("cancels a paused memory-backed payload member before it is read", async () => {
+  const decoded = 1024 * 1024;
+  const { reader, entries } = await entriesOf(
+    buildExpandingPayloadsProductArchive(decoded),
+    "paused-payload.pkg",
+    decoded * 4,
+  );
+  try {
+    const big = entries.find((entry) => entry.path === "A.pkg/Payload/big.bin");
+    expect(big).toBeDefined();
+    const controller = new AbortController();
+    const stream = await reader.open(big!, controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stream.readableLength).toBeGreaterThan(0);
+    const closed = new Promise<unknown>((resolve) => {
+      stream.once("close", () => resolve(stream.errored));
+    });
+    controller.abort(new Error("caller stopped"));
+    await expect(closed).resolves.toMatchObject({ reason: "cancelled" });
+    expect(stream.destroyed).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});

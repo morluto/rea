@@ -354,7 +354,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
             },
           },
         );
-      const output = this.#memberStream(stored, signal);
+      const output = this.#memberStream(stored, signal, cancellationFailure);
       ownArtifactStream(source, output, {
         scope: this.#scope,
         streams: this.#streams,
@@ -1064,8 +1064,13 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     return decoded.value;
   }
 
-  #memberStream(entry: StoredEntry, signal?: AbortSignal): Transform {
+  #memberStream(
+    entry: StoredEntry,
+    signal: AbortSignal | undefined,
+    cancellationFailure: (reason: unknown) => Error,
+  ): Transform {
     let bytes = 0;
+    let validating = false;
     const expected =
       entry.origin.kind === "memory"
         ? entry.origin.bytes.length
@@ -1081,7 +1086,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       if (expected !== null && bytes !== expected) throw mismatch();
       await this.#source.read(signal);
     };
-    return new Transform({
+    const output = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         bytes += chunk.length;
         if (expected !== null && bytes > expected) {
@@ -1091,6 +1096,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         callback(null, chunk);
       },
       flush(callback) {
+        validating = true;
         void check().then(
           () => callback(),
           (cause: unknown) =>
@@ -1102,5 +1108,18 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         );
       },
     });
+    // Retained bytes involve no descriptor I/O, so a paused consumer must not
+    // hold cancellation until production finishes. Final validation, once
+    // started, still owns failure precedence.
+    if (entry.origin.kind === "memory" && signal !== undefined) {
+      const onAbort = (): void => {
+        if (!validating && !output.destroyed)
+          output.destroy(cancellationFailure(signal.reason));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      output.once("close", () => signal.removeEventListener("abort", onAbort));
+      if (signal.aborted) onAbort();
+    }
+    return output;
   }
 }
