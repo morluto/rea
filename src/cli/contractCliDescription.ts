@@ -753,18 +753,30 @@ const camelCase = (field: string): string =>
 const admitsOmission = (field: z.ZodType): boolean =>
   z.object({ value: field }).safeParse({}).success;
 
+const isWrapper = (value: z.ZodType) =>
+  value instanceof z.ZodOptional ||
+  value instanceof z.ZodExactOptional ||
+  value instanceof z.ZodDefault ||
+  value instanceof z.ZodPrefault ||
+  value instanceof z.ZodNullable ||
+  value instanceof z.ZodReadonly;
+
 const core = (value: z.ZodType): z.ZodType => {
   let current = value;
-  while (
-    current instanceof z.ZodOptional ||
-    current instanceof z.ZodExactOptional ||
-    current instanceof z.ZodDefault ||
-    current instanceof z.ZodPrefault ||
-    current instanceof z.ZodNullable ||
-    current instanceof z.ZodReadonly
-  )
-    current = current.unwrap() as z.ZodType;
+  while (isWrapper(current)) current = current.unwrap() as z.ZodType;
   return current;
+};
+
+/**
+ * The description of a field, read through wrappers such as `.optional()`:
+ * zod does not carry a wrapped schema's description to its wrapper, and the
+ * advertised JSON Schema shows the wrapped description.
+ */
+const describedThroughWrappers = (value: z.ZodType): string | undefined => {
+  let current = value;
+  while (current.description === undefined && isWrapper(current))
+    current = current.unwrap() as z.ZodType;
+  return current.description;
 };
 
 /**
@@ -1401,7 +1413,8 @@ const describeTargetOpening = (
           throw new Error(`${opener}.${field} does not admit ${value}`);
       schema = z.enum(projected.values).optional();
     }
-    const description = projected.description ?? declared.description;
+    const description =
+      projected.description ?? describedThroughWrappers(declared);
     if (description !== undefined) schema = schema.describe(description);
     return {
       field,
@@ -1895,16 +1908,12 @@ export const describeContractCommand = <
             : text;
       if (viewSelection && viewDelivery !== undefined)
         schema = schema.describe(viewOptionHelp(viewDelivery));
-      else if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
       // The flag spells null, so the option itself takes only a value.
       if (!declared.safeParse(null).success)
         throw new Error(`${contract.name}.${field} does not admit null`);
       assertArgvField(contract.name, field, declared);
       schema = argvDecimal(core(declared).optional());
-      if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else if (delivery)
       schema =
         viewDelivery?.viewSelectsSummary === true
@@ -1917,8 +1926,6 @@ export const describeContractCommand = <
           ? z.array(localPathStringSchema)
           : localPathStringSchema;
       schema = admitsOmission(declared) ? admitted.optional() : admitted;
-      if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else {
       assertArgvField(contract.name, field, declared);
       schema = argvDecimal(argvOptional(declared));
@@ -1935,9 +1942,12 @@ export const describeContractCommand = <
       schema = schema.default(projected.default as never);
       if (described !== undefined) schema = schema.describe(described);
     }
-    if (projected?.description !== undefined)
-      schema = schema.describe(projected.description);
-    const description = schema.description;
+    const description =
+      projected?.description ??
+      schema.description ??
+      describedThroughWrappers(declared);
+    if (description !== undefined && description !== schema.description)
+      schema = schema.describe(description);
     const value = core(declared);
     const selector = selectorOptions[field];
     let selectorOption: ContractCliSelectorOption | undefined;
@@ -2060,7 +2070,8 @@ export const describeContractCommand = <
           // An omitted member stays omitted; the contract applies its default.
           schema = argvDecimal(omittable(withoutDefault(memberDeclared)));
         }
-        const description = projected.description ?? memberDeclared.description;
+        const description =
+          projected.description ?? describedThroughWrappers(memberDeclared);
         if (description !== undefined) schema = schema.describe(description);
         const value = core(memberDeclared);
         return [
