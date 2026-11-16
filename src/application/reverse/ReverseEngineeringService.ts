@@ -71,6 +71,7 @@ import {
 import { classifyLaunchFailure } from "../../process/classifyProviderOutcome.js";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
@@ -780,11 +781,13 @@ export class ReverseEngineeringService {
         outputLimitReached = true;
       // Host capacity and an oversized argument list are classified by the
       // shared launch owner; a refusal keeps this provider's repair below.
-      const launch = launcherFailureOf(
-        cause instanceof LinuxOwnedProcessPrerequisiteError
-          ? cause.cause
-          : cause,
-      );
+      const launch =
+        preparationHostCapacityFailure(ownedCause) ??
+        launcherFailureOf(
+          cause instanceof LinuxOwnedProcessPrerequisiteError
+            ? cause.cause
+            : cause,
+        );
       if (
         earlyFailure === undefined &&
         (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
