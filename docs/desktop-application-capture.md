@@ -280,8 +280,12 @@ looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
 has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
 normalized), and then in the `ldconfig -p` cache entries for the executable's
-machine. Each candidate's ELF machine, class and byte order must match the
-needing image before it is selected or its dependencies are walked. A foreign
+machine. Dynamic library names and search paths retain their original UTF-8
+filesystem bytes, including a leading BOM as filename content. ELF strings that
+cannot be represented exactly as UTF-8 filesystem paths leave the walk incomplete
+with an explicit reason; they are not reinterpreted as Latin-1 or replaced with
+Unicode replacement characters. Each candidate's ELF machine, class and byte
+order must match the needing image before it is selected or its dependencies are walked. A foreign
 search-path candidate is skipped in favor of later directories or the cache; a
 cache architecture flag alone does not establish compatibility. If a candidate's
 identity cannot be read, that lookup stays unresolved, without selecting its
