@@ -25,7 +25,7 @@ import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "../mcpDoctorOptions.js";
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);
 
-/** Supplement Incur's built-in setup instructions without replacing its help. */
+/** Supplement the completion setup page with Zsh initialization guidance. */
 export const completionHelpNote = (
   global: CliGlobalArguments,
 ): string | undefined => {
@@ -109,7 +109,6 @@ const completionCommands = (
     description: COMPLETIONS_DESCRIPTION,
     commands: new Map(CLI_COMPLETION_SHELLS.map((shell) => [shell, {}])),
   });
-  // REA uses sync:false, so the framework's skills integration is disabled.
   return commands;
 };
 
@@ -146,7 +145,7 @@ export const createCliCompletions = (
     if (!Number.isSafeInteger(index) || index < 0 || index > words.length)
       return true;
     // Consume global option values before scope resolution. A value named
-    // 'mcp' is still data; leave an unfinished flag for Incur's enum hints.
+    // 'mcp' is still data; retain an unfinished flag for enum hints.
     const before = parseCliGlobalArguments(words.slice(1, index)).command;
     if (before.includes("--")) return true;
     const input = [cli.name, ...before, words[index] ?? ""];
@@ -178,14 +177,15 @@ export const createCliCompletions = (
     );
     if (command[offset] !== "completions" || selected === undefined)
       return false;
-    // Help/manifests/schema/version and server controls keep framework precedence.
+    // Help, manifests and server controls precede a completion script.
     const values = new Set(global.outputValues.map(({ index }) => index));
     if (
       global.arguments.some(
         (token, index) =>
           !values.has(index) &&
-          ((CLI_BUILTIN_FLAGS.has(token) && !OUTPUT_SWITCHES.has(token)) ||
-            token === "--version"),
+          CLI_BUILTIN_FLAGS.has(token) &&
+          token !== "--schema" &&
+          !OUTPUT_SWITCHES.has(token),
       )
     )
       return false;

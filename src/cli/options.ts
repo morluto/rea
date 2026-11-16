@@ -28,7 +28,7 @@ const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
 
 /**
- * Incur advertises Zod's output view. Publish the input view so an argv token
+ * Command schemas advertise Zod's output view. Publish the input view so an argv token
  * grammar that transforms text survives `--schema` and other SDK conversions.
  */
 export const publishArgvInput = <Field extends z.ZodType>(

@@ -1,7 +1,7 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 import {
@@ -31,7 +31,7 @@ const effects = {
 };
 
 const verifyReplay = async (
-  cli: ReturnType<typeof Cli.create>,
+  cli: ReturnType<typeof createCommandCli>,
   path: string,
   snapshot: string,
   root: string,
@@ -155,7 +155,7 @@ it.each([
       createNativeBinarySession: createSession,
       createManagedBinarySession: createSession,
     };
-    const cli = Cli.create("rea-native-trace-cli-source", { sync: false });
+    const cli = createCommandCli();
     registerCoreBinaryCommands(
       cli,
       pino({ enabled: false }),

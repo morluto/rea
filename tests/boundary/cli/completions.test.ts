@@ -1,5 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { resolve } from "node:path";
-import { Cli } from "incur";
 import { z } from "zod";
 import { expect, it } from "vitest";
 
@@ -12,7 +12,7 @@ type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 const registry = () => {
-  const cli = Cli.create("rea", { sync: false }) as unknown as CliInstance;
+  const cli = createCommandCli() as unknown as CliInstance;
   registerCliCommand(cli, "instructions", {
     options: z.object({
       procedure: z.string().optional(),
@@ -134,7 +134,17 @@ it("shares Bash registration across ordinary and protocol routes while retaining
   expect(direct).toContain("type compopt");
   expect(direct).toContain("||\n    complete -o default -o bashdefault");
   expect(ordinary(["completions", "bash", "--help"], {})).toBe(false);
-  expect(ordinary(["completions", "bash", "--schema"], {})).toBe(false);
+  for (const flag of ["--schema", "--version"]) {
+    let script = "";
+    expect(
+      ordinary(["completions", "bash", flag], {
+        stdout: (text) => {
+          script += text;
+        },
+      }),
+    ).toBe(true);
+    expect(script).toBe(direct);
+  }
 });
 
 workspaceCliTest(
