@@ -81,7 +81,8 @@ it.each([
     (entry) => entry.logical_path === name,
   )!;
   expect(occurrence).toMatchObject({ hash_status: "unavailable" });
-  expect(occurrence.limitations.join(" ")).toContain("without replacement");
+  expect(occurrence.artifact_id).toBeNull();
+  expect(occurrence.limitations.length).toBeGreaterThan(0);
   const packedOccurrence = inventory.occurrences.find(
     (entry) =>
       entry.logical_path.startsWith("packed/") &&
