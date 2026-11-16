@@ -75,7 +75,9 @@ describe("Kimi Code configuration paths and skills", () => {
     expect(
       clientSkillDirectories("/home/a", ["kimi"], {}, HOST_PLATFORM.platform)
         .directories,
-    ).toEqual([{ client: "shared", directory: "/home/a/.agents/skills" }]);
+    ).toEqual([
+      { client: "shared", directory: join("/home/a", ".agents", "skills") },
+    ]);
   });
 });
 
