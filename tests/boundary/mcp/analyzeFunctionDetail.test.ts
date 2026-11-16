@@ -22,6 +22,7 @@ import { parseGhidraFunctionInput } from "../../../src/ghidra/GhidraFunctionValu
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { recordsWorkflowSession } from "../../fixtures/workflowSession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
 const partialCallees = {
@@ -93,7 +94,10 @@ const connect = async (
       withAdmittedAnalysis: withAdmittedAnalysis({ kind: "fixed", analysis }),
     },
   );
-  const client = new Client({ name: "fn-detail-client", version: "1" });
+  const client = new Client(
+    { name: "fn-detail-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -299,6 +303,23 @@ it("returns the complete dossier inline when detail is complete", async () => {
     pseudocode: dossier.pseudocode,
   });
   expect(evidence.normalized_result).toHaveProperty("native_value_flow");
+});
+
+it("records a completed workflow's Evidence once before delivering it", async () => {
+  const { client, records } = await connect();
+  const record = vi.spyOn(records, "recordEvidence");
+  const parent = await createTestTempDirectory("rea-workflow-once-");
+  const reply = await client.callTool({
+    name: "decompile_all",
+    arguments: { output_directory: join(parent, "out") },
+  });
+  expect(reply.isError).not.toBe(true);
+  const delivered = parseEvidence(reply.structuredContent);
+  expect(
+    record.mock.calls.filter(
+      ([evidence]) => evidence.evidence_id === delivered.evidence_id,
+    ),
+  ).toHaveLength(1);
 });
 
 it("rejects a summary request before analysis when the server retains no Evidence", async () => {

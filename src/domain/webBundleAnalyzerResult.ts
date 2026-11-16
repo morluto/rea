@@ -6,6 +6,7 @@ import { browserOriginSchema } from "./browserObservation.js";
 import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
+  type WebBundleCallSite,
 } from "./webBundleAnalysis.js";
 import {
   createWebBundleAnalysisAccumulator,
@@ -177,6 +178,7 @@ export const buildCapturedWebBundleAnalysis = (
       failedScripts: accumulator.failedScripts,
       recoveredScripts: accumulator.recoveredScripts,
       widenedScripts: accumulator.widenedScripts,
+      unresolvedEndpoints: accumulator.unresolvedEndpoints,
       unavailableAnalyses,
       sourceMaps,
       omittedScripts,
@@ -220,6 +222,10 @@ const mergeScriptResults = (
     appendAll(accumulator.edges, result.observations.edges);
     appendAll(accumulator.routes, result.observations.routes);
     appendAll(accumulator.endpoints, result.observations.endpoints);
+    appendAll(
+      accumulator.unresolvedEndpoints,
+      result.observations.unresolved_endpoints,
+    );
     appendAll(accumulator.webMcp, result.observations.webmcp_declarations);
     appendAll(accumulator.inferences, result.inferences);
   }
@@ -266,6 +272,7 @@ interface UnknownsInput {
   readonly failedScripts: readonly string[];
   readonly recoveredScripts: readonly string[];
   readonly widenedScripts: readonly string[];
+  readonly unresolvedEndpoints: readonly WebBundleCallSite[];
   readonly unavailableAnalyses: readonly Extract<
     WebBundleScriptAnalysis,
     { readonly status: "unavailable" }
@@ -340,6 +347,23 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
             : { refused_phase: refusedPhase }),
         }),
       )),
+  ...(input.unresolvedEndpoints.length === 0
+    ? []
+    : [
+        {
+          dimension: "endpoints" as const,
+          reason:
+            "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+          affected_script_keys: [
+            ...new Set(
+              input.unresolvedEndpoints.map(
+                ({ location }) => location.script_key,
+              ),
+            ),
+          ],
+          call_sites: [...input.unresolvedEndpoints],
+        },
+      ]),
   ...(input.widenedScripts.length === 0
     ? []
     : [

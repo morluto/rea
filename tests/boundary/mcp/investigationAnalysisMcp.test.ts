@@ -27,6 +27,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("aggregates comparison Evidence and records an approved runtime gap", async () => {
   const { session, server, client } = await connected();
@@ -134,7 +135,10 @@ it("keeps call-path publication ahead of close_binary record draining", async ()
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-close-race", version: "1" });
+  const client = new Client(
+    { name: "investigation-close-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const callPathPreparation = phaseGate();
@@ -616,7 +620,10 @@ const connected = async (analysis?: AnalysisOperationPort) => {
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "investigation-test", version: "1" });
+  const client = new Client(
+    { name: "investigation-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

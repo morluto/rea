@@ -73,6 +73,10 @@ import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCle
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { runOwned } from "../providers/runOwned.js";
 import {
+  processInspectionFailure,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
+import {
   readLldbObservationJournal,
   readBoundedPrefix,
   readPartialCapture,
@@ -279,6 +283,7 @@ export class LldbCallTracer implements NativeCallTracer {
       targetPid: undefined,
       processStopped: true,
       targetStopped: true,
+      identityInspections: [],
     };
     let primaryFailure: AnalysisError | undefined;
     const finalized = await runOwned(
@@ -370,15 +375,36 @@ export class LldbCallTracer implements NativeCallTracer {
           ),
       },
     );
+    // An identity inspection failure always fails the trace: the bridge
+    // refuses an unavailable identity, and an unverified target exit is a
+    // cleanup failure. Only failures carry these descriptors.
     if (finalized.kind === "completed") return ok(finalized.value);
     if (
       finalized.kind !== "completed-cleanup-retained" &&
       finalized.cleanup.kind === "released"
     )
       return err(
-        resolvedAnalysisError(bindLldbCleanup(finalized.error, owner)),
+        this.#retainIdentityInspections(
+          owner,
+          resolvedAnalysisError(bindLldbCleanup(finalized.error, owner)),
+        ),
       );
-    return err(finalized.error);
+    return err(this.#retainIdentityInspections(owner, finalized.error));
+  }
+
+  /** Move identity-read descriptors to the inspection scope that close retries. */
+  #retainIdentityInspections(
+    owner: RetainedLldbResources,
+    failure: AnalysisError,
+  ): AnalysisError {
+    for (const cause of owner.identityInspections.splice(0))
+      failure = retainProcessInspectionCleanup(
+        cause,
+        failure,
+        this.#inspectionResources,
+        OPERATION,
+      );
+    return failure;
   }
 
   /** Retry retained LLDB cleanup without abandoning its process or runtime owner. */
@@ -410,7 +436,7 @@ export class LldbCallTracer implements NativeCallTracer {
     return call;
   }
 
-  async #retryPendingCleanup(): Promise<ProviderCleanupError | undefined> {
+  async #retryPendingCleanup(): Promise<AnalysisError | undefined> {
     const owner = this.#pendingCleanup;
     if (owner === undefined) return undefined;
     const failures: unknown[] = [];
@@ -452,10 +478,7 @@ export class LldbCallTracer implements NativeCallTracer {
         owner.targetStopped = true;
       else {
         try {
-          const targetTermination = await ensureTerminated(
-            owner.targetPid,
-            owner.targetIdentity,
-          );
+          const targetTermination = await ensureTerminated(owner);
           if (targetTermination !== "terminated")
             failures.push(
               new Error(targetTerminationReason(targetTermination)),
@@ -475,10 +498,13 @@ export class LldbCallTracer implements NativeCallTracer {
         failures.push(cause);
       }
     }
-    return lldbCleanupFailure(
+    return this.#retainIdentityInspections(
       owner,
-      failures.map(errorMessage).join("; "),
-      new AggregateError(failures, "LLDB cleanup remains incomplete"),
+      lldbCleanupFailure(
+        owner,
+        failures.map(errorMessage).join("; "),
+        new AggregateError(failures, "LLDB cleanup remains incomplete"),
+      ),
     );
   }
 
@@ -678,6 +704,8 @@ export class LldbCallTracer implements NativeCallTracer {
     }
     retained.supervisor = exited.cleanupOwner;
     retained.targetIdentity = exited.targetIdentity;
+    if (exited.targetIdentityInspection !== undefined)
+      retained.identityInspections.push(exited.targetIdentityInspection);
     retained.processStopped =
       exited.cleanupOwner === undefined && exited.cleanupFailure === undefined;
     retained.targetStopped = !exited.targetLaunched;
@@ -695,7 +723,7 @@ export class LldbCallTracer implements NativeCallTracer {
     const targetTermination: TargetTermination =
       exited.targetLaunched &&
       !bridgeProvesTargetGone(published, retained.targetPid)
-        ? await ensureTerminated(retained.targetPid, exited.targetIdentity)
+        ? await ensureTerminated(retained)
         : "terminated";
     retained.targetStopped = targetTermination === "terminated";
     if (
@@ -1289,6 +1317,11 @@ interface RetainedLldbResources {
   targetPid: number | undefined;
   processStopped: boolean;
   targetStopped: boolean;
+  /**
+   * Inspection-owner rejections of target identity reads. Their descriptors
+   * move to the tracer's inspection scope when the trace or retry reports.
+   */
+  readonly identityInspections: unknown[];
 }
 
 /** Preserve compiler facts and a foreign helper marker without inventing an LLDB exit. */
@@ -1397,6 +1430,8 @@ type LldbExit =
       readonly targetIdentity: string | undefined;
       /** Why the host acknowledged the launched target's identity as unavailable. */
       readonly targetIdentityFailure?: string;
+      /** The inspection-owner rejection of that read, which may own descriptors. */
+      readonly targetIdentityInspection?: unknown;
       readonly cleanupFailure: string | undefined;
       /** The work budget elapsed before this physical LLDB exit was selected. */
       readonly overran?: true;
@@ -1445,6 +1480,7 @@ const runLldb = async (
   );
   let targetIdentity: string | undefined;
   let targetIdentityFailure: string | undefined;
+  let targetIdentityInspection: unknown;
   let supervisor: ProviderProcessSupervisor | undefined;
   let retained = false;
   let processFailureBeforeInterruption:
@@ -1477,6 +1513,9 @@ const runLldb = async (
       targetLaunched: supervisor !== undefined,
       targetIdentity,
       ...(targetIdentityFailure === undefined ? {} : { targetIdentityFailure }),
+      ...(targetIdentityInspection === undefined
+        ? {}
+        : { targetIdentityInspection }),
       cleanupFailure:
         stopped?.status === "incomplete" ? stopped.reason : undefined,
       ...(overran === undefined ? {} : { overran }),
@@ -1535,6 +1574,8 @@ const runLldb = async (
         } catch (cause: unknown) {
           observation = undefined;
           targetIdentityFailure = errorMessage(cause);
+          if (processInspectionFailure(cause) !== undefined)
+            targetIdentityInspection = cause;
         }
         if (observation?.state === "readable")
           targetIdentity = observation.identity;
@@ -1605,8 +1646,24 @@ type TargetTermination =
   | "identity-changed"
   | "signal-did-not-stop";
 
-/** Only signal a surviving target when its captured OS start identity still matches. */
+/**
+ * Only signal a surviving target when its captured OS start identity still
+ * matches. An identity check the inspection owner rejects leaves the target
+ * unverified and keeps the rejection on the owner for retention.
+ */
 const ensureTerminated = async (
+  owner: RetainedLldbResources,
+): Promise<TargetTermination> => {
+  try {
+    return await terminateTarget(owner.targetPid, owner.targetIdentity);
+  } catch (cause: unknown) {
+    if (processInspectionFailure(cause) === undefined) throw cause;
+    owner.identityInspections.push(cause);
+    return "identity-unavailable";
+  }
+};
+
+const terminateTarget = async (
   pid: number | undefined,
   identity: string | undefined,
 ): Promise<TargetTermination> => {

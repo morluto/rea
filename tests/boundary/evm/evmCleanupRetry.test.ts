@@ -994,3 +994,51 @@ it("keeps the selected limiter and child environment together while later inspec
     await rm(workspace, { recursive: true, force: true });
   }
 });
+
+it.each([
+  ["the caller's own abort error", "own", true],
+  ["an abort error carrying another reason", "foreign", false],
+  ["a reasonless AbortError", "reasonless", false],
+] as const)(
+  "counts %s from the worker launch as cancellation: %s",
+  async (_label, thrown, cancelled) => {
+    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-abort-owner-"));
+    const input = join(workspace, "selected.hex");
+    await writeFile(input, "0x60006000f3\n");
+    const controller = new AbortController();
+    const callerReason = { requested: "stop inspection" };
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      async () => {
+        controller.abort(callerReason);
+        // An abort error raised while the caller's signal is also aborted.
+        throw thrown === "reasonless"
+          ? new DOMException("Aborted elsewhere", "AbortError")
+          : Object.assign(new Error("The operation was aborted"), {
+              name: "AbortError",
+              code: "ABORT_ERR",
+              cause:
+                thrown === "own"
+                  ? callerReason
+                  : { requested: "another owner's deadline" },
+            });
+      },
+      undefined,
+      SIMULATED_LINUX_X64,
+    );
+    try {
+      const result = await provider.inspect(
+        { path: input, encoding: "hex" },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected the launch to fail");
+      if (cancelled) {
+        expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+        expect(result.error.cause).toBe(callerReason);
+      } else expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
+    } finally {
+      await provider.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  },
+);

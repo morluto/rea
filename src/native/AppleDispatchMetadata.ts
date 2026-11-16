@@ -15,7 +15,6 @@ import {
   parseFailureFromCause,
 } from "../domain/parseFailure.js";
 import { setImmediate as immediate } from "node:timers/promises";
-import { createHash } from "node:crypto";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
   DEFAULT_DISPATCH_METADATA_INPUT_BYTES,
@@ -69,6 +68,7 @@ import {
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Decode validated little-endian 64-bit Apple Objective-C metadata without loading target code. */
 export function* decodeAppleDispatchMetadataSteps(
@@ -427,7 +427,7 @@ export const inspectAppleDispatchMetadata = async (
         cancellationFailure: () => cancelled(),
       });
       if (read === undefined) throw inputBudgetExceeded(admission, null);
-      const sha256 = createHash("sha256").update(read).digest("hex");
+      const sha256 = sha256Hex(read);
       if (sha256 !== target.sha256)
         throw new EvidenceIntegrityError(
           "Apple metadata target digest changed after session binding",

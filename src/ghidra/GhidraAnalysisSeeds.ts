@@ -1,5 +1,5 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
-import { createHash } from "node:crypto";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
@@ -12,7 +12,7 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
-  ghidraFileFailure,
+  ghidraFileDialect,
 } from "./GhidraFileArtifacts.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -24,6 +24,7 @@ import {
   ghidraSeedLineError,
   type GhidraSeedEntry,
 } from "../domain/native/ghidraSeedFile.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Seed file format admitted by this adapter. */
 export const GHIDRA_SEED_FORMAT = "rea-ghidra-seeds-v1";
@@ -70,9 +71,6 @@ export const ghidraSeedReportSchema = z
     { message: "Seed outcomes must account for exactly the reported entries." },
   );
 export type GhidraSeedReport = z.infer<typeof ghidraSeedReportSchema>;
-
-const sha256 = (bytes: Buffer | string): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** Parse seed facts before final close so later cleanup cannot replace invalid input. */
 const readSeeds = (
@@ -124,10 +122,13 @@ export const resolveGhidraAnalysisSeeds = async (
         entries = await readSeeds(path, resources, signal);
       } catch (cause: unknown) {
         return err(
-          ghidraFileFailure(cause, "resolve_analysis_profile", {
-            setting: "REA_GHIDRA_SEED_FILE",
-            path: configured,
-          }),
+          classifyProviderFailure(
+            cause,
+            ghidraFileDialect("resolve_analysis_profile", {
+              setting: "REA_GHIDRA_SEED_FILE",
+              path: configured,
+            }),
+          ),
         );
       }
       const normalized = normalizedGhidraSeeds(entries);
@@ -137,15 +138,18 @@ export const resolveGhidraAnalysisSeeds = async (
         format: GHIDRA_SEED_FORMAT,
         path,
         configured_path: configured,
-        sha256: sha256(normalized),
+        sha256: sha256Hex(normalized),
         entries: tally,
       });
     })
     .catch((cause: unknown) =>
       err(
-        ghidraFileFailure(cause, "resolve_analysis_profile", {
-          setting: "REA_GHIDRA_SEED_FILE",
-        }),
+        classifyProviderFailure(
+          cause,
+          ghidraFileDialect("resolve_analysis_profile", {
+            setting: "REA_GHIDRA_SEED_FILE",
+          }),
+        ),
       ),
     );
 
@@ -165,7 +169,7 @@ export const snapshotGhidraAnalysisSeeds = async (
         throw new GhidraAdmissionError("seed_path_differs");
       const entries = await readSeeds(commitment.path, resources, signal);
       const normalized = normalizedGhidraSeeds(entries);
-      if (sha256(normalized) !== commitment.sha256)
+      if (sha256Hex(normalized) !== commitment.sha256)
         throw new GhidraAdmissionError("seed_changed", {
           path: commitment.path,
         });
@@ -176,10 +180,13 @@ export const snapshotGhidraAnalysisSeeds = async (
       return path;
     })
     .catch((cause: unknown) => {
-      throw ghidraFileFailure(cause, "open_binary", {
-        setting: "REA_GHIDRA_SEED_FILE",
-        path: commitment.path,
-      });
+      throw classifyProviderFailure(
+        cause,
+        ghidraFileDialect("open_binary", {
+          setting: "REA_GHIDRA_SEED_FILE",
+          path: commitment.path,
+        }),
+      );
     });
 
 const totalEntries = (commitment: GhidraSeedCommitment): number =>

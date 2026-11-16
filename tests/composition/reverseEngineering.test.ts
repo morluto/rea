@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
 import { ok } from "../../src/domain/result.js";
@@ -832,11 +832,31 @@ it("shares one preflight deadline across stat and digest", async () => {
       typeof import("node:fs").createReadStream
     >;
   };
-  const started = performance.now();
-  await expect(
-    digestFile("/tmp/rea-preflight-deadline", undefined, stat, 200, open),
-  ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-  expect(performance.now() - started).toBeLessThan(280);
+  // The 150 ms stat and the stalled digest share one 200 ms deadline on a
+  // fake clock: the digest must time out at 200 ms, not 150 + 200 ms.
+  vi.useFakeTimers();
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+  let outcome: unknown;
+  void digestFile(
+    "/tmp/rea-preflight-deadline",
+    undefined,
+    stat,
+    200,
+    open,
+  ).then(
+    () => {
+      outcome = "digested";
+    },
+    (cause: unknown) => {
+      outcome = cause;
+    },
+  );
+  await vi.advanceTimersByTimeAsync(199);
+  expect(outcome).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(outcome).toMatchObject({ code: "ETIMEDOUT" });
 });
 
 it("retains an explicit null reason when digest admission is already cancelled", async () => {

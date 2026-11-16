@@ -37,6 +37,7 @@ import { err, ok } from "../../domain/result.js";
 import { APPLE_IPS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
   AppleIpsResourceFailure,
+  type AppleIpsFixedBoundary,
   type AppleIpsSelectedBoundary,
 } from "./AppleIps.errors.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
@@ -242,9 +243,17 @@ const resourceRecovery = (
         remediationAction: budgetRemediation(input, boundary),
       }
     : fixedAllowanceOptions(
-        `The IPS ${boundary.replaceAll("_", " ")} allowance of ${String(cause.maximum)}`,
+        `The IPS ${boundary.replaceAll("_", " ")} allowance`,
         "parser",
+        { limit: cause.maximum, unit: FIXED_BOUNDARY_UNITS[boundary] },
       );
+};
+
+/** The unit each fixed IPS format ceiling counts. */
+const FIXED_BOUNDARY_UNITS: Readonly<Record<AppleIpsFixedBoundary, string>> = {
+  termination_reasons: "termination reasons",
+  unlisted_keys: "keys",
+  nesting: "levels",
 };
 
 const appleIpsFailurePrimary = (

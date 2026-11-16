@@ -303,8 +303,8 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
     details: {
       binding_mismatch: {
         target: {
-          snapshot: { sha256: await sha(path) },
-          selected: { sha256: await sha(other) },
+          snapshot: { identity: { sha256: await sha(path) } },
+          selected: { identity: { sha256: await sha(other) } },
         },
         profile_comparison: "not_compared",
       },

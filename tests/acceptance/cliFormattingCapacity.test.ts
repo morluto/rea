@@ -8,28 +8,41 @@ import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { workspaceCliTest } from "../support/cli/workspaceCliFixture.js";
 
-// Exercise the real dispatcher and pinned formatter with an authored capacity
-// failure. No engine-sized document or native target execution is needed.
-const formatterFailure = `
-  if (fmt !== "json" && fmt !== "jsonl" &&
-      (value?.operation === "inspect_managed_artifact" ||
-       value?.data?.operation === "inspect_managed_artifact" ||
-       value?.code === "target_unavailable" ||
-       value?.error?.code === "target_unavailable")) {
+// Exercise the real dispatcher and the pinned TOON and YAML encoders with an
+// authored capacity failure. No engine-sized document or native target
+// execution is needed.
+const encoderFailure = (value: string) => `
+  if (${value}?.operation === "inspect_managed_artifact" ||
+      ${value}?.data?.operation === "inspect_managed_artifact" ||
+      ${value}?.code === "target_unavailable" ||
+      ${value}?.error?.code === "target_unavailable") {
     process.stderr.write("REA_AUTHORED_FORMAT_CAPACITY\\n");
     throw new RangeError("Invalid string length");
   }
 `;
-const incurCapacityHook = `data:text/javascript,${encodeURIComponent(`
+const encoders = [
+  {
+    file: "/@toon-format/toon/dist/index.mjs",
+    signature: "function encode(input, options) {",
+    failure: encoderFailure("input"),
+  },
+  {
+    file: "/yaml/dist/public-api.js",
+    signature: "function stringify(value, replacer, options) {",
+    failure: encoderFailure("value"),
+  },
+];
+const encoderCapacityHook = `data:text/javascript,${encodeURIComponent(`
 import { registerHooks } from "node:module";
+const encoders = ${JSON.stringify(encoders)};
 registerHooks({
   load(url, context, next) {
     const loaded = next(url, context);
-    if (!url.endsWith("/incur/dist/Formatter.js")) return loaded;
+    const encoder = encoders.find(({ file }) => url.endsWith(file));
+    if (encoder === undefined) return loaded;
     const source = String(loaded.source);
-    const signature = "export function format(value, fmt = 'toon') {";
-    if (!source.includes(signature)) throw new Error("Pinned formatter boundary changed");
-    return { ...loaded, source: source.replace(signature, signature + ${JSON.stringify(formatterFailure)}) };
+    if (!source.includes(encoder.signature)) throw new Error("Pinned encoder boundary changed: " + encoder.file);
+    return { ...loaded, source: source.replace(encoder.signature, encoder.signature + encoder.failure) };
   },
 });
 `)}`;
@@ -107,7 +120,9 @@ for (const scenario of scenarios)
               ? `data:text/javascript,${encodeURIComponent('Object.defineProperty(process.stdout, "isTTY", { value: true });')}`
               : "data:text/javascript,",
             "--import",
-            scenario.format === "md" ? markdownCapacityHook : incurCapacityHook,
+            scenario.format === "md"
+              ? markdownCapacityHook
+              : encoderCapacityHook,
             resolve("scripts/rea.mjs"),
             "inspect-managed-artifact",
             target,
@@ -161,7 +176,7 @@ workspaceCliTest.skipIf(process.platform === "win32")(
       process.execPath,
       [
         "--import",
-        incurCapacityHook,
+        encoderCapacityHook,
         resolve("scripts/rea.mjs"),
         "inspect-managed-artifact",
         workspace.path("missing.dll"),

@@ -7,7 +7,7 @@ import {
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { canonicalJson } from "../domain/comparisonSemantics.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   DEFAULT_MCP_TOOLS_LIST_PAGE_BUDGET,

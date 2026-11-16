@@ -8,6 +8,16 @@ import { z } from "zod";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import type { FixedAllowanceKind } from "../../../src/domain/fixedAllowanceRemediation.js";
+
+/** Guidance for a 64 MiB plist ceiling, from the refusal's owning formatter. */
+const fixedCeilingRemediation = (name: string, kind: FixedAllowanceKind) =>
+  analysisRefusalRemediation({
+    kind: "fixed_ceiling",
+    operation: "inspect_plist",
+    ceiling: { name, kind, limit: 64 * 1024 * 1024, unit: "bytes" },
+  });
 
 const environment = {
   REA_LOG_LEVEL: "silent",
@@ -126,14 +136,17 @@ describe.skipIf(process.platform !== "darwin")(
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject({
           code: "capability_unavailable",
-          message: expect.stringContaining("(CLI: --relative-path)"),
+          message: expect.stringMatching(
+            /select another plist.*with the path input\.$/iu,
+          ),
           remediation: {
-            action: expect.stringMatching(
-              /select another plist.*path input.*--relative-path/iu,
-            ),
+            action: expect.stringMatching(/select another plist.*path input/iu),
           },
           details: {
             operation: "inspect_plist",
+            // The message names the contract field; the CLI renders its flag.
+            related_parameters: ["path"],
+            related_cli_flags: { path: "--relative-path" },
             reason: expect.stringContaining(
               `no readable default plist at ${join(directory, "Contents/Info.plist")}: no file exists there.`,
             ),
@@ -412,14 +425,22 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringMatching(
-              /64 MiB.*67108864.byte.*decode allowance.*no runtime override.*do not raise.*complete input.*unchanged request fails/iu,
+            action: fixedCeilingRemediation(
+              "The native binary plist decode allowance",
+              "parser",
             ),
           },
           details: {
             operation: "inspect_plist",
             resource: "memory",
             reported_limits: { maximum_decoded_bytes: 64 * 1024 * 1024 },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native binary plist decode allowance",
+              allowance_kind: "parser",
+              limit: 64 * 1024 * 1024,
+              unit: "bytes",
+            },
           },
         });
         expect(Buffer.compare(await readFile(path), source)).toBe(0);
@@ -442,13 +463,21 @@ describe.skipIf(process.platform !== "darwin")(
           code: "resource_constraint",
           retryable: false,
           remediation: {
-            action: expect.stringMatching(
-              /complete artifact.*64 MiB.*67108864.byte.*input allowance.*no runtime override/iu,
+            action: fixedCeilingRemediation(
+              "The native plist input allowance",
+              "input",
             ),
           },
           details: {
             resource: "file-size",
             reported_limits: { maximum_input_bytes: 64 * 1024 * 1024 },
+            refusal: {
+              kind: "fixed_ceiling",
+              allowance: "The native plist input allowance",
+              allowance_kind: "input",
+              limit: 64 * 1024 * 1024,
+              unit: "bytes",
+            },
           },
         });
         expect(JSON.stringify(result.json)).not.toMatch(hostMemoryAdvice);

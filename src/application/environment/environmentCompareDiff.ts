@@ -24,7 +24,7 @@ import {
   translateValue,
   type IdMap,
 } from "./environmentCompareIds.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 export const DIFFERENCE_CATEGORIES = [
   "status",

@@ -1,5 +1,4 @@
 import { observePythonBytecodePrefix } from "../domain/python/pythonBytecodeIdentity.js";
-import { createHash } from "node:crypto";
 import {
   MarshalReader,
   smallBitLength,
@@ -33,6 +32,7 @@ import {
   PythonPycResourceFailure,
 } from "./PythonPyc.errors.js";
 import { pythonPycBytecodeIdentity } from "./PythonPycBytecodeEquality.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const TYPE_NULL = 0x30;
 const TYPE_NONE = 0x4e;
@@ -225,7 +225,7 @@ const sha256 = (bytes: Buffer, work: PythonPycWork): string => {
   const cached = digests.get(bytes);
   if (cached !== undefined) return cached;
   work.digestedBytes += bytes.length;
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  const digest = sha256Hex(bytes);
   digests.set(bytes, digest);
   return digest;
 };

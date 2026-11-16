@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import {
   ADVERTISED_BOUND_LIMIT,
   ADVERTISED_DESCRIPTION_MAX_CHARACTERS,

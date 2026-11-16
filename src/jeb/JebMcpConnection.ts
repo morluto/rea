@@ -23,6 +23,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { JebMcpDeadline, selectedJebMcpTimeout } from "./JebMcpDeadline.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Upstream protocol names for the operations REA exposes. */
 export const JEB_ENGINE_TOOLS = {
@@ -87,10 +88,7 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
 };
 
 const isJebFailureEnvelope = (value: JsonValue): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  value.success === false;
+  isRecord(value) && value.success === false;
 
 export interface JebMcpConnectionTimeouts {
   /** Absolute catalog connection and pagination deadline. */

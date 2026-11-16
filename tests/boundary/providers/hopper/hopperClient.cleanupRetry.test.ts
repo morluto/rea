@@ -7,7 +7,7 @@ import { expect, it, onTestFinished } from "vitest";
 
 import { AnalysisCleanupRelease } from "../../../../src/domain/analysisCleanupRelease.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { HopperStartError } from "../../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../../src/hopper/HopperErrors.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import type {
@@ -26,6 +26,7 @@ import {
 import { silentLogger } from "../../../../src/logger.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
+import { ArtifactResourceScope } from "../../../../src/resources/index.js";
 
 class RetryCleanupLauncher implements BridgeLauncher {
   readonly sessions: BridgeSession[] = [];
@@ -191,6 +192,7 @@ it.each([false, true])(
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: undefined,
     };
     const socket = new Socket();
@@ -480,6 +482,7 @@ it("preserves confirmed document shutdown while retrying owned process cleanup",
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: undefined,
     } satisfies HopperOwnedResources,
     activeRequest: null,
@@ -545,6 +548,7 @@ it.each([
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: undefined,
     };
     const result = await cleanupHopperSession({

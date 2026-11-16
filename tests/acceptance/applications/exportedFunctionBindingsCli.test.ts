@@ -19,6 +19,7 @@ import {
   createCliCommandSession,
   type CliCommandSession,
 } from "../../support/cli/cliCommandSession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
@@ -1330,10 +1331,13 @@ const getMcpClient = async (): Promise<Client> => {
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({
-      name: "exported-function-bindings",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "exported-function-bindings",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     mcpConnection = {
       client,
       transport,

@@ -4,7 +4,6 @@ import {
   sourceMapLimitRecovery,
   type SourceMapLimits,
 } from "../../domain/sourceMapLimits.js";
-import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { getHeapStatistics } from "node:v8";
 import {
@@ -30,6 +29,7 @@ import {
   type SourceMapSourceDeclaration,
 } from "../../domain/sourceMapFormat.js";
 import { decodeValidatedSourceMapLeaves } from "../../domain/decodedSourceMap.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Decode with the pinned upstream codec; preserve every equal-position candidate. */
 export const traceSourceMap = (
@@ -94,7 +94,7 @@ export const traceSourceMap = (
     .parse(metadata).version;
   const runtime = javaScriptRuntime(process.versions);
   return webSourceMapReportSchema.parse({
-    source_map_sha256: createHash("sha256").update(text).digest("hex"),
+    source_map_sha256: sha256Hex(text),
     url_context: url,
     engine: { id: "jridgewell-trace-mapping", version },
     // Bun reports V8-shaped heap statistics but ignores the codec's heap flags.
@@ -201,9 +201,7 @@ const originalMatch = (
         : {
             state: "embedded",
             text: declaration.content,
-            utf8_sha256: createHash("sha256")
-              .update(declaration.content)
-              .digest("hex"),
+            utf8_sha256: sha256Hex(declaration.content),
             utf8_bytes: Buffer.byteLength(declaration.content),
             representation: "UTF-8 encoding of decoded sourcesContent text",
           },

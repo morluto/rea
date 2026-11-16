@@ -17,6 +17,7 @@ import {
   recordedCrashFixture,
   RECORDED_CRASH_TEST_PROVIDER,
 } from "../../fixtures/binaryDiagnostics/recordedCrash.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("records inline recorded-core evidence with compact schemas and canonical path checks", async () => {
   const value = recordedCrashFixture();
@@ -42,7 +43,10 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
     { kind: "session", session },
     { recordedCrash: service },
   );
-  const client = new Client({ name: "recorded-crash-contract", version: "1" });
+  const client = new Client(
+    { name: "recorded-crash-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

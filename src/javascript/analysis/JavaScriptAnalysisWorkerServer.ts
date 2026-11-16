@@ -10,7 +10,6 @@ import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getHeapStatistics } from "node:v8";
@@ -38,6 +37,7 @@ import {
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Trusted composition callback; this provider owns framing and temporary I/O. */
 export interface JavaScriptSourceWorkerAnalyzer {
@@ -122,9 +122,7 @@ const analyzeJob = async (
   try {
     let resultBudgetBytes = 0;
     const source = await readFile(join(root, `${request.id}.source`), "utf8");
-    if (
-      createHash("sha256").update(source).digest("hex") !== request.text_sha256
-    )
+    if (sha256Hex(source) !== request.text_sha256)
       throw new TypeError(
         "JavaScript worker source text digest does not match its request",
       );
@@ -180,7 +178,7 @@ const analyzeJob = async (
             kind: "static",
             id: request.id,
             bytes,
-            sha256: createHash("sha256").update(text).digest("hex"),
+            sha256: sha256Hex(text),
           });
           const next = await requests.next();
           if (next.done || !next.value.ok)

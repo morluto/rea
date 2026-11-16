@@ -281,9 +281,11 @@ export const ENTRY_FILES = Object.freeze(
       ],
       desktop: [
         "AgentEnvComputer.ts",
+        "AgentEnvProviderIdentity.ts",
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
