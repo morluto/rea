@@ -149,37 +149,43 @@ it("reports a cache root REA cannot use without creating anything", async () => 
   });
 });
 
-it("reports a cache root REA cannot create under its nearest existing parent", async () => {
-  const root = await createTestTempDirectory("rea-kuna-doctor-create-");
-  const kuna = await writeFakeKuna(root);
-  const readOnly = join(root, "read-only");
-  await mkdir(readOnly, { mode: 0o500 });
-  const occupied = join(root, "occupied");
-  await writeFile(occupied, "not a directory");
+// Root can create a directory under a read-only parent, so the failure this case reports never happens.
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "reports a cache root REA cannot create under its nearest existing parent",
+  async () => {
+    const root = await createTestTempDirectory("rea-kuna-doctor-create-");
+    const kuna = await writeFakeKuna(root);
+    const readOnly = join(root, "read-only");
+    await mkdir(readOnly, { mode: 0o500 });
+    const occupied = join(root, "occupied");
+    await writeFile(occupied, "not a directory");
 
-  const underReadOnly = await inspectKunaProvider({
-    REA_KUNA_COMMAND: kuna,
-    REA_KUNA_CACHE_DIR: join(readOnly, "nested", "cache"),
-  });
-  const underFile = await inspectKunaProvider({
-    REA_KUNA_COMMAND: kuna,
-    REA_KUNA_CACHE_DIR: join(occupied, "cache"),
-  });
+    const underReadOnly = await inspectKunaProvider({
+      REA_KUNA_COMMAND: kuna,
+      REA_KUNA_CACHE_DIR: join(readOnly, "nested", "cache"),
+    });
+    const underFile = await inspectKunaProvider({
+      REA_KUNA_COMMAND: kuna,
+      REA_KUNA_CACHE_DIR: join(occupied, "cache"),
+    });
 
-  expect(
-    underReadOnly.checks.find(({ name }) => name === "cache"),
-  ).toMatchObject({
-    name: "cache",
-    ok: false,
-    detail: expect.stringContaining(`${readOnly} is not writable`),
-  });
-  expect(underFile.checks.find(({ name }) => name === "cache")).toMatchObject({
-    name: "cache",
-    ok: false,
-    // stat reports ENOTDIR for a path beneath a regular file.
-    detail: expect.stringContaining("not a directory"),
-  });
-});
+    expect(
+      underReadOnly.checks.find(({ name }) => name === "cache"),
+    ).toMatchObject({
+      name: "cache",
+      ok: false,
+      detail: expect.stringContaining(`${readOnly} is not writable`),
+    });
+    expect(underFile.checks.find(({ name }) => name === "cache")).toMatchObject(
+      {
+        name: "cache",
+        ok: false,
+        // stat reports ENOTDIR for a path beneath a regular file.
+        detail: expect.stringContaining("not a directory"),
+      },
+    );
+  },
+);
 
 it("reports a dangling cache link as unusable and accepts a resolving link", async () => {
   const root = await createTestTempDirectory("rea-kuna-doctor-link-");

@@ -937,7 +937,7 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "drains shared cache cleanup outside a retired client's target key",
   async () => {
     const fixture = await session("rea-kuna-session-cache-cleanup-");
