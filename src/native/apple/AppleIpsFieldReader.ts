@@ -3,6 +3,7 @@ import {
   type AppleIpsTypeMismatch,
   type RecordedInteger,
 } from "../../domain/native/appleIps.js";
+import { invariantViolation } from "../../domain/internalInvariant.js";
 import { AppleIpsResourceFailure } from "./AppleIps.errors.js";
 import type { LosslessJson } from "./losslessJson.js";
 
@@ -72,7 +73,9 @@ export class FieldReader {
     const a = this.#integers.get(left);
     const b = this.#integers.get(right);
     if (a === undefined || b === undefined)
-      throw new Error("IPS integer facts do not belong to this field reader");
+      throw invariantViolation(
+        "IPS integer facts do not belong to this field reader",
+      );
     const reserved = this.#reserve(
       Math.max(left.decimal.length, right.decimal.length) + 1,
       true,

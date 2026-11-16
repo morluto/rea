@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 
 it.each(["physical", "cleanup", "waiter-cancelled"] as const)(
   "does not retry another caller's %s failure",

@@ -1,4 +1,5 @@
-import { appendCallerPath } from "../filesystem/callerPath.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { isAborted } from "../domain/analysisErrorCore.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -7,13 +8,13 @@ import { join, posix } from "node:path";
 
 import { execFileBoundedOutput } from "../process/ExecFileBoundedOutput.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   downloadHopperPackage,
-  isHopperRequestCancellation,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -36,6 +37,8 @@ import {
   type VerifiedLinuxHopperPackage,
   type VerifiedLinuxHopperLauncher,
 } from "./LinuxHopperPublisher.js";
+import type { LinuxHopperLauncherVerification } from "../ports/LinuxHopperLauncherVerification.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Package-manager output retained per stream without stopping the command. */
 const PACKAGE_MANAGER_OUTPUT_BYTES = 64 * 1024;
@@ -206,7 +209,7 @@ const operationFailure = (
     cause instanceof Error ? Reflect.get(cause, "code") : undefined;
   return {
     operation,
-    detail: cause instanceof Error ? cause.message : String(cause),
+    detail: errorMessage(cause),
     ...(path === undefined ? {} : { path }),
     ...(typeof code === "string" ? { systemCode: code } : {}),
   };
@@ -279,7 +282,7 @@ export class LinuxHopperTemporaryCleanupOwner {
         await cleanup(path);
         this.pending.delete(path);
       } catch (cause: unknown) {
-        const reason = cause instanceof Error ? cause.message : String(cause);
+        const reason = errorMessage(cause);
         failures.push(
           `Linux Hopper temporary cleanup failed for ${path}: ${reason}`,
         );
@@ -488,7 +491,7 @@ export const installLinuxHopper = async (
       return { status: "installed", launcherPath };
     })();
   } catch (cause: unknown) {
-    const cancelled = isHopperRequestCancellation(cause, options.signal);
+    const cancelled = isAbortOf(cause, options.signal);
     result = {
       status: "failed",
       reason: cancelled ? "cancelled" : stage,
@@ -505,33 +508,11 @@ export const installLinuxHopper = async (
       ...result,
       cleanupFailure: {
         path: temporary,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     };
   }
 };
-
-/** Canonical launcher path for a legacy user-local Linux Hopper installation. */
-const linuxHopperLauncherPath = (home: string): string =>
-  appendCallerPath(home, ".local/share/rea/hopper/bin/Hopper", "linux");
-
-/** REA's managed Linux install path, preferred when no explicit launcher is set. */
-export const REA_MANAGED_LINUX_HOPPER_LAUNCHER = "/opt/hopper/bin/Hopper";
-
-/** Other system-wide Hopper paths used by package installations. */
-const systemLinuxHopperLauncherCandidates: readonly string[] = [
-  "/opt/hopper-v4/bin/hopper",
-  "/usr/bin/hopper",
-];
-
-/** Probe REA-managed and user-local installs before arbitrary system builds. */
-export const linuxHopperLauncherCandidates = (
-  home: string,
-): readonly string[] => [
-  REA_MANAGED_LINUX_HOPPER_LAUNCHER,
-  linuxHopperLauncherPath(home),
-  ...systemLinuxHopperLauncherCandidates,
-];
 
 /**
  * Compose package-manager and linker checks from the selected caller
@@ -607,7 +588,8 @@ export const systemLinuxHopperPublisher = (
     environment,
     // Only the package family is read here; it does not depend on the
     // architecture that gates automated setup.
-    async () => (await readLinuxDistribution(process.arch))?.packageFamily,
+    async () =>
+      (await readLinuxDistribution(HOST_PLATFORM.architecture))?.packageFamily,
   );
 
 /** Read-only authentication; persistent package retention belongs to approved setup. */
@@ -636,6 +618,13 @@ export const inspectLinuxHopperLauncher = async (
     );
   }
 };
+
+/** The Linux launcher authentication production composition gives the Hopper provider. */
+export const LINUX_HOPPER_LAUNCHER_VERIFICATION: LinuxHopperLauncherVerification =
+  {
+    inspect: inspectLinuxHopperLauncher,
+    retryCleanup: retryLinuxHopperPublisherCleanup,
+  };
 
 /** The publisher retains a failed close before throwing; retry every retained owner. */
 const closePublisherAndRetainedScopes = async (
@@ -724,9 +713,6 @@ const installSystemPackage = async (
     };
   return { status: "installed" };
 };
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;
 
 /** Retain the publisher's error and any vendor request facts it observed. */
 const publisherFailure = (

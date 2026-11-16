@@ -25,19 +25,12 @@ import {
   AnalysisSnapshotMismatchError,
   ResourceSnapshotMismatchError,
 } from "./evidenceErrors.js";
-import {
-  HOPPER_STARTUP_TIMEOUT_REMEDIATION,
-  HopperRemoteError,
-  HopperProcessError,
-  HopperStartError,
-  HopperTimeoutError,
-  hopperAppleEventsAuthorizationDenied,
-} from "./hopperErrors.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
+import { isDoctorProviderId } from "./doctorProviderIds.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
-import { providerRetryAction } from "./providerOperationHealth.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
+import { classifyAnalysisError } from "./analysisErrorClassification.js";
 import {
   analysisRefusalMessage,
   analysisRefusalRemediation,
@@ -49,6 +42,8 @@ import {
   type AnalysisContinuingCallerGuidance,
   type AnalysisError,
   type AnalysisErrorTag,
+  domainErrorTag,
+  ProviderOwnedAnalysisError,
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
@@ -70,12 +65,6 @@ export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_ev
 export const MCP_TRANSPORT_EVIDENCE_LINKS =
   "Request fewer rows with get_evidence_bundle detail: links, a smaller limit or an exact evidence_id filter, then follow next_offset.";
 
-const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE =
-  "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.";
-
-const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
-  "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
-
 /** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
@@ -85,15 +74,19 @@ export const analysisErrorRemediationAction = (
   const continuing =
     callerLifetime === "continuing"
       ? (error.continuingCallerGuidance?.remediationAction ??
-        hopperContinuingRecovery(error)?.remediationAction)
+        error.ownPresentation()?.continuing?.remediationAction)
       : undefined;
   if (continuing !== undefined) return continuing;
+  const owned = error.ownPresentation()?.remediation;
+  if (owned !== undefined) return owned;
   if (
     (error instanceof ProviderAdapterError ||
       error instanceof AnalysisCapabilityUnavailableError) &&
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof ProviderAdapterError && error.userMessage === undefined)
+    return unclassifiedProviderRemediation(error.providerId);
   if (
     error instanceof BrowserObservationError &&
     error.remediationAction !== undefined
@@ -149,6 +142,11 @@ export const analysisErrorRemediationAction = (
     error.remediationAction !== undefined
   )
     return error.remediationAction;
+  if (error instanceof ArtifactOperationError) {
+    const refusal = analysisErrorRefusal(error);
+    if (refusal !== undefined)
+      return analysisRefusalRemediation(refusal, callerLifetime);
+  }
   if (
     error instanceof ArtifactOperationError &&
     error.readerLimit !== undefined
@@ -160,27 +158,6 @@ export const analysisErrorRemediationAction = (
     error.boundary === "capacity"
   )
     return "Use an artifact within the capacity reported in details.detail. Changing output detail or retrying the unchanged input does not remove this boundary.";
-  if (error instanceof HopperTimeoutError)
-    return error.operation === undefined
-      ? HOPPER_STARTUP_TIMEOUT_REMEDIATION
-      : RERUN_HOPPER_INVOCATION;
-  if (error instanceof HopperProcessError)
-    return error.failureCode !== undefined && error.userMessage !== undefined
-      ? error.userMessage
-      : error.stage === "launch"
-        ? "Review the captured launcher diagnostics and Hopper setup, then retry opening the target."
-        : RERUN_HOPPER_INVOCATION;
-  if (error instanceof HopperStartError) {
-    if (hopperAppleEventsAuthorizationDenied(error.launchRejection))
-      return HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION;
-    return error.ownerRunId === undefined
-      ? "Check the Hopper launcher and target details, then retry opening the target."
-      : `Use the active REA session ${error.ownerRunId} or close it before opening this target again.`;
-  }
-  if (error instanceof HopperRemoteError)
-    return error.diagnosticType === "invalid_request"
-      ? "Correct the reported address, document, or arguments and retry."
-      : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.";
   if (error instanceof EvidenceReferenceError)
     return error.reason === "missing" &&
       error.referenceScope === "retained-closure"
@@ -330,115 +307,8 @@ const measuredResourceRemediation = (
 
 export const analysisErrorCategory = (
   error: AnalysisError,
-): AnalysisErrorProjection["category"] => {
-  error = primaryAnalysisError(error);
-  if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
-    return "unavailable";
-  if (
-    error instanceof BinaryTargetError &&
-    error.constraint === "load_selection_rejected"
-  )
-    return "invalid_input";
-  if (
-    error instanceof BinaryTargetError &&
-    (error.constraint === "wasm_requires_static_inspection" ||
-      error.constraint === "file_format_rejected" ||
-      error.constraint === "bundle_type_unsupported")
-  )
-    return "unsupported_target";
-  if (
-    error instanceof ProviderSelectionError &&
-    error.reason === "provider_unavailable"
-  )
-    return "unavailable";
-  if (error._tag === "ProcessCaptureError")
-    return error.userCategory ?? "execution_failure";
-  if (error instanceof BrowserObservationError)
-    return error.userCategory ?? browserErrorCategory(error.reason);
-  if (
-    error instanceof HopperRemoteError &&
-    error.diagnosticType === "invalid_request"
-  )
-    return "invalid_input";
-  if (
-    error instanceof HopperRemoteError &&
-    error.diagnosticType === "authorization"
-  )
-    return "unavailable";
-  if (error instanceof HopperProcessError || error instanceof HopperStartError)
-    return "unavailable";
-  if (error instanceof ArtifactOperationError)
-    return artifactErrorCategory(error.reason);
-  if (
-    error instanceof EvidenceFileError &&
-    (error.reason === "path-limit" || error.reason === "storage-limit")
-  )
-    return "resource_constraint";
-  if (
-    error instanceof EvidenceFileError &&
-    (error.reason === "missing" ||
-      error.reason === "symlink-traversal" ||
-      error.reason === "not-file" ||
-      error.reason === "wrong-kind" ||
-      error.reason === "exists")
-  )
-    return "invalid_input";
-  if (
-    error instanceof UnknownRegistryError &&
-    (error.reason === "already-exists" || error.reason === "constraint")
-  )
-    return "invalid_input";
-  return STATIC_ERROR_CATEGORIES[error._tag] ?? "execution_failure";
-};
-
-const browserErrorCategory = (
-  reason: BrowserObservationError["reason"],
-): AnalysisErrorProjection["category"] => {
-  if (reason === "cancelled") return "cancelled";
-  if (reason === "timeout") return "timeout";
-  if (reason === "payload_limit") return "truncated";
-  if (
-    reason === "target_not_found" ||
-    reason === "target_not_allowed" ||
-    reason === "service_worker_blocked" ||
-    reason === "target_changed" ||
-    reason === "target_session_detached" ||
-    reason === "endpoint_unreachable" ||
-    reason === "disconnected"
-  )
-    return "unavailable";
-  return "execution_failure";
-};
-
-const artifactErrorCategory = (
-  reason: ArtifactOperationError["reason"],
-): AnalysisErrorProjection["category"] => {
-  if (reason === "integrity") return "integrity_mismatch";
-  if (reason === "limit") return "truncated";
-  if (reason === "cancelled") return "cancelled";
-  if (reason === "unavailable") return "unavailable";
-  return "execution_failure";
-};
-
-const STATIC_ERROR_CATEGORIES: Readonly<
-  Partial<Record<AnalysisErrorTag, AnalysisErrorProjection["category"]>>
-> = {
-  ConfigurationError: "invalid_input",
-  AnalysisInputError: "invalid_input",
-  AnalysisAccessDeniedError: "unavailable",
-  AnalysisArtifactChangedError: "integrity_mismatch",
-  AnalysisCapabilityUnavailableError: "unsupported_provider",
-  AnalysisUnsupportedTargetError: "unsupported_target",
-  ProviderSelectionError: "unsupported_provider",
-  EvidenceIntegrityError: "integrity_mismatch",
-  AnalysisCancelledError: "cancelled",
-  HopperCancelledError: "cancelled",
-  AnalysisTimeoutError: "timeout",
-  AnalysisResourceConstraintError: "resource_constraint",
-  HopperTimeoutError: "timeout",
-  NoBinaryOpenError: "unavailable",
-  BinaryTargetError: "unavailable",
-};
+): AnalysisErrorProjection["category"] =>
+  classifyAnalysisError(primaryAnalysisError(error)).category;
 
 /** Describe the request's outcome, adding continuing-caller facts only for that caller. */
 export const analysisErrorUserMessage = (
@@ -459,7 +329,7 @@ const analysisErrorUserMessageParts = (
   const outcome = outcomeUserMessage(error);
   const continuing =
     error.continuingCallerGuidance?.userMessage ??
-    hopperContinuingRecovery(error)?.userMessage;
+    error.ownPresentation()?.continuing?.userMessage;
   return continuing === undefined ? { outcome } : { outcome, continuing };
 };
 
@@ -468,7 +338,7 @@ export const hasAnalysisContinuingCallerGuidance = (
   error: AnalysisError,
 ): boolean =>
   error.continuingCallerGuidance !== undefined ||
-  hopperContinuingRecovery(error) !== undefined;
+  error.ownPresentation()?.continuing !== undefined;
 
 /** A declared recovery action is distinct from a category's generic fallback. */
 const hasAuthoredRemediation = (
@@ -547,12 +417,14 @@ const outcomeUserMessage = (error: AnalysisError): string => {
   }
   if (error instanceof AnalysisTimeoutError)
     return error.userMessage ?? timeoutUserMessage(error);
-  const hopperMessage = hopperErrorUserMessage(error);
-  if (hopperMessage !== undefined) return hopperMessage;
+  const ownedMessage = error.ownPresentation()?.message;
+  if (ownedMessage !== undefined) return ownedMessage;
   if (error.userMessage !== undefined) return error.userMessage;
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Required runtime controls are unavailable for this attempt.";
-  const standardMessage = standardErrorMessage(error._tag);
+  if (error instanceof ProviderAdapterError)
+    return `The ${error.providerId} provider could not complete ${error.operation}, and REA did not classify the failure. Any reason the provider reported is in details.diagnostics.`;
+  const standardMessage = standardErrorMessage(error);
   if (standardMessage !== undefined) return standardMessage;
   if (error instanceof ArtifactOperationError) return artifactMessage(error);
   if (error instanceof EvidenceReferenceError)
@@ -600,108 +472,33 @@ const outcomeUserMessage = (error: AnalysisError): string => {
   if (error._tag === "ProcessCaptureError")
     return (
       error.userMessage ??
-      "Process capture could not complete. Run `rea doctor`, then review capture policy and try again."
+      "Process capture could not complete. Review the reported details and capture policy, then try again."
     );
-  return "Analysis could not complete. Run `rea doctor`, then try again.";
+  return "Analysis could not complete, and REA did not classify the failure. Review the reported details.";
 };
 
-const hopperErrorUserMessage = (error: AnalysisError): string | undefined => {
-  if (error instanceof HopperTimeoutError) {
-    if (error.operation === undefined)
-      return "REA timed out waiting for Hopper bridge readiness, which includes initial analysis. Hopper may still be analyzing the target or waiting for a loader, demo, or license dialog. Review the captured launcher outcome and resolve retained cleanup before retrying.";
-    const request = error.operation;
-    return error.providerState === "busy"
-      ? `Hopper timed out during ${request} while the provider remained busy.`
-      : `Hopper timed out during ${request} before it started.`;
-  }
-  if (error instanceof HopperProcessError) return hopperProcessMessage(error);
-  if (error instanceof HopperStartError) {
-    if (hopperAppleEventsAuthorizationDenied(error.launchRejection))
-      return HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE;
-    return (
-      error.userMessage ??
-      "Hopper could not start. Check the launcher and target details, then retry opening the target."
-    );
-  }
-  if (error instanceof HopperRemoteError)
-    return `Hopper ${error.operation ?? "analysis"} failed (${String(error.code)}, ${error.diagnosticType}): ${error.safeMessage}`;
-  return undefined;
-};
+/**
+ * Recovery for a provider failure no typed variant classified. Doctor is
+ * named only for providers whose readiness it can check.
+ */
+const unclassifiedProviderRemediation = (providerId: string): string =>
+  isDoctorProviderId(providerId)
+    ? `Review the reported details. If the ${providerId} installation or configuration may be at fault, run \`rea doctor --provider ${providerId}\` and apply its fixes. Repeating the unchanged request is not expected to succeed.`
+    : "Review the reported details for the provider's reason; REA has no specific recovery for this unclassified failure. Repeating the unchanged request is not expected to succeed.";
 
-const RESTART_OWNED_PROVIDER =
-  "Restart the owned provider by calling close_binary, then open the target again and retry.";
-const RESTART_UNREACHABLE_HOPPER = `${RESTART_OWNED_PROVIDER} close_binary preserves retained Evidence and Unknown history on this connection; export_evidence_bundle before ending the REA process if you need to resume later.`;
-const RERUN_HOPPER_INVOCATION =
-  "Review the reported Hopper state and resolve any incomplete cleanup before rerunning the command.";
-
-const hopperContinuingRecovery = (
-  error: AnalysisError,
-): AnalysisContinuingCallerGuidance | undefined => {
-  if (error instanceof HopperTimeoutError && error.operation !== undefined) {
-    const action =
-      error.providerState === "busy"
-        ? "Check binary_session.analysis_activity, wait for the active Hopper request to finish, then retry."
-        : "Check binary_session for Hopper health, then retry the operation.";
-    return { userMessage: action, remediationAction: action };
-  }
-  if (!(error instanceof HopperProcessError)) return undefined;
-  if (
-    error.providerState === "exited" &&
-    (error.stage === "launch" || error.failureCode !== undefined)
-  )
-    return undefined;
-  const action =
-    error.providerState === "unreachable"
-      ? RESTART_UNREACHABLE_HOPPER
-      : providerRetryAction(error.providerState) === "restart_provider"
-        ? RESTART_OWNED_PROVIDER
-        : "Read binary_session.provider_operation_health for this request before retrying or restarting the owned provider.";
-  return {
-    userMessage: action,
-    ...(error.stage === "launch" ||
-    (error.failureCode !== undefined && error.userMessage !== undefined)
-      ? {}
-      : { remediationAction: action }),
-  };
-};
-
-const hopperProcessMessage = (error: HopperProcessError): string => {
-  const stage = error.stage;
-  const where = error.operation ?? stage;
-  const request =
-    error.requestId === undefined
-      ? ""
-      : ` Request id ${String(error.requestId)}.`;
-  const startup =
-    error.userMessage === undefined ? "" : ` ${error.userMessage}`;
-  if (error.providerState === "exited") {
-    const signal = error.launcherFailure?.signal;
-    const exit =
-      error.exitCode === null
-        ? signal === undefined || signal === null
-          ? "no exit code was observed"
-          : `signal ${signal}`
-        : `exit code ${String(error.exitCode)}`;
-    return `Hopper exited during ${where} (${exit}).${startup}${request}`;
-  }
-  if (error.providerState === "unreachable")
-    return `Hopper became unreachable during ${where}; its process exit was not observed.${startup}${request}`;
-  return `Hopper failed during ${where} and REA could not determine whether the provider is busy, exited, or unreachable.${startup}${request}`;
-};
-
-const standardErrorMessage = (tag: AnalysisErrorTag): string | undefined => {
-  if (UNREADABLE_OUTPUT_TAGS.has(tag))
-    return "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.";
+/**
+ * Standard text by tag, or by the code an error that presents itself
+ * declares, when nothing more specific describes the outcome.
+ */
+const standardErrorMessage = (error: AnalysisError): string | undefined => {
+  const tag = error._tag;
+  const code = error.ownPresentation()?.code;
+  if (UNREADABLE_OUTPUT_TAGS.has(tag) || code === "unreadable_output")
+    return "Analysis returned a result REA could not read. Review the reported details; repeating the unchanged request is not expected to succeed.";
   if (UNSUPPORTED_PROVIDER_TAGS.has(tag))
     return "This analysis is unavailable for the current target. Choose another analysis or target.";
-  if (CANCELLED_TAGS.has(tag))
+  if (CANCELLED_TAGS.has(tag) || code === "cancelled")
     return "Analysis was cancelled. Start it again when ready.";
-  if (TIMEOUT_TAGS.has(tag))
-    return "Analysis took too long. Try a smaller request, then run `rea doctor` if it continues.";
-  if (ADAPTER_FAILURE_TAGS.has(tag))
-    return "Analysis could not complete. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.";
-  if (START_FAILURE_TAGS.has(tag))
-    return "Analysis could not start or stopped unexpectedly. Run `rea doctor`, then try again.";
   return undefined;
 };
 
@@ -711,30 +508,17 @@ const timeoutUserMessage = (error: AnalysisTimeoutError): string =>
 const timeoutRemediation = (error: AnalysisTimeoutError): string =>
   `Inspect any partial Evidence, provider diagnostics and reported session/provider cleanup state for ${error.operation}. Reduce the request if supported, or resolve the reported provider condition before retrying. Do not repeat the unchanged call or retry while work or cleanup may still be active.`;
 
-const UNREADABLE_OUTPUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+const UNREADABLE_OUTPUT_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
   "AnalysisProtocolError",
   "AnalysisOutputError",
-  "HopperProtocolError",
 ]);
-const UNSUPPORTED_PROVIDER_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
-  "AnalysisCapabilityUnavailableError",
-  "ProviderSelectionError",
-]);
-const CANCELLED_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
+const UNSUPPORTED_PROVIDER_TAGS: ReadonlySet<string> =
+  new Set<AnalysisErrorTag>([
+    "AnalysisCapabilityUnavailableError",
+    "ProviderSelectionError",
+  ]);
+const CANCELLED_TAGS: ReadonlySet<string> = new Set<AnalysisErrorTag>([
   "AnalysisCancelledError",
-  "HopperCancelledError",
-]);
-const TIMEOUT_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
-  "AnalysisTimeoutError",
-  "HopperTimeoutError",
-]);
-const ADAPTER_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
-  "ProviderAdapterError",
-  "HopperRemoteError",
-]);
-const START_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
-  "HopperProcessError",
-  "HopperStartError",
 ]);
 
 /** Operations that accept integrity_policy for declared-integrity mismatches. */
@@ -836,18 +620,18 @@ const KNOWN_ERROR_TAGS = {
   EvidenceIntegrityError: true,
   EvidenceFileError: true,
   UnknownRegistryError: true,
-  HopperTimeoutError: true,
-  HopperCancelledError: true,
-  HopperProtocolError: true,
-  HopperRemoteError: true,
-  HopperProcessError: true,
-  HopperStartError: true,
   ConfigurationError: true,
   NoBinaryOpenError: true,
   BinaryTargetError: true,
 } as const satisfies Readonly<Record<AnalysisErrorTag, true>>;
 
-export const assertKnownAnalysisErrorTag = (tag: AnalysisErrorTag): void => {
-  if (KNOWN_ERROR_TAGS[tag] !== true)
+/**
+ * Accept a domain error the shared tables present, or a provider-owned error
+ * that presents itself.
+ */
+export const assertKnownAnalysisError = (error: AnalysisError): void => {
+  if (error instanceof ProviderOwnedAnalysisError) return;
+  const tag = domainErrorTag(error);
+  if (tag === undefined || KNOWN_ERROR_TAGS[tag] !== true)
     throw new TypeError("Unknown analysis error tag");
 };

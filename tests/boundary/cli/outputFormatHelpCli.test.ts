@@ -66,8 +66,8 @@ describe("global --format help", () => {
     expect([...columns]).toHaveLength(1);
   });
 
-  it("leaves manifests and help-free output alone", async () => {
-    for (const arguments_ of [["--llms"], ["--llms-full"], ["--schema"]]) {
+  it("leaves manifests alone", async () => {
+    for (const arguments_ of [["--llms"], ["--llms-full"]]) {
       const result = await serve(arguments_);
       expect(result.exitCode, arguments_.join(" ")).toBe(0);
       expect(result.stdout, arguments_.join(" ")).not.toContain(

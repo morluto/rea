@@ -113,26 +113,16 @@ export const managedApplicationGraphResultSchema = z
       fields: z.int().min(0),
       pinvoke_imports: z.int().min(0),
       native_implementations: z.int().min(0),
-      // Graphs projected before call and field-access edges existed omit these
-      // counters; null means those relations were not projected, not zero.
-      calls: z
-        .int()
-        .min(0)
-        .nullable()
-        .default(null)
-        .describe("calls edges; null for graphs projected before calls edges"),
-      field_accesses: z
-        .int()
-        .min(0)
-        .nullable()
-        .default(null)
-        .describe(
-          "accesses edges; null for graphs projected before accesses edges",
-        ),
+      calls: z.int().min(0).describe("calls edges"),
+      field_accesses: z.int().min(0).describe("accesses edges"),
     }),
     graph: javascriptApplicationGraphSchema,
     coverage: z.strictObject({
-      status: z.enum(["complete-within-inputs", "partial"]),
+      status: z
+        .enum(["complete-within-inputs", "partial", "unknown"])
+        .describe(
+          "complete-within-inputs when every supplied managed Evidence record is complete and nothing was omitted; unknown when a supplied record is unavailable.",
+        ),
     }),
     evidence_links: z.array(evidenceIdSchema).min(1).max(3),
     limitations: z.array(nonEmptyTextSchema),
@@ -332,6 +322,14 @@ export const readManagedGraphProjection = (
     boundaries: boundaries.value,
   };
   const identity = chooseArtifact(sources);
+  if (identity === undefined) {
+    const missing = "Provide at least one managed inspection result.";
+    return err(
+      new AnalysisInputError(OPERATION, { userMessage: missing }, [
+        { path: [], reason: "invalid_value", message: missing },
+      ]),
+    );
+  }
   const mismatch =
     artifactMismatch(sources, identity.sha256) ??
     moduleIdentityMismatch(sources);
@@ -346,26 +344,17 @@ export const readManagedGraphProjection = (
 
 const OPERATION = "project_managed_application_graph";
 
-/** Validated graph input still had no artifact source. */
-class ManagedGraphSourceError extends Error {
-  readonly _tag = "ManagedGraphSourceError";
-  readonly code = "missing_source" as const;
-
-  constructor() {
-    super("missing_source");
-    this.name = "ManagedGraphSourceError";
-  }
-}
-
+/** The first supplied source's artifact, or `undefined` when none was supplied. */
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
-): { readonly sha256: string; readonly path: string } => {
+): { readonly sha256: string; readonly path: string } | undefined => {
   const result =
     parsed.artifact?.result ??
     parsed.members?.result ??
     parsed.boundaries?.result;
-  if (result === undefined) throw new ManagedGraphSourceError();
-  return { sha256: result.artifact.sha256, path: result.artifact.path };
+  return result === undefined
+    ? undefined
+    : { sha256: result.artifact.sha256, path: result.artifact.path };
 };
 
 const artifactMismatch = (
@@ -443,8 +432,13 @@ const projectionLimitations = (
         "Managed native-boundary Evidence was not supplied; P/Invoke and native-implementation nodes are absent.",
       ]
     : []),
-  ...(omissions.partialInput
+  ...(omissions.inputStates.includes("partial")
     ? ["At least one supplied managed Evidence record has partial coverage."]
+    : []),
+  ...(omissions.inputStates.includes("unavailable")
+    ? [
+        "At least one supplied managed Evidence record is unavailable; what the graph omits is unknown.",
+      ]
     : []),
   ...(omissions.selectedTypes === null
     ? []

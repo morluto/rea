@@ -1,9 +1,9 @@
 import { Writable } from "node:stream";
 
-import { Formatter } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
@@ -46,7 +46,7 @@ describe("full-output token counts for delegated formats", () => {
       expect(counted.handled).toBe(true);
       expect(counted.text).toBe(
         `${estimateTokenCount(
-          Formatter.format(
+          formatCliOutput(
             {
               ok: true,
               data: value,

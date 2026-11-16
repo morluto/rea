@@ -6,7 +6,9 @@ import {
   indefinite,
   oid,
   withIssuer,
+  withRepeatedExtensions,
   withSerial,
+  withSubjectKeyIdentifiers,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
   OID_ECDSA_SHA256,
@@ -104,6 +106,20 @@ describe("v1 signature block (PKCS#7 SignedData)", () => {
     );
     expect(block.signerInfos[0]?.certificateIndex).toBeNull();
     expect(block.certificates.map(sha256)).toEqual([ROOT_SHA256]);
+  });
+
+  it("names no certificate whose tbsCertificate repeats its extensions", () => {
+    // RFC 5280 §4.1 allows one extensions [3]; a repeat is not a
+    // TBSCertificate, so neither copy is chosen to name the signer.
+    const repeated = withRepeatedExtensions(LEAF_CERTIFICATE);
+    const block = decoded(
+      signedDataBlock({
+        certificates: [repeated],
+        signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+      }),
+    );
+    expect(block.signerInfos[0]?.certificateIndex).toBeNull();
+    expect(block.certificates.map(sha256)).toEqual([sha256(repeated)]);
   });
 
   it("accepts BER indefinite lengths on constructed elements", () => {
@@ -450,4 +466,28 @@ it("preserves the canonical OID byte allowance for a valid unknown digest algori
       }),
     ),
   ).toEqual({ kind: "budget-exceeded", resource: "oid-bytes", limit: 64 });
+});
+
+it("names no certificate whose extensions repeat subjectKeyIdentifier", () => {
+  // RFC 5280 §4.2 allows each extension once; neither identifier is chosen.
+  const named = (certificate: Uint8Array) =>
+    decoded(
+      signedDataBlock({
+        certificates: [certificate],
+        signerInfos: [signerInfo({ names: LEAF_CERTIFICATE })],
+      }),
+    );
+  const single = withSubjectKeyIdentifiers(
+    LEAF_CERTIFICATE,
+    Buffer.alloc(20, 1),
+  );
+  expect(named(single).signerInfos[0]?.certificateIndex).toBe(0);
+  const repeated = withSubjectKeyIdentifiers(
+    LEAF_CERTIFICATE,
+    Buffer.alloc(20, 1),
+    Buffer.alloc(20, 2),
+  );
+  const block = named(repeated);
+  expect(block.signerInfos[0]?.certificateIndex).toBeNull();
+  expect(block.certificates.map(sha256)).toEqual([sha256(repeated)]);
 });

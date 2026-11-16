@@ -155,8 +155,10 @@ describe("target format vocabularies", () => {
         result: { observed: true },
       });
       expect(parseEvidence(roundTrip(evidence)).subject).toMatchObject({
-        format: target.format,
-        architecture: target.architecture ?? null,
+        identity: {
+          format: target.format,
+          architecture: target.architecture ?? null,
+        },
       });
       const bundle = createImmutableEvidenceBundle([evidence]);
       expect(parseEvidenceBundle(roundTrip(bundle)).artifacts).toEqual([
@@ -170,7 +172,10 @@ describe("target format vocabularies", () => {
         analysisSnapshotSchema.shape.target.parse(
           roundTrip(snapshotTarget(target)),
         ),
-      ).toMatchObject({ format: target.format, kind: target.kind });
+      ).toMatchObject({
+        kind: target.kind,
+        identity: { format: target.format },
+      });
       expect(binaryTargetSummary(target)).toMatchObject({
         format: target.format,
         kind: target.kind,

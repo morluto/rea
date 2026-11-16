@@ -1,6 +1,6 @@
 import { expect, onTestFinished, vi } from "vitest";
 
-import { SafeOutputTree } from "../../src/artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../../src/resources/SafeOutputTree.js";
 import { waitFor } from "../support/testWait.js";
 
 /**

@@ -10,6 +10,7 @@ import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
@@ -138,6 +139,7 @@ it("retains the runtime limit when an authenticated status response is oversized
     expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
     if (!(error instanceof AnalysisResourceConstraintError)) return false;
     expect(error.operation).toBe("list_cutter_sessions");
+    expect(error.requestSent).toBe(true);
     expect(error.limit).toMatchObject({
       setting: "bridge.max_request_bytes",
       effective_value: 8192,
@@ -236,11 +238,7 @@ const ceilingMismatch = (error: unknown): boolean => {
     bridge_max_request_bytes: 16_777_216,
     client_max_request_bytes: 8192,
   });
-  expect(error.reason).toContain(
-    "No status request was sent to the mismatched session.",
-  );
-  expect(error.remediationAction).toContain("update_analysis_settings");
-  expect(error.remediationAction).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+  expect(error.requestSent).toBe(false);
   return true;
 };
 
@@ -459,9 +457,11 @@ it("refuses an escaped Cutter command before serializing it", async () => {
     ).rejects.toSatisfy((error: unknown) => {
       expect(error).toBeInstanceOf(AnalysisResourceConstraintError);
       if (!(error instanceof AnalysisResourceConstraintError)) return false;
-      expect(error.reason).toContain("authenticated frame limit of 8192 bytes");
-      expect(error.reason).toContain("no command was sent");
-      expect(error.reason).toContain("REA_BRIDGE_MAX_REQUEST_BYTES");
+      expect(error).toMatchObject({
+        resource: "transport",
+        reportedLimits: { max_request_bytes: 8192 },
+        requestSent: false,
+      });
       return true;
     });
     expect(connections).toBe(0);
@@ -534,49 +534,28 @@ it("accepts a Cutter response at the ceiling and excludes the terminating LF", a
     command: "over",
     json: false,
   });
+  // The command was sent, so its completion is unknown; the limit that
+  // omitted the response is the failure's own setting fact.
   expect(oversize).toMatchObject({
     ok: false,
     error: {
       _tag: "AnalysisOutputError",
+      limit: {
+        setting: "bridge.max_request_bytes",
+        effective_value: ceiling,
+      },
       partialObservation: {
         normalized_result: {
           execution_state: "unknown",
           error: "transport-response-missing",
           output_truncated: true,
-          message: expect.stringContaining("8192"),
-        },
-        limitations: expect.arrayContaining([
-          expect.stringMatching(/output.*transport limit.*omitted/iu),
-        ]),
-      },
-    },
-  });
-  expect(oversize).toMatchObject({
-    error: {
-      partialObservation: {
-        normalized_result: {
-          message: expect.stringContaining("REA_BRIDGE_MAX_REQUEST_BYTES"),
         },
       },
     },
   });
-  expect(oversize).toMatchObject({
-    error: {
-      partialObservation: {
-        normalized_result: {
-          message: expect.stringContaining("may have completed"),
-        },
-      },
-    },
-  });
-  expect(oversize).toMatchObject({
-    error: {
-      partialObservation: {
-        normalized_result: {
-          message: expect.not.stringContaining("no runtime override"),
-        },
-      },
-    },
+  if (oversize.ok) throw new Error("Oversize response was accepted");
+  expect(projectAnalysisError(oversize.error).details).toMatchObject({
+    limit: { setting: "bridge.max_request_bytes", effective_value: ceiling },
   });
 });
 

@@ -1,5 +1,5 @@
 import type { CliInstance } from "../cli/types.js";
-import { splitIncurBuiltinArguments } from "../cliBuiltinArguments.js";
+import { parseCliGlobalArguments } from "../cliBuiltinArguments.js";
 import { CLI_OUTPUT_FORMATS } from "../cliOutput.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
@@ -93,7 +93,7 @@ const PRECEDING_FEATURE_FLAGS: ReadonlySet<string> = new Set([
 
 /** Whether this invocation will render help text for the caller. */
 export const requestsHelpText = (arguments_: readonly string[]): boolean => {
-  const { flags } = splitIncurBuiltinArguments(arguments_);
+  const { flags } = parseCliGlobalArguments(arguments_);
   if (!flags.has("--help") && !flags.has("-h")) return false;
   // Decide from the parsed flags: a `--llms` inside a valued output argument
   // is data, not a manifest request, so it must not suppress help.

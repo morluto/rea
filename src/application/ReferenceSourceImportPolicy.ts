@@ -1,3 +1,4 @@
+import { isAborted } from "../domain/analysisErrorCore.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import fs from "node:fs";
 import { join } from "node:path";
@@ -12,21 +13,24 @@ import {
   readRegularFileText,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS,
   type ReferenceSourceImportError,
   type ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
-import { rootFilesystemFailure } from "../reference/ReferenceSourceReaderErrors.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { rootFilesystemFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 /** Validated inputs ready for filesystem traversal. */
 export interface PreparedReferenceSourceImport {
@@ -65,8 +69,6 @@ const ignorePolicyCause = (cause: unknown): unknown =>
     : cause instanceof RegularFileReadFailure
       ? cause.operationCause
       : cause;
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
 const addMarkedPatterns = (
   matcher: ReturnType<typeof ignore>,
@@ -406,6 +408,3 @@ export const prepareReferenceSourceImport = async (
     });
   }
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
