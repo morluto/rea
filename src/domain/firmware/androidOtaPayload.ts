@@ -1279,10 +1279,16 @@ export const androidOtaExtractRefusalError = (
   }
 };
 
+/**
+ * Rebuild a full-payload partition image. A declared-hash mismatch fails
+ * unless `verifyDeclaredHash` is false, which leaves that decision to a caller
+ * that applies its own integrity policy to the returned bytes.
+ */
 export const reconstructAndroidOtaPartition = (
   partition: AndroidOtaPartition,
   blockSize: number,
   readBlob: (offset: number, length: number) => Uint8Array,
+  options: { readonly verifyDeclaredHash?: boolean } = {},
 ): Result<Uint8Array, AndroidOtaPayloadReconstructError> => {
   const refused = androidOtaExtractRefusalError(partition);
   if (refused !== null) return err(refused);
@@ -1354,6 +1360,7 @@ export const reconstructAndroidOtaPartition = (
       ),
     );
   }
+  if (options.verifyDeclaredHash === false) return ok(image);
   const observed = createHash("sha256").update(image).digest("hex");
   const declared = partition.newPartitionInfo.hashHex;
   if (declared !== null && declared !== observed)

@@ -247,3 +247,51 @@ it("streams a reconstructed partition whose hash matches the manifest", async ()
     await reader.close();
   }
 });
+
+it("applies the caller's integrity policy to a partition hash mismatch", async () => {
+  const path = await writeCarrier(
+    "mismatch.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        {
+          name: "boot",
+          newHash: Buffer.alloc(32, 0xff),
+          operations: [{ type: 0, data: Buffer.from("KERNEL") }],
+        },
+      ],
+    }),
+  );
+  await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
+    reason: "integrity",
+  });
+  const recorded = await scanCanonicalArtifactInventory(path, {
+    integrity: "record-and-continue",
+  });
+  expect(
+    recorded.occurrences.find((row) => row.logical_path === "boot.img"),
+  ).toMatchObject({ hash_status: "mismatched" });
+  expect(recorded.integrity_contradictions).toEqual([
+    expect.objectContaining({
+      logical_path: "boot.img",
+      trust: "observed-untrusted",
+    }),
+  ]);
+  const resourceScope = new ArtifactResourceScope();
+  try {
+    const extracted = await extractArtifact({
+      inputPath: path,
+      inputFormat: "android-ota-payload",
+      outputRoot: join(path, "..", "out"),
+      environment: process.env,
+      integrityPolicy: "record-and-continue",
+      resourceScope,
+    });
+    const boot = await readFile(join(extracted.output_root, "boot.img"));
+    expect(boot.subarray(0, 6).toString("latin1")).toBe("KERNEL");
+    expect(extracted.integrity_contradictions).toEqual([
+      expect.objectContaining({ logical_path: "boot.img" }),
+    ]);
+  } finally {
+    await resourceScope.close();
+  }
+});

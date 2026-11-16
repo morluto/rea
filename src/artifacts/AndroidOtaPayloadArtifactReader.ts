@@ -146,6 +146,10 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
         payload.blockSize,
         (offset, length) =>
           blob.get(`${String(offset)}:${String(length)}`) ?? new Uint8Array(),
+        // A SHA-256 claim on the entry is checked by the shared scanner under
+        // the caller's integrity policy, so record-and-continue can keep the
+        // observed bytes. Without that claim the reader checks it here.
+        { verifyDeclaredHash: stored.declaredIntegrity === null },
       );
       if (!reconstructed.ok) throw reconstructFailure(reconstructed.error);
       const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>

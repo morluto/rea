@@ -61,7 +61,7 @@ it("reports an oversize declared manifest as a capacity limit", async () => {
   }
 });
 
-it("refuses a hash mismatch when reconstructing a REPLACE partition", async () => {
+it("streams a mismatched REPLACE partition and leaves its declared hash to the scanner", async () => {
   const reader = new AndroidOtaPayloadArtifactReader(
     await fixture(
       buildAndroidOtaPayload({
@@ -77,9 +77,12 @@ it("refuses a hash mismatch when reconstructing a REPLACE partition", async () =
   );
   try {
     const [entry] = await entries(reader);
-    await expect(reader.open(entry!)).rejects.toMatchObject({
-      reason: "integrity",
+    expect(entry?.declaredIntegrity).toEqual({
+      algorithm: "sha256",
+      digest: "aa".repeat(32),
     });
+    const bytes = await buffer(await reader.open(entry!));
+    expect(bytes.subarray(0, 4).toString("latin1")).toBe("BOOT");
   } finally {
     await reader.close();
   }
