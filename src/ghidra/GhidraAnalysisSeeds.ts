@@ -1,4 +1,5 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
@@ -11,7 +12,7 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGhidraProfileArtifact,
   writeGhidraProfileArtifact,
-  ghidraFileFailure,
+  ghidraFileDialect,
 } from "./GhidraFileArtifacts.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -121,10 +122,13 @@ export const resolveGhidraAnalysisSeeds = async (
         entries = await readSeeds(path, resources, signal);
       } catch (cause: unknown) {
         return err(
-          ghidraFileFailure(cause, "resolve_analysis_profile", {
-            setting: "REA_GHIDRA_SEED_FILE",
-            path: configured,
-          }),
+          classifyProviderFailure(
+            cause,
+            ghidraFileDialect("resolve_analysis_profile", {
+              setting: "REA_GHIDRA_SEED_FILE",
+              path: configured,
+            }),
+          ),
         );
       }
       const normalized = normalizedGhidraSeeds(entries);
@@ -140,9 +144,12 @@ export const resolveGhidraAnalysisSeeds = async (
     })
     .catch((cause: unknown) =>
       err(
-        ghidraFileFailure(cause, "resolve_analysis_profile", {
-          setting: "REA_GHIDRA_SEED_FILE",
-        }),
+        classifyProviderFailure(
+          cause,
+          ghidraFileDialect("resolve_analysis_profile", {
+            setting: "REA_GHIDRA_SEED_FILE",
+          }),
+        ),
       ),
     );
 
@@ -173,10 +180,13 @@ export const snapshotGhidraAnalysisSeeds = async (
       return path;
     })
     .catch((cause: unknown) => {
-      throw ghidraFileFailure(cause, "open_binary", {
-        setting: "REA_GHIDRA_SEED_FILE",
-        path: commitment.path,
-      });
+      throw classifyProviderFailure(
+        cause,
+        ghidraFileDialect("open_binary", {
+          setting: "REA_GHIDRA_SEED_FILE",
+          path: commitment.path,
+        }),
+      );
     });
 
 const totalEntries = (commitment: GhidraSeedCommitment): number =>

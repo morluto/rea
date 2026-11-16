@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 
 import { jsonDocumentText } from "../domain/schemaConstraints.js";
 

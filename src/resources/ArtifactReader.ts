@@ -1,7 +1,4 @@
-import type {
-  FixedAllowance,
-  FixedAllowanceKind,
-} from "../domain/fixedAllowanceRemediation.js";
+import type { FixedAllowance } from "../domain/fixedAllowanceRemediation.js";
 import type { ArtifactReaderLimitFact } from "../domain/artifactReaderLimits.js";
 import type {
   ArtifactAdmissionLimit,
@@ -45,7 +42,7 @@ export interface ArtifactReaderFailureOptions extends ErrorOptions {
   readonly admission?: ArtifactAdmissionLimit;
   readonly readerLimit?: ArtifactReaderLimitFact;
   /** For a `limit` failure, the release-fixed allowance that refused the input. */
-  readonly fixedAllowance?: FixedAllowance;
+  readonly fixedAllowance?: ArtifactFixedLimit;
   /** For an `integrity` failure, the check that failed, when the reader names it. */
   readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
 }
@@ -295,7 +292,7 @@ export class ArtifactReaderFailure extends Error {
   /** Named admission for a limit whose public recovery is owned by the producer. */
   readonly admission: ArtifactAdmissionLimit | undefined;
   readonly readerLimit: ArtifactReaderLimitFact | undefined;
-  readonly fixedAllowance: FixedAllowance | undefined;
+  readonly fixedAllowance: ArtifactFixedLimit | undefined;
   readonly integrityCheck: ArtifactIntegrityCheck | undefined;
 
   /** An `integrity` failure names the check that failed. */
@@ -455,14 +452,14 @@ export class ArtifactReaderFailure extends Error {
   }
 }
 
-/** A release-fixed reader ceiling and its value. */
-export interface ArtifactFixedLimit {
-  /** Display name, such as "The wxapkg member table allowance". */
-  readonly name: string;
-  readonly kind: FixedAllowanceKind;
+/**
+ * A release-fixed reader ceiling. The reader states its value, so a consumer
+ * that carries the ceiling to another process or projection keeps it.
+ */
+export type ArtifactFixedLimit = FixedAllowance & {
   readonly limit: number;
   readonly unit: string;
-}
+};
 
 /**
  * Refuse input above a release-fixed reader ceiling. `outcome` states what

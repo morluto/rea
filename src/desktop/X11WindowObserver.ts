@@ -6,6 +6,12 @@ import {
   type X11WindowProperties,
 } from "../domain/desktop/x11Windows.js";
 import {
+  XpropUnavailableError,
+  type DesktopWindowObserver,
+  type ObservedWindow,
+  type WindowSample,
+} from "../ports/DesktopApplicationSession.js";
+import {
   execFileOutput,
   execFileOutputFailure,
   ExecFileOutputCancelledError,
@@ -16,33 +22,13 @@ const XPROP_MAX_BUFFER = 1024 * 1024;
 /** Reads of a window whose class or owner pid was missing, for one set late. */
 const INCOMPLETE_READS = 4;
 
-/** One managed top-level window seen in a sample. */
-export interface ObservedWindow extends X11WindowProperties {
-  readonly id: string;
-}
-
-/** One client-list read: the windows, or why they could not be listed. */
-export type WindowSample =
-  | { readonly state: "listed"; readonly windows: readonly ObservedWindow[] }
-  | { readonly state: "display_unreadable" }
-  /** The window manager does not publish `_NET_CLIENT_LIST` (EWMH). */
-  | { readonly state: "no_client_list" };
-
-/** `xprop` could not be started at all. */
-export class XpropUnavailableError extends Error {
-  constructor(readonly command: string) {
-    super(`${command} could not be started`);
-    this.name = "XpropUnavailableError";
-  }
-}
-
 /**
  * Lists the window manager's client windows with `xprop`. A window's class,
  * pid and type are read once, or a few times while either is still missing;
  * titles are re-read only for windows the caller marks as interesting, since
  * every read starts a process. Entries for closed windows are dropped.
  */
-export class X11WindowObserver {
+export class X11WindowObserver implements DesktopWindowObserver {
   readonly #command: string;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #known = new Map<

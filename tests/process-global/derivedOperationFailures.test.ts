@@ -75,6 +75,7 @@ import {
   nativeMatchingInventory,
   nativeMatchingDetails,
 } from "../fixtures/nativeFunctionMatching.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 /** Unexpected implementation failures retain the SDK text surface, without a typed caller error. */
 const expectUnexpectedToolFailure = (
@@ -201,10 +202,13 @@ const withSdk = async <Value>(
     );
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "derived-operation-failures",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "derived-operation-failures",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

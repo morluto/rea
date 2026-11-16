@@ -1,7 +1,8 @@
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { expect, it, vi } from "vitest";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
@@ -9,7 +10,6 @@ import type { ApktoolResourceAnalysisPort } from "../../../src/application/apkto
 import { ok } from "../../../src/domain/result.js";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { registerApktoolCommands } from "../../../src/cli/apktoolCommands.js";
-import { registerDecompileDirectoryCommand } from "../../../src/cli/decompileDirectoryCommand.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerSqliteCommands } from "../../../src/cli/sqliteCommands.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
@@ -53,7 +53,6 @@ const registry = () => {
   registerApktoolCommands(cli, silentLogger, {}, apktoolProvider);
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerSqliteCommands(cli, silentLogger, {});
-  registerDecompileDirectoryCommand(cli, silentLogger, runDirectAnalysis);
   const serve = async (argv: readonly string[]): Promise<unknown> => {
     let stdout = "";
     await cli.serve([...argv, "--json"], {

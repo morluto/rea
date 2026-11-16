@@ -15,6 +15,7 @@ import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/la
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const contract = toolContract("analyze_javascript_application");
 
@@ -38,7 +39,10 @@ const connect = async (
         },
     binaryLayout === undefined ? {} : { binaryLayout },
   );
-  const client = new Client({ name: "analysis-summary-detail", version: "1" });
+  const client = new Client(
+    { name: "analysis-summary-detail", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

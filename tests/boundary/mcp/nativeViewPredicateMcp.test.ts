@@ -60,7 +60,10 @@ it.each(["compact"] as const)(
         environment: { ...process.env, REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
       },
     );
-    const client = new Client({ name: "native-view-identity", version: "1" });
+    const client = new Client(
+      { name: "native-view-identity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const validation = createMcpSchemaValidation();
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const root = await createTestTempDirectory("rea-native-view-identity-");

@@ -20,7 +20,6 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import type { ProviderOutcomeContext } from "../../process/classifyProviderOutcome.js";
 import { describeLaunchFailure } from "../../process/launchFailure.js";
-import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import type { ProviderFailureDialect } from "../../providers/classifyProviderFailure.js";
 import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
 import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
@@ -312,7 +311,7 @@ const pwntoolsCommandContext = (
         context,
         { cause: details.cause, diagnostics: details.diagnostics },
       ),
-    dialect: (outcome, details) => {
+    dialect: (outcome, details, unclassified) => {
       // A reserved exit means a resource failure only when the bridge's
       // marker names that resource.
       const reservedExit =
@@ -347,20 +346,9 @@ const pwntoolsCommandContext = (
           },
         );
       // The shared owner already carries the command's output as
-      // `details.capturedOutput`; diagnostics keep only the exit facts.
-      const snapshot = outcome.output?.snapshot;
-      return new ProviderAdapterError(context.providerId, context.operation, {
-        ...details,
-        diagnostics: {
-          ...pwntoolsPhaseDiagnostics(state),
-          reason: outcome.message,
-          failure_kind:
-            outcome.cause instanceof OwnedCommandFailure
-              ? outcome.cause.reason
-              : outcome.kind,
-          exit_code: snapshot?.exitCode ?? null,
-          signal: snapshot?.signal ?? null,
-        },
+      // `details.capturedOutput` and reports the examined exit facts.
+      return unclassified({
+        diagnostics: pwntoolsPhaseDiagnostics(state),
       });
     },
   };

@@ -1,0 +1,14 @@
+$ rea no-such-command
+exit: 1
+--- stdout
+code: COMMAND_NOT_FOUND
+message: 'no-such-command' is not a command for 'rea'. Did you mean 'cutter-command'?
+cta:
+  description: "Suggested commands:"
+  commands[2]:
+    - command: rea cutter-command
+    - command: rea --help
+      description: see all available commands
+<end>
+--- stderr
+<end>

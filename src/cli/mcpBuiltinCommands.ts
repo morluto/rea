@@ -3,10 +3,11 @@ import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
 import {
   adaptCliOutputArgumentsForIncur,
   declaredSensitiveValues,
-  splitIncurBuiltinArguments,
+  parseCliGlobalArguments,
+  type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
 import {
-  parseCliOutputArguments,
+  readCliOutputArguments,
   renderCliDocument,
   type CliOutputFormat,
 } from "../cliOutput.js";
@@ -44,22 +45,23 @@ const PLAIN_SHELL_WORD = /^(?!=)[\w./+=:,-]+$/u;
  * Incur 0.6.1 rejects an unknown `mcp` subcommand in TOON regardless of the
  * selected format. Report the same envelope in the explicitly selected format;
  * without one, Incur's TOON or human rendering is already the selected output.
- * The arguments are the caller's normalized ones, before REA adapts output
- * flags for Incur, so the suggested command keeps the caller's selection.
+ * The caller's arguments are read before REA adapts output flags for Incur,
+ * so the suggested command keeps the caller's selection.
  */
 export const reportUnknownMcpSubcommand = (
   name: string,
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
   options: ServeOptions,
 ): boolean => {
-  const { command, commandIndices } = splitIncurBuiltinArguments(arguments_);
+  const { arguments: arguments_, command, commandIndices } = global;
   const [entry, subcommand] = command;
   // Incur receives JSON for REA's delimited formats and no `--columns`.
-  const incurArguments = adaptCliOutputArgumentsForIncur(arguments_);
+  const incur = parseCliGlobalArguments(
+    adaptCliOutputArgumentsForIncur(arguments_),
+  );
+  const incurArguments = incur.arguments;
   const incurOutputValues = new Set(
-    splitIncurBuiltinArguments(incurArguments).outputValues.map(
-      ({ index }) => index,
-    ),
+    incur.outputValues.map(({ index }) => index),
   );
   if (
     entry !== "mcp" ||
@@ -75,7 +77,7 @@ export const reportUnknownMcpSubcommand = (
     )
   )
     return false;
-  const output = parseCliOutputArguments(incurArguments);
+  const output = readCliOutputArguments(incur);
   // Invalid output controls keep Incur's own parse diagnostic.
   if (!output.formatExplicit || !output.validation.ok) return false;
   const sensitive = declaredSensitiveValues(command);

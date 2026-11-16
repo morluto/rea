@@ -16,6 +16,7 @@ import {
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 cliTest("rejects the removed compare-bundles command", async ({ cli }) => {
   const result = await cli.run({
@@ -189,10 +190,13 @@ cliTest(
       writeFile(rightPath, encoded),
     ]);
 
-    const client = new Client({
-      name: "bundle-path-contract-test",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "bundle-path-contract-test",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [

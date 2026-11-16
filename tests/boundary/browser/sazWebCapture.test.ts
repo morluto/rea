@@ -26,6 +26,12 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { protobufFrame } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../fixtures/zipZstandard.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
 
 import {
   CAPTURE_DECODER_HAS_MEMORY_BOUND as hasMemoryBound,
@@ -949,6 +955,51 @@ it.each([
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   }
   expect(JSON.stringify(result)).not.toContain("malformed-private-input");
+});
+
+it("names the ZIP decoder window instead of the expanded-input budget for a large-window member", async () => {
+  // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+  const { content, compressed } = zstandardWindowFrameFixture(0x90);
+  const path = await fixture(
+    zstandardZipFixture(content, { compressed, name: "raw/1_c.txt" }),
+  );
+  const result = await cliResponse(path);
+  expect(result.ok, result.stdout).toBe(false);
+  const error = JSON.parse(result.stdout);
+  expect(error).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      refusal: {
+        kind: "fixed_ceiling",
+        operation: "inspect_web_network_capture",
+        allowance: ZIP_ZSTANDARD_WINDOW_CEILING.name,
+        allowance_kind: ZIP_ZSTANDARD_WINDOW_CEILING.kind,
+        limit: 2 ** 27,
+        unit: "bytes",
+        narrowing: ZIP_ZSTANDARD_WINDOW_CEILING.narrowing,
+      },
+    },
+    // The recovery is the reader's ceiling through the refusal formatter.
+    remediation: {
+      action: analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation: "inspect_web_network_capture",
+        ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+      }),
+    },
+  });
+  expect(JSON.stringify(error)).not.toContain("max_input_bytes");
+  const { call } = await connectSazMcp();
+  const response = await call("inspect_web_network_capture", {
+    capture_path: path,
+    format: "saz",
+  });
+  expect(response.isError).toBe(true);
+  expect(parseMcpToolError(response).error).toMatchObject({
+    code: error.code,
+    details: { refusal: error.details.refusal },
+    remediation: error.remediation,
+  });
 });
 
 runtimeTest.runIf(!hasMemoryBound && runtimeSupported)(

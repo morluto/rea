@@ -11,10 +11,10 @@ import { execFileOutput } from "../process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   downloadHopperPackage,
-  isHopperRequestCancellation,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -491,7 +491,7 @@ export const installLinuxHopper = async (
       return { status: "installed", launcherPath };
     })();
   } catch (cause: unknown) {
-    const cancelled = isHopperRequestCancellation(cause, options.signal);
+    const cancelled = isAbortOf(cause, options.signal);
     result = {
       status: "failed",
       reason: cancelled ? "cancelled" : stage,

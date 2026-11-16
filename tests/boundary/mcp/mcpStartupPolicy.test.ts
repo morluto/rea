@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../src/domain/analysisResourceLimits.js";
 
 import {
   createEsmModuleProfileCollector,
@@ -257,15 +258,15 @@ describe("packaged MCP startup probe failures", () => {
   });
 });
 
+// The pending phase's own budget is the largest Node can schedule, longer
+// than any test deadline, so only the first-catalog budget can end the wait
+// before the test's deadline does.
 describe("packaged MCP first-catalog budget while a phase is pending", () => {
   it("stops a pending initialize at the shorter first-catalog budget", async () => {
-    const firstCatalogMs = 250;
-    const initializeMs = 8_000;
     const policy = probePolicy({
-      initializeBudgetMs: initializeMs,
-      firstCatalogBudgetMs: firstCatalogMs,
+      initializeBudgetMs: MAX_NODE_TIMER_DELAY_MS,
+      firstCatalogBudgetMs: 250,
     });
-    const started = performance.now();
     let caught: unknown;
     try {
       await measureMcpStartup({
@@ -281,21 +282,15 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     const message = errorMessage(caught);
     expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_INITIALIZE_BUDGET_MS");
-    // The phase request names the first-catalog budget once it is the shorter
-    // bound, so only elapsed time shows the stop beat the phase's own deadline.
-    expect(performance.now() - started).toBeLessThan(initializeMs);
   });
 
   it("stops a pending tools/list at the remaining first-catalog budget", async () => {
-    const firstCatalogMs = 800;
-    const toolsListMs = 8_000;
     const root = await createTestTempDirectory("rea-mcp-startup-");
     const initializedPath = join(root, "initialized");
     const policy = probePolicy({
-      toolsListBudgetMs: toolsListMs,
-      firstCatalogBudgetMs: firstCatalogMs,
+      toolsListBudgetMs: MAX_NODE_TIMER_DELAY_MS,
+      firstCatalogBudgetMs: 800,
     });
-    const started = performance.now();
     let caught: unknown;
     try {
       await measureMcpStartup({
@@ -315,9 +310,6 @@ describe("packaged MCP first-catalog budget while a phase is pending", () => {
     const message = errorMessage(caught);
     expectPhaseText(message, policy.firstCatalog);
     expect(message).not.toContain("REA_MCP_TOOLS_LIST_BUDGET_MS");
-    // The phase request names the first-catalog budget once it is the shorter
-    // bound, so only elapsed time shows the stop beat the phase's own deadline.
-    expect(performance.now() - started).toBeLessThan(toolsListMs);
     expect(await readFile(initializedPath, "utf8")).toBe("ready");
   });
 

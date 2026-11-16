@@ -15,10 +15,8 @@ import type { ProcessCleanupResult } from "../process/ProcessOwnership.js";
 import * as runTokenObservations from "../process/ProcessRunTokenObservations.js";
 import { isProcessOwnershipInspectionCancellation } from "../process/ProcessInspectionCancellation.js";
 import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
-import {
-  runDesktopSession,
-  type DesktopSessionPlan,
-} from "./DesktopApplicationSession.js";
+import { runDesktopSession } from "./DesktopApplicationSession.js";
+import type { DesktopSessionPlan } from "../ports/DesktopApplicationSession.js";
 import { X11WindowObserver } from "./X11WindowObserver.js";
 
 vi.mock("../process/TokenOwnedTermination.js", async (importOriginal) => {

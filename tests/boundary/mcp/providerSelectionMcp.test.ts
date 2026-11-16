@@ -3,7 +3,6 @@ import {
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -13,6 +12,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
@@ -50,6 +50,7 @@ import {
   toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 afterEach(async () => {
@@ -80,7 +81,10 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "provider-diagnostics", version: "1" });
+  const mcp = new Client(
+    { name: "provider-diagnostics", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -191,7 +195,10 @@ describe("provider selection over MCP", () => {
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "provider-selection", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server);
@@ -344,7 +351,10 @@ it("offers admitted providers and retains unconfigured rejections", async () => 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "provider-selection", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);
@@ -538,7 +548,10 @@ const connectDetailFixture = async (starts: string[]) => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "session-detail", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "session-detail", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -658,6 +671,9 @@ const expectedOpenSelection = (path: string, sha256: string) => ({
   sha256,
 });
 
+const firstSha = sha256Hex("first fixture");
+const secondSha = sha256Hex("second fixture");
+
 const expectQueuedOpenReceipt = async (
   mcp: Client,
   session: BinarySession,
@@ -691,16 +707,14 @@ const expectQueuedOpenReceipt = async (
       provider_id: "beta",
     });
     expect(nextReply.isError).not.toBe(true);
-    const sha = (value: string) =>
-      createHash("sha256").update(value).digest("hex");
     expect((await call("binary_session", {})).structuredContent).toMatchObject({
-      result: { path: second, sha256: sha("second fixture") },
+      result: { path: second, sha256: secondSha },
     });
     failedSnapshotOpen.release();
     const failedReply = await failedSwitch;
     expect(
       parseMcpToolError(failedReply).error.details?.selection_at_failure,
-    ).toEqual(expectedOpenSelection(first, sha("first fixture")));
+    ).toEqual(expectedOpenSelection(first, firstSha));
   } finally {
     failedSnapshotOpen.release();
     await failedSwitch.catch(() => undefined);
@@ -720,127 +734,14 @@ const writeSnapshotMismatchTargets = async () => {
   return { testDirectory, first, second, snapshotPath };
 };
 
-it("reports confirmed snapshot binding differences and keeps the active session", async () => {
-  const { testDirectory, first, second, snapshotPath } =
-    await writeSnapshotMismatchTargets();
-  const sha = (value: string) =>
-    createHash("sha256").update(value).digest("hex");
-  let revision = 1;
-  const alphaProfile = createAnalysisProfile(
-    { id: "alpha", name: "alpha provider", version: "1" },
-    { revision: 1 },
-  );
-  const betaProfile = createAnalysisProfile(
-    { id: "beta", name: "beta provider", version: "1" },
-    { fixture: "beta" },
-  );
-  const alpha = candidate("alpha", []);
-  const session = composeBinarySession(
-    new AnalysisProviderRegistry([
-      {
-        ...alpha,
-        resolveAnalysisProfile: () =>
-          Promise.resolve(
-            ok({
-              profile: createAnalysisProfile(
-                { id: "alpha", name: "alpha provider", version: "1" },
-                { revision },
-              ),
-            }),
-          ),
-      },
-      candidate("beta", []),
-    ]),
-  );
-  const server = createServer({ kind: "session", session });
-  const mcp = new Client({ name: "snapshot-mismatch", version: "1" });
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  resources.push(mcp, server, { close: () => session.close() });
-  await server.connect(serverTransport);
-  await mcp.connect(clientTransport);
-  const call = (name: string, args: Record<string, unknown>) =>
-    mcp.callTool({ name, arguments: args });
-  expect(
-    (await call("open_binary", { path: first, provider_id: "alpha" })).isError,
-  ).not.toBe(true);
-  expect(
-    (await call("close_binary", { snapshot_path: snapshotPath })).isError,
-  ).not.toBe(true);
-  expect(
-    (await call("open_binary", { path: first, provider_id: "alpha" })).isError,
-  ).not.toBe(true);
-  const mismatch = async (path: string, provider: string) => {
-    const result = await call("open_binary", {
-      path,
-      provider_id: provider,
-      snapshot_path: snapshotPath,
-    });
-    const error = parseMcpToolError(result).error;
-    expect(error.code).toBe("evidence_integrity_mismatch");
-    expect(error.details).toMatchObject({
-      target_at_open_completion: { sha256: sha("first fixture") },
-      selection_at_failure: expectedOpenSelection(first, sha("first fixture")),
-    });
-    expect(error.remediation.action).toBe(
-      analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
-    );
-    expect((await call("binary_session", {})).structuredContent).toMatchObject({
-      result: {
-        open: true,
-        path: first,
-        analysis_provider_binding: {
-          analysis_profile: { digest: alphaProfile.digest },
-        },
-      },
-    });
-    return error.details?.binding_mismatch;
-  };
-  // A snapshot names its target by the target identity it persisted.
-  expect(await mismatch(second, "alpha")).toEqual({
-    target: {
-      snapshot: expect.objectContaining({
-        identity: expect.objectContaining({ sha256: sha("first fixture") }),
-      }),
-      selected: expect.objectContaining({
-        identity: expect.objectContaining({ sha256: sha("second fixture") }),
-      }),
-    },
-  });
-  const otherProvider = await mismatch(first, "beta");
-  expect(otherProvider).toMatchObject({
-    provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
-    profile_digest: {
-      snapshot: alphaProfile.digest,
-      selected: betaProfile.digest,
-    },
-  });
-  expect(otherProvider).not.toHaveProperty("target");
-  revision = 2;
-  const otherProfile = await mismatch(first, "alpha");
-  expect(otherProfile).toMatchObject({
-    profile_digest: {
-      snapshot: expect.any(String),
-      selected: expect.any(String),
-    },
-  });
-  expect(otherProfile).not.toHaveProperty("provider");
-  expect(otherProfile).not.toHaveProperty("target");
-  const combined = await mismatch(second, "beta");
-  expect(combined).toMatchObject({
-    target: {
-      snapshot: { identity: { sha256: sha("first fixture") } },
-      selected: { identity: { sha256: sha("second fixture") } },
-    },
-    provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
-  });
-  expect((await call("address_name", { address: "0x10" })).isError).not.toBe(
-    true,
-  );
-
-  await expectQueuedOpenReceipt(mcp, session, first, second, snapshotPath);
-
-  revision = 1;
+/** A raw-binary snapshot names the entry point its target was opened with. */
+const expectRawEntryPointMismatch = async (
+  call: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => ReturnType<Client["callTool"]>,
+  testDirectory: string,
+) => {
   const raw = join(testDirectory, "raw.bin");
   const rawSnapshot = join(testDirectory, "raw-snapshot.json");
   await writeFile(raw, Buffer.from([0, 1, 2, 3]));
@@ -871,6 +772,135 @@ it("reports confirmed snapshot binding differences and keeps the active session"
       },
     },
   });
+};
+
+it("reports confirmed snapshot binding differences and keeps the active session", async () => {
+  const { testDirectory, first, second, snapshotPath } =
+    await writeSnapshotMismatchTargets();
+  let revision = 1;
+  const alphaProfile = createAnalysisProfile(
+    { id: "alpha", name: "alpha provider", version: "1" },
+    { revision: 1 },
+  );
+  const betaProfile = createAnalysisProfile(
+    { id: "beta", name: "beta provider", version: "1" },
+    { fixture: "beta" },
+  );
+  const alpha = candidate("alpha", []);
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...alpha,
+        resolveAnalysisProfile: () =>
+          Promise.resolve(
+            ok({
+              profile: createAnalysisProfile(
+                { id: "alpha", name: "alpha provider", version: "1" },
+                { revision },
+              ),
+            }),
+          ),
+      },
+      candidate("beta", []),
+    ]),
+  );
+  const server = createServer({ kind: "session", session });
+  const mcp = new Client(
+    { name: "snapshot-mismatch", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  const call = (name: string, args: Record<string, unknown>) =>
+    mcp.callTool({ name, arguments: args });
+  expect(
+    (await call("open_binary", { path: first, provider_id: "alpha" })).isError,
+  ).not.toBe(true);
+  expect(
+    (await call("close_binary", { snapshot_path: snapshotPath })).isError,
+  ).not.toBe(true);
+  expect(
+    (await call("open_binary", { path: first, provider_id: "alpha" })).isError,
+  ).not.toBe(true);
+  const mismatch = async (path: string, provider: string) => {
+    const result = await call("open_binary", {
+      path,
+      provider_id: provider,
+      snapshot_path: snapshotPath,
+    });
+    const error = parseMcpToolError(result).error;
+    expect(error.code).toBe("evidence_integrity_mismatch");
+    expect(error.details).toMatchObject({
+      target_at_open_completion: { sha256: firstSha },
+      selection_at_failure: expectedOpenSelection(first, firstSha),
+    });
+    expect(error.remediation.action).toBe(
+      analysisErrorRemediationAction(new AnalysisSnapshotMismatchError("")),
+    );
+    expect((await call("binary_session", {})).structuredContent).toMatchObject({
+      result: {
+        open: true,
+        path: first,
+        analysis_provider_binding: {
+          analysis_profile: { digest: alphaProfile.digest },
+        },
+      },
+    });
+    return error.details?.binding_mismatch;
+  };
+  // A snapshot names its target by the target identity it persisted.
+  expect(await mismatch(second, "alpha")).toEqual({
+    target: {
+      snapshot: expect.objectContaining({
+        identity: expect.objectContaining({
+          sha256: firstSha,
+        }),
+      }),
+      selected: expect.objectContaining({
+        identity: expect.objectContaining({
+          sha256: secondSha,
+        }),
+      }),
+    },
+  });
+  const otherProvider = await mismatch(first, "beta");
+  expect(otherProvider).toMatchObject({
+    provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
+    profile_digest: {
+      snapshot: alphaProfile.digest,
+      selected: betaProfile.digest,
+    },
+  });
+  expect(otherProvider).not.toHaveProperty("target");
+  revision = 2;
+  const otherProfile = await mismatch(first, "alpha");
+  expect(otherProfile).toMatchObject({
+    profile_digest: {
+      snapshot: expect.any(String),
+      selected: expect.any(String),
+    },
+  });
+  expect(otherProfile).not.toHaveProperty("provider");
+  expect(otherProfile).not.toHaveProperty("target");
+  const combined = await mismatch(second, "beta");
+  expect(combined).toMatchObject({
+    target: {
+      snapshot: { identity: { sha256: firstSha } },
+      selected: { identity: { sha256: secondSha } },
+    },
+    provider: { snapshot: { id: "alpha" }, selected: { id: "beta" } },
+  });
+  expect((await call("address_name", { address: "0x10" })).isError).not.toBe(
+    true,
+  );
+
+  await expectQueuedOpenReceipt(mcp, session, first, second, snapshotPath);
+
+  revision = 1;
+  await expectRawEntryPointMismatch(call, testDirectory);
 });
 
 it.each([true, false])(
@@ -906,7 +936,10 @@ it.each([true, false])(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "comment-recovery", version: "1" });
+    const mcp = new Client(
+      { name: "comment-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server, { close: () => session.close() });
@@ -1001,7 +1034,10 @@ it("keeps containing-function recovery for undeclared comment facets", async () 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "undeclared-comment-facet", version: "1" });
+  const mcp = new Client(
+    { name: "undeclared-comment-facet", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1247,9 +1283,7 @@ const checkQueuedSwitchReceipt = async (
       arguments: { path: other, provider_id: "alpha" },
     });
     expect(switched.isError).not.toBe(true);
-    expect(session.activeTarget()?.sha256).toBe(
-      createHash("sha256").update("other fixture").digest("hex"),
-    );
+    expect(session.activeTarget()?.sha256).toBe(sha256Hex("other fixture"));
     failedOpenReceipt.release();
     const queuedRefusal = await pending;
     for (const result of [structured(queuedRefusal), refusal])
@@ -1297,7 +1331,10 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "project-refusal", version: "1" });
+  const mcp = new Client(
+    { name: "project-refusal", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1351,7 +1388,10 @@ it("labels unbound provider observations as selection-time after a repair", asyn
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "candidate-scope", version: "1" });
+  const mcp = new Client(
+    { name: "candidate-scope", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1461,7 +1501,10 @@ it("preserves the bound client when a candidate refresh is cancelled during fina
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "candidate-refresh-cancel", version: "1" });
+  const mcp = new Client(
+    { name: "candidate-refresh-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1540,7 +1583,10 @@ it("orders a provider switch after an in-flight candidate refresh", async () => 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "refresh-switch-race", version: "1" });
+  const mcp = new Client(
+    { name: "refresh-switch-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1625,7 +1671,10 @@ it("does not cancel an already admitted prompt lookup for a candidate refresh", 
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "refresh-prompt", version: "1" });
+  const mcp = new Client(
+    { name: "refresh-prompt", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1697,7 +1746,10 @@ it("retains failed candidate-refresh cleanup while preserving the selected bindi
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "candidate-refresh-cleanup", version: "1" });
+  const mcp = new Client(
+    { name: "candidate-refresh-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1772,7 +1824,10 @@ it("retains attributed mixed profile cleanup through registered MCP calls and pa
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "profile-completion", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "profile-completion", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });
@@ -1856,7 +1911,10 @@ it.each(["ready", "cancelled", "physical"] as const)(
       { kind: "session", session },
       { logger: silentLogger },
     );
-    const mcp = new Client({ name: "async-readiness", version: "1.0.0" });
+    const mcp = new Client(
+      { name: "async-readiness", version: "1.0.0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     resources.push(mcp, server, { close: () => session.close() });
