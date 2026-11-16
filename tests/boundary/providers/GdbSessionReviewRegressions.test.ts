@@ -452,8 +452,11 @@ it.skipIf(process.platform === "win32")(
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
 import { readFile, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 process.on("SIGTERM", async () => {
-  await writeFile(${JSON.stringify(signalPath)}, "SIGTERM");
+  // Publish the signal before yielding: bounded stop may end this fake
+  // while an asynchronous write has created but not populated its file.
+  writeFileSync(${JSON.stringify(signalPath)}, "SIGTERM");
   while (true) {
     try {
       await readFile(${JSON.stringify(releasePath)}, "utf8");

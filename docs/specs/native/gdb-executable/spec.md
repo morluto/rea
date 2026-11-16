@@ -17,6 +17,8 @@ to identify that initial file, separately from the current inferior.
    GDB loads it. Share hash outcome and failed-close interpretation with Rizin.
    A physical hash failure leaves identity unknown with its reason; cancellation
    and outstanding descriptor cleanup fail startup and retain cleanup ownership.
+   If hashing completed before final close failed or was cancelled, preserve its
+   SHA-256 and byte count in the startup error, including after cleanup retry.
 3. Disable automatic loading before issuing the MI file-load request. Publish
    readiness only after the load completes successfully. Loading does not issue
    an inferior run, attach or shell command.

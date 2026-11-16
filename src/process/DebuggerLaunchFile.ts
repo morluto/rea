@@ -3,6 +3,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   unknownTarget,
   type FileTargetIdentity,
@@ -10,6 +11,7 @@ import {
 } from "../domain/targetIdentity.js";
 import {
   RegularFileCleanupFailure,
+  RegularFileCancelled,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -91,11 +93,22 @@ export const observeDebuggerLaunchFile = async (
       },
     });
   } catch (cause: unknown) {
+    const outcome =
+      cause instanceof RegularFileCancelled ||
+      cause instanceof RegularFileCleanupFailure
+        ? cause.outcome
+        : undefined;
+    const completed =
+      outcome?.kind === "completed"
+        ? { completed_hash: jsonValueSchema.parse(outcome.value) }
+        : undefined;
     const cancellation = regularFileCancellation(cause);
     const cancelled =
       cancellation === undefined
         ? undefined
-        : cancelledBy(operation, carriedReason(cancellation.reason));
+        : cancelledBy(operation, carriedReason(cancellation.reason), {
+            diagnostics: completed,
+          });
     const describe = (failure: unknown): string =>
       errorMessage(stableFileHashCause(failure));
     if (!(cause instanceof RegularFileCleanupFailure)) {
@@ -108,9 +121,12 @@ export const observeDebuggerLaunchFile = async (
     const cleanup = new ProviderCleanupError(
       provider,
       [path],
-      cause.outcome.kind === "failed" && cancelled === undefined
-        ? { launch_file_hash_failure: describe(cause.outcome.cause) }
-        : {},
+      {
+        ...completed,
+        ...(cause.outcome.kind === "failed" && cancelled === undefined
+          ? { launch_file_hash_failure: describe(cause.outcome.cause) }
+          : {}),
+      },
       { operation, cause: cause.cleanupCause },
     );
     const failure =

@@ -14,7 +14,7 @@
 ## Verification (2026-11-16)
 
 - Serial typecheck/lint and architecture guards passed.
-- Ten focused files passed 301 tests, including advertised-schema/client
+- Ten focused files passed 301 tests before the completed-hash review fix, including advertised-schema/client
   admission, CLI selection, late loading/cancellation, retained file and
   debugger cleanup, and existing GDB/Rizin lifecycle behavior.
 - Temporarily permitting MI2 retry after file-load refusal made the dedicated
@@ -23,5 +23,12 @@
   whose path contained spaces and quotes. Evidence matched its SHA-256,
   Python automatic loading was off, its execution marker remained absent,
   and the session closed successfully. Native Rizin was not exercised.
+- Six additional GDB/Rizin cases preserve completed hash facts when final close
+  fails, is cancelled, or both, through public error projection and cleanup retry.
+  All six fail against the pre-fix shared observer; the twelve-case file passed
+  with the fix. A broader rerun passed 306/307 tests; the remaining fixture
+  observed an empty asynchronous signal marker. Publishing that marker
+  synchronously removed the observation race, and both affected files passed
+  all 32 tests on the final source. Final CI is recorded in the PR.
 - Documentation/generated checks and final native recheck are recorded in the
   PR validation evidence.
