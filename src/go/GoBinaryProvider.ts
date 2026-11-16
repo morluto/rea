@@ -107,6 +107,7 @@ const failureForPrimary = (
           ? fixedAllowanceOptions(
               "The Go structural decoding allowance",
               "parser",
+              { limit: cause.maximum_bytes, unit: "bytes" },
             )
           : {
               retryable: false,

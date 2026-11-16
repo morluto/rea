@@ -134,11 +134,122 @@ const WRAPPER_TYPES = new Set([
   "catch",
 ]);
 
+type SchemaDef = Record<string, unknown> & { readonly type: string };
+
+const schemaDef = (node: z.ZodType): SchemaDef =>
+  node._zod.def as unknown as SchemaDef;
+
+/** The schemas the walk enters below a node, for each type it enters. */
+const enteredChildren = (def: SchemaDef): readonly z.ZodType[] => {
+  if (WRAPPER_TYPES.has(def.type)) return [def.innerType as z.ZodType];
+  if (def.type === "pipe") return [def.out as z.ZodType];
+  if (def.type === "union") return def.options as z.ZodType[];
+  if (def.type === "array") return [def.element as z.ZodType];
+  if (def.type === "object")
+    return Object.values(def.shape as Record<string, z.ZodType>);
+  return [];
+};
+
+// Output schemas are fixed module-level values, so whether a node can reach
+// a recorded control is computed once per node.
+const controlReach = new WeakMap<z.ZodType, boolean>();
+
+/**
+ * Whether a control lies at or below `node`, and the shallowest node still
+ * being visited that its subtree refers back to. A result that depends on an
+ * unfinished ancestor of a recursive schema is not cached until that
+ * ancestor finishes.
+ */
+const visitControlReach = (
+  node: z.ZodType,
+  visiting: Map<z.ZodType, number>,
+): { readonly reaches: boolean; readonly lowest: number } => {
+  const known = controlReach.get(node);
+  if (known !== undefined) return { reaches: known, lowest: Infinity };
+  const active = visiting.get(node);
+  if (active !== undefined) return { reaches: false, lowest: active };
+  if (recordedControlSchemas.has(node)) {
+    controlReach.set(node, true);
+    return { reaches: true, lowest: Infinity };
+  }
+  const depth = visiting.size;
+  visiting.set(node, depth);
+  let lowest = Infinity;
+  let reaches = false;
+  for (const child of enteredChildren(schemaDef(node))) {
+    const visited = visitControlReach(child, visiting);
+    lowest = Math.min(lowest, visited.lowest);
+    if (visited.reaches) {
+      reaches = true;
+      break;
+    }
+  }
+  visiting.delete(node);
+  if (reaches || lowest >= depth) controlReach.set(node, reaches);
+  return { reaches, lowest: reaches ? Infinity : lowest };
+};
+
+/** Whether a recorded control position lies at or below this schema node. */
+const reachesRecordedControl = (node: z.ZodType): boolean =>
+  visitControlReach(node, new Map()).reaches;
+
+/**
+ * Whether a value cannot satisfy an option, judged without parsing it: an
+ * object option rejects a non-object, a missing required key, a key a strict
+ * object does not declare, or a key whose literal values exclude the value's;
+ * a union rejects what every option rejects. Anything else may satisfy it.
+ */
+const cannotSatisfy = (value: unknown, option: z.ZodType): boolean => {
+  const def = schemaDef(option);
+  if (def.type === "union")
+    return (def.options as z.ZodType[]).every((nested) =>
+      cannotSatisfy(value, nested),
+    );
+  if (def.type !== "object") return false;
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return true;
+  const record = value as Record<string, unknown>;
+  const shape = def.shape as Record<string, z.ZodType>;
+  const strict =
+    (def.catchall as z.ZodType | undefined)?._zod.def.type === "never";
+  const literals = Object.entries(option._zod.propValues ?? {});
+  return (
+    Object.entries(shape).some(
+      ([key, field]) =>
+        field._zod.optin === undefined && !Object.hasOwn(record, key),
+    ) ||
+    (strict && Object.keys(record).some((key) => !Object.hasOwn(shape, key))) ||
+    literals.some(([key, values]) => !values.has(record[key] as never))
+  );
+};
+
+/**
+ * The option a union value was produced with, when it can hold a control:
+ * the first option the value satisfies. Options the value's keys and literal
+ * values rule out are not parsed; when one option remains, it is the only
+ * shape the value can have and is followed without parsing it. Options after
+ * the last one that can hold a control are never parsed.
+ */
+const producedUnionOption = (
+  value: unknown,
+  options: readonly z.ZodType[],
+): z.ZodType | undefined => {
+  const possible = options.filter((option) => !cannotSatisfy(value, option));
+  if (possible.length === 1)
+    return reachesRecordedControl(possible[0]!) ? possible[0] : undefined;
+  const last = possible.findLastIndex(reachesRecordedControl);
+  for (const option of possible.slice(0, last + 1))
+    if (option.safeParse(value).success)
+      return reachesRecordedControl(option) ? option : undefined;
+  return undefined;
+};
+
 /**
  * The schema nodes of a value, following the result schema: each position
  * the schema declares a recorded control yields that value. Positions the
  * schema leaves open (records, unknown JSON, lazy or custom types) are not
- * entered, so captured content cannot supply a control.
+ * entered, so captured content cannot supply a control, and subtrees whose
+ * schema declares no control are skipped without reading them.
  */
 const recordedControlValues = (
   output: unknown,
@@ -148,23 +259,18 @@ const recordedControlValues = (
   const pending: [unknown, z.ZodType][] = [[output, schema]];
   while (pending.length > 0) {
     const [value, node] = pending.pop()!;
-    if (value === undefined) continue;
+    if (value === undefined || !reachesRecordedControl(node)) continue;
     if (recordedControlSchemas.has(node)) {
       if (node.safeParse(value).success) found.push(value);
       continue;
     }
-    const def = node._zod.def as unknown as Record<string, unknown> & {
-      readonly type: string;
-    };
+    const def = schemaDef(node);
     if (WRAPPER_TYPES.has(def.type)) {
       pending.push([value, def.innerType as z.ZodType]);
     } else if (def.type === "pipe") {
       pending.push([value, def.out as z.ZodType]);
     } else if (def.type === "union") {
-      // The first option the value satisfies is the one the producer used.
-      const option = (def.options as z.ZodType[]).find(
-        (candidate) => candidate.safeParse(value).success,
-      );
+      const option = producedUnionOption(value, def.options as z.ZodType[]);
       if (option !== undefined) pending.push([value, option]);
     } else if (def.type === "array" && Array.isArray(value)) {
       for (const item of value) pending.push([item, def.element as z.ZodType]);

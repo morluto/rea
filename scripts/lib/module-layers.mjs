@@ -281,6 +281,7 @@ export const ENTRY_FILES = Object.freeze(
       ],
       desktop: [
         "AgentEnvComputer.ts",
+        "AgentEnvProviderIdentity.ts",
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
@@ -450,6 +451,16 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
     // and reports its failures, instead of parsing the fuse wire twice.
     reason:
       "active Electron capture checks the inspect-arguments fuse with the electron provider's fuse reader",
+  }),
+  Object.freeze({
+    from: "desktop",
+    to: "electron",
+    files: Object.freeze(["ElectronFuseReader.ts"]),
+    // The Linux application inventory marks an executable as Electron when
+    // it carries a fuse sentinel. It locates the sentinel with the electron
+    // provider's fuse reader instead of searching the fuse wire again.
+    reason:
+      "the Linux application inventory detects Electron executables with the electron provider's fuse reader",
   }),
   Object.freeze({
     from: "captures",

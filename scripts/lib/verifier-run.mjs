@@ -2,9 +2,19 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 
+// Named types come from the declaration file TypeScript consumers import.
+/** @typedef {import("./verifier-run.mjs").VerifierRunStart} VerifierRunStart */
+/** @typedef {import("./verifier-run.mjs").VerifierRun} VerifierRun */
+/** @typedef {import("./verifier-run.mjs").VerifierProcessLineage} VerifierProcessLineage */
+/** @typedef {{ readonly pid: number; readonly parentPid: number; readonly processGroupId: number }} ProcessMember */
+
+/** @type {VerifierRunStart | undefined} */
 let activeVerifierRun;
 
-/** Allocate one verifier identity before work and propagate it to child processes. */
+/**
+ * Allocate one verifier identity before work and propagate it to child processes.
+ * @returns {VerifierRunStart}
+ */
 export const createVerifierRun = () => {
   if (activeVerifierRun !== undefined) {
     process.env.REA_PROCESS_RUN_ID = activeVerifierRun.run_id;
@@ -24,6 +34,8 @@ export const createVerifierRun = () => {
  *
  * An empty descendant list means none were live during this observation. It
  * does not prove that the verifier never launched children earlier in the run.
+ * @param {VerifierRunStart} run
+ * @returns {Promise<VerifierRun>}
  */
 export const completeVerifierRun = async (run) => {
   const observedAt = new Date().toISOString();
@@ -33,7 +45,10 @@ export const completeVerifierRun = async (run) => {
   };
 };
 
-/** Require positive process-lineage evidence before claiming cleanup complete. */
+/**
+ * Require positive process-lineage evidence before claiming cleanup complete.
+ * @param {VerifierProcessLineage} processLineage
+ */
 export const assertVerifierCleanupComplete = (processLineage) => {
   if (processLineage.status !== "verified")
     throw new Error(
@@ -43,6 +58,11 @@ export const assertVerifierCleanupComplete = (processLineage) => {
     throw new Error("Owned descendants survived verifier cleanup");
 };
 
+/**
+ * @param {VerifierRunStart} run
+ * @param {string} observedAt
+ * @returns {Promise<VerifierProcessLineage>}
+ */
 const observeVerifierLineage = async (run, observedAt) => {
   if (process.platform === "win32")
     return unavailableLineage(
@@ -116,6 +136,13 @@ const observeVerifierLineage = async (run, observedAt) => {
   }
 };
 
+/**
+ * @param {VerifierRunStart} run
+ * @param {string} observedAt
+ * @param {number | null} processGroupId
+ * @param {string} reason
+ * @returns {VerifierProcessLineage}
+ */
 const unavailableLineage = (run, observedAt, processGroupId, reason) => ({
   status: "unavailable",
   observed_at: observedAt,
@@ -125,6 +152,7 @@ const unavailableLineage = (run, observedAt, processGroupId, reason) => ({
   reason,
 });
 
+/** @returns {Promise<{ members: ProcessMember[]; observerPid: number | null }>} */
 const processSnapshot = async () => {
   if (process.platform === "linux") return linuxProcessSnapshot();
   return posixProcessSnapshot();
@@ -132,6 +160,7 @@ const processSnapshot = async () => {
 
 const linuxProcessSnapshot = async () => {
   const entries = await readdir("/proc", { withFileTypes: true });
+  /** @type {ProcessMember[]} */
   const members = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
@@ -155,7 +184,9 @@ const posixProcessSnapshot = async () => {
   const child = spawn("ps", ["-axo", "pid=,ppid=,pgid=,stat="], {
     stdio: ["ignore", "pipe", "pipe"],
   });
+  /** @type {Buffer[]} */
   const stdout = [];
+  /** @type {Buffer[]} */
   const stderr = [];
   child.stdout.on("data", (chunk) => stdout.push(chunk));
   child.stderr.on("data", (chunk) => stderr.push(chunk));
@@ -168,16 +199,25 @@ const posixProcessSnapshot = async () => {
   const members = Buffer.concat(stdout)
     .toString("utf8")
     .split("\n")
-    .map((line) => /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)/u.exec(line))
-    .filter((match) => match !== null && !match[4]?.startsWith("Z"))
-    .map((match) => ({
-      pid: Number(match[1]),
-      parentPid: Number(match[2]),
-      processGroupId: Number(match[3]),
-    }));
+    .flatMap((line) => {
+      const match = /\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)/u.exec(line);
+      return match === null || match[4]?.startsWith("Z")
+        ? []
+        : [
+            {
+              pid: Number(match[1]),
+              parentPid: Number(match[2]),
+              processGroupId: Number(match[3]),
+            },
+          ];
+    });
   return { members, observerPid: child.pid ?? null };
 };
 
+/**
+ * @param {readonly ProcessMember[]} members
+ * @param {number} launcherPid
+ */
 const descendantMembers = (members, launcherPid) => {
   const descendantPids = new Set([launcherPid]);
   let previousSize = -1;
@@ -190,6 +230,10 @@ const descendantMembers = (members, launcherPid) => {
   return members.filter(({ pid }) => descendantPids.has(pid));
 };
 
+/**
+ * @param {number} pid
+ * @returns {Promise<string | undefined>}
+ */
 const processRunId = async (pid) => {
   if (process.platform === "linux") {
     const environment = await readFile(`/proc/${String(pid)}/environ`, "utf8");
@@ -201,6 +245,7 @@ const processRunId = async (pid) => {
   const child = spawn("ps", ["eww", "-p", String(pid)], {
     stdio: ["ignore", "pipe", "ignore"],
   });
+  /** @type {Buffer[]} */
   const stdout = [];
   child.stdout.on("data", (chunk) => stdout.push(chunk));
   const code = await new Promise((resolve, reject) => {

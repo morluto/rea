@@ -6,7 +6,10 @@ import {
   resolvePwntoolsLimits,
   type PwntoolsProducerLimits,
 } from "../../domain/native/pwntoolsResourceLimits.js";
-import type { AnalysisCapturedOutput } from "../../domain/analysisErrorBase.js";
+import type {
+  AnalysisCapturedOutput,
+  AnalysisErrorOptions,
+} from "../../domain/analysisErrorBase.js";
 import type { AnalysisControlLimit } from "../../domain/analysisSettings.js";
 import type { ProviderProcessSnapshot } from "../../process/ProviderProcess.js";
 import {
@@ -16,6 +19,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
 import type { ProviderOutcomeContext } from "../../process/classifyProviderOutcome.js";
+import { describeLaunchFailure } from "../../process/launchFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import type { ProviderFailureDialect } from "../../providers/classifyProviderFailure.js";
 import type { PwntoolsFailureEvidence } from "./PwntoolsResourceLimits.js";
@@ -209,7 +213,7 @@ export const pwntoolsFailureDialect = (
 const pwntoolsCommandContext = (
   state: PwntoolsPhase,
   limits: PwntoolsProducerLimits,
-): ProviderOutcomeContext => {
+): Omit<ProviderOutcomeContext, "providerId"> => {
   const { executablePath, failureEvidence, context } = state;
   const limitReport = failureEvidence.limits;
   const budgetRecovery = pwntoolsBudgetRecovery(limits);
@@ -299,15 +303,16 @@ const pwntoolsCommandContext = (
               PWNTOOLS_LIMITS.cpu_seconds,
             ),
           },
+    launchUnavailable: (failure, details) =>
+      pwntoolsUnavailable(
+        `Selected Python could not launch (${describeLaunchFailure(failure)}): ${executablePath}. Check the configured executable, its interpreter and host execute access.`,
+        executablePath,
+        failure.code,
+        undefined,
+        context,
+        { cause: details.cause, diagnostics: details.diagnostics },
+      ),
     dialect: (outcome, details) => {
-      if (outcome.kind === "launch-refused")
-        return pwntoolsUnavailable(
-          `Selected Python could not launch (${outcome.refusal.code}): ${executablePath}. Check the configured executable, its interpreter and host execute access.`,
-          executablePath,
-          outcome.refusal.code,
-          undefined,
-          context,
-        );
       // A reserved exit means a resource failure only when the bridge's
       // marker names that resource.
       const reservedExit =
@@ -405,9 +410,15 @@ export const pwntoolsUnavailable = (
   systemCode?: string,
   capturedOutput?: AnalysisCapturedOutput,
   context: PwntoolsFailureContext = DEFAULT_CONTEXT,
+  /** The shared launch owner's cause and parsed facts, for a launch failure. */
+  launch?: Pick<AnalysisErrorOptions, "cause" | "diagnostics">,
 ): ProviderSelectionError =>
   new ProviderSelectionError({
     ...(capturedOutput === undefined ? {} : { capturedOutput }),
+    ...(launch?.cause === undefined ? {} : { cause: launch.cause }),
+    ...(launch?.diagnostics === undefined
+      ? {}
+      : { diagnostics: launch.diagnostics }),
     userMessage: reason,
     operation: context.operation,
     reason: "provider_unavailable",

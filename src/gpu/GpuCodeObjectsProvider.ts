@@ -7,6 +7,7 @@ import {
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
+  selectedFileTargetError,
 } from "../resources/index.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
@@ -45,7 +46,6 @@ import {
 } from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,

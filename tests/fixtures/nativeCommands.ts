@@ -154,6 +154,13 @@ export const signatureInspectionFixture = (): InspectSignature => ({
   entitlements: null,
   timestamp: null,
   hardened_runtime: null,
+  slices: {
+    described: "arm64",
+    architectures: [],
+    unmapped: false,
+    checked: [],
+    unsigned: [],
+  },
   provenance: [],
   limitations: ["Controlled parsed facts; no native signing tool invoked."],
 });

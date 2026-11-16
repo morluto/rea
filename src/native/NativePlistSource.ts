@@ -34,13 +34,12 @@ import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   MAX_NATIVE_PLIST_BYTES,
-  NATIVE_PLIST_INPUT_ALLOWANCE,
+  nativePlistInputAllowance,
 } from "./parsers/plist.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
@@ -234,7 +233,7 @@ const nativePlistPrimaryFailure = (
             { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
             {
               cause,
-              ...fixedAllowanceOptions(NATIVE_PLIST_INPUT_ALLOWANCE, "input"),
+              ...nativePlistInputAllowance(),
             },
           )
         : new AnalysisResourceConstraintError(

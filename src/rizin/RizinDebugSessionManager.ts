@@ -1,4 +1,12 @@
-import { unknownTarget } from "../domain/targetIdentity.js";
+import {
+  unknownTarget,
+  type FileTargetIdentity,
+  type UnknownTargetIdentity,
+} from "../domain/targetIdentity.js";
+import {
+  hashStableFile,
+  stableFileHashCause,
+} from "../filesystem/StableFileHash.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
@@ -95,6 +103,19 @@ interface RizinLaunchProvenance {
   readonly resolved_path: string;
 }
 
+/**
+ * The session's launch file, hashed before Rizin started. A hash failure
+ * other than cleanup or cancellation leaves the target unknown, with the
+ * failure retained as a limitation.
+ */
+interface RizinLaunchTarget {
+  readonly identity: FileTargetIdentity | UnknownTargetIdentity;
+  readonly unobservedReason?: string;
+}
+
+const RIZIN_SESSION_TARGET_LIMITATION =
+  "The session target is the launch file hashed at session start; later debugger commands do not rebind it.";
+
 const RIZIN_LAUNCH_PROVENANCE_LIMITATION =
   "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.";
 
@@ -104,6 +125,7 @@ interface RizinCommandEvidenceInput {
   readonly result: RizinDebugCommandResult;
   readonly inferiorTty: string;
   readonly launchProvenance: RizinLaunchProvenance;
+  readonly launchTarget: RizinLaunchTarget;
   readonly limitations: readonly string[];
 }
 
@@ -113,10 +135,16 @@ const createRizinCommandEvidence = ({
   result,
   inferiorTty,
   launchProvenance,
+  launchTarget,
   limitations,
 }: RizinCommandEvidenceInput): Evidence =>
   createEvidence(
-    unknownTarget("not-observed"),
+    {
+      kind: "session",
+      session_kind: "rizin",
+      id: sessionId,
+      target: launchTarget.identity,
+    },
     RIZIN_DEBUGGER_PROVIDER_IDENTITY,
     {
       predicateType: "rea.debugger.command-observation",
@@ -130,7 +158,12 @@ const createRizinCommandEvidence = ({
       result: { ...result },
       rawResult: { ...result },
       limitations: [
-        "The current debugger target identity is not established by the Rizin session identifier.",
+        RIZIN_SESSION_TARGET_LIMITATION,
+        ...(launchTarget.unobservedReason === undefined
+          ? []
+          : [
+              `The launch file could not be hashed at session start, so the session target is unknown: ${launchTarget.unobservedReason}`,
+            ]),
         ...limitations,
         ...(result.completion_status === "unknown"
           ? [
@@ -174,6 +207,7 @@ interface RizinCommandTimeoutEvidenceInput {
   readonly inferiorTty: string;
   readonly cleanupFailure: string | undefined;
   readonly launchProvenance: RizinLaunchProvenance;
+  readonly launchTarget: RizinLaunchTarget;
   readonly deadline: DebuggerAdmissionLimit;
 }
 
@@ -189,6 +223,7 @@ const createRizinCommandTimeoutEvidence = ({
   inferiorTty,
   cleanupFailure,
   launchProvenance,
+  launchTarget,
   deadline,
 }: RizinCommandTimeoutEvidenceInput): Evidence =>
   createRizinCommandEvidence({
@@ -197,6 +232,7 @@ const createRizinCommandTimeoutEvidence = ({
     result,
     inferiorTty,
     launchProvenance,
+    launchTarget,
     limitations: [
       rizinCommandTimeoutLimitation(deadline),
       ...(result.output_invalid_utf8
@@ -229,6 +265,7 @@ interface RizinDebugSession {
   }>;
   readonly backend: string | null;
   readonly launchProvenance: RizinLaunchProvenance;
+  readonly launchTarget: RizinLaunchTarget;
   readonly inferiorTty: string;
   readonly inferiorTtyDevice: number;
   readonly inferiorTtyInode: number;
@@ -292,7 +329,7 @@ class RizinFrameTimeoutError extends Error {
 /** Owns persistent Rizin debugger processes independently from BinarySession. */
 export class RizinDebugSessionManager {
   readonly #sessions: OwnedDebuggerSessionRegistry<RizinDebugSession>;
-  readonly #ttyResources = new ArtifactResourceScope();
+  readonly #startupResources = new ArtifactResourceScope();
   readonly #environment: Readonly<NodeJS.ProcessEnv>;
   #closingAll = false;
   readonly #command: string;
@@ -370,6 +407,73 @@ export class RizinDebugSessionManager {
     const parsed = parseDebuggerCommandOutput(this.#environment);
     if (!parsed.ok) throw parsed.error;
     return parsed.value;
+  }
+
+  /**
+   * Hash the launch file before Rizin starts, so the session names the file
+   * it launched. Cleanup failure and cancellation fail the start; any other
+   * hash failure leaves the target unknown and keeps its reason.
+   */
+  async #observeLaunchFile(
+    path: string,
+    signal: AbortSignal | undefined,
+  ): Promise<Result<RizinLaunchTarget, AnalysisError>> {
+    const operation = "start_rizin_debug_session";
+    let lease: AnalysisCleanupLease | undefined;
+    try {
+      const { sha256 } = await hashStableFile(path, {
+        ...(signal === undefined ? {} : { signal }),
+        retainFailedClose: (owner) => {
+          lease = new AnalysisCleanupLease(() => owner.close(), [path]);
+          this.#startupResources.retain({
+            kind: "lease",
+            resource: path,
+            lease,
+          });
+        },
+      });
+      return ok({
+        identity: {
+          kind: "file",
+          sha256,
+          format: "file",
+          architecture: null,
+          selection: null,
+        },
+      });
+    } catch (cause: unknown) {
+      const cancellation = regularFileCancellation(cause);
+      const cancelled =
+        cancellation === undefined
+          ? undefined
+          : cancelledBy(operation, carriedReason(cancellation.reason));
+      const describe = (failure: unknown): string =>
+        errorMessage(stableFileHashCause(failure));
+      if (!(cause instanceof RegularFileCleanupFailure)) {
+        if (cancelled !== undefined) return err(cancelled);
+        return ok({
+          identity: unknownTarget("not-observed"),
+          unobservedReason: describe(cause),
+        });
+      }
+      // The close failure fails the start; a read failure beside it stays
+      // in the error, since the retained lease only retries the close.
+      const cleanup = new ProviderCleanupError(
+        "rizin",
+        [path],
+        cause.outcome.kind === "failed" && cancelled === undefined
+          ? { launch_file_hash_failure: describe(cause.outcome.cause) }
+          : {},
+        { operation, cause: cause.cleanupCause },
+      );
+      const error =
+        cancelled === undefined
+          ? cleanup
+          : analysisErrorWithCleanupFailure(cancelled, cleanup, operation);
+      lease?.bindCleanupError(cleanup);
+      if (error !== cleanup) lease?.bindCleanupError(error);
+      return err(error);
+    }
   }
 
   async start(
@@ -459,11 +563,11 @@ export class RizinDebugSessionManager {
     let ttyInode: number;
     let ttyLease: AnalysisCleanupLease | undefined;
     try {
-      await this.#ttyResources.retryCleanup();
+      await this.#startupResources.retryCleanup();
     } catch (cause: unknown) {
       const cleanup = new ProviderCleanupError(
         "rizin",
-        this.#ttyResources.cleanupResources,
+        this.#startupResources.cleanupResources,
         {},
         { operation: "start_rizin_debug_session", cause },
       );
@@ -483,7 +587,7 @@ export class RizinDebugSessionManager {
           ...(signal === undefined ? {} : { signal }),
           retainFailedClose: (owner) => {
             ttyLease = new AnalysisCleanupLease(() => owner.close(), [ttyPath]);
-            this.#ttyResources.retain({
+            this.#startupResources.retain({
               kind: "lease",
               resource: ttyPath,
               lease: ttyLease,
@@ -560,6 +664,10 @@ export class RizinDebugSessionManager {
       caller_selected_path: input.path,
       resolved_path: resolvedPath,
     };
+    const launchTarget = await this.#observeLaunchFile(resolvedPath, signal);
+    if (!launchTarget.ok) return launchTarget;
+    if (signal?.aborted)
+      return err(cancelledBy("start_rizin_debug_session", signal));
     const arguments_ = [
       "-N",
       "-0",
@@ -609,6 +717,7 @@ export class RizinDebugSessionManager {
       id,
       launched,
       launchProvenance,
+      launchTarget: launchTarget.value,
       backend: input.backend ?? null,
       inferiorTty: ttyPath,
       inferiorTtyDevice: ttyDevice,
@@ -936,6 +1045,7 @@ export class RizinDebugSessionManager {
         result,
         inferiorTty: session.inferiorTty,
         launchProvenance: session.launchProvenance,
+        launchTarget: session.launchTarget,
         limitations: [
           "Rizin commands and debugger effects depend on the loaded IO plugin and target.",
           "Output contains all NUL frames through an explicit command-completion marker; backend output interleaved before that marker cannot be distinguished from command output.",
@@ -983,6 +1093,7 @@ export class RizinDebugSessionManager {
               result: partialResult,
               inferiorTty: session.inferiorTty,
               launchProvenance: session.launchProvenance,
+              launchTarget: session.launchTarget,
               limitations,
             });
       if (signal?.aborted || cause instanceof AnalysisCancelledError) {
@@ -1062,6 +1173,7 @@ export class RizinDebugSessionManager {
           cleanupFailure:
             stopped.status === "incomplete" ? stopped.reason : undefined,
           launchProvenance: session.launchProvenance,
+          launchTarget: session.launchTarget,
         });
         return this.#finalizeCommandObservation(
           session,
@@ -1078,6 +1190,7 @@ export class RizinDebugSessionManager {
           result,
           inferiorTty: session.inferiorTty,
           launchProvenance: session.launchProvenance,
+          launchTarget: session.launchTarget,
           limitations: [
             "Rizin exited before the command-completion marker; retained frame output is partial and command completion is unknown.",
             "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
@@ -1229,11 +1342,11 @@ export class RizinDebugSessionManager {
 
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
     try {
-      await this.#ttyResources.retryCleanup();
+      await this.#startupResources.retryCleanup();
     } catch (cause: unknown) {
       const error = new ProviderCleanupError(
         "rizin",
-        this.#ttyResources.cleanupResources,
+        this.#startupResources.cleanupResources,
         {},
         {
           operation: "start_rizin_debug_session",
@@ -1253,7 +1366,7 @@ export class RizinDebugSessionManager {
     await this.#sessions.closeStarts();
     const outcomes = await Promise.allSettled([
       this.#sessions.closeAll(),
-      this.#ttyResources.close(),
+      this.#startupResources.close(),
     ]);
     const failures = outcomes.flatMap((outcome) =>
       outcome.status === "rejected" ? [outcome.reason] : [],

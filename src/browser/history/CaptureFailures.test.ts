@@ -255,6 +255,7 @@ it.each(["before open", "during read"])(
     const cause = new ArtifactReaderFailure(
       "integrity",
       `Artifact changed ${stage}: ${path}`,
+      { integrityCheck: "container-identity" },
     );
     const error = historicalCaptureFailure(input, cause, "capture-read");
     const projected = projectAnalysisError(error);
@@ -409,7 +410,9 @@ it("preserves the exact cancellation reason and an earlier reader failure", () =
 
   const changed = historicalCaptureFailure(
     input,
-    new ArtifactReaderFailure("integrity", "Observed changed capture"),
+    new ArtifactReaderFailure("integrity", "Observed changed capture", {
+      integrityCheck: "container-identity",
+    }),
     "capture-read",
     { signal: controller.signal },
   );

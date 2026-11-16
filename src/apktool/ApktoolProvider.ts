@@ -228,12 +228,14 @@ const apktoolCommandFailure = (
         target_path: targetPath,
       },
     });
-  if (!(failure instanceof OwnedCommandFailure))
+  const outcome = providerOutcomeOf(failure);
+  if (outcome === undefined)
     return commandFailure({
       cause: failure,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
     });
-  return classifyProviderOutcome(providerOutcomeOf(failure), {
+  return classifyProviderOutcome(outcome, {
+    providerId: APKTOOL_PROVIDER_IDENTITY.id,
     operation,
     capturedOutput: capturedProviderOutput,
     // Ownership preparation can retain output before any process exists.
@@ -245,8 +247,9 @@ const apktoolCommandFailure = (
     outputLimit: {
       limits: { max_output_bytes: limits.maxOutputBytes },
       recovery: fixedAllowanceOptions(
-        `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+        "The apktool output capture allowance (decode_timeout_ms does not raise it)",
         "capture",
+        { limit: limits.maxOutputBytes, unit: "bytes" },
       ),
     },
     runtimeExhaustion: ({ area }) => ({
@@ -261,6 +264,7 @@ const apktoolCommandFailure = (
       // Only a fully collected ordinary nonzero decode exit carries that meaning.
       if (
         exit.kind !== "exited" ||
+        !(failure instanceof OwnedCommandFailure) ||
         failure.processError !== undefined ||
         failure.preparationFailure !== undefined ||
         exit.exitCode === null ||

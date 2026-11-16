@@ -40,6 +40,7 @@ import {
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
+  type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -62,10 +63,12 @@ import type {
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
+import { execFileOutputFailure } from "../../process/ExecFileOutput.js";
 import {
-  execFileOutputFailure,
-  HOST_SPAWN_CAPACITY_CODES,
-} from "../../process/ExecFileOutput.js";
+  describeLaunchFailure,
+  launcherFailureOf,
+} from "../../process/launchFailure.js";
+import { classifyLaunchFailure } from "../../process/classifyProviderOutcome.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -775,43 +778,29 @@ export class ReverseEngineeringService {
           : undefined);
       if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
         outputLimitReached = true;
-      if (earlyFailure === undefined && code === "E2BIG")
-        earlyFailure = new AnalysisResourceConstraintError(
-          operation,
-          "transport",
-          "The host rejected the provider command because its argument list exceeds the process launch limit.",
-          {
-            argument_bytes: args.reduce(
-              (bytes, argument, index) =>
-                bytes + Buffer.byteLength(argument) + (index === 0 ? 0 : 1),
-              0,
-            ),
-          },
-          { cause, ...ownedCleanupOptions(cause) },
-        );
+      // Host capacity and an oversized argument list are classified by the
+      // shared launch owner; a refusal keeps this provider's repair below.
+      const launch = launcherFailureOf(
+        cause instanceof LinuxOwnedProcessPrerequisiteError
+          ? cause.cause
+          : cause,
+      );
       if (
         earlyFailure === undefined &&
-        typeof code === "string" &&
-        HOST_SPAWN_CAPACITY_CODES.has(code)
-      ) {
-        earlyFailure = new AnalysisResourceConstraintError(
+        (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+      )
+        earlyFailure = classifyLaunchFailure(launch, {
+          providerId: profile.identity.id,
           operation,
-          "capacity",
-          `The host ran out of process, memory or file-descriptor capacity (${code}) to start ${provider}.`,
-          { spawn_error: code, command },
-          {
-            cause,
-            retryable: true,
-            remediationAction: `The host ran out of process, memory or file-descriptor capacity (${code}). Close unused processes or files, or raise the process or open-file limit of the REA process, then retry; ${setting} does not need to change.`,
-            diagnostics: {
-              boundary: "host-capacity",
-              command,
-              system_code: code,
-            },
-            ...ownedCleanupOptions(cause),
-          },
-        );
-      }
+          command,
+          selection: setting,
+          argumentBytes: args.reduce(
+            (bytes, argument, index) =>
+              bytes + Buffer.byteLength(argument) + (index === 0 ? 0 : 1),
+            0,
+          ),
+          details: { cause, ...ownedCleanupOptions(cause) },
+        });
       if (
         earlyFailure === undefined &&
         cause instanceof LinuxOwnedProcessPrerequisiteError
@@ -967,22 +956,45 @@ export class ReverseEngineeringService {
           });
         else {
           const { provider, remediationAction } = profile.repair;
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            profile.identity.id,
-            operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
-            {
-              cause,
-              userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
-              remediationAction,
-              diagnostics: {
-                boundary: "provider-launch",
-                command,
-                system_code: code ?? null,
+          // This provider's repair names the configured executable; the
+          // shared launch owner supplies the errno and syscall facts.
+          const unavailable = (
+            description: string,
+            details: AnalysisErrorOptions,
+          ): AnalysisError =>
+            new AnalysisCapabilityUnavailableError(
+              profile.identity.id,
+              operation,
+              `Unable to run configured command (${description})`,
+              {
+                ...details,
+                userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${description}).`,
+                remediationAction,
               },
-              ...ownedCleanupOptions(cause),
-            },
-          );
+            );
+          const details: AnalysisErrorOptions = {
+            cause,
+            ...ownedCleanupOptions(cause),
+          };
+          earlyFailure =
+            launch === undefined
+              ? unavailable(String(code ?? "unknown error"), {
+                  ...details,
+                  diagnostics: {
+                    boundary: "provider-launch",
+                    command,
+                    system_code: code ?? null,
+                  },
+                })
+              : classifyLaunchFailure(launch, {
+                  providerId: profile.identity.id,
+                  operation,
+                  command,
+                  selection: setting,
+                  details,
+                  unavailable: (failure, launchDetails) =>
+                    unavailable(describeLaunchFailure(failure), launchDetails),
+                });
         }
       }
       if (earlyFailure === undefined && capture !== undefined) {
@@ -1408,13 +1420,11 @@ const runOwnedCommandOutput =
             ? "ETIMEDOUT"
             : cause.reason === "output-limit"
               ? "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-              : launchErrorCode === "E2BIG"
-                ? "E2BIG"
-                : snapshot === null
-                  ? typeof launchErrorCode === "string"
-                    ? launchErrorCode
-                    : "ERR_PROVIDER_LAUNCH"
-                  : (snapshot.exitCode ?? null);
+              : snapshot === null
+                ? typeof launchErrorCode === "string"
+                  ? launchErrorCode
+                  : "ERR_PROVIDER_LAUNCH"
+                : (snapshot.exitCode ?? null);
       throw new OwnedOutputFailure({
         stdout: snapshot?.stdout.text ?? "",
         stderr: snapshot?.stderr.text ?? "",

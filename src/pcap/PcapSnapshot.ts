@@ -165,6 +165,7 @@ export class PcapSnapshot {
           fixedAllowanceOptions(
             "the owned capture snapshot allowance",
             "input",
+            { limit: MAX_CAPTURE_BYTES, unit: "bytes" },
           ),
         );
       const destination = this.own(

@@ -8,6 +8,8 @@ import { inspectAndroidPackage } from "../application/android/AndroidPackageInsp
 import { inspectAndroidSymbol } from "../application/android/AndroidSymbolInspection.js";
 import {
   inspectAnalysisView,
+  projectRetainedAnalysis,
+  requireAnalysisViewRetention,
   type AnalysisViewRetention,
 } from "../application/analysisView/AnalysisViewService.js";
 import { z } from "zod";
@@ -54,6 +56,11 @@ import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheS
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import {
+  executeSessionFunctionAnalysis,
+  executeSessionWorkflowEvidence,
+  type WorkflowSession,
+} from "../application/SessionWorkflowEvidence.js";
 import { projectManagedApplicationGraphExecution } from "../application/managed/ManagedApplicationGraphService.js";
 import { compareManagedMembersExecution } from "../application/managed/ManagedMemberComparisonService.js";
 import { verifyManagedNativeBoundariesExecution } from "../application/managed/ManagedNativeVerificationService.js";
@@ -112,9 +119,61 @@ import {
 import type { CutterBridgeService } from "../cutter/CutterBridgeService.js";
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
+import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { GdbSessionManager } from "../gdb/GdbSessionManager.js";
+import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import {
+  GDB_SESSION_TOOLS,
+  RIZIN_DEBUG_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
+import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
+import {
+  analyzeWebBundle,
+  captureWebScreenshot,
+  compareWebCaptureEvidence,
+  compareWebScreenshotEvidence,
+  discoverWebMcpTools,
+  inspectWebPage,
+  listBrowserTargets,
+  observeWebSession,
+} from "../application/BrowserObservationService.js";
+import {
+  fridaDeviceSelection,
+  fridaRemoteConnection,
+  instrumentWithFrida,
+  loadFridaScript,
+  startFridaSession,
+} from "../application/frida/fridaContractRequests.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
+import {
+  CommittedValue,
+  DetailedFailure,
+  ReducibleValue,
+} from "./contractToolHandler.js";
+import {
+  getNavigationContext,
+  inspectAddressContext,
+  omitContextEvidenceForDelivery,
+} from "../application/AnalysisContextQueries.js";
+import { binaryTargetSummary } from "../application/binary/BinaryTargetSummary.js";
+import {
+  captureSessionProcessScenario,
+  type ProcessSessionCaptureOptions,
+} from "../application/process/ProcessSessionCapture.js";
+import { openBinaryTargetSelection } from "../contracts/sessionLifecycleInputs.js";
+import type { ResidualUnknown } from "../domain/residualUnknown.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
+import {
+  evidenceBundleExportReceipt,
+  readImmutableEvidenceBundle,
+  writeEvidenceBundle,
+} from "../application/EvidenceBundleFiles.js";
+import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";
 import {
   contractServiceBindings,
   registerContractTools,
@@ -141,6 +200,62 @@ export interface AnalysisSettingsToolOptions {
 export interface SessionDerivedToolOptions {
   readonly session: BinarySessionPort;
   readonly resources: ArtifactResourceScope;
+}
+
+/**
+ * A committed residual unknown, with the receipt naming its revision and
+ * mutation Evidence for a response too large to deliver.
+ */
+const committedUnknown = (
+  result: Result<ResidualUnknown, AnalysisError>,
+): Result<CommittedValue, AnalysisError> =>
+  result.ok
+    ? ok(
+        new CommittedValue(result.value, {
+          committed_unknown: {
+            unknown_id: result.value.unknown_id,
+            revision: result.value.revision,
+            mutation_evidence_ids: result.value.mutation_evidence_ids,
+          },
+          evidence_reference: {
+            kind: "retained-evidence",
+            evidence_id: result.value.mutation_evidence_ids[0]!,
+          },
+        }),
+      )
+    : result;
+
+/** Rizin debugger sessions a manager owns and the session they may change. */
+export interface RizinDebugToolOptions {
+  readonly manager: Pick<
+    RizinDebugSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** GDB sessions a manager owns and the session their commands may change. */
+export interface GdbToolOptions {
+  readonly manager: Pick<
+    GdbSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** The Cutter bridge and the session its commands may change. */
+export interface CutterToolOptions {
+  readonly service: Pick<
+    CutterBridgeService,
+    "listSessions" | "execute" | "retryCleanup"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
+
+/** The browser observation provider, or why it failed to load. */
+export interface BrowserObservationToolOptions {
+  readonly browser: BrowserObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
 /** The artifact resource scope application workflows read caller-named files under. */
@@ -598,7 +713,9 @@ const SERVICE_TOOL_BINDINGS = {
         jsonValueResult(await readGuidanceSection(input, resources)),
     },
   })) satisfies Bind<ArtifactResourceScope>,
-  cutterSessions: ((service) => ({
+  // Cutter discovery reads only; an arbitrary command may change the bound
+  // artifact, so it runs under external-mutation admission.
+  cutter: (({ service, session }) => ({
     list_cutter_sessions: {
       admission: "sdk",
       value: async (_input, { signal }) => {
@@ -608,7 +725,16 @@ const SERVICE_TOOL_BINDINGS = {
           : listed;
       },
     },
-  })) satisfies Bind<CutterBridgeService>,
+    cutter_command: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        retryCleanup: () => service.retryCleanup(),
+        run: (input, signal) => service.execute(input, { signal }),
+      },
+    },
+  })) satisfies Bind<CutterToolOptions>,
   // Runtime settings remain usable without an active target or healthy
   // provider, so they run outside analysis admission.
   analysisSettings: (({ settings, delivery }) => ({
@@ -880,6 +1006,571 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<ApplicationWorkflowToolOptions>,
+  // Provider-backed workflows run on the analysis admission grants and
+  // complete their Evidence in the session, when the server has one.
+  enhancedWorkflows: (({ session }) => ({
+    trace_native_values: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_native_values", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    inspect_native_dispatch_metadata: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "inspect_native_dispatch_metadata", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_objc_classes: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_objc_classes", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_objc_protocols: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_objc_protocols", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    batch_decompile: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "batch_decompile", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    decompile_all: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "decompile_all", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_call_graph: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_call_graph", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    analyze_swift_types: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "analyze_swift_types", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    find_xrefs_to_name: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "find_xrefs_to_name", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    binary_overview: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "binary_overview", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    inspect_native_api: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "inspect_native_api", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_feature: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_feature", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_call_path: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_call_path", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_native_ui_action: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_native_ui_action", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    analyze_function: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionFunctionAnalysis(input, analysis, session, request),
+    },
+  })) satisfies Bind<{ readonly session: WorkflowSession | undefined }>,
+  // The session's Evidence bundle and residual unknowns, read and written
+  // under session admission.
+  sessionRecords: (({ session, resources }) => ({
+    export_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input, { signal }) => {
+        const bundle = session.immutableEvidenceBundle();
+        const written = await writeEvidenceBundle(
+          bundle,
+          input.path,
+          input.overwrite,
+          resources,
+          signal,
+        );
+        return written.ok
+          ? ok(evidenceBundleExportReceipt(bundle, written.value))
+          : written;
+      },
+    },
+    import_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input, { signal }) => {
+        const loaded = await readImmutableEvidenceBundle(
+          input.path,
+          signal,
+          resources,
+          "import_evidence_bundle",
+        );
+        if (!loaded.ok) return loaded;
+        if (signal.aborted)
+          return err(cancelledBy("import_evidence_bundle", signal));
+        const imported = session.importEvidenceBundle(loaded.value);
+        return imported.ok
+          ? ok({
+              imported: imported.value.recordsAdded,
+              unknowns_added: imported.value.unknownsAdded,
+              total: imported.value.totalRecords,
+            })
+          : imported;
+      },
+    },
+    get_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) =>
+        inspectEvidenceBundle(session.immutableEvidenceBundle(), input),
+    },
+    list_unknowns: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) =>
+        ok(
+          session.listUnknownsPage({
+            ...(input.status === undefined ? {} : { status: input.status }),
+            ...(input.severity === undefined
+              ? {}
+              : { severity: input.severity }),
+            ...(input.domain === undefined ? {} : { domain: input.domain }),
+            offset: input.offset,
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          }),
+        ),
+    },
+    record_unknown: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => committedUnknown(session.recordUnknown(input)),
+    },
+    update_unknown: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => committedUnknown(session.updateUnknown(input)),
+    },
+    verify_unknown_resolution: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => session.verifyUnknownResolution(input.unknown_id),
+    },
+  })) satisfies Bind<SessionDerivedToolOptions>,
+  // Rizin debugger sessions may change the bound artifact; each command
+  // runs under external-mutation admission and keeps a failed cleanup owned.
+  rizinDebug: (({ manager, session }) => {
+    const retryCleanup = () => manager.retryCleanupFailures();
+    return {
+      start_rizin_debug_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "value",
+          retryCleanup,
+          run: async (input, signal) => {
+            const started = await manager.start(
+              {
+                path: input.path,
+                inferior_tty: input.inferior_tty,
+                ...(input.backend === undefined
+                  ? {}
+                  : { backend: input.backend }),
+              },
+              signal,
+            );
+            return started.ok
+              ? ok({
+                  value: started.value,
+                  retained: { session_id: started.value.session_id },
+                })
+              : started;
+          },
+        },
+      },
+      rizin_debug_command: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "evidence",
+          retryCleanup,
+          run: async (input, signal) => {
+            const executed = await manager.execute(
+              input.session_id,
+              input.command,
+              signal,
+            );
+            return executed.ok ? ok(executed.value.evidence) : executed;
+          },
+        },
+      },
+      rizin_debug_session_status: {
+        admission: "sdk",
+        value: async (input) => {
+          const status = manager.status(input.session_id);
+          return status === undefined
+            ? err(
+                unknownDebuggerSessionError(
+                  RIZIN_DEBUG_SESSION_TOOLS,
+                  "rizin_debug_session_status",
+                ),
+              )
+            : ok({ ...status, recent_output: [...status.recent_output] });
+        },
+      },
+      close_rizin_debug_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "owned-cleanup",
+          resource: (input) => input.session_id,
+          run: (input) => manager.close(input.session_id),
+        },
+      },
+    };
+  }) satisfies Bind<RizinDebugToolOptions>,
+  // Starting GDB loads no target, so it runs outside admission; a console
+  // command may change the bound artifact and runs under external-mutation
+  // admission, keeping a failed cleanup owned for the next retry.
+  gdb: (({ manager, session }) => ({
+    start_gdb_session: {
+      admission: "sdk",
+      value: (input, { signal }) =>
+        manager.start(
+          signal,
+          input.inferior_tty === undefined
+            ? {}
+            : { inferiorTty: input.inferior_tty },
+        ),
+    },
+    gdb_console: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "evidence",
+        detail: "delivery",
+        retryCleanup: () => manager.retryCleanupFailures(),
+        run: async (input, signal) => {
+          const executed = await manager.execute(
+            input.session_id,
+            input.command,
+            signal,
+          );
+          return executed.ok ? ok(executed.value.evidence) : executed;
+        },
+      },
+    },
+    gdb_session_status: {
+      admission: "sdk",
+      value: async (input) => {
+        const status = manager.status(input.session_id);
+        return status === undefined
+          ? err(
+              unknownDebuggerSessionError(
+                GDB_SESSION_TOOLS,
+                "gdb_session_status",
+              ),
+            )
+          : ok({ ...status, recent_mi_records: [...status.recent_mi_records] });
+      },
+    },
+    close_gdb_session: {
+      admission: "sdk",
+      session,
+      mutation: {
+        kind: "owned-cleanup",
+        resource: (input) => input.session_id,
+        run: (input) => manager.close(input.session_id),
+      },
+    },
+  })) satisfies Bind<GdbToolOptions>,
+  // Browser observation runs through an optional provider; when it failed
+  // to load, every call reports it unavailable before admission.
+  browserObservation: (({ browser, loadFailure }, retention) => {
+    const optional = { unavailable: loadFailure };
+    return {
+      list_browser_targets: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => listBrowserTargets(browser, input, options),
+      },
+      inspect_web_page: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => inspectWebPage(browser, input, options),
+      },
+      analyze_web_bundle: {
+        admission: "sdk",
+        ...optional,
+        run: async ({ detail, view, ...request }, options) => {
+          if (detail === "summary") {
+            const ready = requireAnalysisViewRetention(
+              "analyze_web_bundle",
+              retention,
+            );
+            if (!ready.ok) return ready;
+          }
+          const analyzed = await analyzeWebBundle(browser, request, options);
+          return analyzed.ok && view !== undefined
+            ? projectRetainedAnalysis(analyzed.value, retention, view)
+            : analyzed;
+        },
+      },
+      observe_web_session: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => observeWebSession(browser, input, options),
+      },
+      discover_webmcp_tools: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => discoverWebMcpTools(browser, input, options),
+      },
+      compare_web_captures: {
+        admission: "sdk",
+        ...optional,
+        run: (input) => compareWebCaptureEvidence(browser, input),
+      },
+      capture_web_screenshot: {
+        admission: "sdk",
+        ...optional,
+        run: (input, options) => captureWebScreenshot(browser, input, options),
+      },
+      compare_web_screenshots: {
+        admission: "sdk",
+        ...optional,
+        run: (input) => compareWebScreenshotEvidence(browser, input),
+      },
+    };
+  }) satisfies Bind<BrowserObservationToolOptions>,
+  // Frida sessions instrument a live process the caller selects, not the
+  // session's target; compose them without analysis admission.
+  frida: ((service, retention) => ({
+    list_frida_devices: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          await service.listDevices(fridaRemoteConnection(input.remote)),
+        ),
+    },
+    list_frida_processes: {
+      admission: "sdk",
+      value: async (input) =>
+        jsonValueResult(
+          await service.listProcesses(fridaDeviceSelection(input)),
+        ),
+    },
+    start_frida_session: {
+      admission: "sdk",
+      value: async (input, { signal }) =>
+        jsonValueResult(await startFridaSession(service, input, signal)),
+    },
+    load_frida_script: {
+      admission: "sdk",
+      run: (input, { signal }) => loadFridaScript(service, input, signal),
+    },
+    resume_frida_session: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const resumed = await service.resumeSession(input.session_id, signal);
+        return resumed.ok ? ok({ state: "running" }) : resumed;
+      },
+    },
+    unload_frida_script: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const unloaded = await service.unloadScript(
+          input.session_id,
+          input.script_id,
+          signal,
+        );
+        return unloaded.ok ? ok({ unloaded: true }) : unloaded;
+      },
+    },
+    frida_session_status: {
+      admission: "sdk",
+      run: async (input) => service.inspectStatus(input, retention),
+    },
+    close_frida_session: {
+      admission: "sdk",
+      value: async (input) => {
+        const closed = await service.closeSession(input.session_id);
+        return closed.ok ? ok({ target_state: "unknown" }) : closed;
+      },
+    },
+    instrument_with_frida: {
+      admission: "sdk",
+      run: async (input, { signal }) => {
+        const instrumented = await instrumentWithFrida(service, input, signal);
+        return instrumented.ok ? ok(instrumented.value.evidence) : instrumented;
+      },
+    },
+  })) satisfies Bind<FridaInstrumentationService>,
+  // Opening a target orders itself in the session, so it runs outside
+  // analysis admission; a failed open reports the selection at failure.
+  binaryTarget: ((session) => ({
+    open_binary: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const snapshotPath = input.snapshot_path;
+        const opened = await session.open(input.path, {
+          signal,
+          ...openBinaryTargetSelection(input),
+          ...(input.provider_id === undefined
+            ? {}
+            : { providerId: input.provider_id }),
+          ...(snapshotPath === undefined
+            ? {}
+            : {
+                // Read inside the open's turn: calls issued after it must not
+                // overtake a file read that precedes its place in the order.
+                loadSnapshot: () =>
+                  session.readAnalysisSnapshot(snapshotPath, signal),
+              }),
+        });
+        return opened.ok
+          ? ok(binaryTargetSummary(opened.value))
+          : err(
+              new DetailedFailure(opened.error, {
+                selection_at_failure: opened.selection,
+                target_at_open_completion: opened.targetAtCompletion,
+                provider_id_at_open_completion: opened.providerIdAtCompletion,
+              }),
+            );
+      },
+    },
+    open_bundle_resources: {
+      admission: "sdk",
+      value: async (input, { signal }) => {
+        const opened = await session.openBundleResources(input.path, {
+          signal,
+        });
+        return opened.ok
+          ? ok({
+              caller_path: opened.value.callerPath,
+              canonical_path: opened.value.canonicalPath,
+              info_plist_path: opened.value.infoPlistPath,
+              layout: opened.value.layout,
+              executable_sha256: opened.value.executableSha256,
+            })
+          : opened;
+      },
+    },
+  })) satisfies Bind<BinarySessionPort>,
+  // Context reads query the analysis admission grants for the call.
+  analysisContext: ((_options: Readonly<Record<string, never>>) => ({
+    get_navigation_context: {
+      admission: "sdk",
+      query: (input, analysis, { signal }) =>
+        getNavigationContext(analysis, input, signal),
+    },
+    inspect_address_context: {
+      admission: "sdk",
+      query: async (input, analysis, { signal }) => {
+        const inspected = await inspectAddressContext(analysis, input, signal);
+        if (!inspected.ok) return inspected;
+        const context = inspected.value;
+        // An oversized context drops its largest Evidence facets first.
+        return ok(
+          new ReducibleValue(context, (failure, budgetBytes) =>
+            omitContextEvidenceForDelivery(context, failure, budgetBytes),
+          ),
+        );
+      },
+    },
+  })) satisfies Bind<Readonly<Record<string, never>>>,
+  // Process capture runs under session admission and records its Evidence
+  // and residual unknowns in the session itself.
+  processCapture: ((options) => ({
+    capture_process_scenario: {
+      admission: "sdk",
+      analyze: (input, _analysis, request) =>
+        captureSessionProcessScenario(options, input, request),
+    },
+  })) satisfies Bind<ProcessSessionCaptureOptions>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",
