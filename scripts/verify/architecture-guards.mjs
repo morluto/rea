@@ -9,7 +9,10 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
-import { incurZodImportCount } from "./incur-import-guard.mjs";
+import {
+  incurImportedNameCount,
+  incurZodImportCount,
+} from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
@@ -969,6 +972,17 @@ checkCounted(
   files,
   /\bcli\.command\(/gu,
   ["src/cli/commandRegistry.ts"],
+);
+
+// REA is replacing incur with its own CLI owners (#11654). Each replacement
+// removes the names it superseded; this counted list only shrinks until incur
+// leaves package.json.
+checkCounted(
+  "name imported from incur (use REA's CLI owner in src/cli)",
+  "incur-import",
+  [...files, ...testFiles],
+  (_content, file) => incurImportedNameCount(file.source ?? file.content),
+  [],
 );
 
 // `find` on a parsed section, program-header or load-command table silently

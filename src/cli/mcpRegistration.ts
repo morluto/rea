@@ -1,7 +1,6 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { Writable } from "node:stream";
 
-import { Help } from "incur";
 import { z } from "zod";
 
 import {
@@ -25,6 +24,7 @@ import {
   splitIncurBuiltinArguments,
 } from "../cliBuiltinArguments.js";
 import {
+  CLI_DOCUMENT_OUTPUT_FORMATS,
   parseCliOutputArguments,
   renderCliDocument,
   renderCliOutputArgumentError,
@@ -48,6 +48,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { createCliResultOutput } from "./cliResultOutput.js";
+import { formatCommandHelp } from "./help.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 import { ownCliProcessResource } from "./cliResources.js";
@@ -240,12 +241,13 @@ const serveRegistrationDiscovery = async (
 ): Promise<boolean> => {
   if (flags.has("--help") || flags.has("-h")) {
     presentation.write(
-      `${Help.formatCommand("rea mcp add", {
+      `${formatCommandHelp("rea mcp add", {
         description:
           "Register exact stdio launcher arguments in selected client settings, with backups and verified publication.",
         options: mcpRegistrationOptionsSchema,
         alias: { command: "c" },
         hint: "No package acquisition or server execution. --no-global never writes global settings.",
+        globalOptions: { formats: CLI_DOCUMENT_OUTPUT_FORMATS },
       })}\n`,
     );
     return true;

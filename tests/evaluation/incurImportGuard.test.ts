@@ -1,5 +1,27 @@
 import { expect, it } from "vitest";
-import { incurZodImportCount } from "../../scripts/verify/incur-import-guard.mjs";
+import {
+  incurImportedNameCount,
+  incurZodImportCount,
+} from "../../scripts/verify/incur-import-guard.mjs";
+
+it("counts every name a declaration takes from incur", () => {
+  expect(incurImportedNameCount('import { Cli } from "incur";')).toBe(1);
+  expect(
+    incurImportedNameCount(
+      'import { Errors, type MiddlewareHandler } from "incur";',
+    ),
+  ).toBe(2);
+  expect(incurImportedNameCount("import type { Cli as C } from 'incur';")).toBe(
+    1,
+  );
+  expect(
+    incurImportedNameCount(
+      'import { Help } from "incur";\nexport { Filter } from "incur";',
+    ),
+  ).toBe(2);
+  expect(incurImportedNameCount('import { Help } from "./help.js";')).toBe(0);
+  expect(incurImportedNameCount('// import { Help } from "incur";')).toBe(0);
+});
 
 it("counts declarations that take z from incur in every spelling", () => {
   expect(incurZodImportCount('import { z } from "incur";')).toBe(1);
