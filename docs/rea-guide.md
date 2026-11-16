@@ -68,7 +68,7 @@ rea providers --json
 rea setup
 ```
 
-Note: Windows Ghidra support is REA's "experimental P0 boundary" (see [docs/windows-ghidra-p0.md](./windows-ghidra-p0.md)). Setup never installs Ghidra, Java or Python.
+Note: Windows Ghidra support is REA's "experimental P0 boundary" (see [Windows Ghidra P0](providers/windows-ghidra-p0.md)). Setup never installs Ghidra, Java or Python.
 
 ### Linux install example (Debian 13, historical)
 
@@ -336,9 +336,9 @@ The `evidence_id` field itself is not an input. Import recomputes the ID and rej
 
 **Residual unknowns.** `unk_…` IDs are SHA-256 of a canonical projection of question, domain, and scope; each revision carries a `revision_digest`, so the update chain is content-addressed.
 
-**Higher-level digests.** The ledger's [`closure_digest`](#closure_digest) is SHA-256 over the canonical object `{schema: "ReconstructionObligationClosure", status, coverage, summary, reports, ownership_graph, dependency_graph, obligations, evidence_links, limitations}`. The `ledger_id` is `rol_` + SHA-256 over `{schema: "ReconstructionObligationLedger", evidence_ids (bundle record IDs), obligation_ids, closure_digest}` (source: `dist/application/ReconstructionObligationLedgerEvaluation.js`); Application Graph node and graph IDs hash their normalized semantic content; snapshots are identified by the content of the retained results.
+**Higher-level digests.** The ledger's [`closure_digest`](#closure-digest) is SHA-256 over the canonical object `{schema: "ReconstructionObligationClosure", status, coverage, summary, reports, ownership_graph, dependency_graph, obligations, evidence_links, limitations}`. The `ledger_id` is `rol_` + SHA-256 over `{schema: "ReconstructionObligationLedger", evidence_ids (bundle record IDs), obligation_ids, closure_digest}` (source: `dist/application/ReconstructionObligationLedgerEvaluation.js`); Application Graph node and graph IDs hash their normalized semantic content; snapshots are identified by the content of the retained results.
 
-**Consequences.** Deduplication (identical projections share an ID and can be reused), tamper detection (any change to a projected field changes the ID), and reproducibility of that ID from the same projection. `closure_digest` is a separate commitment; a new bundle record can change `ledger_id` without changing it. See [closure_digest](#closure_digest).
+**Consequences.** Deduplication (identical projections share an ID and can be reused), tamper detection (any change to a projected field changes the ID), and reproducibility of that ID from the same projection. `closure_digest` is a separate commitment; a new bundle record can change `ledger_id` without changing it. See [closure_digest](#closure-digest).
 
 **Not hashed into `evidence_id`.** The `evidence_id` field itself, and the subject display fields `name` and `local_path`. That exclusion does not drop filesystem paths stored in parameters, results, or locations, and it does not strip secrets or environment values from the record. Redaction limits are in [Evidence Bundle](#evidence-bundle).
 
@@ -399,7 +399,7 @@ The bundle is the source of truth for observations; it doesn't decide whether a 
 - Input: one JSON object with three required keys: `evidence_bundle`, `reviewed_obligations` (may be an empty array), and `manifest` (`bindings`, `contradictions`). Application-graph and process-capture records can generate candidate obligations. Manifest bindings are not generated. A reviewed obligation is for a claim that is not already a generated candidate; repeating a generated ID is a `duplicate-definition`.
 - Static graph facts create **candidate** obligations only; they don't prove runtime behavior. The ledger is conservative.
 
-The ledger is identified by a deterministic `ledger_id` (`rol_…`) + `closure_digest`. Closure conditions, input dispositions, and output statuses are defined in [Closure semantics](#closure-semantics).
+The ledger is identified by a deterministic `ledger_id` (`rol_…`) + `closure_digest`. Closure conditions, input dispositions, and output statuses are defined in [Closure semantics](#closure-semantics). The request contract and proof applicability are in [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md).
 
 ```
 Evidence Bundle (ev_ records | unk_ unknowns | captures/artifacts/providers)
@@ -579,7 +579,7 @@ Set by you on each reviewed obligation (`disposition`):
 
 #### Output statuses
 
-Derived by REA for every obligation (`status`). The evaluator checks in this order and takes the first match (source: `obligationStatus` in `dist/application/ReconstructionObligationLedgerEvaluation.js`):
+Derived by REA for every obligation (`status`). The evaluator checks in this order and takes the first match (source: `obligationStatus` in `dist/application/ReconstructionObligationLedgerEvaluation.js`). The contract for these states is [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md).
 
 | Order | Status          | When                                                                                                                                                        | Counts as verified? |
 | ----- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
@@ -923,7 +923,7 @@ Overall, the design favors auditability and honesty over speed of assertion. It'
 | 6.1–6.4 | Android device/ADB workflows, JEB integration, better large-analysis handling, more native architectures                                                                                   |
 | 6.5     | Improved JS source selection & cross-bundle recovery, retained Evidence paging, SQLite snapshots, packet/signal/HAR/QUIC analysis, WASM, Rust metadata, Electron fuses, more agent clients |
 
-**Documented against rea-agents 6.7.0** (latest on npm, 2026-10-18; 153 CLI commands, 207 MCP tools).
+**Documented against rea-agents 6.7.0** (latest on npm, 2026-10-18). Current CLI commands and MCP tools are in the [generated catalog](reference/mcp-contracts.md#generated-catalog).
 
 #### Beta test findings (Oct 2026)
 

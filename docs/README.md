@@ -108,6 +108,8 @@ product pages. The VitePress documentation source is this `docs/` tree.
 
 - [MCP runtime contracts](reference/mcp-contracts.md)
 - [Reconstruction obligation ledgers](reference/reconstruction-obligation-ledgers.md)
+- [REA guide](rea-guide.md)
+- [Architecture patterns](architecture-patterns.md)
 
 ## Development and verification
 

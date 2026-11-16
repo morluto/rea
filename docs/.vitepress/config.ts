@@ -96,8 +96,6 @@ export default defineConfig({
           { text: "Authoring conventions", link: "/development/documentation" },
           { text: "Feature specifications", link: "/specs/" },
           { text: "Architecture decisions", link: "/adr/" },
-          { text: "REA guide", link: "/rea-guide" },
-          { text: "Architecture patterns", link: "/architecture-patterns" },
         ],
       },
       ...documentationSections.map((section) => ({

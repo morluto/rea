@@ -353,6 +353,16 @@ export const documentationSections = [
         source: "reference/reconstruction-obligation-ledgers.md",
         route: "/reconstruction-obligation-ledgers",
       },
+      {
+        text: "REA guide",
+        source: "rea-guide.md",
+        route: "/rea-guide",
+      },
+      {
+        text: "Architecture patterns",
+        source: "architecture-patterns.md",
+        route: "/architecture-patterns",
+      },
     ],
   },
   {
