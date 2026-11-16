@@ -779,6 +779,34 @@ it("reads XAR TOC execute bits from owner, group and other permissions", async (
   }
 });
 
+it("keeps an out-of-range XAR TOC mode unknown instead of failing inventory", async () => {
+  const { reader, entries, path } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "huge.sh", mode: "40000000000", bytes: Buffer.from("x") },
+        { path: "max.sh", mode: "37777777777", bytes: Buffer.from("y") },
+      ],
+    }),
+  );
+  try {
+    const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+    expect(byPath.get("huge.sh")).toMatchObject({
+      executable: false,
+      formatMetadata: expect.objectContaining({ mode: null }),
+    });
+    expect(byPath.get("max.sh")).toMatchObject({
+      executable: true,
+      formatMetadata: expect.objectContaining({ mode: 0xffffffff }),
+    });
+  } finally {
+    await reader.close();
+  }
+  const inventory = await scanCanonicalArtifactInventory(path);
+  expect(inventory.occurrences.map((row) => row.logical_path).sort()).toEqual(
+    expect.arrayContaining(["huge.sh", "max.sh"]),
+  );
+});
+
 it("keeps directory and link-only symlink TOC records without heap bodies", async () => {
   const { reader, entries } = await entriesOf(
     buildXar({

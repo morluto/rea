@@ -31,7 +31,8 @@ export interface XarTocFile {
   readonly id: string | null;
   readonly path: string;
   readonly type: string;
-  readonly mode: string | null;
+  /** Octal `<mode>` as a uint32, or null when absent, malformed or out of range. */
+  readonly mode: number | null;
   readonly data: XarFileData | null;
   readonly link: string | null;
 }
@@ -51,6 +52,16 @@ export interface XarToc {
   readonly files: readonly XarTocFile[];
   readonly signatures: readonly XarTocSignature[];
 }
+
+const UINT32_MAX = 0xffffffff;
+
+/** Read `<mode>` octal text once; anything that is not a uint32 stays unknown. */
+const parseMode = (text: string | undefined): number | null => {
+  const trimmed = text?.trim();
+  if (trimmed === undefined || !/^[0-7]+$/u.test(trimmed)) return null;
+  const value = Number.parseInt(trimmed, 8);
+  return value <= UINT32_MAX ? value : null;
+};
 
 const nonNegativeInteger = (
   text: string | undefined,
@@ -222,7 +233,7 @@ const walkFiles = (
       id: file.getAttribute("id") || null,
       path,
       type,
-      mode: childText(file, "mode")?.trim() ?? null,
+      mode: parseMode(childText(file, "mode")),
       data: data.value,
       link: childText(file, "link") ?? null,
     });

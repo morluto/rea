@@ -146,11 +146,9 @@ const specialMemberType = (mode: number): string => {
   }
 };
 
-/** XAR TOC `<mode>` is octal text; any owner, group or other execute bit counts. */
-const xarModeIsExecutable = (mode: string | null): boolean => {
-  if (mode === null || !/^[0-7]+$/u.test(mode)) return false;
-  return (Number.parseInt(mode, 8) & 0o111) !== 0;
-};
+/** Any owner, group or other execute bit in the parsed XAR TOC mode counts. */
+const xarModeIsExecutable = (mode: number | null): boolean =>
+  mode !== null && (mode & 0o111) !== 0;
 
 const basename = (path: string): string => {
   const slash = path.lastIndexOf("/");
@@ -603,7 +601,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         extracted_size: data.size,
         archived_checksum: data.archivedChecksum,
         extracted_checksum: data.extractedChecksum,
-        mode: file.mode === null ? null : Number.parseInt(file.mode, 8) || null,
+        mode: file.mode,
         uid: null,
         gid: null,
         symlink_target: file.link,
@@ -662,7 +660,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
         extracted_size: null,
         archived_checksum: null,
         extracted_checksum: null,
-        mode: file.mode === null ? null : Number.parseInt(file.mode, 8) || null,
+        mode: file.mode,
         uid: null,
         gid: null,
         symlink_target: file.link,
