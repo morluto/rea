@@ -69,9 +69,9 @@ import { isRecord } from "../kernel/isRecord.js";
 import { optionFlagName } from "./optionFields.js";
 
 /**
- * Incur adapter for contract commands. The command itself is described in
+ * CLI adapter for contract commands. The command itself is described in
  * `contractCliDescription.ts`; this module only renders that description as
- * Incur args and options and runs the handler.
+ * CLI args and options and runs the handler.
  */
 
 /** What a contract command's handler receives besides the contract input. */
@@ -564,7 +564,7 @@ export const contractCommandDescriptions = (
     source.kind === "contract" ? [source.description] : [],
   );
 
-const incurOptions = (description: ContractCliDescription): z.ZodType => {
+const commandOptions = (description: ContractCliDescription): z.ZodType => {
   const object = z.object(
     Object.fromEntries([
       ...description.parameters
@@ -646,7 +646,7 @@ export const registerContractCommand = <
               ),
             ),
           }),
-      options: incurOptions(description),
+      options: commandOptions(description),
       ...(Object.keys(alias).length === 0 ? {} : { alias }),
       run: ({
         args,
@@ -857,7 +857,7 @@ const commandShape = (description: ContractCliDescription) => ({
   // Routed descriptions declare no object-level rules, so this is the object.
   options: Object.fromEntries(
     Object.entries(
-      (incurOptions(description) as z.ZodObject).shape as Readonly<
+      (commandOptions(description) as z.ZodObject).shape as Readonly<
         Record<string, z.ZodType>
       >,
     ).map(([key, schema]) => [key, withoutDefault(schema)]),

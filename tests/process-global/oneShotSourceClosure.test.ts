@@ -1,8 +1,8 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
 import type { UndeliveredSourceClosure } from "../../src/application/AnalysisEvidenceSources.js";
@@ -148,7 +148,7 @@ const runMatching = async (
           { operation: "match_native_functions" },
         );
     });
-  const cli = Cli.create("one-shot-source-closure-test", { sync: false });
+  const cli = createCommandCli();
   registerNativeFunctionMatchingCommands(
     cli,
     silentLogger,

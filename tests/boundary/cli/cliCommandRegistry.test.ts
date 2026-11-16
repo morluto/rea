@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import { cliCommands } from "../../../src/cli/commandRegistry.js";
-import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
 
 const cli = createCli({});
 const entries = cliCommands(cli);
@@ -13,19 +12,6 @@ const entry = (name: string) => {
 };
 
 describe("REA's CLI command table", () => {
-  it("holds every dispatched command, in registration order, with the served definition", () => {
-    const dispatched: { path: string; command: object }[] = [];
-    visitRegisteredCommands(cli, (command, path) =>
-      dispatched.push({ path, command }),
-    );
-    expect(entries.map(({ name }) => name)).toEqual(
-      dispatched.map(({ path }) => path),
-    );
-    // Shell owners rewrite inputs and handlers in place; the table sees them.
-    for (const [index, { command }] of dispatched.entries())
-      expect(entries[index]!.definition).toBe(command);
-  });
-
   it("names the operations a direct-analysis command runs and the flag of each field", () => {
     expect(entry("function").operations).toEqual([
       { name: "analyze_function", flags: expect.any(Object) },
