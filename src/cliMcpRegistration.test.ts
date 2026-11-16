@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { beforeAll, expect, it } from "vitest";
+import { expect, test } from "vitest";
 import { z } from "zod";
 
 import { mcpRegistrationReportSchema } from "./contracts/mcpRegistration.js";
@@ -174,7 +174,6 @@ const captureRegistration = async () => {
       process.execPath,
       ["--import", "tsx", entry],
       {
-        timeoutMs: 20_000,
         env: {
           PATH: join(root, "bin") + delimiter + process.env.PATH,
           SystemRoot: process.env.SystemRoot,
@@ -203,12 +202,22 @@ const captureRegistration = async () => {
   }
 };
 
-let observed: z.infer<typeof observationsSchema>;
-beforeAll(async () => {
-  observed = await captureRegistration();
-}, 30_000);
+const it = test.extend<{
+  $file: { observed: z.infer<typeof observationsSchema> };
+}>({
+  observed: [
+    // oxlint-disable-next-line no-empty-pattern -- Vitest parses fixture dependencies from object destructuring.
+    async ({}, use) => {
+      // Collect once, under the running test's remaining child-process budget.
+      await use(await captureRegistration());
+    },
+    { scope: "file" },
+  ],
+});
 
-it("validates named input/output schemas against every registration report", () => {
+it("validates named input/output schemas against every registration report", ({
+  observed,
+}) => {
   const schemas = z
     .object({
       inputSchema: z.record(z.string(), z.unknown()),
@@ -241,7 +250,9 @@ it("validates named input/output schemas against every registration report", () 
     );
 });
 
-it("preserves default and mixed launcher facts, metadata, backups and no-op identity", () => {
+it("preserves default and mixed launcher facts, metadata, backups and no-op identity", ({
+  observed,
+}) => {
   const all = mcpRegistrationReportSchema.parse(observed.all.document);
   expect(observed.all.exitCode).toBe(0);
   expect(all.ok).toBe(true);
@@ -317,7 +328,9 @@ it("preserves default and mixed launcher facts, metadata, backups and no-op iden
   ).toBe(true);
 });
 
-it("retains actionable failures and completed siblings in either order", () => {
+it("retains actionable failures and completed siblings in either order", ({
+  observed,
+}) => {
   const firstFailure = mcpRegistrationReportSchema.parse(
     observed.failedThenSuccess.document,
   );
@@ -342,7 +355,9 @@ it("retains actionable failures and completed siblings in either order", () => {
       expect(client.error.reason).toContain(".cursor");
 });
 
-it("refuses remote transport and project-scope escalation before writes", () => {
+it("refuses remote transport and project-scope escalation before writes", ({
+  observed,
+}) => {
   for (const invocation of observed.remote) {
     expect(invocation.exitCode).toBe(1);
     expect(invocation.document).toMatchObject({
@@ -365,7 +380,9 @@ it("refuses remote transport and project-scope escalation before writes", () => 
   expect(observed.refusalDidNotWrite).toBe(true);
 });
 
-it("preserves runner launcher data without acquisition or ambient writes", () => {
+it("preserves runner launcher data without acquisition or ambient writes", ({
+  observed,
+}) => {
   for (const { runner, invocation, entry } of observed.runners) {
     expect(invocation.exitCode).toBe(0);
     const report = mcpRegistrationReportSchema.parse(invocation.document);
