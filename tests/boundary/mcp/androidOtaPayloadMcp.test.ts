@@ -52,6 +52,13 @@ it.each(["compact"] as const)(
           }),
         }),
       );
+      const summary = await call("inspect_artifact", { detail: "summary" });
+      expect(summary.isError, JSON.stringify(summary)).not.toBe(true);
+      const summaryRoot = JSON.stringify(
+        parseEvidence(summary.structuredContent).normalized_result,
+      );
+      expect(summaryRoot).toContain('"kind":"android-ota-payload-summary"');
+      expect(summaryRoot).not.toContain('"operation_counts"');
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(

@@ -31,6 +31,13 @@ greater than `0` is a delta), `max_timestamp`, `partial_update`,
 flags (`snapshot_enabled`, `vabc_enabled`, `vabc_compression_param`) and
 `apex_info` entries.
 
+The summary view keeps those header and manifest scalars under kind
+`android-ota-payload-summary` and replaces the partition, dynamic partition
+group and `apex_info` arrays with `partition_count`,
+`extractable_partition_count`, `dynamic_partition_group_count` and
+`apex_info_count`. The complete Evidence and the paged inventory views keep
+every array.
+
 Each partition is an occurrence (`boot.img`, `system.img`, …) with its
 `new_partition_info` size and SHA-256 hex, optional `old_partition_info` for
 deltas, version, postinstall fields, operation counts by type (unknown
