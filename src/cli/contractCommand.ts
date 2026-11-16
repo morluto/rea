@@ -686,11 +686,13 @@ export const registerContractCommand = <
             if (!opening.ok) return projectAnalysisError(opening.error);
             // A composed command also takes its sources' options; a control
             // its result records from a source is set by that option.
+            const operations = contractDescriptionOperations(selected);
             const resultBinding =
               description.evidenceTargets === undefined
-                ? selected.inputBinding
+                ? { ...selected.inputBinding, operations }
                 : {
                     ...selected.inputBinding,
+                    operations,
                     flags: {
                       ...description.evidenceTargets.sourceFlags,
                       ...selected.inputBinding.flags,
@@ -1027,7 +1029,10 @@ export const registerRoutedCommand = (
                 ),
               }),
               description.contract.outputSchema,
-              description.inputBinding,
+              {
+                ...description.inputBinding,
+                operations: contractDescriptionOperations(description),
+              },
             );
           }),
         );

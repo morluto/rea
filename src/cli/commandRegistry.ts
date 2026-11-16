@@ -1,5 +1,6 @@
 import type { z } from "zod";
 
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import type {
   ContractCliDescription,
   ContractCliDocumentDescription,
@@ -192,4 +193,41 @@ export const commandOwnOperations = (
     return operations.filter(({ name }) => name !== opening);
   }
   return operations;
+};
+
+/**
+ * The CLI command spelling (`rea <command>`) that runs a contract operation,
+ * or undefined when no CLI command answers it. Prefers the canonical
+ * single-contract command, then a contract command whose own operations start
+ * with or include it, then any other registered command whose own operations
+ * include it.
+ */
+export const cliCommandForOperation = (
+  operation: string,
+  entries: readonly CliCommandEntry[],
+  cliName: string,
+  recordedCommands?: Readonly<Record<string, string>>,
+): string | undefined => {
+  const canonical = cliCommandFor(operation);
+  let contractPrimary: string | undefined;
+  let contractSecondary: string | undefined;
+  let otherMatch: string | undefined;
+  for (const entry of entries) {
+    const own = commandOwnOperations(entry);
+    if (!own.some(({ name }) => name === operation)) continue;
+    if (entry.name === canonical) return `${cliName} ${canonical}`;
+    if (entry.source.kind === "contract") {
+      if (own[0]?.name === operation) contractPrimary ??= entry.name;
+      else contractSecondary ??= entry.name;
+    } else {
+      otherMatch ??= entry.name;
+    }
+  }
+  if (
+    recordedCommands !== undefined &&
+    Object.hasOwn(recordedCommands, canonical)
+  )
+    return `${cliName} ${canonical}`;
+  const selected = contractPrimary ?? contractSecondary ?? otherMatch;
+  return selected === undefined ? undefined : `${cliName} ${selected}`;
 };
