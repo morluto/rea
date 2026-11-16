@@ -303,7 +303,7 @@ const CASES: readonly ParityCase[] = [
   },
 ];
 
-/** Rows of the root command list kept verbatim; the rest are elided. */
+/** Rows of the root command list kept in the golden; the rest are elided. */
 const ROOT_HELP_ROWS: ReadonlySet<string> = new Set([
   "address-to-file-offset",
   "build-reconstruction-obligation-ledger",
@@ -316,8 +316,10 @@ const ELIDED_ROWS = "  <registered command rows elided>";
 
 /**
  * The root command list grows with every new command. Check its layout here
- * (sorted, one aligned description column) and keep only sample rows in the
- * golden, so adding a command does not change this file.
+ * (sorted, every description starting two columns after the longest name)
+ * and keep only sample rows in the golden, written with a two-space gap
+ * instead of the measured padding, so adding a command, including one with a
+ * longer name, does not change the goldens.
  */
 const elideRootCommandRows = (stdout: string): string => {
   const lines = stdout.split("\n");
@@ -334,7 +336,8 @@ const elideRootCommandRows = (stdout: string): string => {
     expect(match![1]!.length + match![2]!.length).toBe(width + 2);
   const kept: string[] = [];
   rows.forEach((row, index) => {
-    if (ROOT_HELP_ROWS.has(names[index]!)) kept.push(row);
+    if (ROOT_HELP_ROWS.has(names[index]!))
+      kept.push(`  ${names[index]!}  ${row.slice(width + 4)}`);
     else if (kept.at(-1) !== ELIDED_ROWS) kept.push(ELIDED_ROWS);
   });
   return [...lines.slice(0, start + 1), ...kept, ...lines.slice(end)].join(
@@ -406,11 +409,15 @@ describe("CLI parity goldens", () => {
     await removeTestWorkspace(workspace.root);
   });
 
+  // Recording writes the files of new cases, so only orphans fail then.
   cliTest("every golden belongs to a case", async () => {
     const files = (await readdir(GOLDEN_DIRECTORY)).filter((file) =>
       file.endsWith(".txt"),
     );
-    expect(files.sort()).toEqual(CASES.map(({ name }) => `${name}.txt`).sort());
+    const expected = CASES.map(({ name }) => `${name}.txt`).sort();
+    if (RECORD)
+      expect(files.filter((file) => !expected.includes(file))).toEqual([]);
+    else expect(files.sort()).toEqual(expected);
   });
 
   cliTest.for(CASES)("$name", async (testCase, { cli }) => {
