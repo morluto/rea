@@ -4,7 +4,9 @@ import { tokenize } from "./source-tokens.mjs";
 // reads the call from scripts/verify/source-tokens.mjs tokens rather than a
 // parser package.
 
-const MENTIONS_CLIENT = /\bnew\s+Client\s*\(/u;
+// Skips files that never name Client. Comments between `new`, `Client` and
+// `(` are read from the tokens, so this test must not require them adjacent.
+const MENTIONS_CLIENT = /\bClient\b/u;
 const OPENERS = new Map([
   ["(", ")"],
   ["[", "]"],
@@ -28,36 +30,55 @@ const quotedText = (source, token) => {
 const keyName = (source, token) =>
   token.kind === "id" ? token.text : quotedText(source, token);
 
+const isPunct = (token, text) => token?.kind === "punct" && token.text === text;
+
 /**
- * Whether the arguments of the call whose `(` is at `open` pass an object
- * literal naming `jsonSchemaValidator` as one of its own keys (written
- * `jsonSchemaValidator: …` or as shorthand).
+ * Whether the arguments of the call whose `(` is at `open` include an object
+ * literal that is itself a whole argument (it starts after the call's `(` or
+ * a top-level `,` and ends before `,` or `)`) and names `jsonSchemaValidator`
+ * as one of its own keys (`jsonSchemaValidator: …` or shorthand). An option
+ * object inside parentheses, a conditional or any other expression is not
+ * read, so the client counts as using the default.
  */
 const callNamesValidator = (source, tokens, open) => {
   const closers = [];
+  // Whether the open top-level object is a whole argument, and whether it
+  // has named the validator so far.
+  let argumentObject = false;
+  let named = false;
   for (let index = open; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token.kind === "punct" && OPENERS.has(token.text)) {
+      if (closers.length === 1 && token.text === "{") {
+        const before = tokens[index - 1];
+        argumentObject = index - 1 === open || isPunct(before, ",");
+        named = false;
+      }
       closers.push(OPENERS.get(token.text));
       continue;
     }
     if (token.kind === "punct" && token.text === closers.at(-1)) {
       closers.pop();
       if (closers.length === 0) return false;
+      if (
+        closers.length === 1 &&
+        token.text === "}" &&
+        argumentObject &&
+        named &&
+        (isPunct(tokens[index + 1], ",") || isPunct(tokens[index + 1], ")"))
+      )
+        return true;
       continue;
     }
-    // A key of an object literal that is itself a direct argument.
-    if (closers.length !== 2 || closers[1] !== "}") continue;
+    if (closers.length !== 2 || closers[1] !== "}" || !argumentObject) continue;
     const before = tokens[index - 1];
     const after = tokens[index + 1];
     if (
-      before?.kind === "punct" &&
-      (before.text === "{" || before.text === ",") &&
-      after?.kind === "punct" &&
-      (after.text === ":" || after.text === "," || after.text === "}") &&
+      (isPunct(before, "{") || isPunct(before, ",")) &&
+      (isPunct(after, ":") || isPunct(after, ",") || isPunct(after, "}")) &&
       keyName(source, token) === "jsonSchemaValidator"
     )
-      return true;
+      named = true;
   }
   return false;
 };

@@ -30,6 +30,15 @@ it.each([
   ['NEW(info, { "jsonSchemaValidator": validation })', 0],
   // A commented-out call is not a client.
   ["// NEW(info)\nNEW(info, { jsonSchemaValidator })", 0],
+  // Comments between the tokens do not hide the call.
+  ["new /* fixture */ Client(info)", 1],
+  ["new Client /* fixture */ (info)", 1],
+  ["new /* a */ Client /* b */ (info, { jsonSchemaValidator })", 0],
+  // Only an object literal that is a whole argument counts as the options.
+  ["NEW(info, ({ jsonSchemaValidator }))", 1],
+  ["NEW(info, enabled ? { jsonSchemaValidator } : {})", 1],
+  ["NEW(info, { ...{ jsonSchemaValidator } })", 1],
+  ["NEW(info, { capabilities: { jsonSchemaValidator } })", 1],
 ] as const)("counts default-validation clients in %j", (text, expected) => {
   expect(countDefaultValidationClients(source(text))).toBe(expected);
 });
