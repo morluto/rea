@@ -10,6 +10,23 @@ import {
   type CliCommandRegistrationId,
 } from "../../../src/cli/cliCommandRegistrations.js";
 import { selectCliRegistrations } from "../../../src/cli/cliLoader.js";
+import {
+  cliCompletionShell,
+  parseCliGlobalArguments,
+} from "../../../src/cliBuiltinArguments.js";
+
+/** Select registrars as the executable does: completion has no global arguments. */
+const selectFor = (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  recorded: Readonly<Record<string, string>> | undefined,
+) =>
+  selectCliRegistrations(
+    cliCompletionShell(environment) === undefined
+      ? parseCliGlobalArguments(arguments_)
+      : undefined,
+    recorded,
+  );
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
@@ -102,7 +119,7 @@ describe("lazy CLI registration", () => {
       arguments_: readonly string[],
       environment: NodeJS.ProcessEnv = {},
       record: Readonly<Record<string, string>> | null = recorded,
-    ) => selectCliRegistrations(arguments_, environment, record ?? undefined);
+    ) => selectFor(arguments_, environment, record ?? undefined);
 
     expect(select(["inspect-go-binary", "a.out"])).toEqual(["go"]);
     expect(select(["inspect-go-binary", "a.out", "--json"])).toEqual(["go"]);

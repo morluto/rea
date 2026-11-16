@@ -2,7 +2,7 @@ import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderAvailability,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { FlutterRequest } from "../../domain/flutter/flutterBuildAnalysis.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";

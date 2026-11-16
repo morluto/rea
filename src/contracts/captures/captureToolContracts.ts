@@ -7,13 +7,21 @@ import {
   packetCaptureSchema,
 } from "../../domain/captures/packetCapture.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 export const CAPTURE_TOOL_CONTRACTS = [
   {
     name: "inspect_packet_fields",
     availability: { host: "packetCapture" },
-    ...toolContractMetadata("inspect_packet_fields"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_packet_fields",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
+    ),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
@@ -31,7 +39,15 @@ export const CAPTURE_TOOL_CONTRACTS = [
   {
     name: "inspect_packet_capture",
     availability: { host: "packetCapture" },
-    ...toolContractMetadata("inspect_packet_capture"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_packet_capture",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
+    ),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

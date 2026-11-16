@@ -11,7 +11,7 @@ import {
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { readReferenceSource } from "../reference/ReferenceSourceReader.js";
 import type {

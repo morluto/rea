@@ -1,4 +1,4 @@
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
 import { MAX_FLUTTER_BUILD_ID_BYTES } from "../domain/flutter/flutterBuildAnalysis.js";

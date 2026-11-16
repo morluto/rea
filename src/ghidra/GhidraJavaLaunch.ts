@@ -2,8 +2,10 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { dirname } from "node:path";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   jvmEnvironmentArguments,
   prepareJdkJavaOptions,

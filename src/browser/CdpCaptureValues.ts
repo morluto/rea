@@ -4,7 +4,7 @@ import type { BrowserObservationOperation } from "../domain/browserObservationEr
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { createWebTextArtifact } from "../domain/webContentArtifact.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export type UnknownRecord = Readonly<Record<string, unknown>>;
 

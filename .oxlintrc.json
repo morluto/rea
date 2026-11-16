@@ -64,6 +64,22 @@
   },
   "overrides": [
     {
+      "files": ["scripts/**/*.mjs", "scripts/**/*.js", "scripts/**/*.cjs"],
+      "env": { "node": true, "es2024": true },
+      "rules": { "no-undef": "error" }
+    },
+    {
+      "files": [
+        "scripts/lib/browser-scenario-service-workers-e2e.mjs",
+        "scripts/lib/browser-screenshot-e2e.mjs",
+        "scripts/verify-browser-dom-destinations.mjs"
+      ],
+      "globals": {
+        "document": "readonly",
+        "ServiceWorkerContainer": "readonly"
+      }
+    },
+    {
       "files": ["src/domain/**/*.ts"],
       "rules": { "rea/no-locale-compare": "error" }
     },

@@ -162,7 +162,7 @@ async function inspect(name) {
     assert.equal(evidence.normalized_result.runtime_attribution, "unknown");
     assert.deepEqual(evidence.provider, evidence.normalized_result.decoder);
     assert.equal(
-      evidence.subject.digest.sha256,
+      evidence.subject.identity.sha256,
       digest(await readFile(input.capture_path)),
     );
   }

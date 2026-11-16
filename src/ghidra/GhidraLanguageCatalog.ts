@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import {
+  type ArtifactResourceScope,
+  withArtifactRegularFile,
+} from "../resources/index.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";

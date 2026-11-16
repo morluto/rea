@@ -141,10 +141,9 @@ describe("browser scenario analysis views", () => {
     const summary = await view(capture, { kind: "summary" });
     expect(summary).toMatchObject({
       limitations: [
-        expect.stringMatching(/artifact identity.*unavailable/iu),
         expect.stringMatching(/platform.*architecture.*not observed/iu),
       ],
-      summary: { limitation_count: 2 },
+      summary: { limitation_count: 1 },
     });
   });
 
