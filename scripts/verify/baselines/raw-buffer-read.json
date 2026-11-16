@@ -37,7 +37,7 @@
   "src/domain/binaryTarget.ts": 10,
   "src/domain/desktop/elfDependencies.ts": 4,
   "src/domain/desktop/openPgpKeys.ts": 2,
-  "src/domain/desktop/zipDirectory.ts": 14,
+  "src/domain/desktop/zipDirectory.ts": 12,
   "src/domain/dosMz.ts": 10,
   "src/domain/elfDynamicEntry.ts": 4,
   "src/domain/elfFixedHeader.ts": 4,

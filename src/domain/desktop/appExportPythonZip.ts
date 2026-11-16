@@ -12,6 +12,8 @@ ZIP_END = b"PK\x05\x06"
 ZIP_CENTRAL = b"PK\x01\x02"
 ZIP64_LOCATOR = b"PK\x06\x07"
 ZIP64_END = b"PK\x06\x06"
+#: Ample bound on a Zip64 end record's extensible data sector, matching the inspection read.
+ZIP64_EXTENSIBLE_LIMIT = 1 << 20
 #: Formats an archive entry may have whose reader needs a tool, a worker or another archive opened.
 NOT_READ_INSIDE = ((SQLITE_HEADER, "sqlite", "a SQLite database"), (GVDB_HEADER, "dconf", "a dconf database"),
                    (ZIP_HEADER, "zip", "an archive"))
@@ -74,6 +76,42 @@ def _zip_entry(archive, info, refusal, name):
             "view": view.get("view"), "view_error": view.get("error")}
 
 
+def _zip64_end_at(file, locator: int, declared: int):
+    """Where the Zip64 end record begins, or None when no record ends exactly at the locator.
+
+    APPNOTE 4.3.14 lets the record carry a variable-size extensible data sector, so its 56 fixed bytes need
+    not end where the locator begins, and 4.3.15 has the locator declare the record's offset. A declared
+    offset is read where it points, whatever the sector's size; the backward search behind the locator is
+    what a bound applies to. The record's own length field is what identifies it either way, which also
+    holds when the archive has data prepended that its declared offset cannot account for."""
+
+    def begins_at(at: int, window: bytes, base: int) -> bool:
+        offset = at - base
+        if offset < 0 or offset + 12 > len(window):
+            return False
+        return (
+            window[offset:offset + 4] == ZIP64_END
+            and at + 12 + int.from_bytes(window[offset + 4:offset + 12], "little") == locator
+        )
+
+    if 0 <= declared and declared + 56 <= locator:
+        file.seek(declared)
+        head = file.read(12)
+        if (
+            len(head) == 12
+            and head[:4] == ZIP64_END
+            and declared + 12 + int.from_bytes(head[4:], "little") == locator
+        ):
+            return declared
+    reach = min(locator, ZIP64_EXTENSIBLE_LIMIT + 56)
+    file.seek(locator - reach)
+    tail = file.read(reach)
+    for at in range(locator - 56, locator - reach - 1, -1):
+        if begins_at(at, tail, locator - reach):
+            return at
+    return None
+
+
 def _zip_end(file, size: int):
     """Where an archive's central directory ends, how long it is and the offset it declares, from the last end
     record whose comment reaches the end of the file and, when a Zip64 locator precedes it whatever that record
@@ -89,16 +127,22 @@ def _zip_end(file, size: int):
         return None
     total, length, offset = struct.unpack_from("<HII", tail, at + 10)
     end = size - window + at
-    record = end - 20 - 56
-    if record < 0:
+    locator = end - 20
+    if locator < 0:
         return end, length, offset
-    file.seek(end - 20)
+    file.seek(locator)
     if file.read(4) != ZIP64_LOCATOR:
         return end, length, offset
-    file.seek(record)
-    zip64 = file.read(56)
-    if len(zip64) == 56 and zip64[:4] == ZIP64_END:
-        length, offset = struct.unpack_from("<QQ", zip64, 40)
+    # The locator is its signature, the disk it names, the record's offset, and the disk count.
+    declared = -1
+    if locator + 16 <= size:
+        file.seek(locator + 8)
+        declared = int.from_bytes(file.read(8), "little")
+    record = _zip64_end_at(file, locator, declared)
+    if record is not None:
+        file.seek(record)
+        header = file.read(56)
+        length, offset = struct.unpack_from("<QQ", header, 40)
         return record, length, offset
     if total == 0xFFFF or 0xFFFFFFFF in (length, offset):
         return None

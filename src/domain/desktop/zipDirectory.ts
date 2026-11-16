@@ -13,12 +13,20 @@ const ZIP64_LOCATOR = 0x07064b50;
 const ZIP64_LOCATOR_BYTES = 20;
 const ZIP64_END = 0x06064b50;
 const ZIP64_END_BYTES = 56;
+/** Ample bound on a Zip64 end record's extensible data sector. */
+const ZIP64_EXTENSIBLE_LIMIT = 1 << 20;
 const UTF8_NAME = 0x800;
 const UNICODE_PATH = 0x7075;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
 const MSDOS_DIRECTORY = 0x10;
 const STRICT_UTF8 = strictUtf8Decoder("preserve");
+
+/** A little-endian 32-bit field, which these records all use. */
+const u32At = (view: DataView, at: number): number => view.getUint32(at, true);
+/** A little-endian 64-bit field as a number, which these records all use. */
+const u64At = (view: DataView, at: number): number =>
+  Number(view.getBigUint64(at, true));
 
 /** An archive's central directory read a record at a time, bounded to the records it keeps. */
 export interface ZipDirectory {
@@ -49,19 +57,41 @@ const directoryEnd = (view: DataView) => {
   const end = window + found.value.offset;
   const { totalEntries, directorySize, directoryOffset } = found.value;
   const classic = { end, size: directorySize, declaredOffset: directoryOffset };
-  const record = end - ZIP64_LOCATOR_BYTES - ZIP64_END_BYTES;
+  const locator = end - ZIP64_LOCATOR_BYTES;
   // Like Python's zipfile, a Zip64 locator is followed whether or not the classic record defers to it.
-  if (
-    record < 0 ||
-    view.getUint32(end - ZIP64_LOCATOR_BYTES, true) !== ZIP64_LOCATOR
+  if (locator < 0 || u32At(view, locator) !== ZIP64_LOCATOR) return classic;
+  // APPNOTE 4.3.14 lets the Zip64 end record carry a variable-size extensible
+  // data sector after its fixed fields, and 4.3.15 has its locator declare that
+  // record's offset, so the record's 56 fixed bytes need not end where the
+  // locator begins. The declared offset is taken when the record there declares
+  // a length that ends exactly at the locator; otherwise the record is read just
+  // before the locator, where zipfile and zip.js look for one with no sector.
+  const zip64EndAt = (at: number): boolean =>
+    at >= 0 &&
+    at + ZIP64_END_BYTES <= locator &&
+    u32At(view, at) === ZIP64_END &&
+    at + 12 + u64At(view, at + 4) === locator;
+  // The record ends exactly where the locator begins, so its own declared length
+  // identifies it however much data precedes the archive, which a declared
+  // archive offset cannot account for. Look at the declared offset first, then
+  // walk back over the extensible sector the record may carry.
+  const declared = u64At(view, locator + 8);
+  let record = zip64EndAt(declared) ? declared : -1;
+  // The bound is on the extensible sector, which begins after the record's 56
+  // fixed bytes, so the walk may reach that many further back than the limit.
+  for (
+    let at = locator - ZIP64_END_BYTES;
+    record < 0 &&
+    at >= 0 &&
+    locator - at - ZIP64_END_BYTES <= ZIP64_EXTENSIBLE_LIMIT;
+    at -= 1
   )
-    return classic;
-  // Read just before its locator, where zipfile and zip.js look when the locator's own offset holds no Zip64 record.
-  if (view.getUint32(record, true) === ZIP64_END)
+    if (zip64EndAt(at)) record = at;
+  if (record >= 0)
     return {
       end: record,
-      size: Number(view.getBigUint64(record + 40, true)),
-      declaredOffset: Number(view.getBigUint64(record + 48, true)),
+      size: u64At(view, record + 40),
+      declaredOffset: u64At(view, record + 48),
     };
   // Without one the classic values stand, as zip.js reads them, unless they are sentinels deferring to it.
   const deferred =
