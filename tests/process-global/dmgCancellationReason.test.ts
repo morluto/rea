@@ -35,7 +35,7 @@ vi.mock("../../src/process/ExecFileOutput.js", async (importOriginal) => {
 import { NativeDmgArtifactReader } from "../../src/artifacts/NativeDmgArtifactReader.js";
 import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { ExecFileOutputCancelledError } from "../../src/process/ExecFileOutput.js";
-import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../src/resources/index.js";
 
 it.skipIf(process.platform !== "darwin").each([false, true])(
   "preserves exact DMG caller reason and settles the command before return (pre-aborted: %s)",

@@ -12,6 +12,16 @@ import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import {
+  isComparisonOrCountFile,
+  optionalFactDefaultCount,
+} from "./optional-fact-default-guard.mjs";
+import { unmarkedMatchCount } from "./reason-marker.mjs";
+import { blankComments } from "./source-tokens.mjs";
+import {
+  cliTextGuardSelects,
+  cliTextOutsideCliCount,
+} from "./cli-text-guard.mjs";
+import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
@@ -42,19 +52,16 @@ const listFiles = async (dir) => {
   return output;
 };
 
-const stripComments = (content) =>
-  content
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n")
-    .replace(/\/\*[\s\S]*?\*\//gu, "");
-
 const sources = await listFiles(join(root, "src"));
 const files = await Promise.all(
-  sources.map(async (path) => ({
-    path: relative(root, path).split(sep).join("/"),
-    content: stripComments(await readFile(path, "utf8")),
-  })),
+  sources.map(async (path) => {
+    const source = await readFile(path, "utf8");
+    return {
+      path: relative(root, path).split(sep).join("/"),
+      content: blankComments(source),
+      source,
+    };
+  }),
 );
 const failures = [];
 const check = (label, selected, pattern, allow = []) => {
@@ -205,7 +212,7 @@ check(
   ],
 );
 
-// "Non-null object other than an array" has one owner: src/domain/isRecord.ts.
+// "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
 // A local predicate with that body, under any name, is a copy. The listed files
 // still hold one and may only be removed from the list; a listed file that no
 // longer matches fails so the list shrinks with the code.
@@ -223,7 +230,7 @@ const RECORD_PREDICATE_COPIES = [
   "src/pcap/PcapOutput.ts",
 ];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
-  if (path === "src/domain/isRecord.ts") return false;
+  if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
   return (
     named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
@@ -324,7 +331,7 @@ const checkCounted = (label, key, selected, pattern, owners) => {
     if (owners.includes(file.path)) continue;
     const count =
       typeof pattern === "function"
-        ? pattern(file.content)
+        ? pattern(file.content, file)
         : (file.content.match(pattern)?.length ?? 0);
     if (count > 0) counts.set(file.path, count);
   }
@@ -350,6 +357,18 @@ const checkCounted = (label, key, selected, pattern, owners) => {
       `${label}; copies were removed, so lower the baseline with \`node scripts/verify/architecture-guards.mjs --shrink-baselines\`:\n${lines(compared.stale)}`,
     );
 };
+
+// Comparison, coverage and count code that reads an optional parsed fact with
+// `?? 0`, `?? []` or `?? false` turns "not reported" into an observed zero,
+// empty list or no. Keep the fact unknown (null with a limitation) instead.
+checkCounted(
+  "optional fact defaulted to 0, [] or false in comparison or count code (keep it unknown)",
+  "optional-fact-default",
+  files.filter(({ path }) => isComparisonOrCountFile(path)),
+  // Exemption markers are comments, so this guard reads the unstripped source.
+  (_content, { source }) => optionalFactDefaultCount(source),
+  [],
+);
 
 // A provider failure's captured output comes from one owner,
 // capturedProviderOutput in src/process; local copies drift on byte counts
@@ -396,7 +415,7 @@ check(
 // src/domain/coverage.ts. A local enum that contains "complete" either copies
 // it or drops `unknown`, which forces an unknown producer to pick a side.
 checkCounted(
-  "local completeness enum (use coverageStatusSchema from src/domain/coverage)",
+  "local completeness enum (use coverageStatusSchema from src/domain/coverage, or mark a detail level, lifecycle state or domain vocabulary with `// detail-level:`, `// lifecycle-state:` or `// domain-vocabulary:` and its reason)",
   "local-completeness-enum",
   files,
   localCompletenessEnumCount,
@@ -431,9 +450,11 @@ checkCounted(
 // src/domain/budget, which refuses malformed or oversized charges without
 // changing the remainder. Hand-written `remaining -=` / `retained +=`
 // arithmetic repeats that admission and drifts (charge-then-check, no
-// safe-integer check).
+// safe-integer check). A cursor, tally or retained length that is compared
+// with a limit without being charged against it carries
+// `// not-an-allowance: <reason>` on its field declaration (#11408).
 checkCounted(
-  "hand-written budget arithmetic (use Budget from src/domain/budget)",
+  "hand-written budget arithmetic (use Budget from src/domain/budget, or mark a cursor or tally field with `// not-an-allowance: <reason>`)",
   "budget-arithmetic",
   files,
   budgetArithmeticCount,
@@ -442,12 +463,21 @@ checkCounted(
 
 // A slice to a named maximum drops items; boundedList in src/domain/boundedList
 // keeps the count of what it dropped beside the retained items, so a consumer
-// can say that more exist and how many.
+// can say that more exist and how many. Two caps drop no evidence and carry a
+// reason marker instead (#11411): `// generation-cap: <reason>` limits what REA
+// generates (suggested checks, guards) or the work spent finding it, and
+// `// sample-cap: <reason>` limits illustrative samples whose full totals the
+// same result already reports.
 checkCounted(
-  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items)",
+  "slice to a named maximum (use boundedList or BoundedListCollector from src/domain/boundedList so the omitted count travels with the items, or mark a generation or sample cap with its reason)",
   "constant-maximum-slice",
   files,
-  /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+  (_content, file) =>
+    unmarkedMatchCount(
+      file.source,
+      /\.slice\(\s*0\s*,\s*[A-Z][A-Z0-9_]*\s*\)/gu,
+      ["generation-cap", "sample-cap"],
+    ),
   ["src/domain/boundedList.ts"],
 );
 
@@ -474,14 +504,77 @@ checkCounted(
   [],
 );
 
-// `tshark -T json` has one envelope reader, src/pcap/TsharkJsonPackets.ts,
+// `tshark -T json` has one envelope reader, src/domain/pcap/tsharkJsonPackets.ts,
 // which owns malformed JSON, the packet array and each packet's layers.
 checkCounted(
-  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/pcap/TsharkJsonPackets)",
+  "local tshark JSON envelope read (use parseTsharkJsonPackets or readTsharkJsonPackets from src/domain/pcap/tsharkJsonPackets)",
   "tshark-json-envelope",
   files,
   /\b_source\s*\.\s*layers\b/gu,
-  ["src/pcap/TsharkJsonPackets.ts"],
+  ["src/domain/pcap/tsharkJsonPackets.ts"],
+);
+
+// Text from an unknown caught value has one owner, src/kernel/errorMessage.ts.
+// The pattern matches the inline copy with the same expression in all three
+// places; a named local helper with this body is the same copy.
+// Copies that run in another realm cannot import the owner and are excluded by
+// name, so no slice rewrites them: the regex worker's source string and a
+// fetch run inside the browser page through page.evaluate.
+const ISOLATED_ERROR_MESSAGE_COPIES = new Map([
+  ["src/browser/PlaywrightScenarioRequest.ts", 1],
+  ["src/process/RegexMatcher.ts", 1],
+]);
+const inlineErrorMessage =
+  /(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+instanceof\s+Error\s*\?\s*\1\.message\s*:\s*String\(\s*\1\s*\)/gu;
+checkCounted(
+  "inline error-to-message conversion (use errorMessage from src/kernel/errorMessage)",
+  "inline-error-message",
+  files,
+  (content, { path }) =>
+    Math.max(
+      0,
+      (content.match(inlineErrorMessage)?.length ?? 0) -
+        (ISOLATED_ERROR_MESSAGE_COPIES.get(path) ?? 0),
+    ),
+  ["src/kernel/errorMessage.ts"],
+);
+
+// Two hexadecimal digits for one byte have one owner, src/kernel/byteToHex.ts.
+checkCounted(
+  "inline byte-to-hex formatting (use byteToHex from src/kernel/byteToHex)",
+  "inline-byte-hex",
+  files,
+  /\.toString\(16\)\s*\.padStart\(\s*2\s*,\s*"0"\s*\)/gu,
+  ["src/kernel/byteToHex.ts"],
+);
+
+// A one-shot SHA-256 hex digest of an in-memory value has one owner,
+// src/kernel/sha256Hex.ts. Incremental and streamed hashing (a Hash updated
+// more than once) is not counted.
+checkCounted(
+  "one-shot SHA-256 hex digest (use sha256Hex from src/kernel/sha256Hex)",
+  "inline-sha256-hex",
+  files,
+  /createHash\(\s*"sha256"\s*\)\s*\.update\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)\s*\.digest\(\s*"hex"\s*\)/gu,
+  ["src/kernel/sha256Hex.ts"],
+);
+
+// The isRecord predicate written inline in a condition is a copy of
+// src/kernel/isRecord.ts. Bodies of the named copies in RECORD_PREDICATE_COPIES
+// are counted by that list, not here.
+const inlineRecordCheck =
+  /typeof\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*===\s*["']object["']\s*&&\s*\1\s*!==\s*null\s*&&\s*!Array\.isArray\(\s*\1\s*\)/gu;
+checkCounted(
+  "inline non-array record check (use isRecord from src/kernel/isRecord)",
+  "inline-record-check",
+  files,
+  (content) =>
+    Math.max(
+      0,
+      (content.match(inlineRecordCheck)?.length ?? 0) -
+        recordPredicateCounts(content).bodies,
+    ),
+  ["src/kernel/isRecord.ts"],
 );
 
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
@@ -531,18 +624,13 @@ checkCounted(
   ["src/gdb/GdbMiRecord.ts"],
 );
 
-// Services name the contract field they refuse or ask the caller to change;
-// the CLI layer owns option spellings (each command's field binding renames
-// issue paths to CLI keys). A `--flag` written outside src/cli copies that
-// mapping and goes stale when the command renames the option.
+// src/cli owns option and command spellings; cli-text-guard.mjs states the
+// rule and its written exemptions (host-only commands, CLI-only files).
 checkCounted(
-  "REA CLI option named outside the CLI layer (name the contract field; src/cli owns option spellings)",
+  "REA CLI option or command named outside the CLI layer (name the contract field or operation; src/cli owns option and command spellings)",
   "cli-option-text-outside-cli",
-  files.filter(
-    ({ path }) =>
-      !path.startsWith("src/cli/") && !/^src\/cli[^/]*\.ts$/u.test(path),
-  ),
-  /\(CLI:? [^)\n]*--[a-z]|--[a-z][a-z0-9-]* on the CLI|or (?:use|pass) --[a-z]|\bcli(?:Flag|Total|PerFile)?:\s*"--[a-z]|(?:message|userMessage):\s*["`]--[a-z]/gu,
+  files.filter(({ path }) => cliTextGuardSelects(path)),
+  cliTextOutsideCliCount,
   [],
 );
 
@@ -843,7 +931,7 @@ const verifierScripts = await Promise.all(
     )
     .map(async (path) => ({
       path: `scripts/${path}`,
-      content: stripComments(
+      content: blankComments(
         await readFile(join(root, "scripts", path), "utf8"),
       ),
     })),

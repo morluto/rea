@@ -97,6 +97,7 @@ export abstract class WebNetworkProjectionAccumulator {
         fixedAllowanceOptions(
           "The analysis-view projection allowance",
           "parser",
+          { limit: this.maximumBytes, unit: "bytes" },
         ),
       ),
     );

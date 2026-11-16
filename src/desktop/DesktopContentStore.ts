@@ -2,7 +2,6 @@ import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { createHash } from "node:crypto";
 import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -25,6 +24,7 @@ import {
   RegularFileCapacityError,
   readStableFileBytes,
 } from "../filesystem/readStableFileBytes.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type Omission = DesktopApplicationCapture["state"]["omitted_content"][number];
 
@@ -143,7 +143,7 @@ export class DesktopContentStore {
 
   /** Store bytes already read, such as a verified apt key; over the per-file limit or the remaining budget they are omitted. */
   async retainBytes(bytes: Buffer): Promise<RetainOutcome> {
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const size = bytes.byteLength;
     if (size > this.#maxFileBytes)
       return { kind: "omitted", reason: "too_large" };

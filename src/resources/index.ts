@@ -25,6 +25,7 @@ export {
   ArtifactFileSource,
   assertArtifactFileSelectedSource,
 } from "./ArtifactFileSource.js";
+export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
@@ -32,6 +33,7 @@ export {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   artifactOperationCause,
+  artifactParseFailure,
   artifactReadCancelledBy,
   artifactSelectedPathErrno,
   assertArtifactReadActive,
@@ -63,6 +65,18 @@ export type {
   CleanupFailedRead,
 } from "./ArtifactReader.js";
 export {
+  assertArtifactSelectedSource,
+  resolveArtifactSourcePath,
+} from "./ArtifactSelectedSource.js";
+export {
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactRootFailure,
+  DirectoryArtifactTraversalLimit,
+} from "./DirectoryArtifactReader.js";
+export type { DirectoryArtifactEntry } from "./DirectoryArtifactReader.js";
+export { hostExecutableMarking } from "./hostExecutableMarking.js";
+export {
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
 } from "./ArtifactResourceScope.js";
@@ -82,6 +96,7 @@ export {
   stableArtifactInputRecovery,
 } from "./StableArtifactFailure.js";
 export type { RequestField } from "./StableArtifactFailure.js";
+export { selectedFileTargetError } from "./RegularFileErrorProjection.js";
 export { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 export {
   fileAccessFailureReason,
@@ -125,3 +140,9 @@ export {
   targetDigestChangedFailure,
   withArtifactTargetIdentity,
 } from "./withArtifactTargetIdentity.js";
+export {
+  ZIP_READER_OPTIONS,
+  ZipArtifactReader,
+  decodeZipEntryText,
+  zipEntryPath,
+} from "./ZipArtifactReader.js";

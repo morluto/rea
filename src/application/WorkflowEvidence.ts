@@ -506,7 +506,7 @@ export const workflowSnapshotRecord = (
       analysisProfile: analysisProfileSchema.parse(evidence.analysis_profile),
       limitations: evidence.limitations,
       locations: evidence.locations,
-      subject: evidenceSubjectTarget(evidence.subject) ?? null,
+      subject: evidence.subject,
     },
   };
 };

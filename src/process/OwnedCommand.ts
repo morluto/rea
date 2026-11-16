@@ -38,6 +38,7 @@ import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
@@ -357,7 +358,7 @@ const collectOwnedCommand = async (
       ? finishCommandInput(launched.process.stdin, (cause) => {
           inputFailure ??= {
             cause,
-            message: `stdin stream failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `stdin stream failed: ${errorMessage(cause)}`,
             processError: cause instanceof Error ? cause : undefined,
           };
           if (processFailure === undefined) {
@@ -500,10 +501,26 @@ const collectOwnedCommand = async (
     (callerSignal?.aborted ? { reason: callerSignal.reason } : undefined);
   if (stopped.status === "incomplete" && retainCleanup !== undefined)
     retainCleanup(supervisor, stopped);
-  else if (stopped.status === "incomplete")
+  else if (stopped.status === "incomplete") {
+    // A completed run interrupted during final cleanup is reported as that
+    // interruption, as when the cleanup succeeds (below); only the retry
+    // owner differs.
+    const interruption =
+      failure !== undefined
+        ? undefined
+        : callerSignal?.aborted
+          ? ("cancelled" as const)
+          : deadline.interruption === "timeout"
+            ? ("timeout" as const)
+            : undefined;
     throw new OwnedCommandFailure(
-      failure?.reason ?? "process",
-      failure?.message ?? "Command cleanup failed.",
+      failure?.reason ?? interruption ?? "process",
+      failure?.message ??
+        (interruption === "cancelled"
+          ? "Command cancelled during final cleanup."
+          : interruption === "timeout"
+            ? "Command deadline elapsed during final cleanup."
+            : "Command cleanup failed."),
       snapshot,
       stopped.reason,
       {
@@ -524,6 +541,7 @@ const collectOwnedCommand = async (
       ownedCommandResources(launched.ownership, spawn.cwd),
       supervisor,
     );
+  }
   if (failure !== undefined)
     throw new OwnedCommandFailure(
       failure.reason,
@@ -610,7 +628,6 @@ const consumeStdout = (
   }
   return pipeline(stdout, sink, { signal }).then(
     () => undefined,
-    (cause: unknown) =>
-      `stdout stream failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    (cause: unknown) => `stdout stream failed: ${errorMessage(cause)}`,
   );
 };

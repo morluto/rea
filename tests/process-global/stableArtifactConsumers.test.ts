@@ -89,7 +89,7 @@ import {
   withArtifactRegularFile,
 } from "../../src/resources/ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "../../src/resources/AnalysisCleanupLease.js";
-import { translateArtifactFailure } from "../../src/artifacts/ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../src/resources/index.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import {
   OwnedRegularFileOperationFailure,
@@ -138,7 +138,7 @@ import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
 import { ggufFixture } from "../fixtures/model/model.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
-import { peResourceFixture } from "../../src/artifacts/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { createRustImage } from "../fixtures/rust/image.js";
@@ -388,7 +388,9 @@ it.each(
     [
       name,
       makeProvider,
-      new ArtifactReaderFailure("integrity", "source replacement"),
+      new ArtifactReaderFailure("integrity", "source replacement", {
+        integrityCheck: "container-identity",
+      }),
       AnalysisArtifactChangedError,
     ] as const,
     [
@@ -441,6 +443,7 @@ it.each(staticProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "controlled source replacement",
+      { integrityCheck: "container-identity" },
     );
     fault.readFailure = { cause: primary };
     const controller = new AbortController();
@@ -479,6 +482,7 @@ it("clears the Python pyc cleanup flag once a retained descriptor closes", async
   const primary = new ArtifactReaderFailure(
     "integrity",
     "controlled source replacement",
+    { integrityCheck: "container-identity" },
   );
   fault.readFailure = { cause: primary };
   try {
@@ -1176,6 +1180,7 @@ it.each(fileFailureProviders)(
     const primary = new ArtifactReaderFailure(
       "integrity",
       "original source replacement",
+      { integrityCheck: "container-identity" },
     );
     try {
       const nested = await scope

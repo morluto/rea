@@ -11,8 +11,8 @@ import { z } from "zod";
 import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
+  translateArtifactFailure,
 } from "../../resources/index.js";
-import { translateArtifactFailure } from "../../artifacts/ArtifactOperationFailure.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   type JavaScriptApplicationAnalysisResult,

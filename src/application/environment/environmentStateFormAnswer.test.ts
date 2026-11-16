@@ -14,14 +14,11 @@ import {
 } from "../../../tests/fixtures/environmentStateFormWrites.js";
 import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const field = (body: JsonValue | undefined, name: string): JsonValue[] => {
   if (!Array.isArray(body)) throw new Error("Expected a list body");
-  return body.map((item) =>
-    typeof item === "object" && item !== null && !Array.isArray(item)
-      ? (item[name] ?? null)
-      : null,
-  );
+  return body.map((item) => (isRecord(item) ? (item[name] ?? null) : null));
 };
 
 describe("served creates and updates modelled on form recordings", () => {

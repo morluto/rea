@@ -36,6 +36,7 @@ import {
   NATIVE_UI_OUTPUT_WEIGHT,
 } from "./NativeUiOutputBudget.js";
 import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const helper = fileURLToPath(
   new URL("../../bridge/native/ReaNativeUI.swift", import.meta.url),
@@ -284,7 +285,7 @@ const observeWithHelper = async (
               cause,
               diagnostics: {
                 helper_path: helper,
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
                 remediation:
                   "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
               },

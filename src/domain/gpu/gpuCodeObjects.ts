@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { createHash } from "node:crypto";
 import { digestSchema } from "../digests.js";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 /**
  * GPU inventories report known coverage: discovery, note and payload
@@ -75,6 +75,7 @@ export const gpuObjectSchema = z.strictObject({
   raw_flags: z.string().nullable(),
   location: gpuLocationSchema,
   metadata_location: gpuLocationSchema,
+  // domain-vocabulary: how deeply one code object was decoded, including format outcomes.
   inspection: z.enum([
     "inventory",
     "complete",
@@ -153,10 +154,7 @@ export const gpuPtxArtifactSchema = z
         path: ["byte_length"],
         message: "PTX text and its UTF-8 source extent disagree",
       });
-    if (
-      createHash("sha256").update(artifact.text, "utf8").digest("hex") !==
-      artifact.sha256
-    )
+    if (sha256Hex(artifact.text) !== artifact.sha256)
       context.addIssue({
         code: "custom",
         path: ["sha256"],

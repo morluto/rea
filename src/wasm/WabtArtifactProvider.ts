@@ -3,7 +3,7 @@ import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -75,6 +75,8 @@ import {
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type AcquiredGlue =
@@ -85,8 +87,6 @@ type AcquiredGlue =
       readonly references: [];
     };
 const OPERATION = "inspect_wasm_artifact";
-const digest = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
 const warningOutput = (text: string): readonly string[] | null => {
   if (text === "") return [];
   const lines = text.trimEnd().split("\n");
@@ -693,7 +693,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         details,
         wat: {
           text: wat.stdout.text,
-          sha256: digest(wat.stdout.text),
+          sha256: sha256Hex(wat.stdout.text),
           representation: "decoded-wat",
         },
         tool_profile: toolProfile,
@@ -780,7 +780,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           WABT_PROVIDER_IDENTITY.id,
           [runtime.path],
           {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             previous_error: result.ok
               ? null
               : projectAnalysisError(result.error),
@@ -817,9 +817,7 @@ const resourceCleanupFailure = (cause: unknown): ProviderCleanupError => {
     WABT_PROVIDER_IDENTITY.id,
     cleanup?.resources ?? ["artifact-resources"],
     {
-      reason:
-        cleanup?.reason ??
-        (cause instanceof Error ? cause.message : String(cause)),
+      reason: cleanup?.reason ?? errorMessage(cause),
     },
     { operation: OPERATION, cause },
   );

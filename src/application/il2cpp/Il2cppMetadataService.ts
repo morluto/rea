@@ -28,6 +28,7 @@ import {
   type Il2cppMetadataProviderInput,
 } from "../../domain/il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
 const NO_RETENTION: AnalysisViewRetention = {
@@ -58,8 +59,7 @@ export class Il2cppMetadataService {
                 this.provider.identity.id,
                 [],
                 {
-                  reason:
-                    cause instanceof Error ? cause.message : String(cause),
+                  reason: errorMessage(cause),
                 },
                 { cause, operation: OPERATION },
               );

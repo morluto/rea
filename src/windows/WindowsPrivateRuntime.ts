@@ -14,6 +14,7 @@ import {
   windowsHandleSchema,
   type WindowsNativeAuthority,
 } from "./WindowsNativeLoader.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const runtimeSchema = windowsFileIdentitySchema.extend({
   path: z.string(),
@@ -225,10 +226,7 @@ export class WindowsPrivateRuntime {
       throw ArtifactReaderFailure.withCleanup(
         primary === undefined ? closeFailure.cause : primary.cause,
         {
-          reason:
-            closeFailure.cause instanceof Error
-              ? closeFailure.cause.message
-              : String(closeFailure.cause),
+          reason: errorMessage(closeFailure.cause),
           resources: [file.requestedPath],
         },
         undefined,

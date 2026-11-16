@@ -108,7 +108,7 @@ it.each(cases)(
         analysisProfile: profile,
         limitations: [],
         locations: [],
-        subject: target,
+        subject: evidence.subject,
       },
     });
     const snapshot = {
@@ -121,13 +121,13 @@ it.each(cases)(
     const restored = parseAnalysisSnapshot(
       JSON.parse(serializeAnalysisSnapshot(snapshot)),
     );
-    expect(restored.target.architecture).toBe(architecture);
+    expect(restored.target.identity.architecture).toBe(architecture);
     expect(
       fileIdentity(restored.evidence_bundle.records[0]?.subject).architecture,
     ).toBe(architecture);
-    expect(restored.entries[0]?.execution.subject?.architecture).toBe(
-      architecture,
-    );
+    expect(
+      fileIdentity(restored.entries[0]?.execution.subject).architecture,
+    ).toBe(architecture);
     expect(
       sessionOutputSchemas.open_binary.parse({ result: target }).result
         .architecture,

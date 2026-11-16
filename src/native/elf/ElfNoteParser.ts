@@ -6,7 +6,6 @@ import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
-import { createHash } from "node:crypto";
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
@@ -33,6 +32,7 @@ import {
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
 import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const SHT_NOTE = 7;
@@ -117,9 +117,6 @@ const chargeText = (
     );
   budget[field] += bytes;
 };
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const GNU_OS_NAMES: Readonly<Record<number, string>> = {
   0: "linux",
@@ -978,7 +975,7 @@ const toEntry = (
   let digest = text.hashes.get(range);
   if (digest === undefined) {
     chargeText(text, note.descriptor.length, "hashed");
-    digest = sha256(note.descriptor);
+    digest = sha256Hex(note.descriptor);
     text.hashes.set(range, digest);
   }
   return {

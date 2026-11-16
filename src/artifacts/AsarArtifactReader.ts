@@ -1,4 +1,3 @@
-import { assertArtifactSelectedSource } from "./ArtifactSelectedSource.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
@@ -26,6 +25,7 @@ import {
   type ArtifactReader,
   type ArtifactTraversalOptions,
   readArtifactFileChunks,
+  assertArtifactSelectedSource,
   admitAsarHeader,
   readAsarHeader,
   type AsarHeaderExtents,

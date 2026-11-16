@@ -1,8 +1,8 @@
 import { captureBudgets } from "./CaptureBudgets.js";
-import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
+  ZipArtifactReader,
 } from "../../resources/index.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";

@@ -7,9 +7,7 @@ import {
   type RecoveryBackupPreservationOptions,
 } from "./SetupRecoveryBackup.js";
 import { err, ok, type Result } from "../domain/result.js";
-
-const errorDetail = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const isMissing = (cause: unknown): boolean =>
   typeof cause === "object" &&
@@ -28,7 +26,7 @@ const restrictExistingBackup = (
     return err({
       kind: "unreadable",
       path: backupPath,
-      detail: `The existing client configuration backup could not be checked: ${errorDetail(cause)}`,
+      detail: `The existing client configuration backup could not be checked: ${errorMessage(cause)}`,
     });
   }
   if (!existing.isFile())
@@ -43,7 +41,7 @@ const restrictExistingBackup = (
     return err({
       kind: "unreadable",
       path: backupPath,
-      detail: `The existing client configuration backup permissions could not be secured: ${errorDetail(cause)}`,
+      detail: `The existing client configuration backup permissions could not be secured: ${errorMessage(cause)}`,
     });
   }
   return ok(undefined);

@@ -46,16 +46,15 @@ export const registerPcapCommands = (
       description:
         "Inspect one pcap/pcapng capture: endpoints, DNS, TLS SNI, and protocol distribution",
       positionals: ["path"],
+      callerPaths: ["path"],
+      fields: {
+        path: { description: "Local pcap or pcapng capture file to inspect" },
+      },
       omit: {
         detail:
           "The one-shot command returns complete Evidence; summaries are retained by MCP sessions.",
       },
     },
-    // The contract admits the path as typed, so the input is the caller's spelling.
-    (input, context) =>
-      inspectWithService(service("inspect_pcap_capture"), "pcap")(input, {
-        ...context,
-        callerInputs: { path: input.path },
-      }),
+    inspectWithService(service("inspect_pcap_capture"), "pcap"),
   );
 };

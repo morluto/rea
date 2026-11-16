@@ -1,27 +1,25 @@
-import { createHash } from "node:crypto";
-
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { allKeyed, firstKeyed, keyedBy } from "../../domain/keyedCollection.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   KERNEL_MODULE_VERSION_ENTRY_BYTES,
-  DEFAULT_KERNEL_MODULE_KEY_BYTES,
+  kernelModuleModinfoLimit,
   MAX_KERNEL_MODULE_RAW_BYTES,
   MAX_KERNEL_MODULE_SECTION_NAME_BYTES,
-  DEFAULT_KERNEL_MODULE_VALUE_BYTES,
-  MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
   MODULE_SIGNATURE_INFO_BYTES,
   MODULE_SIGNATURE_MAGIC,
   MODULE_SIGNATURE_PKCS7_ID_TYPE,
   type KernelModule,
   type InspectKernelModuleInput,
 } from "../../domain/native/kernelModule.js";
+import type { AnalysisParameterLimit } from "../../domain/analysisSettings.js";
 import type {
   ImageSection,
   BinaryContainer,
 } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = KernelModule;
@@ -29,9 +27,6 @@ type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
 const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const exceeds = (examined: number, maxEntries: number): void => {
   if (examined > maxEntries)
@@ -188,7 +183,7 @@ const parseModinfo = (
     return {
       status: "unsupported",
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "modinfo_section_compressed",
     };
@@ -238,7 +233,7 @@ const parseModinfo = (
       },
       key,
       value,
-      raw_sha256: sha256(raw),
+      raw_sha256: sha256Hex(raw),
       raw_hex: rawHex(raw),
       status: reason === null ? "observed" : "malformed",
       reason,
@@ -247,31 +242,25 @@ const parseModinfo = (
     if (!terminated) break;
     at = end + 1;
   }
-  for (const [field, selected, required, defaultBytes] of [
-    [
-      "key",
-      input.max_modinfo_key_bytes,
-      largestKeyBytes,
-      DEFAULT_KERNEL_MODULE_KEY_BYTES,
-    ],
-    [
-      "value",
-      input.max_modinfo_value_bytes,
-      largestValueBytes,
-      DEFAULT_KERNEL_MODULE_VALUE_BYTES,
-    ],
+  const omissionLimits: AnalysisParameterLimit[] = [];
+  for (const [field, selected, required] of [
+    ["key", input.max_modinfo_key_bytes, largestKeyBytes],
+    ["value", input.max_modinfo_value_bytes, largestValueBytes],
   ] as const) {
-    if (required > selected)
+    if (required > selected) {
+      omissionLimits.push(kernelModuleModinfoLimit(field, selected));
       use.limitations.push(
-        `.modinfo ${field} text exceeds max_modinfo_${field}_bytes=${String(selected)} bytes (request budget; default ${String(defaultBytes)}, minimum 1, maximum ${String(MAX_INSPECT_KERNEL_MODULE_FILE_BYTES)}). Omitted fields keep their source range and digest; omission does not establish malformed syntax. Retry inspect_kernel_module with max_modinfo_${field}_bytes at least ${String(required)}, or --max-modinfo-${field}-bytes on the CLI. Applies on the next call without a REA restart; input, entry and raw-hex budgets do not change.`,
+        `.modinfo ${field} text exceeds max_modinfo_${field}_bytes=${String(selected)} bytes. Omitted fields keep their source range and digest; omission does not establish malformed syntax. Retry inspect_kernel_module with max_modinfo_${field}_bytes at least ${String(required)}; modinfo.omission_limits records the control. Applies on the next call without a REA restart; input, entry and raw-hex budgets do not change.`,
       );
+    }
   }
   return {
     status: "present",
     location,
-    sha256: sha256(stored),
+    sha256: sha256Hex(stored),
     entries,
     reason: null,
+    ...(omissionLimits.length === 0 ? {} : { omission_limits: omissionLimits }),
   };
 };
 
@@ -318,7 +307,7 @@ const parseVersions = (
       layout,
       entry_bytes: entryBytes,
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "versions_section_compressed",
     };
@@ -328,7 +317,7 @@ const parseVersions = (
       layout,
       entry_bytes: entryBytes,
       location,
-      sha256: sha256(stored),
+      sha256: sha256Hex(stored),
       entries: [],
       reason: "versions_size_not_multiple",
     };
@@ -363,7 +352,7 @@ const parseVersions = (
     layout,
     entry_bytes: entryBytes,
     location,
-    sha256: sha256(stored),
+    sha256: sha256Hex(stored),
     entries,
     reason: null,
   };
@@ -500,7 +489,7 @@ const parseSignature = (bytes: Buffer): Report["signature"] => {
     info,
     pkcs7: {
       location: { offset: infoOffset - info.sig_len, bytes: info.sig_len },
-      sha256: sha256(pkcs7),
+      sha256: sha256Hex(pkcs7),
     },
     reason: null,
   };

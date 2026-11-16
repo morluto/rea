@@ -25,6 +25,7 @@ import { Formatter } from "incur";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export interface CliDelimitedOutputOptions {
   readonly fields: readonly string[];
@@ -268,9 +269,7 @@ const isPlainObjectArray = (
   Array.isArray(value) &&
   value.every(
     (row: unknown) =>
-      typeof row === "object" &&
-      row !== null &&
-      !Array.isArray(row) &&
+      isRecord(row) &&
       (Object.getPrototypeOf(row) === Object.prototype ||
         Object.getPrototypeOf(row) === null),
   );
@@ -284,9 +283,7 @@ const isFlatObject = (value: Record<string, unknown>): boolean =>
 const isObjectArray = (value: unknown): value is Record<string, unknown>[] =>
   Array.isArray(value) &&
   value.length > 0 &&
-  value.every(
-    (item) => typeof item === "object" && item !== null && !Array.isArray(item),
-  ) &&
+  value.every((item) => isRecord(item)) &&
   value.some((item) => Object.keys(item).length > 0);
 
 const isWordCharacter = (character: string | undefined): boolean =>
@@ -467,11 +464,7 @@ const formatMarkdown = (
       if (isScalar(child))
         return `${heading}${escapeMarkdownText(String(child))}`;
       if (isObjectArray(child)) return `${heading}${formatObjectTable(child)}`;
-      if (
-        typeof child === "object" &&
-        child !== null &&
-        !Array.isArray(child)
-      ) {
+      if (isRecord(child)) {
         const nested = child as Record<string, unknown>;
         return isFlatObject(nested)
           ? `${heading}${formatKeyValueTable(nested)}`

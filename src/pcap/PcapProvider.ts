@@ -78,6 +78,7 @@ import {
   selectArtifactCommandPath,
   type ArtifactCommandPath,
 } from "../process/ArtifactCommandPath.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const FIELDS = [
   "frame.number",
@@ -324,7 +325,7 @@ export class PcapProvider {
         unclassified: (failure) =>
           pcapToolUnavailable(
             operation,
-            `Cannot read selected Wireshark tool ${path}: ${failure instanceof Error ? failure.message : String(failure)}`,
+            `Cannot read selected Wireshark tool ${path}: ${errorMessage(failure)}`,
             { cause: failure },
           ),
       });
@@ -638,7 +639,7 @@ export class PcapProvider {
           cause instanceof AnalysisCapabilityUnavailableError
             ? "executable_missing"
             : "version_unresolved",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         // Keep the failing owner's repair, such as the limiter's; only an
         // unattributed tool failure falls back to the Wireshark guidance.
         remediation:
@@ -825,7 +826,7 @@ export class PcapProvider {
         this.#resources.readCleanupFailure(read, primary, undefined, operation),
       unclassified: (cause) =>
         new AnalysisProtocolError(
-          `Packet-capture analysis failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `Packet-capture analysis failed: ${errorMessage(cause)}`,
           { cause },
         ),
     };

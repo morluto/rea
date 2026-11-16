@@ -34,14 +34,14 @@ import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   MAX_NATIVE_PLIST_BYTES,
-  NATIVE_PLIST_INPUT_ALLOWANCE,
+  nativePlistInputAllowance,
 } from "./parsers/plist.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Resolved lookup identity and selection intent, independent of file readiness.
@@ -125,12 +125,16 @@ export const unreadablePlist = (
   switch (selection.origin) {
     case "default": {
       // Name the default that is missing and the selection that still works.
-      const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input (CLI: --relative-path).`;
+      const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input.`;
       return new AnalysisCapabilityUnavailableError(
         IDENTITY.id,
         "inspect_plist",
         missingDefault,
-        { ...options, userMessage: missingDefault },
+        {
+          ...options,
+          userMessage: missingDefault,
+          related: { parameters: ["path"] },
+        },
       );
     }
     case "target":
@@ -233,7 +237,7 @@ const nativePlistPrimaryFailure = (
             { maximum_input_bytes: MAX_NATIVE_PLIST_BYTES },
             {
               cause,
-              ...fixedAllowanceOptions(NATIVE_PLIST_INPUT_ALLOWANCE, "input"),
+              ...nativePlistInputAllowance(),
             },
           )
         : new AnalysisResourceConstraintError(
@@ -250,7 +254,7 @@ const nativePlistPrimaryFailure = (
       cause,
       diagnostics: {
         phase: "plist-scope",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     });
   const { path } = selection;
@@ -283,7 +287,7 @@ const nativePlistPrimaryFailure = (
     diagnostics: {
       path,
       phase: "plist-file",
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

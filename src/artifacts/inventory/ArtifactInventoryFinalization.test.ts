@@ -7,8 +7,10 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { ArtifactProvider } from "../ArtifactProvider.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { ZipArtifactReader } from "../ZipArtifactReader.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
+import {
+  ZipArtifactReader,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
