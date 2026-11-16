@@ -327,12 +327,39 @@ export function discoverStructuredRasters(
     for (const record of records)
       if (!pairsByFormat.has(record.format))
         pairsByFormat.set(record.format, []);
-    for (let i = 0; i + 1 < records.length; i++) {
+    const conflictingDescriptors = new Set<number>();
+    // Identical references contribute one equation, not one per alias.
+    for (let i = 0; i < records.length;) {
       const record = records[i]!;
-      pairsByFormat.get(record.format)!.push({
-        record,
-        delta: records[i + 1]!.payloadOffset - record.payloadOffset,
-      });
+      let next = i + 1;
+      while (
+        next < records.length &&
+        records[next]!.payloadOffset === record.payloadOffset
+      )
+        next++;
+      const aliases = records.slice(i, next);
+      const equal = aliases.every(
+        (r) =>
+          r.format === record.format &&
+          r.width === record.width &&
+          r.height === record.height,
+      );
+      if (equal) {
+        if (next < records.length)
+          pairsByFormat.get(record.format)!.push({
+            record,
+            delta: records[next]!.payloadOffset - record.payloadOffset,
+          });
+      } else {
+        // Unequal aliases stay mismatches even when their areas agree.
+        for (const conflict of aliases) {
+          conflictingDescriptors.add(conflict.descriptorOffset);
+          pairsByFormat
+            .get(conflict.format)!
+            .push({ record: conflict, delta: 0 });
+        }
+      }
+      i = next;
     }
     const formatValues = [...pairsByFormat.keys()].sort((a, b) => a - b);
     const formats: StructuredRasterTable["formats"] = [];
@@ -375,7 +402,11 @@ export function discoverStructuredRasters(
     }
     const byFormat = new Map(formats.map((f) => [f.format, f.hypotheses]));
     const resources: StructuredRasterResource[] = records.map((record) => {
-      const hypotheses = (byFormat.get(record.format) ?? []).map((h) => {
+      const hypotheses = (
+        conflictingDescriptors.has(record.descriptorOffset)
+          ? []
+          : (byFormat.get(record.format) ?? [])
+      ).map((h) => {
         const stride = Math.ceil((record.width * h.bitsPerPixel) / 8),
           length = stride * record.height,
           offset = cursor + record.payloadOffset * h.offsetUnit;

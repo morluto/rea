@@ -285,3 +285,72 @@ it("observes an already-aborted signal before inspecting coverage", () => {
   ).toThrow(reason);
   expect(inspected).toBe(false);
 });
+
+function aliasFixture(unequal = false) {
+  const bytes = new Uint8Array(1024).fill(255),
+    v = new DataView(bytes.buffer);
+  for (let i = 0; i < 10; i++) {
+    const at = i * 12;
+    bytes[at] = 11;
+    bytes[at + 1] = 0;
+    v.setUint16(at + 2, unequal && i === 1 ? 8 : 16, true);
+    v.setUint16(at + 4, unequal && i === 1 ? 16 : 8, true);
+    v.setUint16(at + 6, 0, true);
+    v.setUint32(at + 8, Math.max(0, i - 1) * 16, true);
+  }
+  return bytes;
+}
+it("counts identical payload aliases once while retaining every descriptor", () => {
+  const t = discoverStructuredRasters(aliasFixture(), {
+    bitsPerPixel: [1],
+    offsetUnits: [1],
+  }).tables[0];
+  expect(t?.recordCount).toBe(10);
+  expect(t?.formats[0]?.comparisons).toBe(8);
+  expect(t?.formats[0]?.hypotheses[0]).toMatchObject({
+    matches: 8,
+    consistency: 1,
+  });
+  expect(t?.resources[0]?.hypotheses).toEqual(t?.resources[1]?.hypotheses);
+});
+it("does not treat unequal same-size aliases as corroboration or resolved resources", () => {
+  expect(
+    discoverStructuredRasters(aliasFixture(true), {
+      bitsPerPixel: [1],
+      offsetUnits: [1],
+    }).tables,
+  ).toEqual([]);
+  const t = discoverStructuredRasters(aliasFixture(true), {
+    bitsPerPixel: [1],
+    offsetUnits: [1],
+    minConsistency: 0.5,
+  }).tables[0];
+  expect(t?.resources.slice(0, 2).map((r) => r.status)).toEqual([
+    "unresolved",
+    "unresolved",
+  ]);
+});
+it("does not pool equal enums in unrelated tables", () => {
+  const a = fixture(0).bytes,
+    b = fixture(0).bytes,
+    v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  let offset = 0;
+  for (let i = 0; i < 12; i++) {
+    v.setUint32(i * 12 + 8, offset, true);
+    offset += Math.ceil(((9 + i) * 4) / 8) * (8 + (i % 3));
+  }
+  const bytes = new Uint8Array(8192).fill(255);
+  bytes.set(a);
+  bytes.set(b, 4096);
+  const r = discoverStructuredRasters(bytes);
+  expect(
+    r.tables
+      .find((t) => t.offset === 0)
+      ?.formats[0]?.hypotheses.map((h) => h.bitsPerPixel),
+  ).toEqual([1]);
+  expect(
+    r.tables
+      .find((t) => t.offset === 4096)
+      ?.formats[0]?.hypotheses.some((h) => h.bitsPerPixel === 4),
+  ).toBe(true);
+});
