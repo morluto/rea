@@ -447,10 +447,10 @@ it("charges many sections sharing one huge __ksymtab name to the entry budget", 
   const bytes = kernelModuleFixture({
     sharedNameSections: { name, count: 8192 },
   });
-  const started = performance.now();
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  // The shared name decodes once; per-section decoding exceeds the 16 MiB
+  // section-name budget and refuses this module.
   const report = parse(bytes, { max_entries: 65_536 });
-  expect(performance.now() - started).toBeLessThan(5_000);
   const huge = report.ksymtab?.sections.slice(1) ?? [];
   expect(huge).toHaveLength(8192);
   expect(
