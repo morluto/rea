@@ -11,6 +11,8 @@ const state = vi.hoisted(() => ({
   hang: true,
   /** Withhold owned cleanup until the test allows it. */
   cleanupAllowed: true,
+  /** When set, exit 1 at once with this hdiutil diagnostic on stderr. */
+  diagnostic: undefined as string | undefined,
 }));
 // Stand in for hdiutil at the launch boundary, under production supervision.
 vi.mock("../../src/process/ProviderProcess.js", async (importOriginal) => {
@@ -37,9 +39,11 @@ vi.mock("../../src/process/ProviderProcess.js", async (importOriginal) => {
         expectedCommand: process.execPath,
         arguments: [
           "-e",
-          state.hang
-            ? 'const fs = require("node:fs"); process.on("SIGTERM", () => { fs.writeFileSync(process.argv[1] + ".term", "rolled back"); process.exit(0); }); fs.writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)'
-            : 'require("node:fs").writeFileSync(process.argv[1], String(process.pid))',
+          state.diagnostic !== undefined
+            ? `require("node:fs").writeFileSync(process.argv[1], String(process.pid)); process.stderr.write(${JSON.stringify(state.diagnostic)}); process.exitCode = 1`
+            : state.hang
+              ? 'const fs = require("node:fs"); process.on("SIGTERM", () => { fs.writeFileSync(process.argv[1] + ".term", "rolled back"); process.exit(0); }); fs.writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)'
+              : 'require("node:fs").writeFileSync(process.argv[1], String(process.pid))',
           state.marker,
         ],
       });
@@ -153,6 +157,38 @@ it.skipIf(process.platform !== "darwin")(
       await reader.close();
       expect(state.calls).toBe(1);
     } finally {
+      state.cleanupAllowed = true;
+      await reader.close().catch(() => undefined);
+    }
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "admits no further hdiutil command while an earlier command's cleanup stays unresolved",
+  async () => {
+    const root = await createTestTempDirectory("rea-dmg-cleanup-admission-");
+    state.marker = join(root, "ran");
+    state.calls = 0;
+    state.hang = false;
+    state.cleanupAllowed = false;
+    // A transient refusal is retried; its exit status survives failed cleanup.
+    state.diagnostic =
+      "hdiutil: verify failed - Resource temporarily unavailable\n";
+    const reader = new NativeDmgArtifactReader("fixture.dmg", {});
+    try {
+      const failure = await (async () => {
+        for await (const _entry of reader.entries()) {
+          /* consume */
+        }
+      })().catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      // The retry waited for the retained cleanup, which is still withheld.
+      expect(state.calls).toBe(1);
+      expect((failure as ArtifactReaderFailure).cleanup?.resources).toEqual(
+        expect.arrayContaining([`pid:${await readFile(state.marker, "utf8")}`]),
+      );
+    } finally {
+      state.diagnostic = undefined;
       state.cleanupAllowed = true;
       await reader.close().catch(() => undefined);
     }

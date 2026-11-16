@@ -147,45 +147,55 @@ const createSystemHost = (
     },
     run: <T>(work: () => Promise<T>) => work(),
   };
+  const runOwned: NativeDmgHost["run"] = async (
+    arguments_,
+    signal,
+    options,
+  ) => {
+    try {
+      await prepareOwnedCommand(signal);
+      const snapshot = await runOwnedCommand(
+        {
+          command: HDIUTIL,
+          arguments: [...arguments_],
+          runId: `rea-hdiutil-${randomUUID()}`,
+          hostEnvironment: environment,
+        },
+        {
+          timeoutMs: options?.timeoutMs ?? null,
+          diagnosticBytes: {
+            stdout: HDIUTIL_OUTPUT_BYTES,
+            stderr: HDIUTIL_OUTPUT_BYTES,
+          },
+          acceptNonZeroExit: true,
+          termination: HDIUTIL_TERMINATION,
+        },
+        { signal },
+      );
+      // An accepted run exited normally, so it has a numeric status.
+      if (typeof snapshot.exitCode !== "number")
+        throw invariantViolation("hdiutil completed without an exit status");
+      const { stdout, stderr } = capturedProviderOutput(snapshot);
+      return { stdout, stderr, exitCode: snapshot.exitCode };
+    } catch (cause: unknown) {
+      retainOwnedCommandCleanup(
+        cause,
+        retained,
+        "artifact",
+        `hdiutil ${arguments_[0] ?? "operation"}`,
+      );
+      throw cause;
+    }
+  };
   return {
     delay,
-    async run(arguments_, signal, options) {
-      try {
-        await prepareOwnedCommand(signal);
-        const snapshot = await runOwnedCommand(
-          {
-            command: HDIUTIL,
-            arguments: [...arguments_],
-            runId: `rea-hdiutil-${randomUUID()}`,
-            hostEnvironment: environment,
-          },
-          {
-            timeoutMs: options?.timeoutMs ?? null,
-            diagnosticBytes: {
-              stdout: HDIUTIL_OUTPUT_BYTES,
-              stderr: HDIUTIL_OUTPUT_BYTES,
-            },
-            acceptNonZeroExit: true,
-            termination: HDIUTIL_TERMINATION,
-          },
-          { signal },
-        );
-        // An accepted run exited normally, so it has a numeric status.
-        if (typeof snapshot.exitCode !== "number")
-          throw invariantViolation("hdiutil completed without an exit status");
-        const { stdout, stderr } = capturedProviderOutput(snapshot);
-        return { stdout, stderr, exitCode: snapshot.exitCode };
-      } catch (cause: unknown) {
-        retainOwnedCommandCleanup(
-          cause,
-          retained,
-          "artifact",
-          `hdiutil ${arguments_[0] ?? "operation"}`,
-        );
-        throw cause;
-      }
-    },
-    close: () => processes.close(),
+    // Admission retries retained cleanup first and stays blocked while it is
+    // unresolved, so no hdiutil starts beside one REA could not stop.
+    run: (arguments_, signal, options) =>
+      processes.run(() => runOwned(arguments_, signal, options)),
+    // The reader releases retained commands before and after its close-time
+    // detach, so this retries them without ending admission.
+    close: () => processes.retryCleanup(),
   };
 };
 
