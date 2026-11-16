@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
 
 import { BinaryReader, WireType } from "@bufbuild/protobuf/wire";
 
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
 
@@ -1397,7 +1397,7 @@ export const reconstructAndroidOtaPartition = (
     );
   }
   if (options.verifyDeclaredHash === false) return ok(image);
-  const observed = createHash("sha256").update(image).digest("hex");
+  const observed = sha256Hex(image);
   const declared = partition.newPartitionInfo.hashHex;
   if (declared !== null && declared !== observed)
     return err({
