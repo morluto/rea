@@ -6,7 +6,7 @@ import { snapshotAndroidTarget } from "../../dist/android/AndroidTargetSnapshot.
 import { toolContract } from "../../dist/contracts/toolContracts.js";
 import { PROPOSED_ADB_UI_ACTION_CONTRACT } from "../../dist/contracts/adb/adbUiToolContracts.js";
 import { hashStableFile } from "../../dist/filesystem/StableFileHash.js";
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../dist/resources/index.js";
 import { acquireFixtureLease } from "./lease.mjs";
 
 export const FIXTURE_PACKAGE = "com.rea.ui.probe";

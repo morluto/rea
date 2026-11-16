@@ -8,6 +8,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { toolContract } from "../../dist/contracts/toolContracts.js";
 import { createEvidence } from "../../dist/domain/evidence.js";
+import { unknownTarget } from "../../dist/domain/targetIdentity.js";
 import { settleCommandOwners, withCommands } from "../command-scope.mjs";
 import {
   FIXTURE_PACKAGE,
@@ -23,13 +24,12 @@ const identity = {
 };
 const evidence = (operation, parameters, result) =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Scripted boundary", version: "1" },
     {
       operation,
       parameters,
       result,
-      subjectUnavailableReason: "Synthetic lifecycle fixture",
     },
   );
 

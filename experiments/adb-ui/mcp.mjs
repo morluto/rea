@@ -25,6 +25,7 @@ process.exitCode = await run({
         : undefined;
     const provider = createAdbDeviceAnalysisProvider(
       options?.environment,
+      undefined,
       (evidence) => {
         const recorded = recordEvidence?.(evidence);
         if (recorded !== undefined && !recorded.ok) throw recorded.error;
