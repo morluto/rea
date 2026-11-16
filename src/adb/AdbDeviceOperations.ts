@@ -1,7 +1,7 @@
 import {
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -61,6 +61,8 @@ export const listAdbDevicesOperation = async (
     context.signal,
   );
   if (!ran.ok) return ran;
+  // Keep exact transport identities internally; the shared client boundary
+  // alone produces the legacy numeric projection.
   const { devices, unparsedLines, daemonStarted } = parseAdbDevicesOutput(
     ran.value.stdout,
     ran.value.stderr,

@@ -10,12 +10,10 @@ import {
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import type { Evidence } from "../evidence.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-  type AnalysisViewResult,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import type { AnalysisViewResult } from "./analysisViewResult.js";
+import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 import {
   WITHHELD_WRITE_HINTS,
   summarizeEnvironmentCoverage,

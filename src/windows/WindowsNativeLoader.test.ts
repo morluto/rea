@@ -1,26 +1,30 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { windowsNativeArtifactFixture } from "../../tests/fixtures/windowsNativeArtifact.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   loadWindowsNativeAuthority,
+  windowsNativeFailureRemediation,
   type WindowsNativeLoadHost,
 } from "./WindowsNativeLoader.js";
 
 const fixture = (
   capabilities: {
+    filesystem?: string;
     protocolStdin?: boolean;
     jobMemoryLimit?: unknown;
     privateBridgeDescriptorAccess?: unknown;
   } = {},
 ) => {
   const { bytes, manifest } = windowsNativeArtifactFixture();
+  const { filesystem = "NTFS", ...inspectionCapabilities } = capabilities;
   const identity = {
     requestedPath: "D:\\fixture\\runtime",
     finalPath: "\\\\?\\D:\\fixture\\runtime",
-    filesystem: "NTFS",
+    filesystem,
     volumeSerial: "0123456789abcdef",
     fileId: "0123456789abcdef0123456789abcdef",
     size: 0,
@@ -46,7 +50,7 @@ const fixture = (
           privateBridgeDescriptorAccess: true,
           atomicJobAssignment: true,
           killOnOwnerClose: true,
-          ...capabilities,
+          ...inspectionCapabilities,
         }),
       };
     },
@@ -55,6 +59,20 @@ const fixture = (
 };
 
 describe("packaged Windows native compatibility", () => {
+  it.each(["NTFS", "ReFS"])("admits %s filesystem identities", (filesystem) => {
+    const result = loadWindowsNativeAuthority(fixture({ filesystem }).host);
+    expect(result).toMatchObject({
+      available: true,
+      authority: { inspection: { filesystem: { filesystem } } },
+    });
+  });
+
+  it("rejects an unsupported filesystem identity", () => {
+    expect(
+      loadWindowsNativeAuthority(fixture({ filesystem: "exFAT" }).host),
+    ).toMatchObject({ available: false, failureStage: "inspection" });
+  });
+
   it.each([true, false])(
     "preserves protocol stdin capability %s alongside existing job controls",
     (protocolStdin) => {
@@ -240,6 +258,12 @@ describe("packaged Windows native artifact validation", () => {
     });
   });
 
+  it("describes NTFS and ReFS temporary volumes in self-test remediation", () => {
+    expect(windowsNativeFailureRemediation("self-test")).toContain(
+      "writable local NTFS/ReFS temporary directory",
+    );
+  });
+
   it("requires every inspected native fact", () => {
     const value = fixture();
     const loaded = loadWindowsNativeAuthority({
@@ -257,5 +281,34 @@ describe("packaged Windows native artifact validation", () => {
       available: false,
       reason: expect.stringContaining("privateBridgeDescriptorAccess"),
     });
+  });
+});
+
+describe("system authority cache", () => {
+  // Each case starts from an empty module-level cache.
+  beforeEach(() => {
+    vi.resetModules();
+  });
+  const systemAuthority = async () =>
+    (await import("./WindowsNativeLoader.js")).systemWindowsNativeAuthority;
+  const other = {
+    platform: HOST_PLATFORM.platform === "win32" ? "linux" : "win32",
+    architecture: "x64",
+  } as const;
+
+  it("keeps the host result after another host is injected", async () => {
+    const authority = await systemAuthority();
+    const host = authority();
+    const injected = authority(other);
+    expect(injected).not.toEqual(host);
+    expect(authority()).toEqual(host);
+  });
+
+  it("never caches an injected host's result for the host", async () => {
+    const authority = await systemAuthority();
+    const injected = authority(other);
+    const host = authority();
+    expect(host).not.toEqual(injected);
+    expect(authority()).toEqual(host);
   });
 });

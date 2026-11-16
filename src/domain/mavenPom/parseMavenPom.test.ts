@@ -385,7 +385,7 @@ describe("hostile documents", () => {
       { doctype: "reject", lineEndings: "normalize" },
     );
     expect(document.ok).toBe(false);
-    expect(document.ok ? null : document.error.reason).toBe("doctype");
+    expect(document.ok ? null : document.error.kind).toBe("unsupported");
   });
 
   it("rejects malformed XML instead of inventing declarations", () => {
@@ -394,7 +394,7 @@ describe("hostile documents", () => {
       lineEndings: "normalize",
     });
     expect(document.ok).toBe(false);
-    expect(document.ok ? null : document.error.reason).toBe("malformed");
+    expect(document.ok ? null : document.error.kind).toBe("malformed");
   });
 });
 

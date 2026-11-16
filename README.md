@@ -71,7 +71,7 @@ Setup registers REA with your agent and installs matching workflow instructions.
 ## Quick start
 
 On Linux, Ghidra, JADX, firmware tool launches and static JavaScript/Electron
-analysis require a procps-compatible `ps` on REA's `PATH` for process ownership
+analysis require a procps-compatible system `ps` for process ownership
 checks. Recovery steps are in `docs/getting-started/installation.md` under
 "Linux owned-process prerequisite".
 
@@ -92,20 +92,20 @@ project. Installation and recovery details are in the setup guide below.
 
 Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/getting-started/installation.md#supported-agents). See
-[installation and setup](docs/getting-started/installation.md) for provider configuration and
-manual MCP registration and Claude Code/Codex plugin installation.
+[installation and setup](docs/getting-started/installation.md) for provider configuration,
+manual MCP registration, Claude Code/Codex plugins, and the Cursor Marketplace
+plugin.
 
-MCP uses compact input schemas by default to reduce context overhead. Set
-`REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
-complete advertised field guidance and nested validation details. Both profiles
-keep the full tool set and canonical server validation. See
-"Compact input schema profile" in the MCP contracts guide.
+MCP advertises compact input schemas to reduce context overhead; guidance a
+compact schema omits follows the tool description. The full tool set and
+canonical server validation are unchanged. See "Compact input schema profile"
+in the MCP contracts guide.
 
-Complete output schemas are advertised by default. If your client caps the
-complete `tools/list` frame, set `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to
-bound each advertised output schema, or `off` to omit output schemas entirely.
-Both settings keep canonical server-side validation and complete structured
-results. See "Output schemas" in the MCP contracts guide.
+Output schemas are omitted from `tools/list` by default: no model API reads
+them, and REA validates every result itself. Set
+`REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to advertise each output schema within
+a 4,096-byte budget. Both settings keep canonical server-side validation and
+complete structured results. See "Output schemas" in the MCP contracts guide.
 
 ### Ask your agent
 
@@ -214,7 +214,7 @@ Additional tools and host support depend on the target:
 | EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments and mutability                               | Local raw/hex carrier on Linux x64; [offline EVM guide](docs/guides/evm/evm-bytecode.md)                                                                             |
 | SQLite databases        | Tables, columns, indexes, views, triggers and selected ordinary-table rows                        | Local database/WAL snapshot; Node.js 24.x >=24.15 or 26+ with native SQLite limits                                                                                   |
 | Recorded Linux crashes  | Raw notes, every recorded thread's registers/signals and optional mapping candidates              | Caller-supplied pwntools on Linux x64; optional GDB/pwndbg; [recorded crashes](docs/guides/native/recorded-crashes.md)                                               |
-| JavaScript / Electron   | Modules, imports, source maps, routes, IPC and native add-on relationships                        | Node.js and npm; Linux: procps-compatible `ps`; [application analysis](docs/guides/javascript/javascript-application-workflows.md)                                   |
+| JavaScript / Electron   | Modules, imports, source maps, routes, IPC, native add-ons, `rea audit-release-exposure`          | Node.js and npm; Linux: procps-compatible `ps`; [application analysis](docs/guides/javascript/javascript-application-workflows.md)                                   |
 | Websites                | Page structure, scripts, network observations and requested screenshots                           | A Chrome-family browser; [browser analysis](docs/guides/web/browser-observation.md)                                                                                  |
 | Saved network captures  | Requests, responses, exposed payloads and source locations                                        | HAR or Fiddler Everywhere SAZ; mitmdump on Linux for native mitmproxy; [capture guide](docs/guides/web/web-network-captures.md)                                      |
 | .NET assemblies         | Metadata, CIL instructions, declared native dependencies and build comparisons                    | None (static only); [managed-code guide](docs/guides/managed/managed-code-analysis.md)                                                                               |

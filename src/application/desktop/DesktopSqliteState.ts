@@ -27,7 +27,7 @@ type Cell = z.infer<typeof sqliteValueSchema>;
 /**
  * SQLite cells as JSON. Values that plain JSON would conflate keep a tagged
  * form: integers beyond the safe range, text whose bytes did not decode
- * cleanly, and blobs.
+ * cleanly, special REAL values, and blobs.
  */
 const cellValue = (cell: Cell): JsonValue => {
   switch (cell.type) {
@@ -38,7 +38,7 @@ const cellValue = (cell: Cell): JsonValue => {
       return Number.isSafeInteger(value) ? value : { integer: cell.value };
     }
     case "real":
-      return cell.value;
+      return typeof cell.value === "string" ? { real: cell.value } : cell.value;
     case "text":
       return cell.value.includes("\uFFFD")
         ? { text: cell.value, bytes_hex: cell.bytes_hex }

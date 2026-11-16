@@ -6,9 +6,8 @@ import { deflateRawSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 
 import { DEFAULT_DOTNET_BUNDLE_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
-import { artifactFixedLimitFailure } from "../../../src/artifacts/ArtifactReader.js";
 import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { extractArtifact } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import {
@@ -23,6 +22,32 @@ import {
   DOTNET_BUNDLE_SIGNATURE,
 } from "../../../src/artifacts/dotnet/DotnetBundle.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { writeMinimalElfHeader } from "../../fixtures/nativeHeaders.js";
+
+it.each(["close", "cancel"] as const)(
+  "does not complete a .NET bundle inventory after %s at the last entry",
+  async (interruption) => {
+    const root = await createTestTempDirectory("rea-dotnet-paused-");
+    const path = join(root, "app");
+    await writeFile(
+      path,
+      dotnetBundleFixture([{ path: "member", bytes: Buffer.from("x") }]).bytes,
+    );
+    const reader = new DotnetBundleArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it.each([
   { field: "entry_count", maximum: 1, required: 2 },
@@ -66,7 +91,8 @@ it.each([
           required_value: needed,
           applies_at: "next_operation",
           agent_editable: true,
-          rea_restart_required: false,
+          update_mode: "parameter",
+          pending_restart: false,
         },
       });
       const recovered = await readDotnetBundle(
@@ -102,17 +128,17 @@ it("retains the exact integer representation ceiling independently of reader bud
   await writeFile(path, fixture.bytes);
   const handle = await open(path, "r");
   try {
-    const expected = artifactFixedLimitFailure(
-      ".NET bundle exact integer range",
-      9_007_199_254_740_991,
-      "integer units",
-    );
     await expect(
       readDotnetBundle(handle, fixture.bytes.length, fixture.headerOffset),
     ).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      message: expected.message,
+      fixedAllowance: {
+        name: "The .NET bundle exact integer range",
+        kind: "parser",
+        limit: 9_007_199_254_740_991,
+        unit: "integer units",
+      },
     });
   } finally {
     await handle.close();
@@ -456,7 +482,16 @@ it("rejects replacement, forged entry metadata and cancellation without losing c
     const entry = entries[0]!;
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),
-    ).rejects.toMatchObject({ reason: "integrity" });
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
+    });
+    await expect(
+      reader.open({ ...entry, adapterKey: "foreign" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
     const controller = new AbortController();
     controller.abort();
     await expect(reader.open(entry, controller.signal)).rejects.toMatchObject({
@@ -761,9 +796,8 @@ it.each(["elf", "mach-o"] as const)(
     const root = await createTestTempDirectory("rea-dotnet-native-");
     const path = join(root, "renamed.data");
     const fixture = dotnetBundleFixture();
-    Buffer.from(format === "elf" ? "7f454c46" : "cffaedfe", "hex").copy(
-      fixture.bytes,
-    );
+    if (format === "elf") writeMinimalElfHeader(fixture.bytes);
+    else Buffer.from("cffaedfe", "hex").copy(fixture.bytes);
     await writeFile(path, fixture.bytes);
     const inventory = await inventoryArtifact(path, {
       resourceScope: new ArtifactResourceScope(),
@@ -797,7 +831,7 @@ it.each(["pe", "elf"] as const)(
     const path = join(root, "template.bin");
     const fixture = dotnetBundleFixture();
     fixture.bytes.writeBigUInt64LE(0n, 536);
-    if (format === "elf") Buffer.from("7f454c46", "hex").copy(fixture.bytes);
+    if (format === "elf") writeMinimalElfHeader(fixture.bytes);
     await writeFile(path, fixture.bytes);
     const inventory = await inventoryArtifact(path, {
       resourceScope: new ArtifactResourceScope(),

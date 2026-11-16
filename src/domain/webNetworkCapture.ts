@@ -1,6 +1,11 @@
+import { deadlineParameterLimit } from "./analysisResourceLimits.js";
+import { createHash } from "node:crypto";
+import { canonicalBase64Schema } from "./stringPatterns.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "./coverage.js";
 import {
   browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
   browserDeadlineRetry,
   optionalBrowserDeadlineMs,
   selectedBrowserDeadlineMs,
@@ -31,7 +36,7 @@ const CAPTURE_REPORTED_RECORD_DEPTH = [
   0,
   "reported",
 ].length;
-export const MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH =
+const MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH =
   MAX_JSON_DEPTH - CAPTURE_REPORTED_RECORD_DEPTH;
 
 /** One admitted capture's complete-input, complete-reply and parser policy. */
@@ -79,7 +84,8 @@ export const webNetworkCaptureBudgetFacts = (
         ? MAX_WEB_NETWORK_CAPTURE_NESTING_DEPTH
         : Number.MAX_SAFE_INTEGER,
     applies_at: "next_operation",
-    rea_restart_required: false,
+    update_mode: "parameter" as const,
+    pending_restart: false as const,
   };
 };
 
@@ -108,9 +114,14 @@ export const selectedWebNetworkCaptureTimeoutMs = (
 /** Caller-visible capture deadline; byte/depth budgets have separate per-call controls. */
 export const webNetworkCaptureTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `inspect_web_network_capture reached its ${String(timeoutMs)} ms capture deadline (deadlineExpired) for capture_timeout_ms. No partial capture is returned. This is not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS, "--capture-timeout-ms")} ${browserDeadlineRetry} The separate max_input_bytes, max_reply_bytes and max_nesting_depth controls apply to the next call without restarting REA; capture_timeout_ms does not raise them.`,
+  limit: deadlineParameterLimit(
+    "capture_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("capture_timeout_ms", timeoutMs, DEFAULT_WEB_NETWORK_CAPTURE_TIMEOUT_MS)} ${browserDeadlineRetry} The separate max_input_bytes, max_reply_bytes and max_nesting_depth controls apply to the next call without restarting REA; capture_timeout_ms does not raise them.`,
 });
 
 export const WEB_NETWORK_CAPTURE_FORMATS = [
@@ -215,7 +226,35 @@ export const webNetworkCaptureBinaryDescriptorSchema = z.discriminatedUnion(
   [retainedBinaryDescriptorSchema, redactedBinaryDescriptorSchema],
 );
 const binarySchema = z.discriminatedUnion("state", [
-  retainedBinaryDescriptorSchema.extend({ content_base64: z.string() }),
+  retainedBinaryDescriptorSchema
+    .extend({ content_base64: canonicalBase64Schema })
+    .superRefine((field, context) => {
+      const encoded = field.content_base64;
+      const decodedBytes = Buffer.byteLength(encoded, "base64");
+      if (field.bytes !== decodedBytes) {
+        context.addIssue({
+          code: "custom",
+          path: ["bytes"],
+          message:
+            "Retained binary byte count differs from its canonical content.",
+        });
+        return;
+      }
+      // Quartet-aligned windows authenticate every retained byte without
+      // allocating a second whole body while the capture remains live.
+      const hash = createHash("sha256");
+      for (let offset = 0; offset < encoded.length; offset += 65536)
+        hash.update(
+          Buffer.from(encoded.slice(offset, offset + 65536), "base64"),
+        );
+      if (hash.digest("hex") !== field.sha256)
+        context.addIssue({
+          code: "custom",
+          path: ["sha256"],
+          message:
+            "Retained binary SHA-256 differs from its canonical content.",
+        });
+    }),
   redactedBinaryDescriptorSchema.extend({ content_base64: z.null() }),
 ]);
 const numberSchema = z.strictObject({
@@ -244,7 +283,21 @@ export const webNetworkCaptureRecordSchema = z.strictObject({
     }),
   ]),
   reported: jsonValueSchema,
-  binary_fields: z.array(binarySchema),
+  binary_fields: z.array(binarySchema).superRefine((fields, context) => {
+    const pointers = new Set<string>();
+    for (const [index, field] of fields.entries()) {
+      if (pointers.has(field.pointer)) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "pointer"],
+          message:
+            "Each retained source coordinate can declare binary facts only once.",
+        });
+        return;
+      }
+      pointers.add(field.pointer);
+    }
+  }),
   numeric_literals: z.array(numberSchema),
   redactions: z.array(redactionSchema),
   limitations: z.array(z.string()),
@@ -266,7 +319,7 @@ export const webNetworkCaptureDecoderSchema = z.strictObject({
 /** Source coverage is shared by every offline decoder. */
 export const protobufCaptureCoverageSchema = z
   .strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     selected_records: z.number().int().nonnegative(),
     inspected_records: z.number().int().nonnegative(),
   })

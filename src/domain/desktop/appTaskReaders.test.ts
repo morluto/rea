@@ -8,7 +8,6 @@ import {
   readerCommand,
 } from "./appTaskReaders.js";
 
-const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
 const POSTER = "Documents/poster.xcf";
 
 const LAYERS = {
@@ -27,16 +26,13 @@ const LAYER_CHECK = {
 };
 
 const parse = (change: Record<string, unknown>) =>
-  parseDesktopTask(
-    {
-      name: "rename-layer",
-      prompt: "In GIMP, rename the Headline layer to Summer Sale and save it.",
-      checks: [LAYER_CHECK],
-      readers: [LAYERS],
-      ...change,
-    },
-    portable,
-  );
+  parseDesktopTask({
+    name: "rename-layer",
+    prompt: "In GIMP, rename the Headline layer to Summer Sale and save it.",
+    checks: [LAYER_CHECK],
+    readers: [LAYERS],
+    ...change,
+  });
 
 /** Task changes the parser refuses for its readers, each with part of its message. */
 const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
@@ -106,7 +102,8 @@ describe("task readers", () => {
       readers: undefined,
       checks: [{ kind: "file_present", file: POSTER }],
     });
-    expect(parsed.ok && "readers" in parsed.value).toBe(false);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect("readers" in parsed.value).toBe(false);
   });
 
   it.each(REFUSALS)("refuses %j", (change, message) => {

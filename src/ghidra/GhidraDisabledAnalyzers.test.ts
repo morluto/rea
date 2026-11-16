@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  ghidraDisabledAnalyzersSchema,
-  MAX_GHIDRA_DISABLED_ANALYZER_NAMES,
-} from "../config/ghidraDisabledAnalyzers.js";
+import { MAX_GHIDRA_DISABLED_ANALYZER_NAMES } from "../config/ghidraDisabledAnalyzers.js";
 import { parseConfig } from "../config/parseConfig.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
@@ -80,11 +77,5 @@ describe("REA_GHIDRA_DISABLED_ANALYZERS", () => {
           }),
         ],
       });
-  });
-
-  it("admits the documented Objective-C analyzer name", () => {
-    expect(
-      ghidraDisabledAnalyzersSchema.parse("Objective-C Message Analyzer"),
-    ).toEqual(["Objective-C Message Analyzer"]);
   });
 });

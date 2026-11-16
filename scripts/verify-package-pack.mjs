@@ -2,7 +2,7 @@ import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { FULL_CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../dist/contracts/catalog/catalogIdentity.js";
 
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
@@ -213,7 +213,8 @@ export async function verifyPackagePack({ root, workspace, commands }) {
   const skillMetadata = parseSkillManifestMetadata(skill);
   if (
     !skillMetadata.ok ||
-    skillMetadata.value.toolCount !== FULL_CATALOG_IDENTITY.counts.mcp_tools ||
+    skillMetadata.value.toolCount !==
+      DEFAULT_CATALOG_IDENTITY.counts.mcp_tools ||
     skillMetadata.value.hasCatalogDigest
   )
     throw new Error(
@@ -266,6 +267,39 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       )
         throw new Error(`Packaged plugin ${path} is missing its shared icon`);
   }
+  const cursorManifest = JSON.parse(
+    (
+      await commands.exec("tar", [
+        "-xOf",
+        tarball,
+        "package/.cursor-plugin/plugin.json",
+      ])
+    ).stdout,
+  );
+  const cursorServer = JSON.parse(
+    (await commands.exec("tar", ["-xOf", tarball, "package/mcp.json"])).stdout,
+  );
+  const cursorLogo = String(cursorManifest.logo ?? "").replace(/^\.\//u, "");
+  const cursorSkill =
+    "package/.cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
+  if (
+    cursorManifest.version !== packedManifest.version ||
+    cursorManifest.skills !== ".cursor-plugin/skills" ||
+    cursorLogo !== "assets/rea-plugin.png" ||
+    cursorManifest.mcpServers !== undefined ||
+    cursorServer.mcpServers?.rea?.command !== "npx" ||
+    JSON.stringify(cursorServer.mcpServers?.rea?.args) !==
+      JSON.stringify([
+        "-y",
+        `${packedManifest.name}@${packedManifest.version}`,
+        "mcp",
+      ]) ||
+    !packedFiles.includes(`package/${cursorLogo}`) ||
+    !packedFiles.includes(cursorSkill)
+  )
+    throw new Error(
+      "Packaged Cursor plugin does not ship the pinned server, skill, and logo",
+    );
   if (packedFiles.includes("package/.mcp.json"))
     throw new Error("Plugin metadata must not register a project MCP server");
   if (!packedFiles.includes("package/.codex-plugin/mcp.json"))

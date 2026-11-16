@@ -1,21 +1,30 @@
 import { analysisClientFailureForOperation } from "./AnalysisClientFailure.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type {
   AnalysisClient,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
+import {
+  closedAnalysisClientError,
+  ProviderAdapterError,
+} from "../domain/providerAdapterError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
-import { closeAnalysisClient } from "../application/AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
 
 /** Own deferred client creation while callers wait independently and close joins it. */
 export class AnalysisClientCreation {
@@ -69,16 +78,9 @@ export class AnalysisClientCreation {
     operation: string,
     signal?: AbortSignal,
   ): Promise<Result<AnalysisClient, AnalysisError>> {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     if (this.#closed)
-      return err(
-        new ProviderAdapterError(this.providerId, operation, {
-          diagnostics: { reason: "client_closed" },
-        }),
-      );
+      return err(closedAnalysisClientError(this.providerId, operation));
     if (this.#failure?.cleanupIncomplete)
       return err(
         analysisClientFailureForOperation(
@@ -111,9 +113,7 @@ export class AnalysisClientCreation {
     }
     const waited = await attempt.wait(signal);
     if (waited.status === "cancelled")
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal?.reason }),
-      );
+      return err(cancelledBy(operation, carriedReason(waited.reason)));
     if (
       draining &&
       !signal?.aborted &&
@@ -131,10 +131,7 @@ export class AnalysisClientCreation {
           operation,
         ),
       );
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     return waited.value;
   }
 
@@ -142,11 +139,7 @@ export class AnalysisClientCreation {
     signal: AbortSignal,
   ): Promise<Result<AnalysisClient, AnalysisError>> {
     if (signal.aborted)
-      return err(
-        new AnalysisCancelledError("create_analysis_client", {
-          cause: signal.reason,
-        }),
-      );
+      return err(cancelledBy("create_analysis_client", signal));
     let primary: AnalysisError | undefined;
     try {
       this.#client = await this.create(signal, this.#inspectionOwner);
@@ -164,28 +157,26 @@ export class AnalysisClientCreation {
       this.#inspectionResources.retryCleanup(),
     );
     if (signal.aborted && primary === undefined)
-      primary = new AnalysisCancelledError("create_analysis_client", {
-        cause: signal.reason,
-      });
+      primary = cancelledBy("create_analysis_client", signal);
     if (!inspections.ok)
       primary =
         primary === undefined
           ? inspections.error
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               primary,
               inspections.error,
               "create_analysis_client",
-            ).bindCleanupDependencies([primary, inspections.error]);
+            );
     if (primary !== undefined) {
       const closed = await this.#releaseClient(this.#closeOptions);
       return err(
         closed.ok
           ? primary
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               primary,
               closed.error,
               "create_analysis_client",
-            ).bindCleanupDependencies([primary, closed.error]),
+            ),
       );
     }
     if (this.#client === undefined)
@@ -233,11 +224,11 @@ export class AnalysisClientCreation {
         const closed = await this.#releaseClient(options);
         if (!closed.ok && inspectionFailure !== undefined)
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               closed.error,
               inspectionFailure,
               "create_analysis_client",
-            ).bindCleanupDependencies([closed.error, inspectionFailure]),
+            ),
           );
         if (!closed.ok) return closed;
         if (inspectionFailure !== undefined) return err(inspectionFailure);

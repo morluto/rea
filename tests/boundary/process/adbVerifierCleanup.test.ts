@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
+import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
+
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -30,19 +32,9 @@ const runVerifier = async (
 ) => {
   const root = await mkdtemp(join(tmpdir(), "rea-adb-verifier-test-"));
   roots.push(root);
-  await mkdir(join(root, "scripts", "lib"), { recursive: true });
   await mkdir(join(root, "dist", "application", "adb"), { recursive: true });
   await mkdir(join(root, "dist", "composition"), { recursive: true });
-  await writeFile(
-    join(root, "scripts", "verify-adb.mjs"),
-    await readFile(new URL("../../../scripts/verify-adb.mjs", import.meta.url)),
-  );
-  await writeFile(
-    join(root, "scripts", "lib", "verifier-cleanup.mjs"),
-    await readFile(
-      new URL("../../../scripts/lib/verifier-cleanup.mjs", import.meta.url),
-    ),
-  );
+  await copyScriptsWithImports(["scripts/verify-adb.mjs"], root);
   // The simulated device directory stands in for /data/local/tmp; the fake
   // adb client records its argv and removes only the named probe.
   const device = join(root, "device");
@@ -157,22 +149,13 @@ export class AdbDeviceAnalysisService {
 const posix = it.skipIf(process.platform === "win32");
 
 posix(
-  "runs the production verifier successfully and closes its provider",
+  "removes exactly its own pushed probe before reporting success",
   async () => {
     const result = await runVerifier();
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("all adb device checks passed");
     expect(result.closed).toBe("closed");
-  },
-);
-
-posix(
-  "removes exactly its own pushed probe before reporting success",
-  async () => {
-    const result = await runVerifier();
-
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.adbCalls).toHaveLength(1);
     expect(result.adbCalls[0]).toMatch(
       /^-s test shell rm -- \/data\/local\/tmp\/rea-verify-\d+\.txt$/u,

@@ -1,3 +1,4 @@
+import type { FileMapping } from "../domain/virtualFileMapping.js";
 import { isUtf8 } from "node:buffer";
 import {
   GO_ANALYSIS_BUDGET_DEFAULTS,
@@ -11,10 +12,9 @@ import {
   createFileMappingIndex,
   imageFileMappings,
   type BinaryContainer,
-  type FileMapping,
   type FileMappingIndex,
   type LoadRegion,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 
 const MAX_REJECTED_SLICE_CACHE = 4096;
 const PE_MEM_READ = 0x40000000;

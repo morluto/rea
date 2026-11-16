@@ -5,21 +5,22 @@ import { dirname, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+  type PhaseGate,
+} from "../../support/lifecycleHarness.js";
 import { z } from "zod";
 
 import {
   createAnalysisExecution,
   type AnalysisProvider,
   type CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../../fixtures/binarySession.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -33,6 +34,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { recordUnknownInputSchema } from "../../../src/domain/residualUnknown.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const identity = { id: "fixture", name: "Fixture", version: "1" } as const;
 const profile = createAnalysisProfile(identity, { fixture: true });
@@ -82,7 +84,7 @@ describe("MCP external command snapshot retirement", () => {
         arguments: { path: targetPath, command: "iI" },
       });
       let closeSettled = false;
-      const closeStarted = createDeferred<void>();
+      const snapshotClose = phaseArrival();
       let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
       try {
         const readyDeadline = Date.now() + 5_000;
@@ -101,17 +103,13 @@ describe("MCP external command snapshot retirement", () => {
               name: "close_binary",
               arguments: { snapshot_path: snapshotPath },
             },
-            { onprogress: () => closeStarted.resolve() },
+            { onprogress: () => snapshotClose.arrive() },
           )
           .finally(() => {
             closeSettled = true;
           });
         // Close queues its transition before sending its first progress event.
-        await awaitAcknowledgement(
-          closeStarted.promise,
-          closeRequest,
-          "snapshot close progress",
-        );
+        await snapshotClose.reached(closeRequest, "snapshot close progress");
         expect(closeSettled).toBe(false);
         await expect(access(snapshotPath)).rejects.toMatchObject({
           code: "ENOENT",
@@ -186,15 +184,14 @@ describe("MCP composed workflow target admission", () => {
       throw new Error("Expected two workflow targets");
     const starts: string[] = [];
     const calls: string[] = [];
-    const entered = createDeferred<void>();
-    const release = createDeferred<void>();
+    const providerEntry = phaseGate();
     const session = createWorkflowSession(
-      makeProvider(starts, calls, undefined, { entered, release }),
+      makeProvider(starts, calls, undefined, providerEntry),
     );
     const { mcp } = await connectWorkflowMcp(session, "admitted-workflow");
-    const closeStarted = createDeferred<void>();
+    const workflowClose = phaseArrival();
     mcp.setNotificationHandler("notifications/progress", () => {
-      closeStarted.resolve();
+      workflowClose.arrive();
     });
     await openWorkflowTarget(mcp, firstPath);
 
@@ -205,27 +202,19 @@ describe("MCP composed workflow target admission", () => {
     let closeRequest: ReturnType<typeof mcp.callTool> | undefined;
     let openRequest: ReturnType<typeof mcp.callTool> | undefined;
     try {
-      await awaitAcknowledgement(
-        entered.promise,
-        analysisRequest,
-        "workflow provider entry",
-      );
+      await providerEntry.reached(analysisRequest, "workflow provider entry");
       closeRequest = mcp.callTool({
         name: "close_binary",
         arguments: { snapshot_path: snapshotPath },
         _meta: { progressToken: "close-race" },
       });
-      await awaitAcknowledgement(
-        closeStarted.promise,
-        closeRequest,
-        "workflow close progress",
-      );
+      await workflowClose.reached(closeRequest, "workflow close progress");
       openRequest = mcp.callTool({
         name: "open_binary",
         arguments: { path: secondPath },
       });
     } finally {
-      release.resolve();
+      providerEntry.release();
       await Promise.allSettled([
         analysisRequest,
         ...(closeRequest === undefined ? [] : [closeRequest]),
@@ -792,12 +781,17 @@ const expectSnapshotImportGuidance = async (mcp: Client, path: string) => {
     arguments: { path },
   });
   const error = parseMcpToolError(imported).error;
-  expect(error.code).toBe("invalid_request");
+  expect(error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "read",
+      reason: "wrong-kind",
+      detected_kind: "analysis-snapshot",
+    },
+  });
   expect(error.remediation.action).toContain("open_binary");
   expect(error.remediation.action).toContain("snapshot_path");
   expect(error.remediation.action).toContain("--snapshot");
-  expect(error.remediation.action).toContain("loads and updates");
-  expect(error.remediation.action).toContain("not been validated");
   expect((await readFile(path)).equals(before)).toBe(true);
 };
 
@@ -826,8 +820,14 @@ it("does not authenticate snapshot-shaped or unrelated malformed bundle input", 
       arguments: { path: snapshotPath },
     }),
   ).error;
-  expect(snapshotLike.code).toBe("invalid_request");
-  expect(snapshotLike.remediation.action).toContain("not been validated");
+  expect(snapshotLike).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "read",
+      reason: "wrong-kind",
+      detected_kind: "analysis-snapshot",
+    },
+  });
 
   await writeFile(
     snapshotPath,
@@ -893,7 +893,10 @@ const connectWorkflowMcp = async (
       ...(providerEnvironment === undefined ? {} : { providerEnvironment }),
     },
   );
-  const mcp = new Client({ name: clientName, version: "1.0.0" });
+  const mcp = new Client(
+    { name: clientName, version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);
@@ -914,10 +917,7 @@ const makeProvider = (
   starts: string[],
   calls: string[],
   liveOperation?: (typeof operations)[number],
-  pause?: {
-    readonly entered: ReturnType<typeof createDeferred<void>>;
-    readonly release: ReturnType<typeof createDeferred<void>>;
-  },
+  pause?: PhaseGate,
 ): AnalysisProvider => {
   const capabilities: CapabilityDescriptor[] = operations.map((operation) => ({
     operation,
@@ -946,8 +946,7 @@ const makeProvider = (
         execute: async (operation) => {
           calls.push(operation);
           if (operation === "list_documents" && pause !== undefined) {
-            pause.entered.resolve();
-            await pause.release.promise;
+            await pause.hold();
           }
           const result =
             operation === "health"

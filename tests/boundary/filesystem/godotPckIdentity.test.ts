@@ -66,7 +66,7 @@ it.each(
         expect(failure).toMatchObject({
           reason: "integrity",
           details: undefined,
-          message: expect.stringContaining("source identity changed"),
+          integrityCheck: "container-identity",
         });
       else if (matchingDigest)
         expect(failure).toMatchObject({ reason: "cancelled", cause: reason });

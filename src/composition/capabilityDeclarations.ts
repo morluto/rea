@@ -1,7 +1,9 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
-import type { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import type { ToolContractGroupId } from "../contracts/toolFamilies.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
+import type {
+  TOOL_CONTRACTS,
+  ToolContractGroupId,
+} from "../contracts/toolContracts.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
@@ -45,6 +47,7 @@ import {
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
   PE_RESOURCES_PROVIDER,
+  RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
   WINDOWS_SHORTCUT_PROVIDER,
 } from "../domain/investigationProviders.js";
@@ -476,6 +479,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(PYTHON_PYC_PROVIDER_IDENTITY, {
         group: "PYTHON_PYC_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  releaseExposure: {
+    providers: [
+      providerBinding(RELEASE_EXPOSURE_PROVIDER, {
+        group: "RELEASE_EXPOSURE_TOOL_CONTRACTS",
       }),
     ],
   },

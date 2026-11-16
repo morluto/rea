@@ -1,4 +1,13 @@
+import { completeOrUnknownCoverageSchema } from "./coverage.js";
+import {
+  ntfsFileReferenceSchema,
+  ntfsFileNameSchema,
+  ntfsAttributeSchema,
+  ntfsAttributeIssueSchema,
+  ntfsAttributeListResolutionSchema,
+} from "./windows/ntfsMftAttributes.js";
 import { z } from "zod";
+import { MFT_INLINE_HEADER_LIMIT } from "./windows/ntfsMft.js";
 
 import { jsonRecordSchema } from "./jsonRecord.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -299,6 +308,63 @@ export const hexRecordRegionMetadataSchema = z.strictObject({
   last_line: offset,
 });
 
+const ntfsRecordHeaderSchema = z.strictObject({
+  index: offset,
+  fileOffset: offset,
+  sequenceNumber: offset,
+  hardLinkCount: offset,
+  flags: z.strictObject({
+    raw: offset,
+    names: z.array(z.string()),
+    unknownMask: offset,
+  }),
+  inUse: z.boolean(),
+  directory: z.boolean(),
+  usedBytes: offset,
+  totalBytes: offset,
+  extentValid: z.boolean(),
+  baseRecordReference: ntfsFileReferenceSchema.nullable(),
+  declaredRecordNumber: offset.nullable(),
+  recordNumberMatchesSlot: z.boolean().nullable(),
+  logFileSequenceNumber: z.string().regex(/^(?:0|[1-9][0-9]*)$/u),
+  firstAttributeOffset: offset,
+  nextAttributeId: offset,
+  fileNames: z.array(ntfsFileNameSchema).exactOptional(),
+  attributes: z.array(ntfsAttributeSchema).exactOptional(),
+  attributeCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeIssue: ntfsAttributeIssueSchema.nullable().exactOptional(),
+  fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
+  attributeListResolution: ntfsAttributeListResolutionSchema.exactOptional(),
+  fixups: z.strictObject({
+    sequenceNumber: offset,
+    entries: offset,
+    verifiedSectors: offset,
+    coveredSectors: offset,
+    mismatchSector: offset.nullable(),
+    malformed: z.boolean(),
+  }),
+});
+
+/** NTFS $MFT record-header and resident file-name coverage facts. */
+export const ntfsMftMetadataSchema = z.strictObject({
+  kind: z.literal("ntfs-mft"),
+  record_bytes: offset,
+  record_count: offset,
+  in_use_record_count: offset,
+  directory_record_count: offset,
+  extension_record_count: offset,
+  fixup_mismatch_count: offset,
+  fixup_unverified_record_count: offset,
+  truncated_tail_bytes: offset,
+  record_headers: z.array(ntfsRecordHeaderSchema).max(MFT_INLINE_HEADER_LIMIT),
+  omitted_record_headers: offset,
+  record_header_start_index: offset.exactOptional(),
+  next_record_header_index: offset.nullable().exactOptional(),
+  file_name_count: offset.exactOptional(),
+  file_name_incomplete_record_count: offset.exactOptional(),
+  attribute_incomplete_record_count: offset.exactOptional(),
+});
+
 /**
  * U-Boot FIT root facts. Configuration references are declared names; a
  * reference that names no image is reported as a limitation, not removed.
@@ -481,13 +547,11 @@ export const espImageMetadataSchema = z.strictObject({
    * `flash_offset`, and a partition table sits at `table_file_offset`, where
    * that origin puts the default `0x8000`. Reopen the file as
    * `esp-flash-image` with that `flash_offset`. Null otherwise, and in the
-   * nested facts of a flash layout. Absent from Evidence recorded before REA
-   * reported it; its graph digest covers the record without the field.
+   * nested facts of a flash layout.
    */
   flash_dump: z
     .strictObject({ flash_offset: uint32, table_file_offset: offset })
-    .nullable()
-    .exactOptional(),
+    .nullable(),
 });
 export type EspImageMetadata = z.infer<typeof espImageMetadataSchema>;
 
@@ -572,7 +636,7 @@ export const espFlashImageFactsSchema = z.strictObject({
   image: espImageMetadataSchema.nullable(),
   segments: z.array(espImageSegmentMetadataSchema),
   signature_blocks: z.array(espImageSignatureBlockMetadataSchema),
-  coverage: z.enum(["complete", "unknown"]).nullable(),
+  coverage: completeOrUnknownCoverageSchema.nullable(),
   limitations: z.array(z.string()),
 });
 
@@ -886,6 +950,7 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   espImageSignatureBlockMetadataSchema,
   uf2MetadataSchema,
   uf2RegionMetadataSchema,
+  ntfsMftMetadataSchema,
   dfuSeMetadataSchema,
   dfuSeElementMetadataSchema,
   espFlashImageMetadataSchema,
@@ -1035,6 +1100,10 @@ const declarationsByKind: {
   "uf2-region": {
     notCompared:
       "Its familyID and addresses are in its path, family_name is REA's label for the familyID, and its block counts and positions are layout; content comparison covers its bytes.",
+  },
+  "ntfs-mft": {
+    notCompared:
+      "Its fields come from the file's own FILE record headers and resident file-name attributes, which content comparison covers.",
   },
   dfuse: {
     notCompared:

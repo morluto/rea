@@ -126,8 +126,7 @@ export const resolveElectronBrowserWindowReceiver = (
   // Keep every alias's consumed path and check at the original invocation site.
   completeSemanticSteps(index.indexMemberMutationFactsSteps());
   for (const alias of aliases)
-    if (index.referenceMayHaveChangedAt(site, alias.receiver, alias.path))
-      return undefined;
+    if (index.mayObserve(site, alias.receiver, alias.path)) return undefined;
   return {
     owner: receiver,
     path,

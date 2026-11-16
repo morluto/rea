@@ -26,9 +26,12 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Native call source coordinates](native/call-source-locations/spec.md) ([plan](native/call-source-locations/plan.md), [tasks](native/call-source-locations/tasks.md), [verification](native/call-source-locations/verification.md))
 - [Go static string-header literal recovery](native/go-string-literals/spec.md) ([plan](native/go-string-literals/plan.md), [tasks](native/go-string-literals/tasks.md))
 - [Windows Shell Link shortcut inspection](native/windows-shortcut/spec.md) ([plan](native/windows-shortcut/plan.md), [tasks](native/windows-shortcut/tasks.md))
+- [NTFS $MFT and USN Journal inspection](native/ntfs-mft/spec.md) ([plan](native/ntfs-mft/plan.md), [tasks](native/ntfs-mft/tasks.md))
 - [Solidity terminal metadata inspection](solidity/cbor-metadata/spec.md) ([plan](solidity/cbor-metadata/plan.md), [tasks](solidity/cbor-metadata/tasks.md), [verification](solidity/cbor-metadata/verification.md))
 - [Inspect a V8 code cache container](v8/code-cache-inspection/spec.md) ([plan](v8/code-cache-inspection/plan.md), [tasks](v8/code-cache-inspection/tasks.md))
 - [Deno compile executable inventory and extraction](artifacts/deno-standalone/spec.md) ([plan](artifacts/deno-standalone/plan.md), [tasks](artifacts/deno-standalone/tasks.md))
 - [ELF unwind function ranges](native/elf-unwind-ranges/spec.md) ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))
 - [Linux kernel build config](native/kernel-build-config/spec.md) ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))
 - [Native initializers](native/native-initializers/spec.md) ([plan](native/native-initializers/plan.md), [tasks](native/native-initializers/tasks.md))
+
+- [Release exposure audit](artifacts/release-exposure/spec.md) ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))

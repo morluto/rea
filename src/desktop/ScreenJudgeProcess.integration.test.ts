@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ScreenJudgeProcess } from "./ScreenJudgeProcess.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const check = { id: "x", kind: "screen_judge", question: "ready?" } as const;
 
@@ -65,25 +66,29 @@ it.skipIf(process.platform === "win32")(
       new Uint8Array([1]),
       controller.signal,
     );
+    void running.catch(() => undefined);
     let pid = 0;
-    await vi.waitFor(
-      async () => {
+    try {
+      await waitFor(async () => {
         pid = Number(await readFile(marker, "utf8"));
         expect(pid).toBeGreaterThan(0);
-      },
-      { timeout: 10000 },
-    );
-    controller.abort(new Error("cancelled by caller"));
-    await expect(running).rejects.toThrow();
-    let state = "";
-    try {
-      state = execFileSync("ps", ["-p", String(pid), "-o", "stat="], {
-        encoding: "utf8",
-      }).trim();
-    } catch {
-      /* Process no longer exists. */
+      });
+      controller.abort(new Error("cancelled by caller"));
+      await expect(running).rejects.toThrow();
+      let state = "";
+      try {
+        state = execFileSync("ps", ["-p", String(pid), "-o", "stat="], {
+          encoding: "utf8",
+        }).trim();
+      } catch {
+        /* Process no longer exists. */
+      }
+      expect(state === "" || state.startsWith("Z")).toBe(true);
+      expect(await judge.close()).toMatchObject({ verified: true });
+    } finally {
+      controller.abort(new Error("test cleanup"));
+      await running.catch(() => undefined);
+      expect(await judge.close()).toMatchObject({ verified: true });
     }
-    expect(state === "" || state.startsWith("Z")).toBe(true);
-    expect(await judge.close()).toMatchObject({ verified: true });
   },
 );

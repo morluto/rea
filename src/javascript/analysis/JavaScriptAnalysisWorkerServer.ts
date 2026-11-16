@@ -1,3 +1,7 @@
+import {
+  javaScriptMemberMutationAllowanceFromField,
+  type JavaScriptMemberMutationAllowance,
+} from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import { fitJavaScriptRouteSourceFacts } from "../../domain/javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
@@ -6,7 +10,6 @@ import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getHeapStatistics } from "node:v8";
@@ -33,6 +36,8 @@ import {
   javaScriptWorkerMessageSchema,
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Trusted composition callback; this provider owns framing and temporary I/O. */
 export interface JavaScriptSourceWorkerAnalyzer {
@@ -47,7 +52,8 @@ export interface JavaScriptSourceWorkerAnalyzer {
     },
     packageType: JavaScriptPackageType,
     purpose: "analysis" | "preload-discovery",
-    precision?: JavaScriptSemanticPrecisionInput,
+    precision: JavaScriptSemanticPrecisionInput | undefined,
+    memberMutationAllowance: JavaScriptMemberMutationAllowance,
   ): Promise<{
     readonly module: JavaScriptModuleSemanticIr;
     readonly projection: JavaScriptSemanticFileProjection;
@@ -116,9 +122,7 @@ const analyzeJob = async (
   try {
     let resultBudgetBytes = 0;
     const source = await readFile(join(root, `${request.id}.source`), "utf8");
-    if (
-      createHash("sha256").update(source).digest("hex") !== request.text_sha256
-    )
+    if (sha256Hex(source) !== request.text_sha256)
       throw new TypeError(
         "JavaScript worker source text digest does not match its request",
       );
@@ -174,7 +178,7 @@ const analyzeJob = async (
             kind: "static",
             id: request.id,
             bytes,
-            sha256: createHash("sha256").update(text).digest("hex"),
+            sha256: sha256Hex(text),
           });
           const next = await requests.next();
           if (next.done || !next.value.ok)
@@ -194,6 +198,9 @@ const analyzeJob = async (
       request.package_type,
       request.purpose,
       request.semantic_precision,
+      javaScriptMemberMutationAllowanceFromField(
+        request.member_mutation_allowance,
+      ),
     );
     await send({ kind: "phase", id: request.id, phase: "transfer" });
     const descriptor =
@@ -231,9 +238,7 @@ const analyzeJob = async (
       message:
         cause instanceof AnalysisResourceConstraintError
           ? cause.reason
-          : cause instanceof Error
-            ? cause.message
-            : String(cause),
+          : errorMessage(cause),
     });
   }
 };

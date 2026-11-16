@@ -49,8 +49,10 @@ as the 4.3 and 4.4.1 exporters do, so the declared MD5 does not depend on the
 encryption IV. Encrypted members whose declared MD5s differ therefore also
 compare `unknown` in `metadata` and `availability`: the MD5s declare
 different scripts, but REA cannot verify them, and equal MD5s add nothing for
-the same reason. An encrypted member with an MD5 on only one side stays
-`unknown`.
+the same reason. An encrypted member with an MD5 on only one side, including
+an all-zero MD5 that records no claim, stays `unknown` in `metadata` and
+`availability`: the claim's presence differs, and one claim does not prove
+the script changed.
 
 ## CLI
 

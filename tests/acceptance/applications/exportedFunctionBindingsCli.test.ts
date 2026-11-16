@@ -19,6 +19,7 @@ import {
   createCliCommandSession,
   type CliCommandSession,
 } from "../../support/cli/cliCommandSession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
@@ -541,8 +542,15 @@ describe("CommonJS export identity and scope regressions", () => {
     expect(comparison).toMatchObject({
       left: { status: "selected" },
       right: { status: "selected" },
-      summary: { added: 0, removed: 0, changed: 0 },
-      changes: [],
+      summary: { added: 0, removed: 0, changed: 0, unknown: 1 },
+      changes: [
+        {
+          status: "unknown",
+          path: "/count",
+          left: { availability: "unknown" },
+          right: { availability: "unknown" },
+        },
+      ],
     });
   });
 });
@@ -1323,10 +1331,13 @@ const getMcpClient = async (): Promise<Client> => {
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({
-      name: "exported-function-bindings",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "exported-function-bindings",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     mcpConnection = {
       client,
       transport,

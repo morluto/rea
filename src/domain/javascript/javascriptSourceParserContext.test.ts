@@ -13,6 +13,7 @@ import {
 import {
   semanticRequireLoaderAt,
   semanticRequireOrigin,
+  semanticRequireOriginCandidate,
 } from "./javascriptSemanticRequireOrigin.js";
 import {
   completeSemanticSteps,
@@ -271,3 +272,130 @@ it("detects JavaScript module syntax within an observed unspecified package", ()
   expect(file.errors).toEqual([]);
   expect(javaScriptRuntimeContext(file.program)).toBe("module");
 });
+
+// The loader and the origin of one unbound require call answer one question,
+// with activation timing: may an assignment to `require` run before the call?
+// Each "after" row states why the call is proven to run before every
+// assignment; each "may precede" row states why that proof is missing.
+const unboundRequireCases = [
+  {
+    source: 'const fs = require("fs"); for (const x of [1]) require = custom;',
+    precedes: false,
+    why: "the loop is a later top-level statement, so it starts only after the call",
+  },
+  {
+    source: 'const fs = require("fs"); for (const x of []) require = custom;',
+    precedes: false,
+    why: "an empty array literal with unchanged array iteration never runs the body",
+  },
+  {
+    source: 'require = wrap(require("fs"));',
+    precedes: false,
+    why: "the right-hand side is evaluated before the assignment stores its value",
+  },
+  {
+    source: 'const fs = require("fs"); require = custom;',
+    precedes: false,
+    why: "a later straight-line top-level statement runs after the call",
+  },
+  {
+    source:
+      'Array.prototype[Symbol.iterator] = gen; const fs = require("fs"); for (const x of []) require = custom;',
+    precedes: true,
+    why: "a replaced array iterator can yield from an empty literal",
+  },
+  {
+    source: 'for (const x of [1]) require = custom; const fs = require("fs");',
+    precedes: true,
+    why: "the loop body runs before the call",
+  },
+  {
+    source: 'const fs = require("fs"); while (ready) require = custom;',
+    precedes: true,
+    why: "a while body is not placed by top-level statement order",
+  },
+  {
+    source: 'function load() { require = custom; } const fs = require("fs");',
+    precedes: true,
+    why: "a hoisted function may run before the call",
+  },
+  {
+    source:
+      'class C { fs = require("fs"); } for (const x of [1]) require = custom; const c = new C();',
+    precedes: true,
+    why: "an instance field runs on construction, after the loop",
+  },
+  {
+    source: 'require = class { fs = require("fs"); }; new require();',
+    precedes: true,
+    why: "a field of the replacement class runs on construction, after the replacement",
+  },
+] as const;
+
+const unboundRequireCall = (
+  source: string,
+  sourcePath: string,
+  packageType?: "commonjs",
+) => {
+  const { file } = parseRecoveredJavaScript(
+    source,
+    sourcePath,
+    {},
+    packageType,
+  );
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(file.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  let required: t.CallExpression | undefined;
+  traverseJavaScriptAst(file.program, {
+    enter: (node) => {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "require" }) &&
+        t.isStringLiteral(node.arguments[0], { value: "fs" })
+      )
+        required = node;
+    },
+  });
+  if (required === undefined) throw new Error("Expected a require call");
+  return { program: file.program, required, state: index.bindings };
+};
+
+it.each(unboundRequireCases)(
+  "agrees on loader and origin for a CommonJS require in $source ($why)",
+  ({ source, precedes }) => {
+    const { program, required, state } = unboundRequireCall(
+      source,
+      "entry.cjs",
+      "commonjs",
+    );
+    expect(javaScriptRuntimeContext(program)).toBe("commonjs");
+    expect(semanticRequireLoaderAt(required, state, new Set())).toBe(
+      precedes ? "unknown" : "commonjs-loader",
+    );
+    expect(semanticRequireOrigin(required, state)?.origin.specifier).toBe(
+      precedes ? undefined : "fs",
+    );
+  },
+);
+
+it.each(unboundRequireCases)(
+  "keeps an unknown-runtime require a candidate in $source ($why)",
+  ({ source, precedes }) => {
+    const { program, required, state } = unboundRequireCall(source, "entry.js");
+    expect(javaScriptRuntimeContext(program)).toBe("unknown");
+    expect(semanticRequireLoaderAt(required, state, new Set())).toBe("unknown");
+    expect(semanticRequireOriginCandidate(required, state)?.origin).toEqual(
+      precedes
+        ? undefined
+        : {
+            specifier: "fs",
+            importedPath: [],
+            resolutionMode: "require",
+            loaderAuthority: "candidate",
+          },
+    );
+    expect(semanticRequireOrigin(required, state)).toBeUndefined();
+  },
+);

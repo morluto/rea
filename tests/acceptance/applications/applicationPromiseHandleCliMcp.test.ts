@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -14,8 +15,6 @@ cliTest.for(["promise", "awaited", "reassigned", "opaque"] as const)(
   async (mode, { cli }) => {
     const { client, call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "electron",
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     });
     const definition = (await client.listTools()).tools.find(
       ({ name }) => name === "analyze_javascript_application",
@@ -25,7 +24,7 @@ cliTest.for(["promise", "awaited", "reassigned", "opaque"] as const)(
     const validate = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(definition.inputSchema);
+    }).compile(canonicalInputSchema(definition.name));
     const root = await createTestTempDirectory("rea-promise-handle-");
     const bodies = {
       promise: 'const handle = open("input.txt", "r");',

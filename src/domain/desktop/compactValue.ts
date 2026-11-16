@@ -1,13 +1,7 @@
+import { ellipsisExcerpt } from "../excerpt.js";
 import type { JsonValue } from "../jsonValue.js";
 import { isXmlElement } from "./viewPointer.js";
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-export const cut = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max)}…` : text;
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** An element's attributes; none for a value that holds none. */
 export const attributesOf = (element: Record<string, JsonValue>) => {
@@ -77,7 +71,7 @@ export const previewWriter = (max: number) => {
     escaped,
     jsonString,
     startTag,
-    result: () => cut(parts.join(""), max),
+    result: () => ellipsisExcerpt(parts.join(""), max),
   };
 };
 
@@ -99,7 +93,7 @@ export const compactValue = (
   format: "json" | "xml" | "archive",
 ): JsonValue => {
   if (value === undefined) return null;
-  if (typeof value === "string") return cut(value, max);
+  if (typeof value === "string") return ellipsisExcerpt(value, max);
   if (value === null || typeof value !== "object") return value;
   const { push, escaped, jsonString, startTag, result } = previewWriter(max);
   const write = (node: JsonValue): boolean => {
