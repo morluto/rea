@@ -1,7 +1,7 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterAll, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
@@ -36,7 +36,7 @@ import {
 import { minimalMachoImage } from "../../fixtures/nativeHeaders.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
-import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
 /**
  * One call, two adapters: every analysis operation the CLI exposes runs once
@@ -135,22 +135,28 @@ const dependencies: DirectAnalysisDependencies = {
   createManagedBinarySession: session,
 };
 
-const cli = createCliShell({
-  selectedEnvironment: { REA_LOG_LEVEL: "silent" },
-  createAnalysis: () => bindDirectAnalysis(dependencies),
-  registrations: await Promise.all(
-    CLI_REGISTRATION_ORDER.map(async (id) => ({
-      registration: CLI_COMMAND_REGISTRATIONS[id],
-      module: await CLI_COMMAND_REGISTRATIONS[id].load(),
-    })),
-  ),
-});
+/** Loaded command modules; each case registers them on its own CLI. */
+const registrations = await Promise.all(
+  CLI_REGISTRATION_ORDER.map(async (id) => ({
+    registration: CLI_COMMAND_REGISTRATIONS[id],
+    module: await CLI_COMMAND_REGISTRATIONS[id].load(),
+  })),
+);
 
-/** The first CLI command that runs each contract. */
+/** A fresh CLI command tree over the simulated provider. */
+const createCli = () =>
+  createCliShell({
+    selectedEnvironment: { REA_LOG_LEVEL: "silent" },
+    createAnalysis: () => bindDirectAnalysis(dependencies),
+    registrations,
+  });
+
+/** The first CLI command that runs each contract (descriptions only). */
+const inventory = createCli();
 const commands = new Map<string, ContractCliDescription>();
 for (const description of [
-  ...contractCommandDescriptions(cli),
-  ...routedCommandDescriptions(cli),
+  ...contractCommandDescriptions(inventory),
+  ...routedCommandDescriptions(inventory),
 ])
   if (!commands.has(description.contract.name))
     commands.set(description.contract.name, description);
@@ -324,9 +330,6 @@ const differences = (
     );
 };
 
-const mcp = createTestMcp();
-afterAll(() => mcp.close());
-
 it("covers every recorded difference with an operation the CLI runs", () => {
   const names = new Set(OPERATIONS.map(({ contract }) => contract.name));
   for (const name of [
@@ -336,16 +339,18 @@ it("covers every recorded difference with an operation the CLI runs", () => {
     expect(names, name).toContain(name);
 });
 
-it.each(OPERATIONS.map((operation) => [operation.contract.name, operation]))(
+mcpTest.for(
+  OPERATIONS.map((operation) => [operation.contract.name, operation] as const),
+)(
   "%s returns the same Evidence through the CLI and MCP",
-  async (name, { contract, description }) => {
+  async ([name, { contract, description }], { mcp }) => {
     const directory = await createTestTempDirectory("rea-adapter-parity-");
     await writeFile(join(directory, "fixture"), minimalMachoImage(64));
     // A non-canonical spelling shows whose path each adapter records.
     const target = `${directory}/./fixture`;
     const input = callInput(contract, description, directory, target);
     const cliResult = cliOutcome(
-      await serveInProcessCli(cli, argvFor(description, target, input)),
+      await serveInProcessCli(createCli(), argvFor(description, target, input)),
       target,
     );
     // Each adapter writes caller-selected outputs into a fresh location.
