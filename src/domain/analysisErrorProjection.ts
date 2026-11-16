@@ -66,13 +66,6 @@ import { analysisRefusalDetails } from "./analysisRefusal.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 /**
- * Project expected failures into exhaustive, secret-safe caller fields. The
- * default describes a continuing caller, such as an MCP connection, and is
- * also the adapter-independent form retained inside Evidence. An adapter that
- * releases its provider session and runtime after this request, such as a
- * one-shot CLI command, passes `"invocation"`.
- */
-/**
  * Inputs the recovery names, by contract field and operation name. Each
  * adapter renders them in its own spelling.
  */
@@ -87,6 +80,13 @@ const relatedInputDetails = (
     : { related_operations: [...related.operations] }),
 });
 
+/**
+ * Project expected failures into exhaustive, secret-safe caller fields. The
+ * default describes a continuing caller, such as an MCP connection, and is
+ * also the adapter-independent form retained inside Evidence. An adapter that
+ * releases its provider session and runtime after this request, such as a
+ * one-shot CLI command, passes `"invocation"`.
+ */
 export const projectAnalysisError = (
   error: AnalysisError,
   callerLifetime: AnalysisCallerLifetime = "continuing",
