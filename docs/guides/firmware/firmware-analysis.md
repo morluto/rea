@@ -365,7 +365,7 @@ component padding, preserved names, resource policies and verification scope.
 magic and inventory its DeltaArchiveManifest without applying the update or
 verifying signatures. Full payloads can reconstruct REPLACE, ZERO and
 REPLACE_ZSTD partition images; delta operations stay inventoried and refuse
-extraction. See [Android OTA update payloads](../../android-ota-payload.md)
+extraction. See [Android OTA update payloads](android-ota-payload.md)
 for header facts, operation types, limits and verification scope.
 
 ## Inspect UF2 and DfuSe images

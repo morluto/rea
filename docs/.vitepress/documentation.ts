@@ -540,7 +540,7 @@ export const documentationSections = [
       },
       {
         text: "Android OTA update payloads",
-        source: "android-ota-payload.md",
+        source: "guides/firmware/android-ota-payload.md",
         route: "/android-ota-payload",
       },
       {

@@ -370,7 +370,7 @@ rea inspect-artifact ./payload.bin --detail summary --evidence_output payload.js
 rea extract-artifact ./payload.bin --json
 ```
 
-See [Android OTA update payloads](../android-ota-payload.md) for manifest
+See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
 facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
 
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with

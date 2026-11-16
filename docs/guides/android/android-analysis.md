@@ -14,7 +14,7 @@ system `ps`; see the shared
 [Linux process prerequisite](../../getting-started/installation.md#linux-owned-process-prerequisite).
 
 A/B OTA `payload.bin` files are a separate offline artifact, not a JADX
-package. See [Android OTA update payloads](../../android-ota-payload.md).
+package. See [Android OTA update payloads](../firmware/android-ota-payload.md).
 
 ## Optional package delivery
 

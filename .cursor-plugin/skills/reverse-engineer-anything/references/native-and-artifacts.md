@@ -857,6 +857,13 @@ Multi-file components retain their aligned physical ranges; the full payload
 is also materialized. Unknown name text retains its original 32 bytes. See
 [U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
 
+Android A/B OTA `payload.bin` files (CrAU v2) use the same
+inspection/extraction workflows. Prefer a retained summary for header,
+partition table, dynamic groups and signature counts. Signatures are not
+verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
+operations stay inventoried with unavailable content. See
+[Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
+
 ## ESP images
 
 For an ESP32-family app or bootloader image, `open_binary` then

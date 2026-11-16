@@ -2,7 +2,7 @@
 
 This specification records an implementation increment and its original
 problem statement. For current behavior and limitations, see
-[Android OTA update payloads](../../../android-ota-payload.md).
+[Android OTA update payloads](../../../guides/firmware/android-ota-payload.md).
 
 ## Problem and outcome
 

@@ -171,7 +171,7 @@ the exact commit messages and references from the release they describe.
 - [Build RL environments with REA](agent-environments-quickstart.md)
 - [Agent environments from recorded captures](agent-environments.md)
 - [APK signature schemes](apk-signature.md)
-- [Android OTA update payloads](android-ota-payload.md)
+- [Android OTA update payloads](guides/firmware/android-ota-payload.md)
 - [Apple IPS crash reports](apple-ips.md)
 - [Static analysis in GitHub Actions](ci-analysis.md)
 - [Desktop installation directories](desktop-applications.md)
