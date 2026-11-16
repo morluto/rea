@@ -7,6 +7,7 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { ok } from "../../../src/domain/result.js";
 import { hopperProducerIdentity } from "../../../src/hopper/HopperBridgeSources.js";
 import { HopperProvider } from "../../../src/hopper/HopperProvider.js";
@@ -25,13 +26,16 @@ const query = {
   arguments: { document: "selected", address: "0x1000" },
 };
 
-const fixture = async () => {
-  const root = await createTestTempDirectory("rea-hopper-producer-mcp-");
+const fixture = async (existingRoot?: string) => {
+  const root =
+    existingRoot ?? (await createTestTempDirectory("rea-hopper-producer-mcp-"));
   const path = join(root, "selected.hop");
   const snapshotPath = join(root, "snapshot.json");
   const launcher = join(root, "hopper");
-  await writeFile(path, "owned database fixture");
-  await writeFile(launcher, "owned launcher fixture");
+  if (existingRoot === undefined) {
+    await writeFile(path, "owned database fixture");
+    await writeFile(launcher, "owned launcher fixture");
+  }
   const config = parseConfig({ HOPPER_LAUNCHER_PATH: launcher });
   if (!config.ok) throw config.error;
   const hopper = new HopperProvider(config.value, silentLogger, {}, "linux");
@@ -42,7 +46,8 @@ const fixture = async () => {
   let starts = 0;
   let reads = 0;
   // Real Hopper profile/capability owners, session, snapshot files and MCP
-  // delivery; native engine execution alone is substituted at its port.
+  // delivery. Execution replies are injected at AnalysisClient; no native
+  // Hopper process or bridge is exercised.
   const provider: AnalysisProvider = {
     identity: () => hopper.identity(),
     capabilities: () => hopper.capabilities(),
@@ -91,6 +96,7 @@ const fixture = async () => {
   return {
     ...harness,
     call,
+    root,
     path,
     open,
     save,
@@ -204,10 +210,27 @@ it("reopens a matching Hopper producer snapshot while keeping observations live"
   expect(snapshot.entries).toEqual([]);
   expect(snapshot.evidence_bundle.records).toContainEqual(first);
 
-  await f.open(f.snapshotPath);
-  const second = parseEvidence((await f.call(query)).structuredContent);
+  await f.close();
+  const reopened = await fixture(f.root);
+  expect(reopened.session.evidenceById(first.evidence_id)).toBeUndefined();
+  await reopened.open(f.snapshotPath);
+  const evidencePath = join(f.root, "restored-evidence.json");
+  await reopened.call({
+    name: "export_evidence_bundle",
+    arguments: { path: evidencePath },
+  });
+  const restored = evidenceBundleSchema.parse(
+    JSON.parse(await readFile(evidencePath, "utf8")),
+  );
+  expect(restored.records).toContainEqual(first);
+  expect(reopened.reads()).toBe(0);
+  expect(reopened.starts()).toBe(0);
+
+  const second = parseEvidence((await reopened.call(query)).structuredContent);
   expect(second.analysis_profile).toEqual(first.analysis_profile);
   expect(second.evidence_id).toBe(first.evidence_id);
-  expect(f.reads()).toBe(2);
-  expect(f.starts()).toBe(2);
+  expect(f.reads()).toBe(1);
+  expect(f.starts()).toBe(1);
+  expect(reopened.reads()).toBe(1);
+  expect(reopened.starts()).toBe(1);
 });
