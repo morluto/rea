@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  HopperCancelledError,
-  HopperProtocolError,
-} from "../domain/hopperErrors.js";
+import { HopperCancelledError, HopperProtocolError } from "./HopperErrors.js";
 import { ok } from "../domain/result.js";
 import { HopperRequestQueue } from "./HopperRequestQueue.js";
 

@@ -37,12 +37,9 @@ import {
 import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const OPERATION = "recover_javascript_sources";
-
-/** Fingerprint exact selected or derived bytes. */
-export const recoveryDigest = (bytes: Uint8Array): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /** A file exceeded the byte bound its caller selected; the caller owns what that bound means. */
 class RecoveryFileSizeError extends AnalysisOutputError {
@@ -255,7 +252,7 @@ const snapshotRecoveryInput = async (
     path,
     snapshot_path: snapshotPath,
     relative_path: relativePath,
-    sha256: recoveryDigest(bytes),
+    sha256: sha256Hex(bytes),
     bytes: bytes.length,
   };
 };

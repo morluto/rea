@@ -56,8 +56,8 @@ export {
 export { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 export type {
   ArtifactEntry,
+  ArtifactFixedLimit,
   ArtifactReader,
-  ArtifactReaderFailureOptions,
   ArtifactReaderTraversal,
   ArtifactTraversalOmission,
   ArtifactTraversalOptions,
@@ -91,11 +91,11 @@ export {
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
-  regularFileSymlinkRecovery,
   stableArtifactInputFailure,
   stableArtifactInputRecovery,
 } from "./StableArtifactFailure.js";
 export type { RequestField } from "./StableArtifactFailure.js";
+export { selectedFileTargetError } from "./RegularFileErrorProjection.js";
 export { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 export {
   fileAccessFailureReason,
@@ -128,7 +128,7 @@ export { SafeOutputTreeCreationFailure } from "./SafeOutputTreeCreationFailure.j
 export { streamChunkToBuffer } from "./StreamBytes.js";
 export { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 export { abortIfNeeded, digestReadableToCompletion } from "./StreamDigest.js";
-export type { StreamDigest, StreamDigestObserver } from "./StreamDigest.js";
+export type { StreamDigest } from "./StreamDigest.js";
 export {
   hashStableRootArtifact,
   hashStableRootArtifactHandle,

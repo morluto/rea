@@ -74,9 +74,6 @@ export class ElfNotesProvider implements ElfNotesPort {
   }
 }
 
-const NOTE_TEXT_BUDGET =
-  "The ELF note text, hash, and scan budget fixed by the admitted image length plus decoded section names";
-
 const inputBudgetRemediation = (
   boundary: "file-size" | "capacity",
   input: InspectElfNotesInput,
@@ -130,9 +127,8 @@ const elfNotesFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
-      // Caller-selected read and entry budgets name the bound to raise.
-      // The note text, hash, and scan ceiling equals the admitted image
-      // length plus decoded section names, so host memory cannot raise it.
+      // Caller-selected read and entry budgets name the bound to raise; a
+      // memory limit keeps the ceiling its parser named (note text).
       const noteTextBudget = cause.boundary === "memory";
       return new AnalysisResourceConstraintError(
         OPERATION,
@@ -147,7 +143,12 @@ const elfNotesFailurePrimary = (
           ...(cause.boundary === undefined
             ? {}
             : noteTextBudget
-              ? fixedAllowanceOptions(NOTE_TEXT_BUDGET, "parser")
+              ? cause.fixedAllowance === undefined
+                ? {}
+                : {
+                    retryable: false as const,
+                    fixedAllowance: cause.fixedAllowance,
+                  }
               : {
                   retryable: false as const,
                   remediationAction: inputBudgetRemediation(

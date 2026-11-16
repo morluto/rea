@@ -17,6 +17,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const procedureRows = [
   {
@@ -277,10 +278,13 @@ it("refuses summary before provider work when no retaining session is configured
       },
     },
   });
-  const client = new Client({
-    name: "unretained-native-summary",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "unretained-native-summary",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -327,7 +331,10 @@ it("projects imported inventories with an unknown artifact without inventing a p
   const recorded = session.recordEvidence(source);
   if (!recorded.ok) throw recorded.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unbound-native-views", version: "1" });
+  const client = new Client(
+    { name: "unbound-native-views", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

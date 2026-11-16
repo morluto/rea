@@ -1,6 +1,5 @@
 import type { CdpFrameFacts } from "./CdpFrameIdentity.js";
 import { cdpFrameEvent } from "./protocol/CdpEvents.js";
-import { createHash } from "node:crypto";
 
 import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type {
@@ -46,6 +45,7 @@ import {
   cdpSourceCoordinates,
   topCallFrame,
 } from "./CdpCaptureEventHelpers.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
@@ -675,6 +675,4 @@ const toolKey = (frameUrl: string, frameId: string, name: string): string =>
   // Registrations without a known admitted frame are excluded above, so the
   // frame ID here always distinguishes owners. Composite tuple keeps a NUL
   // inside one field from collapsing two registrations before hashing.
-  `webmcp_${createHash("sha256")
-    .update(compositeKey([frameUrl, frameId, name]))
-    .digest("hex")}`;
+  `webmcp_${sha256Hex(compositeKey([frameUrl, frameId, name]))}`;

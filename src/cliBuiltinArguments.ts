@@ -16,8 +16,8 @@ export const OUTPUT_SWITCHES: ReadonlySet<string> = new Set([
   "--timings",
 ]);
 
-/** Valueless flags Incur removes from every position before command parsing. */
-export const INCUR_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
+/** Valueless global flags taken out of every position before command parsing. */
+export const CLI_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--full-output",
   "--llms",
   "--llms-full",
@@ -25,7 +25,7 @@ export const INCUR_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--help",
   "-h",
   "--update",
-  // Incur's internal update-check flag.
+  // The detached update check's own flag.
   "--incur-update-check",
   "--schema",
   "--json",
@@ -33,7 +33,7 @@ export const INCUR_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--timings",
 ]);
 
-/** Supported boolean spelling under the pinned Incur global parser. */
+/** The timing global's spellings: `--timings`, `--no-timings`, `--timings=<text>`. */
 const cliTimingFlagValue = (token: string): boolean | undefined =>
   token === "--timings"
     ? true
@@ -43,112 +43,45 @@ const cliTimingFlagValue = (token: string): boolean | undefined =>
         ? token.slice("--timings=".length) === "true"
         : undefined;
 
-/** Remove only timing globals, preserving valued output data and the -- boundary. */
-export const splitCliTimingArguments = (
-  arguments_: readonly string[],
-): { arguments: string[]; enabled: boolean } => {
-  const values = new Set(
-    splitIncurBuiltinArguments(arguments_).outputValues.map(
-      ({ index }) => index,
-    ),
-  );
-  let enabled = false;
-  let ended = false;
-  const remaining = arguments_.filter((token, index) => {
-    if (values.has(index)) return true;
-    if (token === "--") ended = true;
-    const value = ended ? undefined : cliTimingFlagValue(token);
-    if (value === undefined) return true;
-    enabled = value;
-    return false;
-  });
-  return { arguments: remaining, enabled };
-};
-
-/** Command tokens and output-flag values as Incur's builtin pass assigns them. */
-export interface IncurBuiltinArgumentSplit {
+/**
+ * One invocation's global arguments, read once from the caller's argv.
+ * Consumers read these facts instead of scanning argv again.
+ */
+export interface CliGlobalArguments {
+  /**
+   * The caller's arguments with valued output flags in spaced form and a root
+   * `--update` routed to `update`. The positions below index into this list.
+   */
+  readonly arguments: readonly string[];
   /** Tokens left for command resolution and command option parsing. */
   readonly command: readonly string[];
   /** Argument position of each `command` token. */
   readonly commandIndices: readonly number[];
-  /** Valueless global flags extracted by Incur before command dispatch. */
+  /** Valueless global flags and timing spellings taken out before command parsing. */
   readonly flags: ReadonlySet<string>;
   /** Positions of nonempty values consumed by valued output flags. */
   readonly outputValues: readonly {
     readonly flag: string;
     readonly index: number;
   }[];
+  /** Positions of the timing spellings in `flags`. */
+  readonly timingIndices: readonly number[];
+  /** The timing global's value; the last spelling wins. */
+  readonly timings: boolean;
 }
 
 /**
- * Mirror Incur's builtin pass over normalized arguments without stopping at a
- * rejected value, so callers can still see every later token. Then mirror the
- * boolean timing global pass over the remaining tokens; no config is registered.
+ * Route the root update alias and split `--flag=value` output forms. Command
+ * options accept both forms; the global split below reads the spaced one.
  */
-export const splitIncurBuiltinArguments = (
-  arguments_: readonly string[],
-): IncurBuiltinArgumentSplit => {
-  const command: string[] = [];
-  const commandIndices: number[] = [];
-  const flags = new Set<string>();
-  const outputValues: { readonly flag: string; readonly index: number }[] = [];
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index]!;
-    const next = arguments_[index + 1];
-    if (
-      (INCUR_BUILTIN_FLAGS.has(argument) && argument !== "--timings") ||
-      // A following value belongs to a command-local `--version` option.
-      (argument === "--version" && (next === undefined || next.startsWith("-")))
-    ) {
-      flags.add(argument);
-      continue;
-    }
-    if (VALUED_OUTPUT_FLAGS.has(argument) && next) {
-      outputValues.push({ flag: argument, index: index + 1 });
-      index += 1;
-      continue;
-    }
-    command.push(argument);
-    commandIndices.push(index);
-  }
-  // Incur extracts builtin output values first, then parses globals until `--`.
-  // A timing-shaped output value is data; a command option's value is still
-  // subject to this global pass before the registration builtin consumes it.
-  let globalsEnded = false;
-  const remaining: string[] = [];
-  const remainingIndices: number[] = [];
-  command.forEach((token, position) => {
-    if (token === "--") globalsEnded = true;
-    if (!globalsEnded && cliTimingFlagValue(token) !== undefined) {
-      flags.add(token);
-      return;
-    }
-    remaining.push(token);
-    remainingIndices.push(commandIndices[position]!);
-  });
-  return {
-    command: remaining,
-    commandIndices: remainingIndices,
-    flags,
-    outputValues,
-  };
-};
-
-/**
- * Route the root update alias and split `--flag=value` output forms. Incur reads these
- * flags only in spaced form, so `--format=json` otherwise reaches the command
- * parser and fails as an unknown flag. Command options accept both forms.
- */
-export const normalizeCliArguments = (
-  arguments_: readonly string[],
-): string[] => {
+const normalizeCliArguments = (arguments_: readonly string[]): string[] => {
   const normalized: string[] = [];
   const updates = new Set<number>();
   let rootUpdate = true;
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]!;
     if (VALUED_OUTPUT_FLAGS.has(argument) && arguments_[index + 1]) {
-      // Incur consumes a nonempty spaced value before looking for more flags.
+      // A nonempty spaced value is consumed before looking for more flags.
       // Its contents belong to that option, even when they look like a flag.
       normalized.push(argument, arguments_[index + 1]!);
       index += 1;
@@ -169,40 +102,74 @@ export const normalizeCliArguments = (
     }
   }
   // Output option values were consumed above; flag-shaped data is never an alias.
-  // Help/check/command/unknown tokens retain Incur's parsing and precedence.
+  // Help/check/command/unknown tokens keep their own parsing and precedence.
   return rootUpdate && updates.size > 0
     ? ["update", ...normalized.filter((_, index) => !updates.has(index))]
     : normalized;
 };
 
-/** Keep REA-owned delimited formats out of Incur's narrower formatter surface. */
-export const adaptCliOutputArgumentsForIncur = (
+/**
+ * Read one invocation's global arguments. Builtin switches are taken from any
+ * position, including after `--`; a valued output flag consumes the next
+ * nonempty token as data. The timing global is then read from the remaining
+ * tokens until `--`. The output argument reader reports malformed output
+ * values from these same positions.
+ */
+export const parseCliGlobalArguments = (
   arguments_: readonly string[],
-): string[] => {
-  const adapted: string[] = [];
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index]!;
-    const value = arguments_[index + 1];
-    if (VALUED_OUTPUT_FLAGS.has(argument)) {
-      if (argument === "--columns") {
-        if (value !== undefined) index += 1;
-        continue;
-      }
-      if (argument === "--format" && (value === "csv" || value === "tsv")) {
-        adapted.push("--format", "json");
-        index += 1;
-        continue;
-      }
-      adapted.push(argument);
-      if (value) {
-        adapted.push(value);
-        index += 1;
-      }
+): CliGlobalArguments => {
+  const normalized = normalizeCliArguments(arguments_);
+  const command: string[] = [];
+  const commandIndices: number[] = [];
+  const flags = new Set<string>();
+  const outputValues: { readonly flag: string; readonly index: number }[] = [];
+  for (let index = 0; index < normalized.length; index += 1) {
+    const argument = normalized[index]!;
+    const next = normalized[index + 1];
+    if (
+      (CLI_BUILTIN_FLAGS.has(argument) && argument !== "--timings") ||
+      // A following value belongs to a command-local `--version` option.
+      (argument === "--version" && (next === undefined || next.startsWith("-")))
+    ) {
+      flags.add(argument);
       continue;
     }
-    adapted.push(argument);
+    if (VALUED_OUTPUT_FLAGS.has(argument) && next) {
+      outputValues.push({ flag: argument, index: index + 1 });
+      index += 1;
+      continue;
+    }
+    command.push(argument);
+    commandIndices.push(index);
   }
-  return adapted;
+  // A timing-shaped output value is data; a command option's value is still
+  // read by this global pass before the command parser sees it.
+  let globalsEnded = false;
+  let timings = false;
+  const remaining: string[] = [];
+  const remainingIndices: number[] = [];
+  const timingIndices: number[] = [];
+  command.forEach((token, position) => {
+    if (token === "--") globalsEnded = true;
+    const value = globalsEnded ? undefined : cliTimingFlagValue(token);
+    if (value === undefined) {
+      remaining.push(token);
+      remainingIndices.push(commandIndices[position]!);
+      return;
+    }
+    flags.add(token);
+    timings = value;
+    timingIndices.push(commandIndices[position]!);
+  });
+  return {
+    arguments: normalized,
+    command: remaining,
+    commandIndices: remainingIndices,
+    flags,
+    outputValues,
+    timingIndices,
+    timings,
+  };
 };
 
 type McpAddArgumentError =
@@ -219,7 +186,7 @@ type McpAddArgumentError =
  * and dispatch cannot interpret a command value as an agent selector.
  */
 export const readMcpAddArguments = (
-  command: IncurBuiltinArgumentSplit["command"],
+  command: CliGlobalArguments["command"],
 ): {
   readonly agents: readonly string[];
   readonly commandText: string | undefined;
@@ -292,10 +259,10 @@ export const classifyMcpAddDiscovery = (
 };
 
 /** The lightweight launcher and full dispatcher share the same parsed scope fact. */
-export const isProjectScopedAmpRegistration = (
-  arguments_: readonly string[],
-): boolean => {
-  const { command, flags } = splitIncurBuiltinArguments(arguments_);
+export const isProjectScopedAmpRegistration = ({
+  command,
+  flags,
+}: CliGlobalArguments): boolean => {
   if (command[0] !== "mcp" || command[1] !== "add") return false;
   if (classifyMcpAddDiscovery(flags) !== undefined) return false;
   const rest = command.slice(2);
@@ -303,35 +270,46 @@ export const isProjectScopedAmpRegistration = (
   return !global && (agents.length === 0 || agents.includes("amp"));
 };
 
-/** Select production doctor using the same normalized builtin argument owner as CLI dispatch. */
+/**
+ * The arguments production `mcp doctor` parses itself: the caller's, without
+ * the `mcp doctor` words and the timing global the launcher measures. Returns
+ * undefined for any other command.
+ */
 export const productionMcpDoctorArguments = (
   arguments_: readonly string[],
-): readonly string[] | undefined => {
-  const normalized = normalizeCliArguments(arguments_);
-  const split = splitIncurBuiltinArguments(normalized);
-  if (split.command[0] !== "mcp" || split.command[1] !== "doctor")
+):
+  | { readonly arguments: readonly string[]; readonly timings: boolean }
+  | undefined => {
+  const global = parseCliGlobalArguments(arguments_);
+  if (
+    global.command[0] !== "mcp" ||
+    global.command[1] !== "doctor" ||
+    global.flags.has("--mcp")
+  )
     return undefined;
-  const values = new Set(split.outputValues.map(({ index }) => index));
-  const mcp = normalized.findIndex(
-    (token, index) => token === "mcp" && !values.has(index),
-  );
-  const doctor = normalized.findIndex(
-    (token, index) => index > mcp && token === "doctor" && !values.has(index),
-  );
-  return normalized.filter((_, index) => index !== mcp && index !== doctor);
+  const removed = new Set([
+    global.commandIndices[0]!,
+    global.commandIndices[1]!,
+    ...global.timingIndices,
+  ]);
+  return {
+    arguments: global.arguments.filter((_, index) => !removed.has(index)),
+    timings: global.timings,
+  };
 };
 
-/** Incur accepts the schema key and its kebab-case spelling. */
+/** The command parser accepts the schema key and its kebab-case spelling. */
 const FLAGS = ["--sensitive-value", "--sensitiveValue"] as const;
 
 /**
- * Read declarations from the tokens Incur leaves for command parsing. Incur
- * rejects a malformed token before it reaches later declarations, so this scan
- * is independent of parse success. A token following a declaration flag counts
- * as declared even where the command parser would bind it to another option.
+ * Read declarations from the tokens left for command parsing. The command
+ * parser rejects a malformed token before it reaches later declarations, so
+ * this scan is independent of parse success. A token following a declaration
+ * flag counts as declared even where the command parser would bind it to
+ * another option.
  */
 export const declaredSensitiveValues = (
-  command: IncurBuiltinArgumentSplit["command"],
+  command: CliGlobalArguments["command"],
 ): readonly string[] => {
   const values = new Set<string>();
   for (let index = 0; index < command.length; index += 1) {

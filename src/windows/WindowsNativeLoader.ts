@@ -13,11 +13,11 @@ import {
 } from "../domain/windowsNativeArtifact.js";
 import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** A native resource remains opaque until the addon validates its object tag. */
-export const windowsHandleSchema = z.custom<object>(
-  (value): value is object =>
-    typeof value === "object" && value !== null && !Array.isArray(value),
+export const windowsHandleSchema = z.custom<object>((value): value is object =>
+  isRecord(value),
 );
 
 /** Observed identity of an opened local NTFS or ReFS object. */

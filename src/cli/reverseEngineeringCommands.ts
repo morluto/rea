@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
@@ -18,6 +18,7 @@ import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { OBJDUMP_ARTIFACT_OPERATIONS } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
@@ -48,6 +49,7 @@ import {
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
@@ -80,10 +82,7 @@ const cleanupOnlyCompleteEvidence = (
   const parsed = recognizeEvidence(error.partialObservation);
   if (!parsed.ok || parsed.value === undefined) return undefined;
   const normalized = parsed.value.normalized_result;
-  return typeof normalized === "object" &&
-    normalized !== null &&
-    !Array.isArray(normalized) &&
-    normalized.completion_status !== "unknown"
+  return isRecord(normalized) && normalized.completion_status !== "unknown"
     ? parsed.value
     : undefined;
 };
@@ -234,7 +233,7 @@ export const registerReverseEngineeringCommands = (
         ),
       ),
   );
-  cli.command(CLI_COMMANDS.debugWithGdb, {
+  registerCliCommand(cli, CLI_COMMANDS.debugWithGdb, {
     description:
       "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
     args: z.object({
@@ -244,6 +243,13 @@ export const registerReverseEngineeringCommands = (
         .describe("One unrestricted GDB console command."),
     }),
     options: z.object({
+      executable: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Initial local file to hash and load without running it; command Evidence retains this initial selection.",
+        ),
       inferiorTty: z
         .string()
         .min(1)
@@ -282,6 +288,9 @@ export const registerReverseEngineeringCommands = (
             run: async () => {
               const started = await manager.start(signal, {
                 inferiorTty: options.inferiorTty,
+                ...(options.executable === undefined
+                  ? {}
+                  : { executable: options.executable }),
               });
               if (!started.ok) return started;
               sessionId = started.value.session_id;
@@ -310,7 +319,7 @@ export const registerReverseEngineeringCommands = (
         }),
       ),
   });
-  cli.command(CLI_COMMANDS.debugWithRizin, {
+  registerCliCommand(cli, CLI_COMMANDS.debugWithRizin, {
     description:
       "Run one unrestricted Rizin debugger command in an ephemeral session",
     args: z.object({

@@ -9,8 +9,13 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import {
+  incurImportedNameCount,
+  incurZodImportCount,
+} from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
   optionalFactDefaultCount,
@@ -25,6 +30,7 @@ import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
+import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -212,7 +218,35 @@ check(
   ],
 );
 
-// "Non-null object other than an array" has one owner: src/domain/isRecord.ts.
+// A signal's own abort is the abort error carrying that signal's reason; a bare
+// ABORT_ERR code may come from another signal or a synthetic failure.
+check(
+  "ABORT_ERR code comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  files,
+  /(?:===|!==)\s*["']ABORT_ERR["']|["']ABORT_ERR["']\s*(?:===|!==)/u,
+  ["src/process/SignalAbort.ts"],
+);
+
+// Hopper's error types live with the Hopper adapter. Shared layers read the
+// provider-neutral facts every AnalysisError carries (ownPresentation,
+// providerWide, providerRequest) and never import a provider's error types.
+check(
+  "import of Hopper error types outside src/hopper (use the provider-neutral AnalysisError facts)",
+  files.filter((file) => !file.path.startsWith("src/hopper/")),
+  /from "\.{1,2}\/(?:[\w-]+\/)*HopperErrors\.js"/u,
+);
+
+// An unrecognised command outcome is reported only by the shared outcome
+// classifier, which attaches the outcome it examined; a provider reports it
+// through the dialect's `unclassified` callback.
+check(
+  "UnclassifiedProviderFailure construction outside classifyProviderOutcome (use the dialect's unclassified report)",
+  files,
+  /\bnew\s+UnclassifiedProviderFailure\b/u,
+  ["src/process/classifyProviderOutcome.ts"],
+);
+
+// "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
 // A local predicate with that body, under any name, is a copy. The listed files
 // still hold one and may only be removed from the list; a listed file that no
 // longer matches fails so the list shrinks with the code.
@@ -230,7 +264,7 @@ const RECORD_PREDICATE_COPIES = [
   "src/pcap/PcapOutput.ts",
 ];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
-  if (path === "src/domain/isRecord.ts") return false;
+  if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
   return (
     named !== 0 || bodies !== (RECORD_PREDICATE_COPIES.includes(path) ? 1 : 0)
@@ -432,6 +466,32 @@ checkCounted(
   ["src/domain/analysisErrorCore.ts"],
 );
 
+// Whether an abort error is a signal's own cancellation is decided by the
+// signal owner; a name comparison alone accepts another signal's abort.
+checkCounted(
+  "AbortError name comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  "abort-error-name",
+  files,
+  /\.name\s*===\s*["']AbortError["']/gu,
+  ["src/process/SignalAbort.ts"],
+);
+
+// A refusal for a limit a parser stopped at is built from the failure's
+// LimitRef by parseLimitConstraint in src/domain/parseFailureAnalysisError; a
+// hand-built AnalysisResourceConstraintError spells the limit key and reason
+// again beside the parser that named them (#11456). Each migrated producer
+// lowers this count.
+checkCounted(
+  "hand-built resource-constraint refusal (use parseLimitConstraint from src/domain/parseFailureAnalysisError when the cause is a parse limit)",
+  "resource-constraint-constructor",
+  files,
+  /new AnalysisResourceConstraintError\(/gu,
+  [
+    "src/domain/analysisErrorCore.ts",
+    "src/domain/parseFailureAnalysisError.ts",
+  ],
+);
+
 // A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
 // src/domain/parseFailure); a refusal is an AnalysisRefusal. A local limit
 // class on plain Error hides the limit's name and maximum from both; a limit
@@ -557,6 +617,24 @@ checkCounted(
   files,
   /createHash\(\s*"sha256"\s*\)\s*\.update\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)\s*\.digest\(\s*"hex"\s*\)/gu,
   ["src/kernel/sha256Hex.ts"],
+);
+
+// The isRecord predicate written inline in a condition is a copy of
+// src/kernel/isRecord.ts. Bodies of the named copies in RECORD_PREDICATE_COPIES
+// are counted by that list, not here.
+const inlineRecordCheck =
+  /typeof\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*===\s*["']object["']\s*&&\s*\1\s*!==\s*null\s*&&\s*!Array\.isArray\(\s*\1\s*\)/gu;
+checkCounted(
+  "inline non-array record check (use isRecord from src/kernel/isRecord)",
+  "inline-record-check",
+  files,
+  (content) =>
+    Math.max(
+      0,
+      (content.match(inlineRecordCheck)?.length ?? 0) -
+        recordPredicateCounts(content).bodies,
+    ),
+  ["src/kernel/isRecord.ts"],
 );
 
 // Strict UTF-8 decoding has one owner, src/domain/strictUtf8.ts, which makes
@@ -874,6 +952,41 @@ checkCounted(
   [],
 );
 
+// Schemas import zod directly. incur's `z` is a re-export of the same package;
+// importing it through the CLI framework ties schemas to a dependency REA is
+// removing (#11654). Declarations are read from code tokens, so the text in a
+// comment or string fixture does not count.
+checkCounted(
+  'zod imported through incur (import { z } from "zod")',
+  "incur-zod-reexport",
+  [...files, ...testFiles],
+  (_content, file) => incurZodImportCount(file.source ?? file.content),
+  [],
+);
+
+// Every CLI command is registered through src/cli/commandRegistry.ts, which
+// records it in REA's command table (name, inputs, contract operations and
+// their flags) before handing it to the dispatcher (#11654). A direct
+// `cli.command(...)` would be dispatched but missing from that table.
+checkCounted(
+  "CLI command registered outside REA's command table (use registerCliCommand)",
+  "cli-command-outside-registry",
+  files,
+  /\bcli\.command\(/gu,
+  ["src/cli/commandRegistry.ts"],
+);
+
+// REA is replacing incur with its own CLI owners (#11654). Each replacement
+// removes the names it superseded; this counted list only shrinks until incur
+// leaves package.json.
+checkCounted(
+  "name imported from incur (use REA's CLI owner in src/cli)",
+  "incur-import",
+  [...files, ...testFiles],
+  (_content, file) => incurImportedNameCount(file.source ?? file.content),
+  [],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
@@ -943,6 +1056,38 @@ checkCounted(
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
 );
+
+// The MCP SDK client compiles every listed tool's output schema on its first
+// tool call. With the default Ajv options, REA's catalog costs gigabytes of
+// allocation per client, so test clients take the lazy, reference-preserving
+// validation from tests/fixtures/mcpSchemaValidation (directly, or through
+// tests/support/mcp/mcpFixture). Tests of the SDK default itself stay listed.
+// The counter parses each source, so comments need no stripping here. A
+// client built inside a generated child script is string data, not a call, so
+// it is not read (such scripts run over compiled dist/ modules, which cannot
+// load the TypeScript fixture).
+const mcpClientTestFiles = testFiles.filter((file) =>
+  file.path.startsWith("tests/"),
+);
+checkCounted(
+  "MCP SDK client without shared schema validation in tests (pass createMcpSchemaValidation from tests/fixtures/mcpSchemaValidation or use mcpTest)",
+  "test-mcp-client-default-validation",
+  mcpClientTestFiles,
+  countDefaultValidationClients,
+  [
+    // Checks the SDK default validator itself across catalog refreshes.
+    "tests/boundary/mcp/outputValidatorReuse.test.ts",
+  ],
+);
+
+// Scripts covered by tsconfig.scripts.json declare and check their types in
+// JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
+// creates a second, unchecked type source that hides signature drift.
+const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
+if (siblingDeclarationFiles.length > 0)
+  failures.push(
+    `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
 
 for (const key of baselineTexts.keys())
   if (!checkedBaselineKeys.has(key))

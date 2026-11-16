@@ -16,6 +16,7 @@ import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("leaves the session unchanged after bundle comparison cancellation and permits a retry", async () => {
   const root = await createTestTempDirectory("rea-mcp-compare-cancel-");
@@ -56,10 +57,13 @@ it("leaves the session unchanged after bundle comparison cancellation and permit
   if (!recorded.ok) throw recorded.error;
   const before = session.exportEvidenceBundle();
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "bundle-comparison-cancellation",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "bundle-comparison-cancellation",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const controller = new AbortController();
   let releaseRead: (() => void) | undefined;
   onTestFinished(async () => {

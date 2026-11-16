@@ -286,6 +286,7 @@ export const ENTRY_FILES = Object.freeze(
         "BuildComputerEnvironment.ts",
         "DconfDatabaseReader.ts",
         "DesktopBuildDoctorFacts.ts",
+        "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],

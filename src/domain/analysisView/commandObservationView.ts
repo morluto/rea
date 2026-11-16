@@ -20,6 +20,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 export const commandSummaryContext = {
   source_provider: providerSchema.nullable(),
@@ -119,9 +120,7 @@ export const projectCommandObservationView = (
     if (!parsed.ok) return parsed;
     const selection = parameters.data;
     if (
-      typeof selection === "object" &&
-      selection !== null &&
-      !Array.isArray(selection) &&
+      isRecord(selection) &&
       typeof selection.command === "string" &&
       selection.command !== parsed.value.command
     )

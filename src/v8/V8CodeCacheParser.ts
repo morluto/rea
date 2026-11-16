@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
@@ -12,6 +11,7 @@ import {
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
 import { V8CodeCacheBudgetFailure } from "../v8/V8CodeCache.errors.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const unsupported = (message: string): never => {
   throw unsupportedInput("v8-code-cache", message);
@@ -53,9 +53,6 @@ const MODULE_BITS = V8_CODE_CACHE_MODULE_BIT | V8_CODE_CACHE_LEGACY_MODULE_BIT;
 /** Printable ASCII and horizontal tab, the run alphabet of one observation. */
 const isPrintable = (byte: number): boolean =>
   (byte >= 0x20 && byte <= 0x7e) || byte === 0x09;
-
-const payloadSha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 /**
  * Read one V8 code cache container without executing it.
@@ -175,7 +172,7 @@ export const parseV8CodeCache = (
     payload: {
       offset: payloadOffset,
       bytes: payload.length,
-      sha256: payloadSha256(payload),
+      sha256: sha256Hex(payload),
       trailing_bytes: 0,
     },
     embedded_strings: observations,

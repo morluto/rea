@@ -77,7 +77,7 @@ it.each([
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       confidence: "observed",
-      subject: { format },
+      subject: { identity: { format } },
       normalized_result: report,
     });
   },

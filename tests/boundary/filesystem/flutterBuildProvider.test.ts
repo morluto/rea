@@ -47,6 +47,12 @@ import {
   realRm,
 } from "../../fixtures/flutterCleanup.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/ZipArtifactReader.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../fixtures/zipZstandard.js";
 import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -1102,6 +1108,12 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     expect(projected.code).toBe("resource_constraint");
     expect(projected.retryable).toBe(false);
     expect(projected.remediation.action).toContain("APK snapshot allowance");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "input",
+      limit: 2 * 1024 ** 3,
+      unit: "bytes",
+    });
     expect(projected.remediation.action).not.toMatch(/evidence reply/u);
     expect(result.error).toMatchObject({
       operation,
@@ -1268,6 +1280,82 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       reportedLimits: { max_metadata_read_bytes: 8 * 1024 ** 2 },
     });
     expect(result.error.message).toContain("ZIP metadata read requires");
+    expect(projectAnalysisError(result.error).details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      limit: 8 * 1024 ** 2,
+      unit: "bytes",
+    });
+  },
+);
+
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s names the APK expansion allowance, not the metadata read allowance, for oversized declared members",
+  async (operation) => {
+    const root = await createTestTempDirectory("rea-flutter-expansion-");
+    const path = join(root, "declared.apk");
+    // A small archive declaring a 300 MiB member exceeds the 256 MiB floor
+    // of its size-derived expansion budget while its metadata fits.
+    await writeFile(
+      path,
+      zstandardZipFixture(Buffer.from("x"), {
+        method: 0,
+        compressed: Buffer.from("x"),
+        declaredSize: 300 * 1024 ** 2,
+        name: "assets/declared.bin",
+      }),
+    );
+    const provider = new FlutterBuildProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.execute({ operation, input: { path } });
+    if (result.ok) throw new Error("expected an expansion refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit: 256 * 1024 ** 2,
+      unit: "bytes",
+    });
+    expect(projected.details?.reported_limits).toEqual({
+      max_expanded_bytes: 256 * 1024 ** 2,
+    });
+  },
+);
+
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s names the ZIP decoder window, not the metadata read allowance, for a large-window library",
+  async (operation) => {
+    const root = await createTestTempDirectory("rea-flutter-zstd-");
+    const path = join(root, "zstd-window.apk");
+    // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+    const { content, compressed } = zstandardWindowFrameFixture(0x90);
+    await writeFile(
+      path,
+      zstandardZipFixture(content, {
+        compressed,
+        name: "lib/arm64-v8a/libapp.so",
+      }),
+    );
+    const provider = new FlutterBuildProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.execute({ operation, input: { path } });
+    if (result.ok) throw new Error("expected a decoder window refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance: "The ZIP Zstandard decoder window allowance",
+      limit: 128 * 1024 ** 2,
+      unit: "bytes",
+    });
+    // The recovery is the reader's ceiling through the refusal formatter.
+    expect(projected.remediation.action).toBe(
+      analysisRefusalRemediation({
+        kind: "fixed_ceiling",
+        operation,
+        ceiling: ZIP_ZSTANDARD_WINDOW_CEILING,
+      }),
+    );
   },
 );
 
@@ -1467,15 +1555,26 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
   },
 );
 
-it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
-  "%s refuses ABI metadata expansion before opening empty libraries",
-  async (operation) => {
+it.each([
+  ["identify_flutter_build", "ABI", 32, "ABIs"],
+  ["inspect_dart_aot", "ABI", 32, "ABIs"],
+  ["identify_flutter_build", "path", 1024, "bytes"],
+] as const)(
+  "%s refuses %s metadata expansion before opening empty libraries",
+  async (operation, shape, limit, unit) => {
     const path = await buildApk(
       "many-abis.apk",
-      Array.from({ length: 33 }, (_, index) => ({
-        path: `lib/abi_${String(index)}/libapp.so`,
-        bytes: Buffer.alloc(0),
-      })),
+      shape === "ABI"
+        ? Array.from({ length: 33 }, (_, index) => ({
+            path: `lib/abi_${String(index)}/libapp.so`,
+            bytes: Buffer.alloc(0),
+          }))
+        : [
+            {
+              path: `lib/${"a".repeat(1024)}/libapp.so`,
+              bytes: Buffer.alloc(0),
+            },
+          ],
     );
     const extract = vi.spyOn(ZipArtifactReader.prototype, "open");
     onTestFinished(() => extract.mockRestore());
@@ -1483,7 +1582,14 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     onTestFinished(() => provider.close());
     const result = await provider.execute({ operation, input: { path } });
     if (result.ok) throw new Error("ABI expansion must be refused");
-    expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit,
+      unit,
+    });
     expect(extract).not.toHaveBeenCalled();
   },
 );
@@ -1697,7 +1803,13 @@ it("refuses truncated hash-candidate evidence and includes five-character tokens
     input: { path },
   });
   if (result.ok) throw new Error("Incomplete candidate set must be explicit");
-  expect(projectAnalysisError(result.error).code).toBe("resource_constraint");
+  const projected = projectAnalysisError(result.error);
+  expect(projected.code).toBe("resource_constraint");
+  expect(projected.details?.refusal).toMatchObject({
+    kind: "fixed_ceiling",
+    limit: 64,
+    unit: "candidates",
+  });
 });
 
 it.each([

@@ -71,6 +71,7 @@ import {
 import { classifyLaunchFailure } from "../../process/classifyProviderOutcome.js";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
@@ -780,11 +781,13 @@ export class ReverseEngineeringService {
         outputLimitReached = true;
       // Host capacity and an oversized argument list are classified by the
       // shared launch owner; a refusal keeps this provider's repair below.
-      const launch = launcherFailureOf(
-        cause instanceof LinuxOwnedProcessPrerequisiteError
-          ? cause.cause
-          : cause,
-      );
+      const launch =
+        preparationHostCapacityFailure(ownedCause) ??
+        launcherFailureOf(
+          cause instanceof LinuxOwnedProcessPrerequisiteError
+            ? cause.cause
+            : cause,
+        );
       if (
         earlyFailure === undefined &&
         (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
@@ -1163,6 +1166,7 @@ export class ReverseEngineeringService {
       completion_status: completionStatus,
       artifact_sha256_after: absolutePath === undefined ? null : digestAfter,
       artifact_changed: absolutePath === undefined ? null : artifactChanged,
+      ...(rejection === undefined ? {} : { refusal: rejection.refusal }),
     };
     const limitations = [
       // A pathless command reports no artifact; its provider says what the
@@ -1174,7 +1178,7 @@ export class ReverseEngineeringService {
           ]),
       ...(profile.limitations ?? []),
       "A non-zero process exit is preserved as an observed command result.",
-      ...(rejection === undefined ? [] : [rejection]),
+      ...(rejection === undefined ? [] : [rejection.limitation]),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[
@@ -1568,9 +1572,8 @@ const PHYSICAL_FAILURE_CODES = new Set([
 
 /**
  * A late abort does not replace a recognized physical failure. Other rejections
- * observed while the caller signal is aborted remain cancellation. A bare
- * `ABORT_ERR` is not cancellation until the command boundary, which already
- * used that code for an aborted provider process.
+ * observed while the caller signal is aborted remain cancellation; a bare
+ * `ABORT_ERR` without the caller's abort is not.
  */
 const preflightCancelled = (
   signal: AbortSignal | undefined,
@@ -1593,7 +1596,7 @@ const commandCancelled = (
     cause.cause instanceof OwnedCommandFailure
   )
     return cause.cause.reason === "cancelled";
-  return code === "ABORT_ERR" || preflightCancelled(signal, cause, code);
+  return preflightCancelled(signal, cause, code);
 };
 
 const callerCancellationCause = (

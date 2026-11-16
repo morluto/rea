@@ -12,12 +12,12 @@ import {
   type ProviderAdapterErrorOptions,
 } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
 import {
   DesktopSessionCleanupError,
+  XpropUnavailableError,
   type UnresolvedCleanup,
-} from "../../desktop/DesktopApplicationSession.js";
-import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
-import { XpropUnavailableError } from "../../desktop/X11WindowObserver.js";
+} from "../../ports/DesktopApplicationSession.js";
 import type { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
@@ -28,7 +28,7 @@ import {
 
 /** The parts of the content store its cleanup uses. */
 type ContentOwner = Pick<
-  DesktopContentStore,
+  CaptureContentStore,
   "close" | "discard" | "directory"
 >;
 
