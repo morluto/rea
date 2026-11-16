@@ -349,19 +349,19 @@ export interface BrowserObservationToolOptions {
 }
 
 /** Passive Electron observation is independent of active scenario capture. */
-export interface ElectronObservationToolOptions {
+interface ElectronObservationToolOptions {
   readonly provider: ElectronObservationPort | undefined;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
 /** Existing owned Electron scenario execution and its independent load failure. */
-export interface ElectronScenarioToolOptions {
+interface ElectronScenarioToolOptions {
   readonly provider: ElectronActiveObservationPort | undefined;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
 /** Static JavaScript analysis needs local artifacts, never an Electron runtime. */
-export interface JavaScriptApplicationToolOptions {
+interface JavaScriptApplicationToolOptions {
   readonly resources: ArtifactResourceScope;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly settings?: AnalysisSettingsReader;
