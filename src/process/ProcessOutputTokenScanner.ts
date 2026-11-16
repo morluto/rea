@@ -10,7 +10,7 @@ export interface ProviderProcessOutputToken {
   /** True when the line's right edge is cut or its end has not been observed. */
   readonly trailingContextIncomplete?: true;
 }
-export const PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES = 1024;
+const PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES = 1024;
 const NEWLINE = 0x0a;
 const isWordByte = (byte: number): boolean =>
   (byte >= 0x30 && byte <= 0x39) ||

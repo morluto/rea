@@ -1,3 +1,8 @@
+import {
+  canonicalOutputSchema,
+  canonicalInputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -19,7 +24,7 @@ import type { ArtifactOccurrence } from "../../../src/domain/artifactGraph.js";
 import {
   artifactInventorySummaryViewResultSchema,
   analysisViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   canBorrowParsedJsonSnapshot,
   immutableJsonSnapshotMember,
@@ -33,14 +38,18 @@ const viewValidators = async (client: Client) => {
   const contract = catalog.tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (contract?.outputSchema === undefined)
+  if (contract === undefined)
     throw new Error("Missing named view output contract");
   const ajv = schemaValidation.assertions;
-  const inputSchema: Record<string, unknown> = contract.inputSchema;
-  const outputSchema: Record<string, unknown> = contract.outputSchema;
+  const inputSchema = canonicalInputSchema(contract.name);
+  const outputSchema = canonicalOutputSchema(contract.name);
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  return { ajv, inputSchema, outputSchema };
+  return {
+    ajv,
+    inputSchema,
+    toolDefinition: withCanonicalOutputSchema(contract),
+  };
 };
 
 const retainedInventoryView =
@@ -58,17 +67,13 @@ const retainedInventoryView =
       validators.ajv.validate(validators.inputSchema, arguments_),
       JSON.stringify(validators.ajv.errors),
     ).toBe(true);
-    const reply = await client.callTool({
-      name: "inspect_analysis_view",
-      arguments: arguments_,
-    });
+    const reply = await client.callTool(
+      { name: "inspect_analysis_view", arguments: arguments_ },
+      { toolDefinition: validators.toolDefinition },
+    );
     expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
       true,
     );
-    expect(
-      validators.ajv.validate(validators.outputSchema, reply.structuredContent),
-      JSON.stringify(validators.ajv.errors),
-    ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence.evidence_links).toContain(evidenceId);
     return analysisViewResultSchema.parse(evidence.normalized_result);
@@ -121,7 +126,7 @@ const expectedPckMembers = (
   return expected;
 };
 
-const profiles = ["full", "compact"] as const;
+const profiles = ["compact"] as const;
 const members = [
   { path: "res://a.txt", data: "a" },
   { path: "res://b.txt", data: "b" },
@@ -188,11 +193,7 @@ it.for(inventoryCases)(
     ).toBe(nested.normalized_result);
     const graph = nested.normalized_result;
     const view = retainedInventoryView(client, parent.evidence_id, validators);
-    await assertInvalidNodeField(
-      client,
-      parent.evidence_id,
-      profile === "full" ? validators : undefined,
-    );
+    await assertInvalidNodeField(client, parent.evidence_id, undefined);
     const wanted = graph.occurrences.filter((row) => row.logical_path !== ".");
     const expectedMembers = expectedPckMembers(members, wanted);
     const occurrences = await view({

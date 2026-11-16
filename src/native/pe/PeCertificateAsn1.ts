@@ -4,6 +4,7 @@ import {
   Asn1BerReader,
   type Asn1BerNode,
 } from "../../domain/asn1Ber.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 const OID_NAMES: Readonly<Record<string, string>> = {
   "1.2.840.113549.1.7.1": "data",
@@ -52,12 +53,9 @@ const fail = (message: string): never => {
   throw new PeCertificateAsn1Failure(message);
 };
 
-const required = <T>(value: T | undefined, message: string): T =>
-  value === undefined ? fail(message) : value;
-
 // Authenticode signatures with full chains and countersignatures decode to a
 // few thousand nodes; the budget bounds sibling fan-out, which depth does not.
-export const ASN1_NODE_BUDGET = 16_384;
+const ASN1_NODE_BUDGET = 16_384;
 
 /** Decode one bounded ASN.1 TLV, including indefinite constructed BER values. */
 export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
@@ -91,12 +89,12 @@ export const oidName = (oid: string): string | null => OID_NAMES[oid] ?? null;
 
 // One arc grows a BigInt by a shift per byte. Certificate OIDs, including a
 // 2.25 UUID arc, fit under both caps; the caps stop that growth.
-export const MAX_OID_BYTES = 256;
-export const MAX_OID_ARC_BYTES = 32;
+const MAX_OID_BYTES = 256;
+const MAX_OID_ARC_BYTES = 32;
 
 // One PKCS#7 payload shares this ceiling. Real issuer and subject names are
 // far smaller; the cap stops one wide string from occupying the file budget.
-export const MAX_DECODED_NAME_BYTES = 65_536;
+const MAX_DECODED_NAME_BYTES = 65_536;
 
 interface DecodedNameBudget {
   remaining: number;
@@ -113,7 +111,7 @@ const chargeDecodedName = (budget: DecodedNameBudget, bytes: number): void => {
 };
 
 /** Decode an OBJECT IDENTIFIER content buffer as dotted decimal. */
-export const decodeOid = (content: Buffer): string => {
+const decodeOid = (content: Buffer): string => {
   const decoded = decodeAsn1Oid(content, {
     bytes: MAX_OID_BYTES,
     arcBytes: MAX_OID_ARC_BYTES,
@@ -222,7 +220,7 @@ const decodeDirectoryString = (
       return node.content.toString("latin1");
     default:
       return fail(
-        `Unsupported certificate name encoding (DER tag 0x${node.tag.toString(16).padStart(2, "0")}).`,
+        `Unsupported certificate name encoding (DER tag 0x${byteToHex(node.tag)}).`,
       );
   }
 };
@@ -297,6 +295,7 @@ interface Attribute {
   readonly oid: string;
   readonly oid_name: string | null;
   readonly value: string;
+  readonly rdn_index: number;
 }
 
 const decodeName = (
@@ -307,7 +306,7 @@ const decodeName = (
   readonly attributes: readonly Attribute[];
 } => {
   const attributes: Attribute[] = [];
-  for (const rdn of sequence(node, "Name")) {
+  for (const [rdnIndex, rdn] of sequence(node, "Name").entries()) {
     if (rdn.tag !== 0x31) return fail("Name RDN is not a SET.");
     if (rdn.children.length === 0) return fail("Name RDN is empty.");
     for (const attribute of rdn.children) {
@@ -327,16 +326,29 @@ const decodeName = (
         oid,
         oid_name: oidName(oid),
         value: decodeDirectoryString(valueNode, budget),
+        rdn_index: rdnIndex,
       });
     }
   }
-  const text = attributes
-    .map((attribute) => {
-      const key = attribute.oid_name ?? attribute.oid;
-      return `${key}=${attribute.value}`;
-    })
-    .join(", ");
-  return { text, attributes };
+  // RFC 4514 joins one RDN's attributes with "+" and RDNs with a comma.
+  // Keep encoded order: reversing RDNs would change every existing name.
+  const renderedRdns: string[] = [];
+  let openRdn = -1;
+  let openAttributes: string[] = [];
+  const finishRdn = (): void => {
+    if (openAttributes.length > 0) renderedRdns.push(openAttributes.join("+"));
+  };
+  for (const attribute of attributes) {
+    if (attribute.rdn_index !== openRdn) {
+      finishRdn();
+      openRdn = attribute.rdn_index;
+      openAttributes = [];
+    }
+    const key = attribute.oid_name ?? attribute.oid;
+    openAttributes.push(`${key}=${attribute.value}`);
+  }
+  finishRdn();
+  return { text: renderedRdns.join(", "), attributes };
 };
 
 // RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and
@@ -427,6 +439,11 @@ const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
     )
       return fail(
         "TBSCertificate extension is not an OID, optional BOOLEAN, and OCTET STRING.",
+      );
+    // X.690 11.1 requires DER TRUE=0xff; 11.5 omits DEFAULT FALSE.
+    if (critical !== undefined && critical.content[0] !== 0xff)
+      return fail(
+        "TBSCertificate extension critical must be omitted for FALSE or encoded as DER TRUE (0xff).",
       );
     const oid = decodeOid(extnId.content);
     if (seen.has(oid)) return fail(`TBSCertificate repeats extension ${oid}.`);

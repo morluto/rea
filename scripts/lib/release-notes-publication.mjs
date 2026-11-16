@@ -1,5 +1,6 @@
 import { valid } from "semver";
 import { z } from "zod";
+import { readMergedReleasePullRequest } from "./release-pull-request.mjs";
 import {
   releaseInventorySchema,
   verifyInventoryHistory,
@@ -8,17 +9,6 @@ import {
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const repository = z.string().regex(/^[\w.-]+\/[\w.-]+$/u);
-const pullRequest = z.object({
-  number: z.number().int().positive(),
-  body: z.string(),
-  merged_at: z.string().nullable(),
-  merge_commit_sha: sha.nullable(),
-  head: z.object({
-    ref: z.string(),
-    repo: z.object({ full_name: z.string() }).nullable(),
-  }),
-  labels: z.array(z.object({ name: z.string() })),
-});
 
 /** Read the reviewed Git snapshot and live PR before Release Please can mutate tags. */
 export async function verifyNotesPublication(run, options) {
@@ -39,41 +29,13 @@ export async function verifyNotesPublication(run, options) {
     .parse(JSON.parse(await read("package.json")));
   if (valid(version) !== version || version.includes("+"))
     throw new Error("Invalid reviewed package version");
-  let candidates;
-  if (options.pr !== undefined) {
-    const number = z.coerce.number().int().positive().parse(options.pr);
-    candidates = [
-      pullRequest.parse(
-        JSON.parse(await run("gh", ["api", `repos/${repo}/pulls/${number}`])),
-      ),
-    ];
-  } else {
-    candidates = z
-      .array(z.array(pullRequest))
-      .parse(
-        JSON.parse(
-          await run("gh", [
-            "api",
-            "--paginate",
-            "--slurp",
-            `repos/${repo}/commits/${source}/pulls?per_page=100`,
-          ]),
-        ),
-      )
-      .flat();
-  }
-  const matching = candidates.filter(
-    (pr) =>
-      pr.merged_at !== null &&
-      pr.merge_commit_sha === source &&
-      pr.head.repo?.full_name.toLowerCase() === repo.toLowerCase() &&
-      pr.head.ref.startsWith("release-please--branches--"),
-  );
-  if (matching.length !== 1)
+  const pr = await readMergedReleasePullRequest(run, { ...options, source });
+  if (pr === undefined)
     throw new Error(
       "Expected exactly one merged Release Please PR for the reviewed source",
     );
-  const pr = matching[0];
+  if (pr.body === null)
+    throw new Error("The merged release PR has no release notes body");
   const path = `docs/releases/${version}.contributions.json`;
   const present =
     (

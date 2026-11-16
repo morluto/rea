@@ -1,3 +1,7 @@
+import {
+  ProcessOwnershipInspectionCancelled,
+  assertProcessOwnershipInspectionActive,
+} from "./ProcessInspectionCancellation.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupOwnedProcessGroup,
@@ -1069,17 +1073,19 @@ describe("owned process-group cleanup validation: exited members", () => {
     const reason = new Error("cancelled process observation");
     const adapter = nonSignalingObserver(async (signal) => {
       controller.abort(reason);
-      signal?.throwIfAborted();
+      assertProcessOwnershipInspectionActive(signal);
       return [];
     });
-    await expect(
-      observeOwnedProcessGroups(
-        ownership.runId,
-        [ownership.processGroupId],
-        adapter,
-        controller.signal,
-      ),
-    ).rejects.toBe(reason);
+    const failure: unknown = await observeOwnedProcessGroups(
+      ownership.runId,
+      [ownership.processGroupId],
+      adapter,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw failure;
+    expect(failure.reason).toBe(reason);
   });
   it("does not inspect a process group after observation was cancelled", async () => {
     const controller = new AbortController();
@@ -1088,14 +1094,16 @@ describe("owned process-group cleanup validation: exited members", () => {
     const adapter = nonSignalingObserver(() => {
       throw new Error("Cancelled observation must not inspect processes");
     });
-    await expect(
-      observeOwnedProcessGroups(
-        ownership.runId,
-        [ownership.processGroupId],
-        adapter,
-        controller.signal,
-      ),
-    ).rejects.toBe(reason);
+    const failure: unknown = await observeOwnedProcessGroups(
+      ownership.runId,
+      [ownership.processGroupId],
+      adapter,
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
+    if (!(failure instanceof ProcessOwnershipInspectionCancelled))
+      throw failure;
+    expect(failure.reason).toBe(reason);
   });
   it("ignores exited zombie members during live ownership checks", async () => {
     const environment = vi.fn((pid: number) =>

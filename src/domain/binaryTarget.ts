@@ -42,6 +42,7 @@ import {
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
+  type MachoHeaderDeclarations,
 } from "./apple/machoLoadCommands.js";
 
 /** Format and architecture facts recovered from an executable header. */
@@ -68,6 +69,11 @@ export type ExecutableMetadata =
       readonly format: "elf";
       readonly architecture: "hexagon";
       readonly availableArchitectures: readonly "hexagon"[];
+    }
+  | {
+      readonly format: "elf";
+      readonly architecture: "xtensa";
+      readonly availableArchitectures: readonly "xtensa"[];
     }
   | {
       readonly format: "mach-o";
@@ -148,6 +154,56 @@ export const parseExecutableHeader = (
   return err("unsupported binary format");
 };
 
+/**
+ * The native executable format whose header structure decodes, whatever its
+ * CPU: an ELF fixed header, or a thin Mach-O header whose load-command framing
+ * walks within the retained bytes. `null` when the bytes claim neither; an
+ * error when they claim one whose header target admission would also refuse.
+ * Inventory classification uses this so a magic-only stub is not reported as
+ * an executable the resolver then rejects.
+ */
+export const readNativeHeaderFormat = (
+  bytes: Buffer,
+  fileSize = bytes.length,
+): Result<"elf" | "mach-o" | null, string> => {
+  if (
+    bytes.length >= 4 &&
+    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+  ) {
+    const header = readElfFixedHeader(bytes, fileSize);
+    return header.ok ? ok("elf") : header;
+  }
+  if (readMachoHeaderPrefixFacts(bytes).format === null) return ok(null);
+  const table = readMachoLoadCommandTableHeader(bytes, fileSize);
+  if (!table.ok) return table;
+  if (table.value === null) return err("unsupported Mach-O header");
+  const framing = walkMachoCommandFraming(bytes, table.value);
+  return framing.ok ? ok("mach-o") : framing;
+};
+
+/**
+ * Walk the load-command framing that `bytes` holds. Header-only callers may
+ * retain a prefix; file-backed admission walks every remaining command header
+ * through its bounded reader.
+ */
+const walkMachoCommandFraming = (
+  bytes: Buffer,
+  table: MachoHeaderDeclarations,
+): Result<null, string> => {
+  const commands = new MachoLoadCommandCursor(table);
+  while (commands.nextOffset !== null) {
+    const offset = table.headerSize + commands.nextOffset;
+    if (
+      offset + 8 > bytes.length &&
+      commands.nextOffset + 8 <= table.commandBytes
+    )
+      return ok(null);
+    const frame = commands.read(bytes.subarray(offset, offset + 8));
+    if (!frame.ok) return frame;
+  }
+  return commands.finish();
+};
+
 /** CPU_TYPE_ARM64_32: AArch64 instructions with 32-bit pointers (watchOS). */
 const CPU_TYPE_ARM64_32 = 0x0200000c;
 
@@ -161,23 +217,8 @@ const parseThinMachO = (
   const { identity } = table.value;
   const architecture = machoBinaryArchitecture(identity.cpuType);
   if (architecture === undefined) return err("unsupported Mach-O architecture");
-  const commands = new MachoLoadCommandCursor(table.value);
-  while (commands.nextOffset !== null) {
-    const offset = table.value.headerSize + commands.nextOffset;
-    // Header-only callers may retain a prefix. File-backed admission walks
-    // every remaining command header through its bounded reader.
-    if (
-      offset + 8 > bytes.length &&
-      commands.nextOffset + 8 <= table.value.commandBytes
-    )
-      break;
-    const frame = commands.read(bytes.subarray(offset, offset + 8));
-    if (!frame.ok) return frame;
-  }
-  if (commands.nextOffset === null) {
-    const complete = commands.finish();
-    if (!complete.ok) return complete;
-  }
+  const framing = walkMachoCommandFraming(bytes, table.value);
+  if (!framing.ok) return framing;
   if (architecture === "arm64_32")
     return ok({
       format: "mach-o",
@@ -498,6 +539,12 @@ const parseElf = (
       architecture,
       availableArchitectures: [architecture],
     });
+  if (architecture === "xtensa")
+    return ok({
+      format: "elf",
+      architecture,
+      availableArchitectures: [architecture],
+    });
   return ok({
     format: "elf",
     architecture,
@@ -733,27 +780,61 @@ export const parsePeCodeViewFromBuffer = (
   fileBytes: Buffer,
   peOffset: number,
 ): PeCodeViewRecord | undefined => {
-  if (fileBytes.length < peOffset + 24) return undefined;
+  const result = inspectPeCodeViewFromBuffer(fileBytes, peOffset);
+  return result.ok ? result.value : undefined;
+};
+
+/** Distinguish absent CodeView records from incomplete bounded parsing. */
+export const inspectPeCodeViewFromBuffer = (
+  fileBytes: Buffer,
+  peOffset: number,
+): Result<
+  PeCodeViewRecord | undefined,
+  { readonly kind: "incomplete"; readonly message: string }
+> => {
+  const incomplete = (message: string) =>
+    err({ kind: "incomplete" as const, message });
+  if (fileBytes.length < peOffset + 24)
+    return incomplete("Truncated PE header.");
   const coff = readPeCoffHeader(
     fileBytes.subarray(peOffset + 4, peOffset + 24),
   );
-  if (!coff.ok) return undefined;
+  if (!coff.ok) return incomplete(coff.error.message);
   const { sectionCount: numberOfSections, optionalHeaderSize } = coff.value;
   if (
     optionalHeaderSize > 4096 ||
     fileBytes.length < peOffset + 24 + optionalHeaderSize
   )
-    return undefined;
+    return incomplete(
+      "PE optional header is truncated or exceeds the parsing allowance.",
+    );
   const optionalHeader = fileBytes.subarray(
     peOffset + 24,
     peOffset + 24 + optionalHeaderSize,
   );
-  const debugDir = peDebugDirectoryEntry(optionalHeader);
-  if (debugDir === undefined) return undefined;
+  const fixed = readPeOptionalHeaderFixedFields(optionalHeader);
+  if (!fixed.ok) return incomplete(fixed.error.message);
+  const observed = readPeOptionalHeaderDirectory(
+    optionalHeader,
+    fixed.value,
+    6,
+  );
+  if (observed.state === "absent") return ok(undefined);
+  if (observed.state !== "present")
+    return incomplete("Truncated PE debug directory declaration.");
+  const { address: debugRva, size: debugSize } = observed.directory;
+  if (debugRva === 0 && debugSize === 0) return ok(undefined);
+  if (debugRva === 0 || debugSize < 28 || debugSize % 28 !== 0)
+    return incomplete("Invalid PE debug directory declaration.");
+  const debugDir = {
+    debugRva,
+    debugSize,
+    sizeOfHeaders: fixed.value.sizeOfHeaders,
+  };
   const sectionTableOffset = peOffset + 24 + optionalHeaderSize;
   const sectionTableSize = numberOfSections * 40;
   if (fileBytes.length < sectionTableOffset + sectionTableSize)
-    return undefined;
+    return incomplete("Truncated PE section table.");
   const sectionTable = fileBytes.subarray(
     sectionTableOffset,
     sectionTableOffset + sectionTableSize,
@@ -765,17 +846,27 @@ export const parsePeCodeViewFromBuffer = (
     debugDir.sizeOfHeaders,
     Math.min(debugDir.debugSize, 4096),
   );
-  if (debugFileOffset === undefined || fileBytes.length < debugFileOffset + 28)
-    return undefined;
+  if (
+    debugFileOffset === undefined ||
+    fileBytes.length < debugFileOffset + debugDir.debugSize
+  )
+    return incomplete("PE debug directory is unmapped or truncated.");
   const maxDebugBytes = Math.min(
     debugDir.debugSize,
     fileBytes.length - debugFileOffset,
   );
+  const directory = fileBytes.subarray(
+    debugFileOffset,
+    debugFileOffset + maxDebugBytes,
+  );
+  let codeViewEntries = 0;
+  for (let offset = 0; offset < directory.length; offset += 28)
+    if (directory.readUInt32LE(offset + 12) === 2) codeViewEntries += 1;
   for (const {
     fileOffset: pointerToRawData,
     declaredSize: sizeOfData,
   } of peCodeViewDataRanges(
-    fileBytes.subarray(debugFileOffset, debugFileOffset + maxDebugBytes),
+    directory,
     sectionTable,
     numberOfSections,
     debugDir.sizeOfHeaders,
@@ -787,9 +878,11 @@ export const parsePeCodeViewFromBuffer = (
       Math.min(fileBytes.length, pointerToRawData + sizeOfData),
     );
     const parsed = parseCodeViewData(codeViewData, sizeOfData);
-    if (parsed !== undefined) return parsed;
+    if (parsed !== undefined) return ok(parsed);
   }
-  return undefined;
+  return codeViewEntries > 0
+    ? incomplete("PE CodeView records could not be decoded completely.")
+    : ok(undefined);
 };
 
 /** CPU family a Mach-O cpu type names, or undefined when it names none here. */

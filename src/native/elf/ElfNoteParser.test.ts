@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
 import {
   androidIdentNote,
   compressedElfNoteFixture,
@@ -21,10 +21,7 @@ import {
   gnuBuildIdNote,
   gnuPropertyNote,
 } from "./ElfNotes.fixture.js";
-import {
-  ElfNoteSectionNameBudgetFailure,
-  parseElfNotes,
-} from "./ElfNoteParser.js";
+import { elfNoteSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -266,10 +263,9 @@ it.each([1, 2])(
     } catch (cause) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(ElfNoteSectionNameBudgetFailure);
-    expect(failure).toMatchObject({
-      minimumMaxFileBytes: BigInt(minimumMaxFileBytes),
-      selectedMaxFileBytes: bytes.length + 1,
+    expect(elfNoteSectionNameBudget(failure)).toMatchObject({
+      required: BigInt(minimumMaxFileBytes),
+      selected: bytes.length + 1,
     });
 
     const admitted = parse(
@@ -1078,6 +1074,63 @@ it("rejects 64-bit auxv tags and out-of-range page sizes with core: null without
   expect(report.entries[0]?.core).toBeNull();
   expect(report.entries[1]?.core).toBeNull();
 });
+
+it.each([32, 64] as const)(
+  "leaves ELF%d NT_FILE mappings unknown when the descriptor contains a surplus pathname",
+  (bits) => {
+    const little = bits === 64;
+    const file = coreFileNote(
+      [{ start: 0x1000, end: 0x2000, file_ofs: 2, path: "/bin/app" }],
+      4096,
+      bits,
+      little,
+    );
+    const descriptorBytes = little
+      ? file.readUInt32LE(4)
+      : file.readUInt32BE(4);
+    // A five-byte CORE owner including its NUL pads to eight bytes.
+    const descriptor = file.subarray(20, 20 + descriptorBytes);
+    const inspect = (tail: Buffer) => {
+      const payload = Buffer.concat([descriptor, tail]);
+      return parse(
+        elfNoteFixture({
+          bits,
+          little,
+          machine: little ? 62 : 20,
+          type: 4,
+          ownership: "both",
+          notes: elfNote("CORE", 0x46494c45, payload, little),
+        }),
+      );
+    };
+    const exact = inspect(Buffer.alloc(0));
+    const padded = inspect(Buffer.alloc(3));
+    expect(exact.entries).toHaveLength(2);
+    expect(padded.entries.map(({ core }) => core)).toEqual(
+      exact.entries.map(({ core }) => core),
+    );
+    for (const entry of exact.entries)
+      expect(entry.core?.file?.mappings[0]).toMatchObject({
+        start_address: "0x1000",
+        end_address: "0x2000",
+        file_offset_pages: "0x2",
+        path: "/bin/app",
+      });
+
+    const tail = Buffer.from("/lib/extra.so\0");
+    const malformed = inspect(tail);
+    expect(malformed.coverage).toEqual(exact.coverage);
+    expect(malformed.entries).toHaveLength(2);
+    const payload = Buffer.concat([descriptor, tail]);
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    for (const entry of malformed.entries)
+      expect(entry).toMatchObject({
+        type_name: "core_file",
+        core: null,
+        descriptor: { bytes: payload.length, sha256 },
+      });
+  },
+);
 
 it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
   const header = Buffer.alloc(16);

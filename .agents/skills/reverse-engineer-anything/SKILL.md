@@ -168,6 +168,7 @@ explicit path or endpoint and do not need it.
   Facts retain all-recorded-events-before-selection scope. Other qlog layouts
   and PCAP correlation are unsupported.
 - User-owned Electron runtime already open: `list_electron_targets`. Before an electron-main Inspector attempt, check packaged fuses with `inspect_electron_fuses`; disabled `EnableNodeCliInspectArguments` means the app ignores `--inspect`.
+- Shipped application exposure for a local `.app`, install directory, ASAR, or executable: `audit_release_exposure` / `rea audit-release-exposure`. Each check has a stable id, a status, and fixed remediation. Unknown and unassessed checks stay in the report. This does not establish that an application is secure. Credential-marker hits report the rule id and location only. See [release exposure](https://github.com/morluto/rea/blob/main/docs/release-exposure.md).
 - Packet-field discovery: `inspect_packet_fields` searches installed protocols
   and field names/types before choosing fields for `inspect_packet_capture`.
   Query/page the relevant records; registrations do not establish observed traffic.
@@ -362,7 +363,7 @@ explicit path or endpoint and do not need it.
   `CONFIG_IKCONFIG`. Non-gzip payloads are unsupported; decompress externally,
   then inspect the result. See the
   [kernel build config guide](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
-- CPython 3.7–3.13 `.pyc` header, nested marshal code objects and bytecode
+- CPython 3.7–3.15 `.pyc` header, nested marshal code objects and bytecode
   identity: `inspect_python_pyc` with the explicit local file. This built-in
   target-free inspection requires no Python installation. Preserve magic,
   PEP 552 hash or mtime/size, nested names, and bytecode SHA-256. Bytecode is
@@ -407,16 +408,16 @@ explicit path or endpoint and do not need it.
 
 For an existing IDA MCP configuration, use `open_binary` with the original
 input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.
-The legacy attached profile binds the already-open GUI input by SHA-256 and
+The native attached profile binds the already-open GUI input by SHA-256 and
 leaves its database open. The modern headless profile creates and closes an
-owned private database without saving. Installation and registration reuse
-[mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); see the
+owned private database without saving; it reuses
+[mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp). See the
 [IDA provider guide](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md).
-For migration to the separate native IDA MCP plugin, follow the guide's
-[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md#migrate-a-legacy-attached-registration).
-Replace the upstream registration explicitly; modern mrexodia tools are not the
-native profile. Native attachment preserves the database but does not provide
-direct callers; check session availability and the guide's verification limits.
+A registration naming the removed ida-pro-mcp 1.4 `"legacy"` protocol is
+refused; follow the guide's
+[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md#migrate-a-legacy-attached-registration)
+instead of editing the protocol value. No IDA profile provides direct callers;
+check session availability and the guide's verification limits.
 Proceed directly to `analyze_function`, pseudocode, or function/string searches
 after opening; IDA does not supply `binary_overview`. Consult session availability
 when composing broader workflows. Modern direct callers and unsupported dossier

@@ -1,4 +1,5 @@
 import {
+  WEB_SOURCE_MAP_LIMITS,
   sourceMapLimitSelection,
   sourceMapLimitRecovery,
   type SourceMapLimits,
@@ -7,14 +8,17 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
-  AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -22,16 +26,17 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, type Result } from "../../domain/result.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
-  WEB_SOURCE_MAP_LIMITS,
   webSourceMapDecodeTimeoutRecovery,
   type WebSourceMapReport,
 } from "../../domain/webSourceLocation.js";
 import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
+import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../../process/RuntimeControlUnavailableError.js";
+} from "../../domain/runtimeControlUnavailableError.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
@@ -44,6 +49,7 @@ import {
   type SpawnedOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
 import { prepareProcessOwnershipInspection } from "../../process/ProcessOwnershipObservation.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "trace_web_source_location";
 const PROVIDER = "source-map-decoder";
@@ -117,21 +123,46 @@ export const runSourceMapCommand = async (
       options?.signal,
     );
   } catch (cause: unknown) {
+    const signal = options?.signal;
+    const preparation =
+      cause !== signal?.reason &&
+      cause instanceof DarwinProcessOwnershipInspectionError
+        ? cause
+        : undefined;
+    const knownPhysical =
+      cause !== signal?.reason &&
+      (cause instanceof AnalysisError ||
+        cause instanceof ProcessAdmissionError ||
+        (preparation !== undefined && preparation.cancellation === undefined));
+    const physical =
+      cause instanceof AnalysisError
+        ? cause
+        : new ProviderAdapterError(PROVIDER, OPERATION, {
+            cause,
+            ...(preparation?.capturedOutput === undefined
+              ? {}
+              : { capturedOutput: preparation.capturedOutput }),
+            diagnostics: {
+              map_path: path,
+              error_message: errorMessage(cause),
+              phase: "process_ownership_preparation",
+            },
+          });
+    const primary = signal?.aborted
+      ? analysisErrorWithCancellation(
+          knownPhysical ? physical : undefined,
+          cancelledBy(OPERATION, signal),
+        )
+      : physical;
+    if (preparation?.cleanupFailure === undefined) return err(primary);
+    const owner = new PreparationCleanup(preparation, path);
+    retainedCleanup.owner = owner;
     return err(
-      options?.signal?.aborted === true
-        ? new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
-          })
-        : cause instanceof AnalysisError
-          ? cause
-          : new ProviderAdapterError(PROVIDER, OPERATION, {
-              cause,
-              diagnostics: {
-                map_path: path,
-                error_message: message(cause),
-                phase: "process_ownership_preparation",
-              },
-            }),
+      analysisErrorWithCleanupFailure(
+        primary,
+        preparation.cleanupFailure,
+        OPERATION,
+      ).bindCleanupDependencies([preparation.cleanupFailure], owner),
     );
   }
   const deadline = new ProviderStartupDeadline(
@@ -162,15 +193,16 @@ export const runSourceMapCommand = async (
   }
   const cleanup = await command.close();
   const observation = result.ok ? result.value : undefined;
-  const completed =
-    result.ok && options?.signal?.aborted
-      ? err(
-          new AnalysisCancelledError(OPERATION, {
-            cause: options.signal.reason,
+  const completed = options?.signal?.aborted
+    ? err(
+        analysisErrorWithCancellation(
+          result.ok ? undefined : result.error,
+          cancelledBy(OPERATION, options.signal, {
             partialObservation: observation,
           }),
-        )
-      : result;
+        ),
+      )
+    : result;
   if (cleanup === undefined) return completed;
   if (observation !== undefined) cleanup.retainPartialObservation(observation);
   retainedCleanup.owner = command;
@@ -185,11 +217,46 @@ export const runSourceMapCommand = async (
       );
 };
 
+/** Keep the exact Darwin helper owner available after failed preparation cleanup. */
+class PreparationCleanup implements SourceMapCleanupOwner {
+  constructor(
+    readonly preparation: DarwinProcessOwnershipInspectionError,
+    readonly path: string,
+  ) {}
+
+  get cleanupResources(): readonly string[] {
+    return this.preparation.cleanupFailure?.cleanupResources ?? [];
+  }
+
+  async close(): Promise<ProviderCleanupError | undefined> {
+    const cleanup = this.preparation.cleanupFailure;
+    if (cleanup === undefined || !cleanup.cleanupIncomplete) return undefined;
+    try {
+      if (this.preparation.cleanupOwner !== undefined)
+        await this.preparation.cleanupOwner.close();
+    } catch (cause: unknown) {
+      return new SourceMapCleanupFailure(cleanup.cleanupResources, {
+        map_path: this.path,
+        cleanup_failures: [errorMessage(cause)],
+      }).bindCleanupDependencies([cleanup], this);
+    }
+    return cleanup.cleanupIncomplete
+      ? new SourceMapCleanupFailure(cleanup.cleanupResources, {
+          map_path: this.path,
+          cleanup_failures: [
+            "Ownership preparation cleanup remains incomplete",
+          ],
+        }).bindCleanupDependencies([cleanup], this)
+      : undefined;
+  }
+}
+
 class OwnedCodec implements SourceMapCleanupOwner {
   readonly #runId = `rea-source-map-${randomUUID()}`;
   #runtime: SourceMapCodecRuntime | undefined;
   #supervisor: ProviderProcessSupervisor | undefined;
-  #cleanupAnchor: SourceMapCleanupFailure | undefined;
+  /** Reported by every close failure until a later close releases the codec. */
+  #cleanupRelease: AnalysisCleanupRelease | undefined;
   #outcome: CodecOutcome | undefined;
   #drainStop: CodecPhysicalObservation | undefined;
   readonly #onInterruption: () => void;
@@ -330,9 +397,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "physical")
       throw this.#physicalFailure(outcome.observation);
     if (outcome?.kind === "cancelled")
-      throw new AnalysisCancelledError(OPERATION, {
-        cause: outcome.callerReason,
-      });
+      throw cancelledBy(OPERATION, carriedReason(outcome.callerReason));
     if (outcome?.kind === "timeout")
       throw new AnalysisTimeoutError(
         OPERATION,
@@ -347,9 +412,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
     if (outcome?.kind === "physical")
       return this.#physicalFailure(outcome.observation);
     if (outcome?.kind === "cancelled")
-      return new AnalysisCancelledError(OPERATION, {
-        cause: outcome.callerReason,
-      });
+      return cancelledBy(OPERATION, carriedReason(outcome.callerReason));
     if (outcome?.kind === "timeout")
       return new AnalysisTimeoutError(
         OPERATION,
@@ -361,7 +424,10 @@ class OwnedCodec implements SourceMapCleanupOwner {
       ? runtimeControlCapabilityError(PROVIDER, OPERATION, cause)
       : new ProviderAdapterError(PROVIDER, OPERATION, {
           cause,
-          diagnostics: { map_path: this.path, error_message: message(cause) },
+          diagnostics: {
+            map_path: this.path,
+            error_message: errorMessage(cause),
+          },
         });
   }
 
@@ -540,12 +606,12 @@ class OwnedCodec implements SourceMapCleanupOwner {
         await this.#runtime.close();
         this.#runtime = undefined;
       } catch (cause: unknown) {
-        failures.push(message(cause));
+        failures.push(errorMessage(cause));
       }
     }
     if (failures.length === 0) {
-      this.#cleanupAnchor?.resolveCleanup();
-      this.#cleanupAnchor = undefined;
+      this.#cleanupRelease?.confirm();
+      this.#cleanupRelease = undefined;
       return undefined;
     }
     const failure = new SourceMapCleanupFailure(this.cleanupResources, {
@@ -553,10 +619,8 @@ class OwnedCodec implements SourceMapCleanupOwner {
       cleanup_failures: failures,
       codec_pid: this.#supervisor?.launch.process.pid ?? null,
     }).bindCleanupResourceOwner(this);
-    if (this.#cleanupAnchor === undefined) this.#cleanupAnchor = failure;
-    else failure.bindCleanupDependencies([this.#cleanupAnchor], this);
-    return failure;
+    return (this.#cleanupRelease ??= new AnalysisCleanupRelease()).bind(
+      failure,
+    );
   }
 }
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

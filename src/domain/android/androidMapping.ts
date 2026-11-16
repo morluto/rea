@@ -6,7 +6,6 @@ import {
   PROGUARD_MAPPING_LIMITS,
   proguardResolutionBytes,
   type ProguardMapping,
-  type ProguardResolution,
   resolveProguardClass,
   resolveProguardField,
   resolveProguardMethod,

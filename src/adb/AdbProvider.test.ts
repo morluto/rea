@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  access,
   chmod,
   lstat,
   mkdir,
@@ -11,6 +12,7 @@ import {
 import { join } from "node:path";
 import { expect, onTestFinished, test, vi } from "vitest";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 
 const adbTestHooks = vi.hoisted(() => ({
   afterScreencap: undefined as (() => void) | undefined,
@@ -72,6 +74,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import type { AdbRequest } from "../domain/adb/adbDeviceAnalysis.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -166,13 +169,11 @@ fi`,
   let closing: Promise<void> | undefined;
   try {
     await awaitAcknowledgement(
-      vi.waitFor(
-        async () => expect(await lstat(join(root, "started"))).toBeDefined(),
-        { timeout: 10_000 },
+      waitFor(async () =>
+        expect(await lstat(join(root, "started"))).toBeDefined(),
       ),
       inspection,
       "ADB version probe",
-      10_000,
     );
     let closed = false;
     closing = provider.close().then(() => {
@@ -185,13 +186,14 @@ fi`,
     await closing;
     await expect(provider.inspectAvailability()).rejects.toMatchObject({
       _tag: "AnalysisCancelledError",
+      cause: OwnerCancellation.ownerClosed,
     });
   } finally {
     await writeFile(join(root, "release"), "");
     await Promise.allSettled([inspection, closing]);
     await provider.close();
   }
-}, 15_000);
+});
 
 it("fails closed when adb exits successfully without a recognized version", async () => {
   const stdout = `unexpected adb output ${"x".repeat(700)}\n`;
@@ -246,7 +248,13 @@ fi`,
       product: "sdk_gphone64_x86_64",
       model: "sdk_gphone64_x86_64",
       device: "emu64xa",
-      transport_id: 1,
+      transport_identity: {
+        status: "reported",
+        decimal: "1",
+        source_token: "1",
+        source_line:
+          "emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1",
+      },
       kind: "emulator",
       kind_basis: "emulator_serial_prefix",
     },
@@ -276,7 +284,13 @@ fi`,
       product: "sdk_gphone64_x86_64",
       model: "sdk_gphone64_x86_64",
       device: "emu64xa",
-      transport_id: 1,
+      transport_identity: {
+        status: "reported",
+        decimal: "1",
+        source_token: "1",
+        source_line:
+          "emulator-5554          device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 device:emu64xa transport_id:1",
+      },
       kind: "emulator",
       kind_basis: "emulator_serial_prefix",
     },
@@ -324,7 +338,13 @@ fi`,
       product: null,
       model: null,
       device: null,
-      transport_id: 4,
+      transport_identity: {
+        status: "reported",
+        decimal: "4",
+        source_token: "4",
+        source_line:
+          "07ef9c2a               no permissions; see [http://developer.android.com/tools/device.html] usb:1-1 transport_id:4",
+      },
       kind: "physical",
       kind_basis: "usb_transport",
     },
@@ -739,14 +759,16 @@ it("reports exhausted host capacity at the version probe as a retryable constrai
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: true,
-      remediation: {
-        action: expect.stringContaining("does not need to change") as unknown,
-      },
       details: {
+        reported_limits: {
+          spawn_error: "EMFILE",
+          exhausted_resource: "file-descriptors",
+        },
         diagnostics: {
           selected_binary: binary,
           path_source: "environment",
-          filesystem_error: "EMFILE",
+          boundary: "host-capacity",
+          system_code: "EMFILE",
         },
       },
     });
@@ -2684,5 +2706,41 @@ it("attributes version capture failures to the public operation and retains the 
       operation: "list_adb_devices",
       diagnostics: { prerequisite_operation: "inspect_adb_client" },
     },
+  });
+});
+
+it("refuses a device file name the selected Windows host cannot store before pulling", async () => {
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+: > "${join(root, "pull-ran")}"
+exit 0`,
+  );
+  const provider = new AdbProvider({
+    environment: { REA_ADB_PATH: binary },
+    platform: "win32",
+  });
+  const result = await provider.execute({
+    operation: "pull_adb_file",
+    input: {
+      serial: "emulator-5554",
+      device_path: "/data/local/tmp/CON",
+      output_directory: join(root, "pulls"),
+    },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["device_path"],
+          message: expect.stringContaining("(reserved_name)"),
+        },
+      ],
+    },
+  });
+  await expect(access(join(root, "pull-ran"))).rejects.toMatchObject({
+    code: "ENOENT",
   });
 });

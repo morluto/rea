@@ -1,15 +1,7 @@
 import type { PYTHON_PYC_LIMIT_MAXIMA } from "../domain/python/pythonPyc.js";
 
-/** Distinguish corrupt recognized pycs from magics outside parser coverage. */
-export class PythonPycFormatFailure extends Error {
-  constructor(
-    readonly kind: "malformed" | "unsupported",
-    message: string,
-  ) {
-    super(message);
-    this.name = "PythonPycFormatFailure";
-  }
-}
+/** The ParseFailure format of a standalone CPython pyc. */
+export const PYTHON_PYC_FORMAT = "python-pyc";
 
 /** Resource boundary exceeded while walking marshal objects. */
 export class PythonPycResourceFailure extends Error {

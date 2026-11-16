@@ -15,7 +15,9 @@ it.each([
     const root = await mkdtemp(join(tmpdir(), "rea-bun-owner-test-"));
     try {
       await mkdir(join(root, "scripts", "lib"), { recursive: true });
-      await mkdir(join(root, "dist", "process"), { recursive: true });
+      // VerifierFixture loads src/process/PrivateRuntimeRoot.ts beside its
+      // copied scripts/lib, so the stand-in root sits there.
+      await mkdir(join(root, "src", "process"), { recursive: true });
       await mkdir(join(root, "dist", "domain"), { recursive: true });
       await writeFile(
         join(root, "scripts", "verify-bun-standalone.mjs"),
@@ -26,12 +28,18 @@ it.each([
           ),
         ),
       );
-      await writeFile(
-        join(root, "scripts", "lib", "verifier-cleanup.mjs"),
-        await readFile(
-          new URL("../../../scripts/lib/verifier-cleanup.mjs", import.meta.url),
-        ),
-      );
+      for (const helper of [
+        "verifier-cleanup.mjs",
+        "verifier-fixture.mjs",
+        "canonical-temporary-directory.mjs",
+        "verifier-source-loader.mjs",
+      ])
+        await writeFile(
+          join(root, "scripts", "lib", helper),
+          await readFile(
+            new URL(`../../../scripts/lib/${helper}`, import.meta.url),
+          ),
+        );
       await writeFile(
         join(root, "scripts", "lib", "verify-commands.mjs"),
         `export async function createVerifierCommands() {
@@ -42,7 +50,7 @@ it.each([
     }`,
       );
       await writeFile(
-        join(root, "dist", "process", "PrivateRuntimeRoot.js"),
+        join(root, "src", "process", "PrivateRuntimeRoot.ts"),
         `import { writeFile } from "node:fs/promises";
       export class PrivateRuntimeRoot { static async create() { return {
         path: process.env.ROOT, async close() { if (process.env.FAULT === "init_close") throw new Error("root close refused"); await writeFile(process.env.CLOSED, "closed"); }

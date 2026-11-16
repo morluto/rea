@@ -5,6 +5,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** An unresolved Hermes profile must not be configured as the default home. */
 export class HermesClientPathError extends Error {
@@ -178,9 +179,10 @@ export const resolveHermesClientHome = (
   let name: string;
   try {
     // Python uses utf-8-sig and ignores unreadable / invalid-UTF8 active_profile files.
-    name = new TextDecoder("utf-8", { fatal: true })
-      .decode(readFileSync(appendCallerPath(stickyRoot, "active_profile")))
-      .trim();
+    name = decodeStrictUtf8(
+      readFileSync(appendCallerPath(stickyRoot, "active_profile")),
+      "strip-signature",
+    ).trim();
   } catch {
     return root;
   }

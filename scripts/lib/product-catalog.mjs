@@ -11,7 +11,7 @@ export const createProductCatalog = async (root) => {
   assertSameNames(
     "Primary CLI inventory",
     cli.primary,
-    sources.cliCommandNames.CLI_COMMAND_NAMES,
+    sources.catalogIdentity.CLI_COMMAND_NAMES,
   );
   const tools = toolFamilyCatalog(sources);
   const providers = providerCatalog(sources);
@@ -43,7 +43,7 @@ export const createProductCatalog = async (root) => {
       aliases: cli.aliases,
     },
     runtime_catalog: {
-      counts: sources.catalogIdentity.FULL_CATALOG_IDENTITY.counts,
+      counts: sources.catalogIdentity.DEFAULT_CATALOG_IDENTITY.counts,
       digests: {
         // Full runtime schema digests belong to server identity, not this facts projection.
         providers_sha256: digest(providers),

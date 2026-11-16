@@ -15,7 +15,26 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...original,
-    readFile: filesystem.readFile,
+    open: async (path: unknown) => {
+      if (!String(path).startsWith("/proc/"))
+        throw new Error(`Unexpected descriptor open: ${String(path)}`);
+      let bytes: Buffer | undefined;
+      return {
+        fd: 42,
+        close: async () => {},
+        read: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: bigint,
+        ) => {
+          bytes ??= Buffer.from(await filesystem.readFile(path));
+          const start = Number(position);
+          const count = bytes.copy(buffer, offset, start, start + length);
+          return { bytesRead: count, buffer };
+        },
+      };
+    },
     readlink: filesystem.readlink,
     stat: filesystem.stat,
   };
@@ -543,12 +562,23 @@ it("preserves cancellation before and after the signal-zero probe", async () => 
   const controller = new AbortController();
   const reason = new Error("cancelled");
   controller.abort(reason);
-  filesystem.readFile.mockRejectedValueOnce(
-    Object.assign(new Error("aborted"), { name: "AbortError" }),
-  );
+  const readsBefore = filesystem.readFile.mock.calls.length;
   await expect(
     host.processIdentities?.([entry], controller.signal),
-  ).rejects.toMatchObject({ name: "AbortError" });
+  ).rejects.toMatchObject({
+    _tag: "ProcessOwnershipIdentityBatchFailure",
+    failures: [
+      {
+        pid: 42,
+        cause: {
+          _tag: "ProcessOwnershipInspectionCancelled",
+          reason,
+          cause: reason,
+        },
+      },
+    ],
+  });
+  expect(filesystem.readFile).toHaveBeenCalledTimes(readsBefore);
 
   const afterProbe = new AbortController();
   const probeAbort = vi.spyOn(process, "kill").mockImplementation(() => {
@@ -559,8 +589,88 @@ it("preserves cancellation before and after the signal-zero probe", async () => 
     filesystem.readFile.mockRejectedValueOnce(filesystemError("ENOENT"));
     await expect(
       host.processIdentities?.([entry], afterProbe.signal),
-    ).rejects.toBe(reason);
+    ).rejects.toMatchObject({
+      _tag: "ProcessOwnershipIdentityBatchFailure",
+      failures: [
+        {
+          pid: 42,
+          cause: {
+            _tag: "ProcessOwnershipInspectionCancelled",
+            reason,
+            cause: reason,
+          },
+        },
+      ],
+    });
   } finally {
     probeAbort.mockRestore();
   }
 });
+
+it.each([
+  // PF_KTHREAD | PF_NOFREEZE | PF_FORKNOEXEC, as procfs reports a kworker.
+  ["a kernel thread", 0x00208040, true],
+  ["a user process", 0x00000040, false],
+] as const)(
+  "classifies a live unrelated %s whose environment read reports ESRCH",
+  async (_case, flags, cleaned) => {
+    // Reported on a root caller: a live kernel thread's environ read failed
+    // with ESRCH. Its credentials match the caller, so only the PF_KTHREAD
+    // task flag from the same stat record distinguishes it.
+    const callerUid = process.getuid?.() ?? 0;
+    const kernelThread: ProcessTableEntry = {
+      pid: 200,
+      parentPid: 2,
+      processGroupId: 0,
+      state: "I",
+      command: "kworker/0:1",
+    };
+    filesystem.readFile.mockImplementation(async (path) => {
+      if (String(path) === "/proc/200/stat")
+        return procStat(100, 2, 0, 200, flags);
+      if (String(path) === "/proc/200/status")
+        return `Uid:\t${callerUid}\t${callerUid}\t${callerUid}\t${callerUid}\nGid:\t0\t0\t0\t0\n`;
+      if (String(path) === "/proc/200/environ")
+        throw Object.assign(new Error("ESRCH: no such process, read"), {
+          code: "ESRCH",
+        });
+      throw new Error(`unexpected path: ${String(path)}`);
+    });
+    filesystem.readlink.mockImplementation(async () => "user:[1]");
+    filesystem.stat.mockResolvedValue({ uid: callerUid } as never);
+    const signalGroup = vi.fn();
+    const host: ProcessOwnershipHost = {
+      ...createSystemProcessOwnershipHost("linux", {}),
+      listProcesses: async () => [kernelThread],
+      signalGroup,
+    };
+
+    try {
+      const result = await withCaller(callerUid, 0, () =>
+        verifyNoTokenOwnedProcesses("owned-run", host, undefined, {
+          leaderPid: 100,
+          processGroupId: 100,
+          evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+        }),
+      );
+
+      if (cleaned)
+        expect(result).toEqual({
+          cleaned: true,
+          signaled: false,
+          unverified: [
+            { pid: 200, diagnostic: "ESRCH: no such process, read" },
+          ],
+        });
+      else
+        expect(result).toMatchObject({
+          cleaned: false,
+          failures: [{ pid: 200, reason: "environment-unreadable" }],
+        });
+      expect(signalGroup).not.toHaveBeenCalled();
+    } finally {
+      filesystem.stat.mockReset();
+      filesystem.stat.mockRejectedValue(filesystemError("ENOENT"));
+    }
+  },
+);

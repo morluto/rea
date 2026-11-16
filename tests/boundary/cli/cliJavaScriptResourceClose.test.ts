@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   closeCliJavaScriptResources,
   CliJavaScriptAnalysisHost,
@@ -133,10 +133,15 @@ it("shares one in-flight JavaScript worker shutdown between callers", async () =
     await openCliScope();
     const first = closeCliJavaScriptResources();
     const second = closeCliJavaScriptResources();
-    expect(second).toBe(first);
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
     expect(calls).toBe(1);
     release();
-    await first;
+    await Promise.all([first, second]);
     expect(calls).toBe(1);
   } finally {
     release();

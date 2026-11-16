@@ -1,16 +1,14 @@
 import { expect, it } from "vitest";
-import { parseNativeExports } from "./NativeExportParser.js";
+import { parseNativeExports } from "../../domain/native/nativeExportParser.js";
 import {
   elfExportImage,
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  analysisViewRequestSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "../../domain/analysisView/analysisView.js";
+import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
+import type { AnalysisViewParent } from "../../domain/analysisView/analysisViewParent.js";
+import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
 
 const artifact = {
   path: "/fixtures/exports",
@@ -85,7 +83,7 @@ it("keeps every ELF same-name/version alternative, source order and matching-pag
   });
 });
 
-it("qualifies projected names with exact encoding facts and normalizes historical omissions", () => {
+it("qualifies projected names with exact encoding facts and refuses rows without them", () => {
   const report = elf();
   expect(
     project(report, {
@@ -104,35 +102,30 @@ it("qualifies projected names with exact encoding facts and normalizes historica
       },
     ],
   });
-  const historical = {
+  const withoutEncoding = {
     ...report,
     exports: report.exports.map(
       ({ name_bytes_base64: _bytes, name_utf8_decodable: _utf8, ...row }) =>
         row,
     ),
   };
-  freezeJsonSnapshot(historical);
-  const input = { ...parent(historical), sealedResult: true };
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const result = projectAnalysisView(
-      input,
-      analysisViewRequestSchema.parse({
-        kind: "native-exports",
-        collection: "exports",
-        indices: [3],
-        fields: ["name"],
-      }),
-    );
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      items: [
-        { name: "café", name_bytes_base64: null, name_utf8_decodable: null },
-      ],
-    });
-  }
+  freezeJsonSnapshot(withoutEncoding);
+  const refused = projectAnalysisView(
+    { ...parent(withoutEncoding), sealedResult: true },
+    analysisViewRequestSchema.parse({
+      kind: "native-exports",
+      collection: "exports",
+      indices: [3],
+      fields: ["name"],
+    }),
+  );
+  expect(refused).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
 });
 
-it("matches ELF UTF-8 identities without conflating Latin-1 display names or unknown encodings", () => {
+it("matches ELF UTF-8 identities without conflating Latin-1 display names", () => {
   const report = parseNativeExports(
     elfExportImage({
       symbols: [{ name: "cafÃ©" }, { name: "café" }, { name: "same" }],
@@ -151,48 +144,24 @@ it("matches ELF UTF-8 identities without conflating Latin-1 display names or unk
     coverage: { total: 1 },
   });
   if (report.format !== "elf") throw new Error("Expected ELF fixture");
-  const historical = {
-    ...report,
-    exports: report.exports.map(
-      ({ name_bytes_base64: _bytes, name_utf8_decodable: _utf8, ...row }) =>
-        row,
-    ),
-  };
-  expect(
-    project(historical, {
-      kind: "native-exports",
-      collection: "exports",
-      names: ["café"],
-    }),
-  ).toMatchObject({
-    items: [],
-    unknowns: [expect.stringContaining("lack retained encoding facts")],
-  });
-  expect(
-    project(historical, {
-      kind: "native-exports",
-      collection: "exports",
-      names: [],
-    }),
-  ).toMatchObject({ items: [], unknowns: [] });
   const missingBytes = {
     ...report,
     exports: report.exports.map((row) => ({ ...row, name_bytes_base64: null })),
   };
   expect(
-    project(missingBytes, {
-      kind: "native-exports",
-      collection: "exports",
-      names: ["café", "same"],
-      fields: [],
-    }),
-  ).toMatchObject({
-    items: [{ source_index: 2 }],
-    unknowns: [expect.stringContaining("lack retained encoding facts")],
-  });
+    projectAnalysisView(
+      parent(missingBytes),
+      analysisViewRequestSchema.parse({
+        kind: "native-exports",
+        collection: "exports",
+        names: ["café", "same"],
+        fields: [],
+      }),
+    ).ok,
+  ).toBe(false);
 });
 
-it("does not fill historical name defaults into a projection that omits names", () => {
+it("does not add name encoding facts to a projection that omits names", () => {
   const result = project(elf(), {
     kind: "native-exports",
     collection: "exports",
@@ -207,7 +176,7 @@ it("does not fill historical name defaults into a projection that omits names", 
   expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
 });
 
-it("projects ELF visibility when selected and normalizes historical records without visibility to unknown", () => {
+it("projects ELF visibility when selected and refuses rows without it", () => {
   const report = parseNativeExports(
     elfExportImage({
       symbols: [
@@ -245,22 +214,20 @@ it("projects ELF visibility when selected and normalizes historical records with
   expect(omitted.items[0]).not.toHaveProperty("visibility");
 
   if (report.format !== "elf") throw new Error("Expected ELF fixture");
-  const historical = {
+  const withoutVisibility = {
     ...report,
     exports: report.exports.map(({ visibility: _vis, ...row }) => row),
   };
-  freezeJsonSnapshot(historical);
-  const historicalResult = project(historical, {
-    kind: "native-exports",
-    collection: "exports",
-    fields: ["name", "visibility"],
-  });
-  expect(historicalResult).toMatchObject({
-    items: [
-      { source_index: 0, name: "default_fn", visibility: "unknown" },
-      { source_index: 1, name: "protected_fn", visibility: "unknown" },
-    ],
-  });
+  expect(
+    projectAnalysisView(
+      parent(withoutVisibility),
+      analysisViewRequestSchema.parse({
+        kind: "native-exports",
+        collection: "exports",
+        fields: ["name", "visibility"],
+      }),
+    ).ok,
+  ).toBe(false);
 });
 
 it.each(["Y2Fmw6k", "Y2Fmw6l=", "not base64"])(
@@ -406,6 +373,23 @@ it.each(["partial", "unsupported"] as const)(
     });
   },
 );
+
+it("shows a nonzero null-symbol st_name in the summary without dropping exports", () => {
+  const bytes = elfExportImage({ symbols: [{ name: "kept_export" }] });
+  bytes.writeUInt32LE(0x956, 0x100);
+  const report = parseNativeExports(bytes, artifact);
+  expect(project(report, { kind: "summary" })).toMatchObject({
+    unknowns: [],
+    summary: {
+      export_count: 1,
+      issue_count: 0,
+      coverage: { status: "complete", exports: 1 },
+    },
+    limitations: expect.arrayContaining([
+      expect.stringContaining("nonzero st_name 0x956"),
+    ]),
+  });
+});
 
 it("revalidates mutable imports and refuses inconsistent coverage and format-incompatible fields", () => {
   const report = elf();

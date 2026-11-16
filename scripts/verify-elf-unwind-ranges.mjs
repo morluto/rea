@@ -4,11 +4,11 @@
  * C++ compiler or no readelf.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture, onceConfirmed } from "./lib/verifier-fixture.mjs";
 
 /**
  * Every probe, compiler driver and inspection runs as an owned process tree,
@@ -178,10 +178,11 @@ const inspectedStarts = async (path) => {
   }
 };
 
-// The root holds every compiled image. Remove it only after the owned
-// commands have settled, and keep it when their cleanup failed.
+// The root holds every compiled image. The fixture removes it only after the
+// owned commands have settled, and keeps it when their cleanup failed.
+const closeCommands = onceConfirmed(() => commands.close());
+let rootFixture;
 let root;
-let commandsClosed = false;
 let unavailable = false;
 await withVerifierCleanup(async () => {
   const compiler = await firstAvailable(["zig", "clang++", "g++"]);
@@ -203,7 +204,12 @@ await withVerifierCleanup(async () => {
     unavailable = true;
     return;
   }
-  root = await mkdtemp(join(tmpdir(), "rea-elf-unwind-"));
+  rootFixture = await VerifierFixture.open({
+    prefix: "rea-elf-unwind-",
+    private: false,
+  });
+  rootFixture.releaseAfter(closeCommands);
+  root = rootFixture.path;
   const source = join(root, "ranges.cpp");
   const unstripped = join(root, "ranges.unstripped");
   const stripped = join(root, "ranges.stripped");
@@ -227,13 +233,9 @@ await withVerifierCleanup(async () => {
     }),
   );
 }, [
+  closeCommands,
   async () => {
-    await commands.close();
-    commandsClosed = true;
-  },
-  async () => {
-    if (commandsClosed && root !== undefined)
-      await rm(root, { recursive: true, force: true });
+    await rootFixture?.release();
   },
   async () => {
     process.off("SIGINT", interrupt);

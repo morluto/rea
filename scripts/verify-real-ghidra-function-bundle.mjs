@@ -4,28 +4,27 @@
 // is intentionally synthetic; it is not a claim about Ghidra's analysis history.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 const installation = process.env.GHIDRA_INSTALL_DIR;
 if (!installation || !process.env.JAVA_HOME)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR and JAVA_HOME to caller-installed Ghidra and JDK 21.",
   );
 const commands = await createVerifierCommands();
-let root;
-let commandsClosed = false;
-const targetHash = await withVerifierCleanup(async () => {
-  root = await mkdtemp(join(tmpdir(), "rea-function-bundle-"));
+const workspace = await VerifierFixture.open({
+  prefix: "rea-function-bundle-",
+  private: false,
+});
+// Ghidra and the CLI run as owned commands that may use the root until they close.
+workspace.releaseAfter(() => commands.close());
+const targetHash = await withVerifierFixture(workspace, async () => {
+  const root = workspace.path;
   const target = join(root, "fixture");
   const projectDir = join(root, "project");
   const scriptDir = join(root, "scripts");
@@ -172,16 +171,7 @@ public class SetHistory extends GhidraScript {
   assert.equal(hash(await readFile(target)), targetHash);
   assert.deepEqual(await tree(projectDir), before);
   return targetHash;
-}, [
-  async () => {
-    await commands.close();
-    commandsClosed = true;
-  },
-  async () => {
-    if (commandsClosed && root !== undefined)
-      await rm(root, { recursive: true, force: true });
-  },
-]);
+});
 process.stdout.write(
   `PASS Ghidra function bundles: complete, summary, no-overwrite; target and project unchanged (${targetHash})\n`,
 );

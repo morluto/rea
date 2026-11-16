@@ -1,3 +1,4 @@
+import { boundedList } from "../../domain/boundedList.js";
 import {
   ownMember,
   decodedSegment,
@@ -291,8 +292,10 @@ const stepOf = (
   outcome: { env_status: number | null; differences: Difference[] },
 ): CompareStep => {
   const categories = [...new Set(outcome.differences.map((d) => d.category))];
-  const differences = outcome.differences.slice(0, STEP_DIFFERENCE_LIMIT);
-  const omitted = outcome.differences.length - differences.length;
+  const { items: differences, omitted } = boundedList(
+    outcome.differences,
+    STEP_DIFFERENCE_LIMIT,
+  );
   return {
     ...base,
     tool: call?.tool.name ?? null,
@@ -302,10 +305,11 @@ const stepOf = (
       (difference) => difference.category === "order",
     ),
     categories,
-    differences,
+    differences: [...differences],
     differences_total: outcome.differences.length,
     differences_omitted: omitted,
     differences_truncated: omitted > 0,
+    // optional-fact-default: with no matched call (tool null) no query was mapped.
     ignored_query: [...(call?.ignoredQuery ?? [])],
   };
 };

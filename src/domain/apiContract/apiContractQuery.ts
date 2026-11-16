@@ -7,6 +7,7 @@ import {
   apiContractOperationSchema,
   apiContractPathReferenceSchema,
 } from "./apiContract.js";
+import { presentRootDiscriminator } from "../schemaAnnotations.js";
 
 const page = {
   kind: z.literal("api-contract"),
@@ -50,7 +51,7 @@ export const apiContractFormatSchema = z.enum([
   "openapi-yaml",
   "graphql-sdl",
 ]);
-export const apiContractFileBytesSchema = z
+const apiContractFileBytesSchema = z
   .int()
   .positive()
   .max(API_CONTRACT_MAX_FILE_BYTES)
@@ -58,10 +59,6 @@ export const apiContractFileBytesSchema = z
   .describe(
     "Maximum bytes per input document (up to 32 MiB); reply paging does not increase parser allowances",
   );
-export const apiContractViewSelectionSchema = z.discriminatedUnion("kind", [
-  apiContractViewRequestSchema,
-  graphqlContractViewRequestSchema,
-]);
 const commonInput = {
   path: absoluteLocalPathStringSchema.describe(
     "Absolute path to a local API contract document",
@@ -71,8 +68,8 @@ const commonInput = {
 };
 const selectionDescription =
   "Return this selected page immediately; complete Evidence is retained and view takes precedence over detail";
-export const inspectApiContractInputSchema = z
-  .union([
+export const inspectApiContractInputSchema = presentRootDiscriminator(
+  z.union([
     z.strictObject({
       ...commonInput,
       // Both OpenAPI syntaxes share one declaration contract; only the decoder
@@ -94,8 +91,9 @@ export const inspectApiContractInputSchema = z
         .optional()
         .describe(selectionDescription),
     }),
-  ])
-  .meta({ "x-rea-root-discriminator": "format" });
+  ]),
+  "format",
+);
 export type InspectApiContractInput = z.output<
   typeof inspectApiContractInputSchema
 >;

@@ -1,3 +1,5 @@
+import { Budget } from "../budget.js";
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -16,6 +18,7 @@ import {
   type ApiContractDiagnostic,
   type ApiContractOperation,
 } from "./apiContract.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 // Refusals name the format the caller selected; the shared parser serves both.
 const FORMAT_DOCUMENT_KIND: Record<ApiContract["format"], string> = {
@@ -47,11 +50,7 @@ const pathMetadata = new Set([
 // HTTP methods are case-sensitive tokens; additionalOperations preserves that spelling.
 const httpToken = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const record = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-const pointerPart = (value: string): string =>
-  value.replaceAll("~", "~0").replaceAll("/", "~1");
+  isRecord(value) ? (value as Record<string, unknown>) : undefined;
 const identity = (prefix: string, facts: unknown) =>
   `${prefix}_${digestCanonicalValue(facts)}`;
 
@@ -67,14 +66,13 @@ class ContractInventory {
   readonly operations: ApiContract["operations"] = [];
   readonly references: ApiContract["path_item_references"] = [];
   readonly diagnostics: ApiContractDiagnostic[] = [];
-  #retainedBytes = 0;
+  readonly #retainedBytes = new Budget(API_CONTRACT_FACT_BYTES);
 
   constructor(readonly artifact: ApiContractArtifact) {}
 
   reserve(bytes: number): Result<void, AnalysisError> {
     // Includes object/index overhead and repeated escaped Evidence delivery, not just source bytes.
-    this.#retainedBytes += bytes;
-    return this.#retainedBytes <= API_CONTRACT_FACT_BYTES
+    return this.#retainedBytes.tryCharge(bytes)
       ? ok(undefined)
       : err(
           new AnalysisResourceConstraintError(
@@ -246,7 +244,7 @@ function* additionalOperations(
     if (examined++ % 128 === 0) yield;
     const admitted = inventory.reserve(512 + method.length * 24);
     if (!admitted.ok) return admitted;
-    const source = `${pointer}/${pointerPart(method)}`;
+    const source = `${pointer}/${escapeJsonPointerToken(method)}`;
     const reserved = reservedAdditionalMethods.has(method);
     const added =
       !httpToken.test(method) || reserved
@@ -314,7 +312,7 @@ function* pathItem(
       if (!admitted.ok) return admitted;
       const diagnosed = inventory.diagnostic(
         "unknown-path-item-field",
-        `${pointer}/${pointerPart(key)}`,
+        `${pointer}/${escapeJsonPointerToken(key)}`,
         "This field is not an operation or a recognized Path Item field in the selected OpenAPI minor version.",
       );
       if (!diagnosed.ok) return diagnosed;
@@ -401,7 +399,7 @@ function* collectPaths(
     // Reserve expanded pointer/path strings before escaping or building a row.
     const admitted = inventory.reserve(512 + path.length * 16);
     if (!admitted.ok) return admitted;
-    const pointer = `/paths/${pointerPart(path)}`;
+    const pointer = `/paths/${escapeJsonPointerToken(path)}`;
     const read = path.startsWith("/")
       ? yield* pathItem(sourcePaths[path], { inventory, path, pointer, modern })
       : inventory.diagnostic(

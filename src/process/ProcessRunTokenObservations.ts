@@ -1,9 +1,15 @@
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
+import {
+  assertProcessOwnershipInspectionActive,
+  rethrowProcessOwnershipInspectionFailure,
+} from "./ProcessInspectionCancellation.js";
 import type {
   ProcessOwnershipHost,
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { liveProcesses } from "./ProcessOwnershipProcessTree.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Structured native token availability, distinct from failed reads and caller cancellation. */
 export class ProcessRunTokenReadError extends Error {
@@ -17,9 +23,6 @@ export class ProcessRunTokenReadError extends Error {
     this.name = "ProcessRunTokenReadError";
   }
 }
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Only a variable observed on this process supplies its run token. */
 export const processRunIdFromEnvironment = (
@@ -35,19 +38,24 @@ export const readProcessRunToken = async (
   pid: number,
   signal?: AbortSignal,
 ): Promise<ProcessRunTokenObservation> => {
-  signal?.throwIfAborted();
+  assertProcessOwnershipInspectionActive(signal);
   try {
     const environment =
       signal === undefined
         ? await host.environment(pid)
         : await host.environment(pid, signal);
-    signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     return {
       state: "readable",
       runId: processRunIdFromEnvironment(environment),
     };
   } catch (cause: unknown) {
-    signal?.throwIfAborted();
+    if (
+      cause instanceof DarwinProcessOwnershipInspectionError &&
+      (cause.cleanupOwner !== undefined || cause.cleanupFailure !== undefined)
+    )
+      throw cause;
+    rethrowProcessOwnershipInspectionFailure(cause);
     const code =
       cause instanceof Error &&
       "code" in cause &&
@@ -71,7 +79,7 @@ export async function* readProcessRunTokens(
   readonly process: ProcessTableEntry;
   readonly observation: ProcessRunTokenObservation;
 }> {
-  signal?.throwIfAborted();
+  assertProcessOwnershipInspectionActive(signal);
   if (processes.length === 0) return;
   let batch: ReadonlyMap<number, ProcessRunTokenObservation> | undefined;
   let batchFailure: string | undefined;
@@ -82,12 +90,17 @@ export async function* readProcessRunTokens(
           ? await host.runTokens(processes)
           : await host.runTokens(processes, signal);
     } catch (cause: unknown) {
-      signal?.throwIfAborted();
+      if (
+        cause instanceof DarwinProcessOwnershipInspectionError &&
+        (cause.cleanupOwner !== undefined || cause.cleanupFailure !== undefined)
+      )
+        throw cause;
+      rethrowProcessOwnershipInspectionFailure(cause);
       batchFailure = errorMessage(cause);
     }
   }
   for (const process of processes) {
-    signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     let observation = batch?.get(process.pid);
     if (observation === undefined) {
       observation = await readProcessRunToken(host, process.pid, signal);
@@ -97,7 +110,7 @@ export async function* readProcessRunTokens(
           reason: `${observation.reason}; run-token batch failed: ${batchFailure}`,
         };
     }
-    signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(signal);
     yield { process, observation };
   }
 }
