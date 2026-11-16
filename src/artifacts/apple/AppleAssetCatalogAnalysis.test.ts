@@ -688,6 +688,8 @@ describe("assetutil process cleanup", () => {
         code: "cleanup_incomplete",
         details: {
           operation: "inspect_asset_catalog",
+          // The completed run's output is kept with its cleanup report.
+          captured_output: { stdout: "[]", exit_code: 0 },
           resources: expect.arrayContaining([
             expect.stringMatching(/^process-group:\d+$/u),
           ]),

@@ -507,10 +507,14 @@ const assetUtilFailure = (
     outcome.exitCode === 0 &&
     outcome.signal === null
   ) {
+    // The completed run's output stays with the cleanup report that replaces it.
     const [cleanup, ...more] = retainArtifactCommandCleanup(
       cause,
       resources,
       OPERATION,
+      outcome.output === undefined
+        ? undefined
+        : { capturedOutput: capturedProviderOutput(outcome.output.snapshot) },
     );
     if (cleanup !== undefined)
       return more.reduce(
