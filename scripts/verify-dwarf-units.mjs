@@ -115,9 +115,15 @@ const variants = [
   },
 ];
 
+/**
+ * llvm-dwarfdump prints `DW_AT_x ("escaped")`; readelf prints `DW_AT_x : raw`
+ * with quotes left as they are, so its whole tail is the value.
+ */
 const quoted = (line) => {
-  const match = /"((?:\\.|[^"\\])*)"/u.exec(line);
-  if (match?.[1] !== undefined) return match[1].replace(/\\"/gu, '"');
+  const match = /\b(?:DW_)?AT_\w+\s*\(\s*"((?:\\.|[^"\\])*)"\s*\)\s*$/u.exec(
+    line,
+  );
+  if (match?.[1] !== undefined) return match[1].replace(/\\(["\\])/gu, "$1");
   const attribute = /\bDW_AT_\w+\s*:\s*(.*)$/u.exec(line);
   if (attribute === null) return null;
   const tail = attribute[1]

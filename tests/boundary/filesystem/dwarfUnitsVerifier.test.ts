@@ -68,6 +68,39 @@ describe("DWARF dumper comparison", () => {
     ]);
   });
 
+  it("keeps a whole comp_dir that contains quotes in both dumper formats", () => {
+    const unit = (comp_dir: string) => [
+      {
+        version: 5,
+        name: "alpha.c",
+        comp_dir,
+        producer: null,
+        dwo_name: null,
+      },
+    ];
+    expect(
+      parseDumperUnits(
+        [
+          "  Compilation Unit @ offset 0x0:",
+          "   Version:       5",
+          " <0><c>: Abbrev Number: 1 (DW_TAG_compile_unit)",
+          "    <d>   DW_AT_name        : alpha.c",
+          '    <e>   DW_AT_comp_dir    : (indirect line string, offset: 0x8): /tmp/build"quoted"/src',
+        ].join("\n"),
+      ),
+    ).toEqual(unit('/tmp/build"quoted"/src'));
+    expect(
+      parseDumperUnits(
+        [
+          "0x00000000: Compile Unit: length = 0x2b, format = DWARF32, version = 0x0005",
+          "0x0000000b: DW_TAG_compile_unit",
+          '              DW_AT_name\t("alpha.c")',
+          '              DW_AT_comp_dir\t("/tmp/build\\"quoted\\"/src\\\\x")',
+        ].join("\n"),
+      ),
+    ).toEqual(unit('/tmp/build"quoted"/src\\x'));
+  });
+
   it.each([
     `Compilation Unit @ offset 0x0:
      Version: 4
