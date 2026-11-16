@@ -69,6 +69,12 @@ export interface LaunchFailureContext {
   /** Bytes of the refused argument list, when the caller measured them. */
   readonly argumentBytes?: number;
   /**
+   * The command's arguments do not depend on the request, so an oversized
+   * launch (E2BIG) can only be repaired by shrinking the environment REA
+   * passes to it.
+   */
+  readonly fixedArguments?: boolean;
+  /**
    * The provider's report that it cannot be started, such as a message naming
    * its configured executable. Without it the shared report names the
    * executable and the errno.
@@ -139,8 +145,19 @@ export const classifyLaunchFailure = (
         },
         {
           ...details,
+          diagnostics: {
+            ...details.diagnostics,
+            // Fixed arguments leave the environment as the only input to shrink.
+            oversized_launch_input:
+              context.fixedArguments === true
+                ? "environment"
+                : "request_and_environment",
+          },
           retryable: false,
-          remediationAction: `Select less input for one call, or pass large values through a file, then retry; ${unchanged}. An unchanged request fails the same way.`,
+          remediationAction:
+            context.fixedArguments === true
+              ? `This command's arguments do not depend on the request, so the environment REA passes to it is too large. Remove large or unneeded variables from the environment REA runs with, then retry; ${unchanged}. Retrying in the same environment fails the same way.`
+              : `Select less input for one call, or pass large values through a file, then retry; ${unchanged}. An unchanged request fails the same way.`,
         },
       );
     case "missing":

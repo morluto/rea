@@ -34,6 +34,7 @@ import {
   stopOwnedDebuggerProcess,
   type OwnedDebuggerStopResult,
 } from "../../../src/process/ownedDebuggerSession.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { parseLinuxProcessStat } from "../../../src/process/LinuxProcessStat.js";
 import {
   answerFakeGdbStartup,
@@ -1955,6 +1956,61 @@ it("uses a fallback message when the process launcher rejects without an Error",
   }
   expect(attempts).toBe(2);
 });
+
+it.each([
+  {
+    code: "EAGAIN",
+    tag: "AnalysisResourceConstraintError",
+    projected: { code: "resource_constraint", retryable: true },
+    boundary: "host-capacity",
+  },
+  {
+    code: "E2BIG",
+    tag: "AnalysisResourceConstraintError",
+    // GDB's arguments are fixed, so the repair names the environment.
+    projected: { code: "resource_constraint", retryable: false },
+    boundary: "provider-launch",
+    facts: { oversized_launch_input: "environment" },
+  },
+  {
+    code: "EIO",
+    tag: "AnalysisCapabilityUnavailableError",
+    projected: {
+      code: "capability_unavailable",
+      remediation: { action: expect.stringContaining("REA_GDB_COMMAND") },
+    },
+    boundary: "provider-launch",
+  },
+])(
+  "classifies a $code launch failure once without retrying another MI dialect",
+  async ({ code, tag, projected, boundary, facts }) => {
+    let attempts = 0;
+    const manager = managerWithFakeSpawner(async () => {
+      attempts += 1;
+      throw spawnFailure(code, "fake-gdb");
+    });
+
+    const started = await manager.start();
+
+    expect(attempts).toBe(1);
+    expect(started.ok).toBe(false);
+    if (!started.ok) {
+      expect(started.error._tag).toBe(tag);
+      expect(projectAnalysisError(started.error)).toMatchObject({
+        ...projected,
+        details: {
+          diagnostics: {
+            boundary,
+            system_code: code,
+            syscall: "spawn fake-gdb",
+            command: "fake-gdb",
+            ...facts,
+          },
+        },
+      });
+    }
+  },
+);
 
 it("returns startup timeout when the MI prompt never arrives", async () => {
   const provider = await createProvider(

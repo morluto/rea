@@ -18,7 +18,14 @@ import {
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { AbortedWait, waitForAbortable } from "../process/AbortablePromise.js";
-import { classifyLaunchFailure } from "../process/launchFailure.js";
+import {
+  describeLaunchFailure,
+  launcherFailureOf,
+} from "../process/launchFailure.js";
+import {
+  classifyLaunchFailure,
+  type LaunchUnavailableFailure,
+} from "../process/classifyProviderOutcome.js";
 import { snapshotGdbCommandRecords } from "./GdbCommandRecords.js";
 import { randomUUID } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
@@ -108,22 +115,28 @@ const copiedTimeoutGuidance = (
     : { diagnostics: cause.diagnostics }),
   ...(cause.limit === undefined ? {} : { limit: cause.limit }),
 });
-/** A host executable refusal cannot be repaired by changing MI dialect. */
-class GdbExecutableRefusal extends AnalysisCapabilityUnavailableError {
-  constructor(command: string, systemCode: string, cause: Error) {
-    super("gdb", "start_gdb_session", cause.message, {
-      cause,
-      userMessage: `Could not launch the selected GDB executable ${JSON.stringify(command)} (${systemCode}).`,
+/** The selected GDB executable could not be started. */
+const gdbLaunchUnavailable = (
+  command: string,
+  failure: LaunchUnavailableFailure,
+  details: AnalysisErrorOptions,
+): AnalysisCapabilityUnavailableError => {
+  const reason = `Could not launch the selected GDB executable ${JSON.stringify(command)} (${describeLaunchFailure(failure)}).`;
+  return new AnalysisCapabilityUnavailableError(
+    "gdb",
+    "start_gdb_session",
+    reason,
+    {
+      ...details,
+      userMessage: reason,
       remediationAction:
         "Set REA_GDB_COMMAND to an installed executable GDB command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.",
-      diagnostics: {
-        boundary: "provider-launch",
-        command,
-        system_code: systemCode,
-      },
-    });
-  }
-}
+    },
+  );
+};
+
+/** Launch failures: changing the MI dialect cannot start the executable. */
+const gdbLaunchFailures = new WeakSet<AnalysisError>();
 
 const MAX_COMMAND_OUTPUT_RECORDS = 16_384;
 const MAX_MI_LINE_BYTES = 16 * 1024 * 1024;
@@ -551,7 +564,7 @@ export class GdbSessionManager {
     return mi3.ok ||
       signal.aborted ||
       this.#sessions.has(id) ||
-      mi3.error instanceof GdbExecutableRefusal
+      gdbLaunchFailures.has(mi3.error)
       ? mi3
       : this.#startProtocol(
           id,
@@ -591,11 +604,22 @@ export class GdbSessionManager {
         cause instanceof AnalysisCancelledError
       )
         return err(cancelledBy("start_gdb_session", carriedReason(cause)));
-      const refusal = classifyLaunchFailure(cause);
-      if (refusal !== undefined && cause instanceof Error)
-        return err(
-          new GdbExecutableRefusal(this.#command, refusal.code, cause),
-        );
+      const launch = launcherFailureOf(cause);
+      if (launch !== undefined) {
+        const command = this.#command;
+        const failure = classifyLaunchFailure(launch, {
+          providerId: "gdb",
+          operation: "start_gdb_session",
+          command,
+          fixedArguments: true,
+          selection: "REA_GDB_COMMAND",
+          details: { cause },
+          unavailable: (unavailable, details) =>
+            gdbLaunchUnavailable(command, unavailable, details),
+        });
+        gdbLaunchFailures.add(failure);
+        return err(failure);
+      }
       return err(
         new AnalysisCapabilityUnavailableError(
           "gdb",

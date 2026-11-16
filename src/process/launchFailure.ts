@@ -89,14 +89,6 @@ export const classifyLaunchFailureCode = (
   return kind === undefined ? undefined : { kind, code };
 };
 
-/** Classify a spawn failure; undefined when it was not a launch refusal. */
-export const classifyLaunchFailure = (
-  cause: unknown,
-): LaunchRefusal | undefined =>
-  cause instanceof Error && "code" in cause
-    ? classifyLaunchFailureCode(cause.code)
-    : undefined;
-
 /**
  * Name the executable on an errno Node threw synchronously from `spawn`.
  * Node emits ENOENT and EACCES as `spawn <path>` with `path`, but throws
