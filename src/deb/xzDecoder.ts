@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const XZ_MAGIC = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
 const XZ_HEADER_SIZE = 12;
@@ -135,8 +136,7 @@ const xzFooterPresent = (bytes: Uint8Array): boolean => {
 };
 
 const isTruncatedXzError = (cause: unknown): boolean => {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return /failed to fill whole buffer/iu.test(message);
+  return /failed to fill whole buffer/iu.test(errorMessage(cause));
 };
 
 export const decodeXz = (

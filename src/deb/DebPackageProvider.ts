@@ -1,4 +1,5 @@
 import { DEB_PACKAGE_PROVIDER_IDENTITY } from "./DebPackageProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import {
   ArtifactResourceScope,
   completedStableArtifactObservation,
@@ -113,7 +114,7 @@ const failureDialect = (
       cause,
       diagnostics: {
         path: input.path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     }),
 });

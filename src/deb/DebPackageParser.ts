@@ -1,4 +1,5 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { constants, zstdDecompressSync } from "node:zlib";
 
 import { gunzip, isGzip } from "../domain/desktop/gzipDocument.js";
@@ -882,10 +883,7 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
       const parsed = parseDebianRelationshipField(raw);
       if (parsed.firstUnread !== null) {
         const name = DEB_CONTROL_RELATIONSHIP_NAMES[field];
-        const first =
-          parsed.firstUnread.length > 120
-            ? `${parsed.firstUnread.slice(0, 120)}...`
-            : parsed.firstUnread;
+        const first = ellipsisExcerpt(parsed.firstUnread, 120);
         issues.push({
           kind: "malformed",
           member: "control.tar",
