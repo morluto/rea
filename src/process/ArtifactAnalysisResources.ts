@@ -485,6 +485,7 @@ export class ArtifactAnalysisResources {
             ? fixedAllowanceOptions(
                 `The retained command-output allowance of ${String(limits.output_bytes)} bytes (this release has no runtime override)`,
                 "capture",
+                { limit: limits.output_bytes, unit: "bytes" },
               )
             : {
                 retryable: false,
@@ -506,8 +507,7 @@ export class ArtifactAnalysisResources {
           },
         };
       },
-      dialect: (outcome, details) =>
-        new AnalysisOutputError(operation, outcome.message, details),
+      dialect: (_outcome, _details, unclassified) => unclassified(),
     };
   }
 

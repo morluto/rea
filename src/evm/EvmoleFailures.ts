@@ -195,7 +195,7 @@ const evmCommandContext = (
         { ...details, userMessage: reason },
       );
     },
-    dialect: (outcome, details) => {
+    dialect: (outcome, details, unclassified) => {
       // The reserved exit means EFBIG only when the worker's marker says so.
       if (
         outcome.kind === "exited" &&
@@ -217,21 +217,8 @@ const evmCommandContext = (
             ),
           },
         );
-      return new ProviderAdapterError(EVMOLE_PROVIDER_IDENTITY.id, OPERATION, {
-        ...details,
-        diagnostics: {
-          ...evmWorkerDiagnostics(context),
-          reason: outcome.message,
-          failure_kind: outcome.kind,
-          // A stream failure is not an ordinary exit, but its recorded
-          // status remains evidence.
-          ...(outcome.output === undefined
-            ? {}
-            : {
-                exit_code: outcome.output.snapshot.exitCode ?? null,
-                signal: outcome.output.snapshot.signal ?? null,
-              }),
-        },
+      return unclassified({
+        diagnostics: evmWorkerDiagnostics(context),
       });
     },
   };

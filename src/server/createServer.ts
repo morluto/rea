@@ -9,12 +9,19 @@ import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
 import { serverInstructions } from "./serverInstructions.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
+import {
+  artifactExecutionParameters,
+  managedAnalysisForAdmission,
+} from "./providerOperationFamilies.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
+import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
 import { promptsForToolFamilies } from "../contracts/promptToolFamilyScope.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
-import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
@@ -30,18 +37,14 @@ import type { BinarySessionPort } from "../application/binary/BinarySessionPort.
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
-import { registerArtifactTools } from "./registerArtifactTools.js";
-import { registerNativeTools } from "./registerNativeTools.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
-import { registerManagedTools } from "./registerManagedTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
-import { registerOfficialTools } from "./registerOfficialTools.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
@@ -50,7 +53,6 @@ import {
   withAdmittedAnalysis,
   type ServerAnalysisSource,
 } from "./analysisAdmission.js";
-import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -319,22 +321,6 @@ export const createServer = (
     if (failures.length > 1)
       throw new AggregateError(failures, "REA server cleanup failed");
   };
-  const analysisOptions = {
-    logger: toolLogger,
-    activeTarget,
-    recordEvidence,
-    evidenceById,
-    withAdmittedAnalysis: analysisAdmission,
-    ...(session === undefined
-      ? {}
-      : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
-  };
-  const evidenceOptions = {
-    logger: toolLogger,
-    activeTarget,
-    recordEvidence,
-    withAdmittedAnalysis: analysisAdmission,
-  };
   const common = {
     logger: toolLogger,
     recordEvidence,
@@ -351,7 +337,22 @@ export const createServer = (
     javascriptRecovery,
   );
   registerToolFamilies({
-    direct: () => registerOfficialTools(server, analysisOptions),
+    direct: () =>
+      registerServiceTools(
+        server,
+        {
+          providerOperations: {
+            contracts: OFFICIAL_TOOL_CONTRACTS,
+            activeTarget,
+            ...(session === undefined
+              ? {}
+              : {
+                  admitRecovery: session.admitRecoveryObservation.bind(session),
+                }),
+          },
+        },
+        contractTools,
+      ),
     enhanced: () =>
       registerServiceTools(
         server,
@@ -359,27 +360,20 @@ export const createServer = (
         contractTools,
       ),
     native: () => {
-      registerNativeTools(server, { ...evidenceOptions, evidenceById });
-      registerReverseEngineeringTools(
+      registerServiceTools(
         server,
-        reverseEngineering,
-        toolLogger,
-        delivery,
-        recordEvidence,
-        analysisAdmission,
-        session === undefined
-          ? undefined
-          : () => session.invalidateSnapshotForExternalMutation(),
-        session === undefined
-          ? undefined
-          : (path, signal, operation, rebindFailure) =>
-              session.withAdmittedExternalMutation(
-                path,
-                signal,
-                operation,
-                rebindFailure,
-              ),
-        evidenceById,
+        {
+          providerOperations: {
+            contracts: NATIVE_TOOL_CONTRACTS,
+            activeTarget,
+          },
+        },
+        contractTools,
+      );
+      registerServiceTools(
+        server,
+        { reverseEngineering: { service: reverseEngineering, session } },
+        contractTools,
       );
       registerServiceTools(
         server,
@@ -416,7 +410,17 @@ export const createServer = (
       );
     },
     artifact: () => {
-      registerArtifactTools(server, { ...evidenceOptions, evidenceById });
+      registerServiceTools(
+        server,
+        {
+          providerOperations: {
+            contracts: ARTIFACT_TOOL_CONTRACTS,
+            activeTarget,
+            parametersForExecution: artifactExecutionParameters,
+          },
+        },
+        contractTools,
+      );
       registerServiceTools(
         server,
         {
@@ -440,7 +444,17 @@ export const createServer = (
       );
     },
     managed: () => {
-      registerManagedTools(server, { ...evidenceOptions, evidenceById });
+      registerServiceTools(
+        server,
+        {
+          providerOperations: {
+            contracts: MANAGED_TOOL_CONTRACTS,
+            activeTarget,
+            analysisForAdmission: managedAnalysisForAdmission(activeTarget),
+          },
+        },
+        contractTools,
+      );
       if (session !== undefined)
         registerServiceTools(
           server,
@@ -572,7 +586,12 @@ export const createServer = (
         },
         contractTools,
       );
-      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
+      // Build tool responses are redacted as a whole; they record nothing.
+      registerServiceTools(
+        server,
+        { desktopBuild: desktopBuildComputers },
+        { logger: toolLogger },
+      );
     },
     session: () => {
       if (session === undefined) return;

@@ -61,6 +61,7 @@ import {
   type PcapCommandLauncher,
 } from "./PcapCommand.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { createPcapEvidence } from "../domain/pcap/pcapEvidence.js";
 import { preparePcapNativeBound } from "./PcapNativeBound.js";
@@ -198,6 +199,16 @@ const assertValidPcapCommandText = (
       },
     },
   );
+};
+
+/**
+ * What the failed DNS wire pass reported. An unrecognised command outcome
+ * names its stage in `detail`, or else the examined outcome's reason.
+ */
+const dnsFailureReason = (cause: AnalysisError): string => {
+  if (!(cause instanceof UnclassifiedProviderFailure)) return cause.message;
+  const detail = cause.diagnostics?.detail;
+  return typeof detail === "string" ? detail : cause.examined.reason;
 };
 
 export interface PcapProviderOptions {
@@ -1173,11 +1184,12 @@ export class PcapProvider {
           !(
             cause instanceof AnalysisResourceConstraintError ||
             cause instanceof AnalysisProtocolError ||
-            cause instanceof AnalysisOutputError
+            cause instanceof AnalysisOutputError ||
+            cause instanceof UnclassifiedProviderFailure
           )
         )
           throw cause;
-        dnsLimitation = `DNS wire identity extraction was unavailable: ${cause.message}; producer queries and addresses are retained without inferred ownership`;
+        dnsLimitation = `DNS wire identity extraction was unavailable: ${dnsFailureReason(cause)}; producer queries and addresses are retained without inferred ownership`;
       }
     } else {
       dnsLimitation =

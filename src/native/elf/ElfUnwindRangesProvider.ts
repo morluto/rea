@@ -23,7 +23,10 @@ import {
 } from "../../domain/native/elfUnwindRanges.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_UNWIND_RANGES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import {
   ElfUnwindSymbolTextFailure,
   parseElfUnwindRanges,
@@ -119,8 +122,9 @@ const elfUnwindFailurePrimary = (
       {
         cause,
         ...fixedAllowanceOptions(
-          "The 16 MiB ELF structural decoding budget",
+          "The ELF structural decoding allowance",
           "parser",
+          binaryResourceCeiling(cause),
         ),
       },
     );
@@ -151,10 +155,12 @@ const elfUnwindFailurePrimary = (
           ...(cause.boundary === undefined
             ? {}
             : structural
-              ? fixedAllowanceOptions(
-                  "The ELF unwind structural decoding budget",
-                  "parser",
-                )
+              ? cause.fixedAllowance === undefined
+                ? {}
+                : {
+                    retryable: false as const,
+                    fixedAllowance: cause.fixedAllowance,
+                  }
               : {
                   retryable: false as const,
                   remediationAction: inputBudgetRemediation(

@@ -105,7 +105,10 @@ it.each(
         },
       },
     );
-    const client = new Client({ name: "source-context", version: "1" });
+    const client = new Client(
+      { name: "source-context", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -222,7 +225,10 @@ it.each([false, true])(
       new InvestigationRecords({ maximumRepresentationBytes: 0 }),
     );
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "source-cleanup-context", version: "1" });
+    const client = new Client(
+      { name: "source-cleanup-context", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -334,10 +340,13 @@ it("keeps a smaller sibling recovery when a later completed observation exceeds 
     new InvestigationRecords({ maximumRepresentationBytes: 0 }),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "multiple-recovery-context",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "multiple-recovery-context",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);

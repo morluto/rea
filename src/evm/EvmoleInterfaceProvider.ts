@@ -8,7 +8,7 @@ import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -52,7 +52,9 @@ import {
   AnalysisOutputError,
   cancelledBy,
   carriedReason,
+  type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
@@ -90,23 +92,20 @@ import {
   type EvmWorkerLimits,
 } from "./EvmWorkerLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "inspect_evm_interface";
 
-/** The caller's own abort, keeping any read cleanup bound to the report. */
+/** The caller's cancellation, observed as `signal`'s own abort. */
 const abortedFailure = (
-  cause: unknown,
+  signal: AbortedSignal,
   retainedOutput: AnalysisCapturedOutput | undefined,
-): AnalysisCancelledError => {
-  const failure = cancelledBy(OPERATION, carriedReason(cause), {
-    ...(retainedOutput === undefined ? {} : { capturedOutput: retainedOutput }),
-    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-      ? { cleanup: cause.cleanup }
-      : {}),
-  });
-  bindArtifactFileCleanup(cause, failure);
-  return failure;
-};
+): AnalysisCancelledError =>
+  cancelledBy(
+    OPERATION,
+    signal,
+    retainedOutput === undefined ? {} : { capturedOutput: retainedOutput },
+  );
 const HOST_REQUIREMENT =
   "Initial real-verified offline EVM interface profile supports Linux x64 only.";
 
@@ -785,9 +784,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         input.encoding,
       );
       const selectedHex = Buffer.from(selectedBytes).toString("hex");
-      const decodedHash = createHash("sha256")
-        .update(selectedBytes)
-        .digest("hex");
+      const decodedHash = sha256Hex(selectedBytes);
       if (
         decodedHash !== reply.bytecode.sha256 ||
         selectedHex !== reply.bytecode.hex ||
@@ -892,24 +889,24 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           };
         }
       }
-      let failure =
-        options?.signal?.aborted &&
-        (cause === options.signal.reason ||
-          (cause instanceof Error && cause.name === "AbortError"))
-          ? abortedFailure(cause, retainedOutput)
-          : // Owns the selected carrier's cleanup binding and snapshot identity.
-            classifyProviderFailure(
-              cause,
-              evmFailureDialect({
-                phase,
-                path: input.path,
-                workerLimits,
-                limiter,
-                fileFailure,
-                timeoutMs,
-                producerLimits,
-              }),
-            );
+      // Only this caller's own abort is a cancellation; an abort error with
+      // another reason is classified as the failure it is.
+      const signal = options?.signal;
+      let failure = isAbortOf(cause, signal)
+        ? abortedFailure(signal, retainedOutput)
+        : // Owns the selected carrier's cleanup binding and snapshot identity.
+          classifyProviderFailure(
+            cause,
+            evmFailureDialect({
+              phase,
+              path: input.path,
+              workerLimits,
+              limiter,
+              fileFailure,
+              timeoutMs,
+              producerLimits,
+            }),
+          );
       if (markerCleanupFailure !== undefined) {
         const cleanup = retainedCleanupFailure(markerCleanupFailure);
         failure = analysisErrorWithCleanupFailure(

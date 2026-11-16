@@ -20,6 +20,7 @@ import {
 } from "../../fixtures/debuggerMcp.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -278,7 +279,10 @@ describe.each([RIZIN, GDB, CUTTER])(
         recorded.push(evidence);
         return ok("added" as const);
       });
-      const client = new Client({ name: "debugger-lifecycle", version: "1" });
+      const client = new Client(
+        { name: "debugger-lifecycle", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       onTestFinished(async () => {
         await client.close();
         await server.close();

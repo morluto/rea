@@ -10,6 +10,7 @@ import {
   createRizinTestManager,
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const test = it.skipIf(process.platform === "win32");
 
@@ -49,7 +50,10 @@ test.each([
       },
     );
     const server = rizinDebugMcpServer("rizin-partial-test", manager);
-    const client = new Client({ name: "rizin-partial-test", version: "1" });
+    const client = new Client(
+      { name: "rizin-partial-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {

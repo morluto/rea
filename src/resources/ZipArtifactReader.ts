@@ -5,6 +5,7 @@ import {
   copyArtifactEntry,
   sameArtifactEntry,
   type ArtifactEntry,
+  type ArtifactFixedLimit,
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
@@ -64,7 +65,16 @@ const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
 const ZIP_ZSTANDARD_WINDOW_ALLOWANCE = `${String(2 ** (ZIP_ZSTANDARD_WINDOW_LOG_MAX - 20))} MiB`;
 
 /** A frame above the window cap is a deliberate resource refusal, not damage. */
-const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt, and this limit cannot be raised at runtime. Recompress the member with a window of at most ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE}, or decompress it with a tool that admits larger windows, then retry.`;
+const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt.`;
+
+/** The fixed method-93 decoder window ceiling, with the request change that fits it. */
+export const ZIP_ZSTANDARD_WINDOW_CEILING: ArtifactFixedLimit = {
+  name: "The ZIP Zstandard decoder window allowance",
+  kind: "parser",
+  limit: 2 ** ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+  unit: "bytes",
+  narrowing: `Recompress the member with a window of at most ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE}, or decompress it with a tool that admits larger windows, then retry.`,
+};
 
 /** Keep zip.js's framing, CRC, size checks and backpressure for method 93. */
 class ZipZstandardDecompressionStream {
@@ -632,6 +642,7 @@ const typedZipFailure = (
     return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
       cause,
       boundary: "memory",
+      fixedAllowance: ZIP_ZSTANDARD_WINDOW_CEILING,
     });
   const invalidZstandard =
     compressionMethod === 93 &&

@@ -12,7 +12,7 @@ import {
   desktopViewByteDisplay,
   type DesktopViewPolicy,
 } from "./desktopViewPolicy.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** Why an archive has no view; the exported reader words it the same. */

@@ -125,12 +125,16 @@ export const unreadablePlist = (
   switch (selection.origin) {
     case "default": {
       // Name the default that is missing and the selection that still works.
-      const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input (CLI: --relative-path).`;
+      const missingDefault = `The target has no readable default plist at ${path}: ${sentence} Select another plist in the target with the path input.`;
       return new AnalysisCapabilityUnavailableError(
         IDENTITY.id,
         "inspect_plist",
         missingDefault,
-        { ...options, userMessage: missingDefault },
+        {
+          ...options,
+          userMessage: missingDefault,
+          related: { parameters: ["path"] },
+        },
       );
     }
     case "target":

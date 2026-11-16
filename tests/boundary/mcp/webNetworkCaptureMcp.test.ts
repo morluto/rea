@@ -16,6 +16,7 @@ import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.j
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const syntheticCaptureService = () =>
   new WebNetworkCaptureService({
@@ -48,10 +49,13 @@ it("publishes valid SDK schemas and retains historical inline Evidence with the 
     { kind: "session", session },
     { webNetworkCapture: service },
   );
-  const client = new Client({
-    name: "historical-capture-contract",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "historical-capture-contract",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

@@ -79,7 +79,7 @@ import {
   type TaskSummary,
 } from "./DesktopTaskExport.js";
 import { taskReads } from "./DesktopExportReaders.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */

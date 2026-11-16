@@ -371,7 +371,10 @@ it("refuses a selected view before tracing when the server retains no Evidence",
     throw new Error("No deep provider");
   });
   const server = createServer({ kind: "fixed", analysis: session });
-  const client = new Client({ name: "feature-trace-fixed", version: "1" });
+  const client = new Client(
+    { name: "feature-trace-fixed", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {

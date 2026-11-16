@@ -239,3 +239,32 @@ mcpTest(
     ]).toEqual([true, true, true, true]);
   },
 );
+
+mcpTest(
+  "binds a provider operation only to the contract of the same name",
+  () => {
+    const mismatched: ContractToolBindings = {
+      xrefs: {
+        admission: "sdk",
+        // @ts-expect-error A provider binding runs only its own operation.
+        provider: { operation: "extract_artifact", activeTarget: undefined },
+      },
+    };
+    const notProvider: ContractToolBindings = {
+      inspect_pe_imports: {
+        admission: "sdk",
+        // @ts-expect-error A tool that is no provider operation binds no provider.
+        provider: { operation: "xrefs", activeTarget: undefined },
+      },
+    };
+    expect(() =>
+      registerContractTools(evidenceServer(), mismatched, {
+        logger: silentLogger,
+        withAdmittedAnalysis: async () => {
+          throw new Error("not called");
+        },
+      }),
+    ).toThrow("MCP tool xrefs binds provider operation extract_artifact");
+    expect(notProvider).toBeDefined();
+  },
+);

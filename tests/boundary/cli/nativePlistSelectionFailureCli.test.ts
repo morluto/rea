@@ -136,14 +136,17 @@ describe.skipIf(process.platform !== "darwin")(
         expect(result.exitCode).toBe(1);
         expect(result.json).toMatchObject({
           code: "capability_unavailable",
-          message: expect.stringContaining("(CLI: --relative-path)"),
+          message: expect.stringMatching(
+            /select another plist.*with the path input\.$/iu,
+          ),
           remediation: {
-            action: expect.stringMatching(
-              /select another plist.*path input.*--relative-path/iu,
-            ),
+            action: expect.stringMatching(/select another plist.*path input/iu),
           },
           details: {
             operation: "inspect_plist",
+            // The message names the contract field; the CLI renders its flag.
+            related_parameters: ["path"],
+            related_cli_flags: { path: "--relative-path" },
             reason: expect.stringContaining(
               `no readable default plist at ${join(directory, "Contents/Info.plist")}: no file exists there.`,
             ),
