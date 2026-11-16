@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../analysisErrorProjectionSchema.js";
 import { relationshipCoverageSchema } from "../relationshipCoverage.js";
 
 /** One recorded traversal outcome; source levels and array positions retain identity. */

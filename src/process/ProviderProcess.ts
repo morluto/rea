@@ -40,6 +40,7 @@ import {
   type RuntimeExhaustion,
 } from "./RuntimeExhaustion.js";
 import { isStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -79,6 +80,19 @@ export interface SpawnedOwnedProviderProcess {
   readonly process: ProviderProcessHandle;
   readonly ownership: OwnedProcessGroup;
   readonly cleanup?: () => Promise<ProcessCleanupResult>;
+  /** See the owned `ProviderProcessLaunch.requestStop`. */
+  readonly requestStop?: (signal: NodeJS.Signals) => boolean;
+}
+
+/**
+ * A command's own stop request before owned cleanup: `signal` goes to the
+ * launched process group, and cleanup waits up to `graceMs` for the leader to
+ * exit before it kills what remains. For a command that rolls back work it
+ * started when asked to stop, such as `hdiutil attach` on SIGTERM.
+ */
+export interface ProcessTerminationPolicy {
+  readonly signal: NodeJS.Signals;
+  readonly graceMs: number;
 }
 
 /** Process events and streams required by provider lifecycle supervision. */
@@ -114,6 +128,13 @@ export type ProviderProcessLaunch =
       readonly ownsProcessLifetime: true;
       readonly ownership?: OwnedProcessGroup;
       readonly cleanup?: () => Promise<ProcessCleanupResult>;
+      /**
+       * Signal the launched process group while its leader is unreaped, so the
+       * leader's PID still names the group this launch created. False when
+       * nothing was signaled, such as after the leader exited or on a host
+       * without process groups.
+       */
+      readonly requestStop?: (signal: NodeJS.Signals) => boolean;
     };
 
 /**
@@ -261,6 +282,8 @@ export interface ProviderProcessStopOptions {
   readonly cleanupResult?: ProcessCleanupResult;
   readonly terminationGraceMs?: number;
   readonly killGraceMs?: number;
+  /** The command's own stop request before owned group cleanup. */
+  readonly termination?: ProcessTerminationPolicy;
 }
 
 /** Non-JSON snapshot of the exact inspection facts retained by a stop attempt. */
@@ -395,7 +418,29 @@ export const spawnOwnedProviderProcess = async (
       ? {}
       : { expectedCommand: options.expectedCommand ?? options.command }),
   };
-  return { process: child, ownership };
+  return {
+    process: child,
+    ownership,
+    requestStop: (signal) => signalUnreapedGroup(child, pid, signal),
+  };
+};
+
+/**
+ * Node sets exitCode or signalCode in the callback that reaps the leader, so
+ * until then the leader's PID still names the group the launch created.
+ */
+const signalUnreapedGroup = (
+  child: ChildProcess,
+  processGroupId: number,
+  signal: NodeJS.Signals,
+): boolean => {
+  if (child.exitCode !== null || child.signalCode !== null) return false;
+  try {
+    process.kill(-processGroupId, signal);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -889,12 +934,19 @@ export class ProviderProcessSupervisor {
       if (this.#inspectionCleanup.size > 0)
         return this.#inspectionStopFailure(
           [...this.#inspectionCleanup.values()]
-            .map(({ cause }) =>
-              cause instanceof Error ? cause.message : String(cause),
-            )
+            .map(({ cause }) => errorMessage(cause))
             .join("; "),
         );
       if (this.launch.cleanup !== undefined) {
+        // The command's own stop request comes first; owned cleanup then
+        // kills whatever remains, so the grace period only delays it.
+        if (
+          options.termination !== undefined &&
+          options.cleanupResult === undefined &&
+          this.#exitObservation === undefined &&
+          this.launch.requestStop?.(options.termination.signal) === true
+        )
+          await this.waitForExit(options.termination.graceMs);
         const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
         const exitObservedBeforeCleanup = this.#exitObservation !== undefined;
         const cleanup = await this.#ownedCleanup(options.cleanupResult);
@@ -1059,6 +1111,7 @@ export class ProviderProcessSupervisor {
 
 class ProcessOutputCapture {
   readonly #chunks: Buffer[] = [];
+  // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
   #bytes = 0;
   /** Observed bytes before the first retained one, which tail retention dropped. */
   #start = 0;

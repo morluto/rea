@@ -173,6 +173,49 @@ it("rejects without another read when the signal aborts after the pause has fulf
   expect(failure instanceof Error && failure.cause).toBe(reason);
 });
 
+it.each([
+  ["the caller's own abort error", "own", true],
+  ["an abort error carrying another reason", "foreign", false],
+  ["a reasonless AbortError", "reasonless", false],
+] as const)(
+  "counts %s from the retry pause as cancellation: %s",
+  async (_label, thrown, cancelled) => {
+    const controller = new AbortController();
+    const reason = { caller: "busy-health cancellation" };
+    const { connection } = scripted([busy("config_json_get")]);
+    const foreign =
+      thrown === "reasonless"
+        ? new DOMException("Aborted elsewhere", "AbortError")
+        : Object.assign(new Error("The operation was aborted"), {
+            name: "AbortError",
+            code: "ABORT_ERR",
+            cause: thrown === "own" ? reason : { other: "deadline" },
+          });
+    const clock = {
+      now: () => 0,
+      delay: async () => {
+        controller.abort(reason);
+        throw foreign;
+      },
+    };
+
+    const failure = await readSettledHealth(connection, {
+      database: "db",
+      timeoutMs: 10_000,
+      signal: controller.signal,
+      clock,
+    }).catch((cause: unknown) => cause);
+
+    if (cancelled)
+      expect(failure).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        operation: "server_health",
+        cause: reason,
+      });
+    else expect(failure, "the pause's own failure is kept").toBe(foreign);
+  },
+);
+
 it("retains the last busy observation when a shortened health request times out", async () => {
   const capturedOutput = {
     stdout: "",

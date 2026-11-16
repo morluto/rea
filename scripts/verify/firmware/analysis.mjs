@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { firmwareResultSchemas } from "../../../dist/domain/firmware/firmwareAnalysis.js";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
-import { ArtifactResourceScope } from "../../../dist/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../dist/resources/ArtifactResourceScope.js";
 import { hashVerifierFile } from "../../lib/verifier-file-resources.mjs";
 import {
   VerifierFixture,
@@ -130,7 +130,7 @@ async function callTool(name, args) {
 // ---------------------------------------------------------------------------
 
 function verifyRegions(evidence) {
-  assert.equal(evidence.subject.digest.sha256, oracle.sha256);
+  assert.equal(evidence.subject.identity.sha256, oracle.sha256);
 
   const parsed = firmwareResultSchemas.inspect_firmware_regions.parse(
     evidence.normalized_result,
@@ -360,7 +360,7 @@ async function stageGhidra(mcpFiles) {
   });
   const dossier = parseEvidence(dossierRaw);
   assert.equal(
-    dossier.subject.digest.sha256,
+    dossier.subject.identity.sha256,
     oracle.files["usr/bin/probe"].sha256,
   );
 

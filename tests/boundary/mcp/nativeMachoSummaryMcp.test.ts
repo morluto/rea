@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { copyFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -150,7 +151,7 @@ mcpTest(
     const { empty, segment, dependency, command, report } =
       binaryUncertainFixture();
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -231,7 +232,7 @@ mcpTest(
       sections: empty,
     };
     const historical = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",
@@ -312,7 +313,7 @@ mcpTest(
       limitations: [],
     });
     const source = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_macho",

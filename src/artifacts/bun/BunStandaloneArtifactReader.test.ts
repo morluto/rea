@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
-import * as artifactPaths from "../ArtifactPaths.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
   bunModuleGraphPayload,
@@ -256,14 +256,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
   const observed = await open(path, "r");
   const prototype = Object.getPrototypeOf(observed) as FileHandle;
   const original = prototype.read;
-  let entered!: () => void;
-  let resume!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const artifactRead = phaseGate();
   let firstRead = true;
   const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
     this: FileHandle,
@@ -272,8 +265,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
     const result = await original.apply(this, args);
     if (firstRead) {
       firstRead = false;
-      entered();
-      await gate;
+      await artifactRead.hold();
     }
     return result;
   });
@@ -285,17 +277,17 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
       },
       (cause: unknown) => cause,
     );
-    await awaitAcknowledgement(started, first, "Bun artifact read");
+    await artifactRead.reached(first, "Bun artifact read");
     const second = collect(reader.entries());
     controller.abort(reason);
-    resume();
+    artifactRead.release();
     expect(await rejected).toMatchObject({
       reason: "cancelled",
       cause: reason,
     });
     expect((await second).map((entry) => entry.path)).toEqual(["$bunfs/a.js"]);
   } finally {
-    resume();
+    artifactRead.release();
     spy.mockRestore();
     await observed.close();
     await reader.close();

@@ -22,6 +22,7 @@ import {
 import { isCallerOnlyIncompleteCoverage } from "./functionCallCoverage.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { appendAll } from "./appendAll.js";
+import { sameTargetIdentity } from "./targetIdentity.js";
 
 /** Minimal directed caller-to-callee adjacency for call-path search. */
 class CallGraph {
@@ -218,11 +219,7 @@ const assertCompatible = (
   if (firstEntry.done) return;
   const first = firstEntry.value;
   for (const snapshot of snapshots.values()) {
-    if (
-      snapshot.subject.digest.sha256 !== first.subject.digest.sha256 ||
-      snapshot.subject.format !== first.subject.format ||
-      snapshot.subject.architecture !== first.subject.architecture
-    )
+    if (!sameTargetIdentity(snapshot.target, first.target))
       throw invalidCallPathSelection(
         ["functions"],
         "Call-path Evidence mixes artifact subjects",
@@ -317,8 +314,9 @@ const inspectSearch = ({
         incompleteExpandedCoverage = true;
       }
       // Explicit, Evidence-bound relationship coverage owns completeness;
-      // generic provider/dossier limitations remain contextual. Legacy Evidence
-      // without that metadata retains its conservative limitation-based rule.
+      // generic provider/dossier limitations remain contextual. Evidence from
+      // a provider that reports no relationship coverage keeps the
+      // conservative limitation-based rule.
       // The search only expands callee edges, so coverage that is unknown
       // solely because callers are unobservable does not make the searched
       // callee closure incomplete; the caller caveat stays in limitations.

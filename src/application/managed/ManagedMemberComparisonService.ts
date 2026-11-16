@@ -1,8 +1,9 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 
 import {
   compareManagedMembers,
@@ -10,30 +11,14 @@ import {
   type ManagedMemberComparisonResult,
 } from "../../domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../domain/managed/managedMemberComparisonMatch.js";
-import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import {
-  classifyBinaryTargetFilesystemFailure,
-  parseBinaryTarget,
-} from "../BinaryTargetResolver.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { inspectManagedMembersBytes } from "../../dotnet/ManagedMemberInspector.js";
-import {
-  readManagedSnapshot,
-  verifyManagedSourceIdentity,
-} from "../../dotnet/ManagedSnapshot.js";
-import { managedInspectionInputFailure } from "../../dotnet/ManagedReaderFailure.js";
-import {
-  MANAGED_STATIC_PROVIDER,
-  MANAGED_WORKFLOW_PROVIDER,
-} from "../../domain/investigationProviders.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
+import { workflowUnknownInput } from "../investigation/WorkflowUnknown.js";
 
 export interface ManagedMemberComparisonExecution {
   readonly evidence: Evidence;
@@ -41,11 +26,23 @@ export interface ManagedMemberComparisonExecution {
   readonly sources: readonly [Evidence, Evidence];
 }
 
+/**
+ * The local paths a caller selected for each side and the inspection fields
+ * both sides were inspected with, recorded as comparison request facts.
+ */
+export interface ManagedMemberComparisonSelection {
+  readonly leftPath: string;
+  readonly rightPath: string;
+  readonly inspection: Readonly<Record<string, JsonValue>>;
+}
+
 /** Authenticate both source records, then compare their parsed observations. */
 export const executeManagedMemberComparison = (
   input: unknown,
   lookup?: EvidenceLookup,
-  options: Pick<ExecutionOptions, "signal"> = {},
+  options: Pick<ExecutionOptions, "signal"> & {
+    readonly selection?: ManagedMemberComparisonSelection;
+  } = {},
 ): Result<ManagedMemberComparisonExecution, AnalysisError> => {
   const operation = "compare_managed_members";
   const request = resolveEvidenceRequest(
@@ -84,6 +81,7 @@ export const executeManagedMemberComparison = (
     left.value.evidence,
     right.value.evidence,
     result,
+    options.selection,
   );
   return ok({
     evidence,
@@ -92,204 +90,78 @@ export const executeManagedMemberComparison = (
   });
 };
 
-interface ManagedMemberComparisonPathDependencies {
-  readonly resolveTarget: typeof parseBinaryTarget;
-  readonly readSnapshot: typeof readManagedSnapshot;
-}
-
-interface ManagedMemberComparisonPathInput {
-  readonly leftPath: string;
-  readonly rightPath: string;
-  /** Applied to both sides with inspect_managed_members selection semantics. */
-  readonly typeNames?: readonly string[];
-  readonly maxSnapshotBytes?: number;
-  readonly maxRepresentationBytes?: number;
-}
-
-/** Inspect two local PE artifacts and return one derived comparison Evidence. */
-export const compareManagedMemberPaths = async (
-  input: ManagedMemberComparisonPathInput,
-  dependencies: Partial<ManagedMemberComparisonPathDependencies> = {},
-  resources?: ArtifactResourceScope,
-): Promise<Result<Evidence, AnalysisError>> => {
-  const operation = "compare_managed_members";
-  const resolveTarget = dependencies.resolveTarget ?? parseBinaryTarget;
-  const readSnapshot = dependencies.readSnapshot ?? readManagedSnapshot;
-  let partialEvidence: Evidence | undefined;
-  try {
-    const [leftTarget, rightTarget] = await Promise.all([
-      resolveTarget(
-        input.leftPath,
-        resources === undefined ? {} : { resources },
-      ),
-      resolveTarget(
-        input.rightPath,
-        resources === undefined ? {} : { resources },
-      ),
-    ]);
-    // Report an unopenable path like every other path-based command does,
-    // with the failed path and constraint, rather than a bare input error.
-    if (!leftTarget.ok) {
-      if (!rightTarget.ok && rightTarget.error.cleanupIncomplete)
-        return err(
-          analysisErrorWithCleanupDependencies(
-            leftTarget.error,
-            rightTarget.error,
-            operation,
-          ),
-        );
-      return leftTarget;
-    }
-    if (!rightTarget.ok) return rightTarget;
-    const inspectTarget = async (
-      target: BinaryTarget,
-      inputField: "leftPath" | "rightPath",
-    ) => {
-      const { path } = target;
-      const selectedPath = input[inputField];
-      let snapshot: Awaited<ReturnType<typeof readManagedSnapshot>>;
-      try {
-        snapshot = await readSnapshot(path, operation, {
-          ...(input.maxSnapshotBytes === undefined
-            ? {}
-            : { maxBytes: input.maxSnapshotBytes }),
-          expectedSha256: target.sha256,
-          ...(resources === undefined ? {} : { resources }),
-        });
-      } catch (cause: unknown) {
-        const failure = classifyBinaryTargetFilesystemFailure(path, cause);
-        if (failure !== undefined) throw failure;
-        throw cause;
-      }
-      const admitted = verifyManagedSourceIdentity(target, snapshot, operation);
-      if (!admitted.ok) throw admitted.error;
-      // Member comparison never reads literals or spends their decode budget.
-      let inspection: ReturnType<typeof inspectManagedMembersBytes>;
-      try {
-        inspection = inspectManagedMembersBytes(snapshot.bytes, target, {
-          userStrings: false,
-          ...(input.maxRepresentationBytes === undefined
-            ? {}
-            : { maxRepresentationBytes: input.maxRepresentationBytes }),
-          ...(input.typeNames === undefined
-            ? {}
-            : { typeNames: input.typeNames }),
-        });
-      } catch (cause: unknown) {
-        throw (
-          managedInspectionInputFailure(
-            operation,
-            selectedPath,
-            cause,
-            inputField,
-          ) ?? cause
-        );
-      }
-      const evidence = createEvidence(target, MANAGED_STATIC_PROVIDER, {
+/**
+ * Compare session-held inspections and keep members that remain unmatched or
+ * ambiguous as the comparison's residual unknown.
+ */
+export const compareManagedMembersExecution = (
+  input: unknown,
+  lookup: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal">,
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const compared = executeManagedMemberComparison(input, lookup, options);
+  if (!compared.ok) return compared;
+  const { evidence, sources, summary } = compared.value;
+  if (summary.unknown === 0)
+    return ok({ evidence, sources, unknown: undefined });
+  const unknown = workflowUnknownInput(evidence.evidence_id, {
+    question:
+      "Which managed members remain unmatched or ambiguous across these versions?",
+    severity: "medium",
+    domain: "managed-member-comparison",
+    required_authority: "shipped-artifact",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [
+      {
         operation: "inspect_managed_members",
-        parameters: {
-          ...(input.typeNames === undefined
-            ? {}
-            : { type_names: [...input.typeNames] }),
-          ...(input.maxSnapshotBytes === undefined
-            ? {}
-            : { max_snapshot_bytes: input.maxSnapshotBytes }),
-          ...(input.maxRepresentationBytes === undefined
-            ? {}
-            : {
-                max_metadata_representation_bytes: input.maxRepresentationBytes,
-              }),
-        },
-        result: inspection,
-        rawResult: null,
-        limitations: inspection.limitations,
-        locations: [{ kind: "artifact-path", path: selectedPath }],
-      });
-      return { inspection, evidence };
-    };
-    const left = await inspectTarget(leftTarget.value, "leftPath");
-    partialEvidence = left.evidence;
-    const right = await inspectTarget(rightTarget.value, "rightPath");
-    const result = compareManagedMembers(
-      {
-        evidenceId: left.evidence.evidence_id,
-        result: left.inspection,
+        rationale:
+          "Review the inspection Evidence coverage and limit diagnostics; this operation has no page override, so unresolved members must remain unknown.",
       },
-      {
-        evidenceId: right.evidence.evidence_id,
-        result: right.inspection,
-      },
-    );
-    return ok(
-      createManagedMemberComparisonEvidence(
-        left.evidence,
-        right.evidence,
-        result,
-        input,
-      ),
-    );
-  } catch (cause: unknown) {
-    const failure = asOutputFailure(operation, cause);
-    return err(
-      partialEvidence === undefined
-        ? failure
-        : failure.retainPartialObservation(partialEvidence),
-    );
-  }
+    ],
+    relationships: [],
+  });
+  return unknown.ok
+    ? ok({ evidence, sources, unknown: unknown.value })
+    : unknown;
 };
 
 const createManagedMemberComparisonEvidence = (
   left: Evidence,
   right: Evidence,
   result: ManagedMemberComparisonResult,
-  pathRequest?: ManagedMemberComparisonPathInput,
+  selection?: ManagedMemberComparisonSelection,
 ): Evidence =>
-  createEvidence(undefined, MANAGED_WORKFLOW_PROVIDER, {
-    predicateType: "rea.managed-member-comparison",
-    operation: "compare_managed_members",
-    parameters: {
-      left_evidence_id: left.evidence_id,
-      right_evidence_id: right.evidence_id,
-      ...(pathRequest === undefined
-        ? {}
-        : {
-            left_path: pathRequest.leftPath,
-            right_path: pathRequest.rightPath,
-          }),
-      ...(pathRequest?.typeNames === undefined
-        ? {}
-        : { type_names: [...pathRequest.typeNames] }),
-      ...(pathRequest?.maxSnapshotBytes === undefined
-        ? {}
-        : { max_snapshot_bytes: pathRequest.maxSnapshotBytes }),
-      ...(pathRequest?.maxRepresentationBytes === undefined
-        ? {}
-        : {
-            max_metadata_representation_bytes:
-              pathRequest.maxRepresentationBytes,
-          }),
+  createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    MANAGED_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.managed-member-comparison",
+      operation: "compare_managed_members",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+        ...(selection === undefined
+          ? {}
+          : {
+              left_path: selection.leftPath,
+              right_path: selection.rightPath,
+              ...selection.inspection,
+            }),
+      },
+      result,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: result.limitations,
+      locations:
+        selection === undefined
+          ? []
+          : [
+              { kind: "artifact-path", path: selection.leftPath },
+              { kind: "artifact-path", path: selection.rightPath },
+            ],
+      evidenceLinks: result.evidence_links,
     },
-    result,
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: result.limitations,
-    locations:
-      pathRequest === undefined
-        ? []
-        : [
-            { kind: "artifact-path", path: pathRequest.leftPath },
-            { kind: "artifact-path", path: pathRequest.rightPath },
-          ],
-    evidenceLinks: result.evidence_links,
-  });
-
-const asOutputFailure = (operation: string, cause: unknown): AnalysisError =>
-  cause instanceof AnalysisError
-    ? cause
-    : new AnalysisOutputError(
-        operation,
-        "Managed member comparison produced invalid output",
-        { cause },
-      );
+  );

@@ -1,18 +1,18 @@
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi, onTestFinished } from "vitest";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   NativeFixtureRunner,
   nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { AnalysisOutputError } from "../../../../src/domain/analysisErrorCore.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 
 const parameters = { breakpoints: [{ kind: "function", name: "main" }] };
 const fixture = async () => {
@@ -91,13 +91,7 @@ it("retains preflight read failure and exact descriptor across failed client cle
 
 it("joins admitted preflight before closing the tracer", async () => {
   const { target, prototype } = await fixture();
-  let enter!: () => void, resume!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const targetRead = phaseGate();
   const original = prototype.read;
   const read = vi
     .spyOn(prototype, "read")
@@ -105,8 +99,7 @@ it("joins admitted preflight before closing the tracer", async () => {
       this: FileHandle,
       ...args: Parameters<FileHandle["read"]>
     ) {
-      enter();
-      await gate;
+      await targetRead.hold();
       return Reflect.apply(original, this, args);
     });
   const calls: string[] = [];
@@ -131,7 +124,7 @@ it("joins admitted preflight before closing the tracer", async () => {
     }),
   ).createClient(target);
   onTestFinished(async () => {
-    resume();
+    targetRead.release();
     try {
       await observing;
     } finally {
@@ -140,7 +133,7 @@ it("joins admitted preflight before closing the tracer", async () => {
     }
   });
   const observing = client.execute("observe_native_calls", parameters);
-  await awaitAcknowledgement(entered, observing, "native target read");
+  await targetRead.reached(observing, "native target read");
   let closed = false;
   const closing = client.close().then((result) => {
     closed = true;
@@ -148,7 +141,7 @@ it("joins admitted preflight before closing the tracer", async () => {
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
   expect(closed).toBe(false);
-  resume();
+  targetRead.release();
   expect((await observing).ok).toBe(false);
   expect((await closing).ok).toBe(true);
   expect(calls).toEqual(["trace", "close"]);
