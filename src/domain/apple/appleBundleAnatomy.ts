@@ -170,6 +170,9 @@ const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
   const byAnatomy = new Set<string>();
   for (const path of directoryPaths(tree)) {
     if (!roots.some((root) => isWithin(path, root))) continue;
+    // An inventoried file keeps its identity: archive members (app.asar/...)
+    // imply a directory at the archive's own path, which is not a bundle.
+    if (isInventoriedFile(tree, path)) continue;
     const name = path.split("/").at(-1) ?? "";
     if (APPLE_BUNDLE_EXTENSION.test(name)) paths.add(path);
     else if (name.includes(".") && hasBundleAnatomy(tree, path)) {
@@ -243,6 +246,12 @@ const indexTree = (entries: readonly Entry[]): Tree => {
     }
   }
   return { directories, files, links, duplicateFiles, listedDirectories };
+};
+
+const isInventoriedFile = (tree: Tree, path: string): boolean => {
+  const slash = path.lastIndexOf("/");
+  const parent = slash === -1 ? "" : path.slice(0, slash);
+  return tree.files.get(parent)?.has(path.slice(slash + 1)) === true;
 };
 
 function* directoryPaths(tree: Tree): Iterable<string> {

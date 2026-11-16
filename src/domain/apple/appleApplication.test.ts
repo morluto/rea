@@ -334,6 +334,24 @@ describe("macOS application roots and bundle roles", () => {
 });
 
 describe("Apple bundle directory identity", () => {
+  it("does not read an archive whose members imply bundle anatomy as a bundle", () => {
+    // The inventory lists app.asar as a file; its members imply a directory
+    // at the same path, holding Info.plist and Contents/.
+    const result = project(
+      inventoryEvidence("directory", "Fixture.app", [
+        { path: "Contents/Info.plist", format: "plist" },
+        macho("Contents/MacOS/Fixture"),
+        { path: "Contents/Resources/app.asar" },
+        { path: "Contents/Resources/app.asar/Info.plist" },
+        { path: "Contents/Resources/app.asar/Contents/Info.plist" },
+      ]),
+    );
+    expect(result.bundles.length).toBeGreaterThan(0);
+    expect(
+      result.bundles.filter(({ path }) => path.endsWith("app.asar")),
+    ).toEqual([]);
+  });
+
   it.each([
     ["Contents", "file"],
     ["Contents", "symlink"],
