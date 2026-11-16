@@ -115,6 +115,9 @@ const unknownExpressions = [
   '(path[method] as typeof path.join)(__dirname, "preload.js")',
   '((useJoin ? path.join : path.resolve) as typeof path.join)(__dirname, "preload.js")',
   'fileURLToPath(new (runtimeURL as typeof URL)("./preload.js", import.meta.url))',
+  'path.join("ignored", __dirname, "preload.js")',
+  'path.join(__dirname, __dirname, "preload.js")',
+  'path.join(__dirname, path.join(__dirname, "preload.js"))',
   "path.resolve()",
   "path.posix.resolve()",
   'path.resolve("sub", "../preload.js")',
@@ -285,11 +288,6 @@ describe("inert JavaScript path resolution", () => {
     [
       'path.join(dirname(fileURLToPath(import.meta.url)), "/lib", "/preload.js")',
       "lib/preload.js",
-      "filesystem-expression",
-    ],
-    [
-      'path.join("ignored", __dirname, "preload.js")',
-      "ignored/preload.js",
       "filesystem-expression",
     ],
     [
