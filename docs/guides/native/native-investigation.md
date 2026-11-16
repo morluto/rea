@@ -1042,11 +1042,12 @@ complete observation.
   (`default` or `caller`) and the bytes retained. A refusal names the observed
   file size, the effective budget and its source, and either the budget to
   select or, above 1 GiB, a deep analysis provider.
-  `swift_decls` lists each `__swift5_types` nominal type descriptor, which
-  survives stripping: `kind` (`class`, `struct`, `enum`, or `actor` from the
-  class actor flag), the descriptor's own `name`, `module`, `qualified_name`
-  (`Outer.Inner`), `generic`, the metadata `accessor_address`, the descriptor
-  `location`, and evidence citing its `__swift5_types` record.
+  `swift_decls` lists each `__swift5_types` and `__swift5_types2` nominal type
+  descriptor, which survives stripping: `kind` (`class`, `struct`, `enum`, or
+  `actor` from the class actor flag), the descriptor's own `name`, `module`,
+  `qualified_name` (`Outer.Inner`), `generic`, the metadata
+  `accessor_address`, the descriptor `location`, and evidence citing its type
+  record by section. Noncopyable types are recorded in `__swift5_types2`.
   Private and local types set `anonymous_context` because their anonymous
   context is omitted from `qualified_name`. When a parent context cannot be
   resolved, such as an extension of a type named only by a mangled name, a
