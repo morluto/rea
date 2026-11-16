@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { holdFirstFileRead } from "../support/holdFirstFileRead.js";
@@ -65,7 +65,7 @@ it.each([
       });
     try {
       if (held !== undefined) {
-        await held.firstRead;
+        await held.reached(running, "first file read");
         process.emit(signal);
         held.release();
       }

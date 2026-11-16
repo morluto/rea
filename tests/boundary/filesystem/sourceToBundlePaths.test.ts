@@ -1,6 +1,6 @@
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { resolveSourceToBundleReference } from "../../../src/application/javascript/SourceToBundleReference.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -788,7 +788,8 @@ it("rejects static application Evidence whose subject path disagrees with its re
   const analyzed = await analyzeJavaScriptApplication({ input_path: root });
   if (!analyzed.ok) throw analyzed.error;
   const subject = analyzed.value.subject;
-  if (subject === null) throw new Error("Analysis Evidence subject missing");
+  if (subject.identity.kind !== "file")
+    throw new Error("Analysis Evidence subject missing");
   const inconsistent = {
     ...analyzed.value,
     subject: {

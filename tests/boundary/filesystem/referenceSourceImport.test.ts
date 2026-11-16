@@ -22,12 +22,12 @@ import { prepareReferenceSourceImport } from "../../../src/application/Reference
 import {
   readRegularFileText,
   RegularFileReadFailure,
-} from "../../../src/application/RegularFileRead.js";
+} from "../../../src/process/RegularFileRead.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 

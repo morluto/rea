@@ -200,7 +200,7 @@ it("keeps value-flow counts unknown when value flow is unrecorded or unavailable
   if (!unrecorded.ok) throw unrecorded.error;
   expect(analysisViewResultSchema.parse(unrecorded.value)).toMatchObject({
     summary: {
-      value_flow: { available: false, truncated: false },
+      value_flow: { available: false, truncated: null },
       counts: flowCounts,
     },
     unknowns: expect.arrayContaining(["native_value_flow was not recorded"]),

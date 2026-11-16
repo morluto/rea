@@ -126,7 +126,7 @@ for (const task of tasks) {
     },
   );
   const evidence = parseEvidence(JSON.parse(response.stdout));
-  assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+  assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
   assert.equal(evidence.operation, task.name);
   cliResults.set(task.name, evidence);
   console.log(`PASS CLI ${task.name}`);
@@ -161,8 +161,8 @@ try {
     assert.deepEqual(evidence.parameters, cliResults.get(task.name).parameters);
     assert.deepEqual(evidence.provider, cliResults.get(task.name).provider);
     assert.deepEqual(
-      evidence.subject.digest,
-      cliResults.get(task.name).subject.digest,
+      evidence.subject.identity,
+      cliResults.get(task.name).subject.identity,
     );
     assert.deepEqual(
       evidence.limitations,

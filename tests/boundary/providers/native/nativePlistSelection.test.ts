@@ -53,7 +53,7 @@ it("resolves selected paths and defaults without conflating intent and file read
   } as const;
   expect(await resolveNativePlistSelection(plistTarget, undefined)).toEqual({
     ok: true,
-    value: { path: chosen, origin: "selected" },
+    value: { path: chosen, origin: "target" },
   });
 });
 
@@ -86,7 +86,7 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.each(["missing", "directory"] as const)(
-  "retains selected target intent for a %s plist",
+  "reports a %s plist target against the target, not the unsent path input",
   async (kind) => {
     const root = await createTestTempDirectory("rea-plist-origin-file-");
     const path = join(root, "chosen.plist");
@@ -105,27 +105,23 @@ it.each(["missing", "directory"] as const)(
       await client.close();
     });
     const result = await client.execute("inspect_plist", {});
-    if (result.ok) throw new Error("Expected selected file refusal");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "invalid_request",
+    if (result.ok) throw new Error("Expected target file refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      code: "target_unavailable",
       details: {
-        issues: [
-          {
-            path: ["path"],
-            message: expect.stringContaining(
-              kind === "missing"
-                ? "no file exists there"
-                : "not a regular file",
-            ),
-          },
-        ],
+        path,
+        reason: expect.stringContaining(
+          kind === "missing" ? "no file exists there" : "not a regular file",
+        ),
       },
     });
+    expect(projected.details).not.toHaveProperty("issues");
   },
 );
 
 it.skipIf(process.platform === "win32")(
-  "reports selected and default plist path-resolution failures as selection failures",
+  "reports target and default plist path-resolution failures against the input that chose them",
   async () => {
     const root = await createTestTempDirectory("rea-plist-origin-resolve-");
     const loop = join(root, "Loop.plist");
@@ -162,16 +158,8 @@ it.skipIf(process.platform === "win32")(
           sha256: "0".repeat(64),
         }),
       ).toMatchObject({
-        code: "invalid_request",
-        details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_value",
-              message: expect.stringContaining(`(${code})`),
-            },
-          ],
-        },
+        code: "target_unavailable",
+        details: { path, reason: expect.stringContaining(`(${code})`) },
       });
     const fallback = await failure(nativeMachoTarget(program));
     expect(fallback).toMatchObject({ code: "capability_unavailable" });

@@ -8,6 +8,7 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 import { AnalysisCancelledError } from "./analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Describe browser cleanup failure without discarding its resource evidence. */
 export const browserCleanupObservation = (
@@ -16,7 +17,7 @@ export const browserCleanupObservation = (
   cause instanceof AnalysisError && cause.cleanup !== undefined
     ? cause.cleanup
     : {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         resources:
           cause instanceof AnalysisError && cause.cleanupResources.length > 0
             ? cause.cleanupResources

@@ -16,7 +16,6 @@ import {
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
-import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
 import {
   artifactExtractionResultSchema,
@@ -24,6 +23,7 @@ import {
 } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 cliTest(
   "inventories and extracts method-93 Zstandard ZIP bytes through the public CLI",

@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
   MODULE_SIGNATURE_MAGIC,
 } from "../../domain/native/kernelModule.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,
@@ -447,10 +447,10 @@ it("charges many sections sharing one huge __ksymtab name to the entry budget", 
   const bytes = kernelModuleFixture({
     sharedNameSections: { name, count: 8192 },
   });
-  const started = performance.now();
   expect(() => parse(bytes)).toThrow(ArtifactReaderFailure);
+  // The shared name decodes once; per-section decoding exceeds the 16 MiB
+  // section-name budget and refuses this module.
   const report = parse(bytes, { max_entries: 65_536 });
-  expect(performance.now() - started).toBeLessThan(5_000);
   const huge = report.ksymtab?.sections.slice(1) ?? [];
   expect(huge).toHaveLength(8192);
   expect(
