@@ -11,6 +11,7 @@ import {
   compareAndroidDeclarationFacts,
   ANDROID_DECLARATION_COMPARISON_LIMITATIONS,
   type AndroidDeclarationComparison,
+  type AndroidPackageDeclarations,
 } from "../../domain/android/androidDeclarationComparison.js";
 import {
   AnalysisInputError,
@@ -21,11 +22,13 @@ import {
   evidenceEnvelopeForAdmission,
   evidenceFileTarget,
   evidenceSubjectDisplay,
+  type Evidence,
 } from "../../domain/evidence.js";
+import { readEvidencePayload } from "../../domain/evidenceValidation.js";
 import {
-  readEvidence,
-  readEvidencePayload,
-} from "../../domain/evidenceValidation.js";
+  canBorrowParsedJsonSnapshot,
+  immutableJsonSnapshotMember,
+} from "../../domain/immutableJson.js";
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import { err, ok } from "../../domain/result.js";
@@ -36,7 +39,10 @@ import {
 } from "../EvidenceInputResolver.js";
 import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { requireAndroidDeclarationComparisonHeadroom } from "./AndroidDeclarationComparisonAdmission.js";
+import {
+  requireAndroidDeclarationComparisonHeadroom,
+  readAndroidDeclarationSource,
+} from "./AndroidDeclarationComparisonAdmission.js";
 import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
 import {
   withEvidenceSources,
@@ -44,10 +50,35 @@ import {
 } from "../investigation/recordEvidenceSources.js";
 
 const OPERATION = "compare_android_declarations";
-const readInspection = (input: unknown, side: "left" | "right") => {
-  const authenticated = readEvidence(input, { side });
-  if (!authenticated.ok) return authenticated;
-  const evidence = authenticated.value;
+const checkedPackages = new WeakMap<object, AndroidPackageDeclarations>();
+
+/** Evidence authentication does not establish the Android payload's format semantics. */
+const readPackageDeclarations = (
+  evidence: Evidence,
+  side: "left" | "right",
+) => {
+  const source = immutableJsonSnapshotMember(evidence, "normalized_result");
+  const known = isRecord(source) ? checkedPackages.get(source) : undefined;
+  if (known !== undefined) return ok(known);
+  const capacity = requireAuthenticationHeadroom(source, {
+    operation: OPERATION,
+    path: `${side}.normalized_result`,
+    description: "Android package declarations cannot be validated",
+  });
+  if (!capacity.ok) return capacity;
+  const parsed = readEvidencePayload(
+    androidResultSchemas.inspect_android_package,
+    source,
+    { side, within: ["normalized_result"] },
+  );
+  if (parsed.ok && canBorrowParsedJsonSnapshot(source, parsed.value)) {
+    checkedPackages.set(source, source);
+    return ok(source);
+  }
+  return parsed;
+};
+
+const readInspection = (evidence: Evidence, side: "left" | "right") => {
   const invalid = (message: string) =>
     err(
       new AnalysisInputError(OPERATION, { userMessage: message }, [
@@ -85,11 +116,7 @@ const readInspection = (input: unknown, side: "left" | "right") => {
     return invalid(
       "Android inspection Evidence must retain its exact path selection in parameters.path.",
     );
-  const parsed = readEvidencePayload(
-    androidResultSchemas.inspect_android_package,
-    evidence.normalized_result,
-    { side, within: ["normalized_result"] },
-  );
+  const parsed = readPackageDeclarations(evidence, side);
   if (!parsed.ok) return parsed;
   const result = parsed.value;
   // The subject is the canonical APK identity. The requested path can be a
@@ -118,17 +145,29 @@ export const compareAndroidDeclarations = async (
   options?: ExecutionOptions,
   lookup?: EvidenceLookup,
 ): Promise<AnalysisResultWithSources<EvidenceWorkflowExecution>> => {
+  if (options?.signal?.aborted)
+    return err(cancelledBy(OPERATION, options.signal));
+  await setImmediate();
+  if (options?.signal?.aborted)
+    return err(cancelledBy(OPERATION, options.signal));
+  const snapshots = new WeakMap<object, Evidence>();
   const resolved = resolveEvidenceRequest(
     OPERATION,
     input,
     compareAndroidDeclarationsInputSchema,
     lookup,
-    options,
+    {
+      ...options,
+      readEvidence: (input, path) => {
+        const known = isRecord(input) ? snapshots.get(input) : undefined;
+        if (known !== undefined) return ok(known);
+        const source = readAndroidDeclarationSource(input, path);
+        if (source.ok && isRecord(input)) snapshots.set(input, source.value);
+        return source;
+      },
+    },
   );
   if (!resolved.ok) return resolved;
-  await setImmediate();
-  if (options?.signal?.aborted)
-    return err(cancelledBy(OPERATION, options.signal));
   const left = readInspection(resolved.value.input.left, "left");
   if (!left.ok) return left;
   const right = readInspection(resolved.value.input.right, "right");

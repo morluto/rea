@@ -69,6 +69,11 @@ The command reads only the selected request and authenticated bundle. Omit
 `--evidence-bundle` when the request contains both complete records inline.
 The derived result links both exact source records, which remain available for
 full manifest inspection and export.
+Complete mutable source records are admitted against available heap before
+authentication, cloning or hashing, including their raw results and full manifest
+facts. Retained records reuse only the Evidence owner's authenticated immutable
+snapshot; Android payload validation remains separate. A capacity refusal names
+the selected source rather than attempting an unsafe copy.
 
 `sdk` compares non-null `min_sdk` and `target_sdk` strings exactly; null remains
 unknown and numeric/resource expressions are not reinterpreted. `permissions`
@@ -85,6 +90,11 @@ unknown groups, retaining every ambiguous occurrence, source array index,
 declaration ordinal and manifest location. Unchanged groups appear only in the
 summary. Compared fields are exported declaration/default, permission value and
 source, and provider authorities as sets; original authority order is retained.
+Exported declarations and their producer-reported defaults are compared as
+separate facts: an unknown default alone establishes neither a change nor
+equality. A known declaration difference can still establish a change, while
+unknown applicable facts keep comparison coverage partial. An omitted declaration
+with a known default remains distinct from an explicit equal boolean.
 Partial declarations, duplicate names and incomplete inventories remain unknown;
 unseen items cannot prove absence. Unchanged describes these selected facts,
 not the whole manifest, installation policy, runtime exposure or compatibility.

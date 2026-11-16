@@ -24,6 +24,11 @@ unnecessary and can select a different observation.
    exported declaration/default, permission/source and authority sets independently;
    preserve original values, null and declaration coverage. Do not infer effective
    access, maliciousness, runtime behavior, compatibility or version ordering.
+6. Admit each complete mutable source before authentication or typed-schema
+   copying. Borrow only authenticated immutable Evidence and validated exact
+   payload facts; metadata selections remain per source.
+7. Unknown exported defaults alone establish neither changed nor unchanged.
+   Preserve established declaration differences and partial attribute coverage.
 
 ## Acceptance
 

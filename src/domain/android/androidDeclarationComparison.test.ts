@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { compareAndroidDeclarationFacts } from "./androidDeclarationComparison.js";
-import { androidDeclarationFacts } from "../../../tests/fixtures/android/declarations.js";
+import {
+  androidDeclarationFacts,
+  androidDeclarationFactsFromManifest,
+} from "../../../tests/fixtures/android/declarations.js";
 
 it("compares selected declarations, keeps source coordinates, and omits unchanged groups", () => {
   const left = androidDeclarationFacts(`
@@ -178,3 +181,125 @@ it("does not match different component kinds and marks unresolved attributes/dec
     compareAndroidDeclarationFacts(facts, facts).components.changes[0],
   ).toMatchObject({ state: "unknown", fields: null });
 });
+
+it.each([
+  {
+    name: "an unknown default against a known default",
+    left: { exported: true, sdk: "FutureDessert", default: null },
+    right: { exported: true, sdk: "35", default: false },
+    state: "unknown",
+    coverage: "partial",
+  },
+  {
+    name: "unknown defaults on both sides",
+    left: { exported: true, sdk: "FutureDessert", default: null },
+    right: { exported: true, sdk: "FutureDessert", default: null },
+    state: "unknown",
+    coverage: "partial",
+  },
+  {
+    name: "a known literal difference despite unknown defaults",
+    left: { exported: true, sdk: "FutureDessert", default: null },
+    right: { exported: false, sdk: "FutureDessert", default: null },
+    state: "changed",
+    coverage: "partial",
+  },
+  {
+    name: "equal known literals and defaults",
+    left: { exported: true, sdk: "35", default: false },
+    right: { exported: true, sdk: "35", default: false },
+    state: "unchanged",
+    coverage: "complete-within-inputs",
+  },
+  {
+    name: "a known default difference with equal literals",
+    left: { exported: true, sdk: "16", default: true },
+    right: { exported: true, sdk: "35", default: false },
+    state: "changed",
+    coverage: "complete-within-inputs",
+  },
+  {
+    name: "an omitted declaration against an explicit equal default",
+    left: { exported: undefined, sdk: "35", default: false },
+    right: { exported: false, sdk: "35", default: false },
+    state: "changed",
+    coverage: "complete-within-inputs",
+  },
+] as const)(
+  "compares producer export facts symmetrically: $name",
+  ({ left, right, state, coverage }) => {
+    const provider = (selection: {
+      exported: boolean | undefined;
+      sdk: string | null;
+    }) => {
+      const sdk =
+        selection.sdk === null
+          ? ""
+          : `<uses-sdk android:targetSdkVersion="${selection.sdk}"/>`;
+      const exported =
+        selection.exported === undefined
+          ? ""
+          : ` android:exported="${String(selection.exported)}"`;
+      const text = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="example.fixture">${sdk}<application><provider android:name=".Data" android:authorities="example.fixture.data"${exported}/></application></manifest>`;
+      return androidDeclarationFactsFromManifest(text, selection.sdk, null);
+    };
+    const a = provider(left);
+    const b = provider(right);
+    for (const [facts, selected] of [
+      [a, left],
+      [b, right],
+    ] as const) {
+      expect(facts.components.status).toBe("complete");
+      expect(facts.components.items).toHaveLength(1);
+      expect(facts.components.items[0]).toMatchObject({
+        declaration_coverage: "complete",
+        exported: selected.exported ?? null,
+        exported_default: selected.default,
+      });
+    }
+    for (const [l, r] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      const report = compareAndroidDeclarationFacts(l, r);
+      expect(report.sdk.target_sdk).toMatchObject({
+        left: l.target_sdk,
+        right: r.target_sdk,
+      });
+      expect(report.components.coverage).toBe(coverage);
+      expect(report.components.summary).toEqual({
+        added: 0,
+        removed: 0,
+        changed: 0,
+        unchanged: 0,
+        unknown: 0,
+        [state]: 1,
+      });
+      if (state === "unchanged") {
+        expect(report.components.changes).toEqual([]);
+      } else {
+        expect(report.components.changes).toMatchObject([
+          {
+            state,
+            fields: { exported: state },
+            left: [
+              {
+                exported: l.components.items[0]?.exported,
+                exported_default: l.components.items[0]?.exported_default,
+              },
+            ],
+            right: [
+              {
+                exported: r.components.items[0]?.exported,
+                exported_default: r.components.items[0]?.exported_default,
+              },
+            ],
+          },
+        ]);
+        if (coverage === "partial")
+          expect(report.components.changes[0]?.reason).toContain("unknown");
+        else expect(report.components.changes[0]?.reason).toBeNull();
+      }
+    }
+  },
+);

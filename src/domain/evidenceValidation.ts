@@ -76,14 +76,22 @@ export const readEvidence = (
 };
 
 /** Authenticate and seal source records retained independently of mutable input. */
-export const readImmutableEvidence = (
+export function readImmutableEvidence(
   input: unknown,
-): Result<Evidence, EvidenceIntegrityError> => {
+): Result<Evidence, EvidenceIntegrityError>;
+export function readImmutableEvidence(
+  input: unknown,
+  location?: Pick<EvidenceSourceLocation, "side">,
+): Result<Evidence, EvidenceIntegrityError>;
+export function readImmutableEvidence(
+  input: unknown,
+  location?: Pick<EvidenceSourceLocation, "side">,
+): Result<Evidence, EvidenceIntegrityError> {
   const parsed = safeParseImmutableEvidence(input);
   return parsed.ok
     ? parsed
-    : err(integrityFailure(parsed.error, { within: [] }));
-};
+    : err(integrityFailure(parsed.error, { ...location, within: [] }));
+}
 
 const authenticateEvidence = (
   input: unknown,

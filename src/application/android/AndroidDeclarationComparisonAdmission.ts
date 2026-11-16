@@ -1,5 +1,11 @@
 import { constants as bufferConstants } from "node:buffer";
 import { jsonStringCodeUnits } from "../../domain/jsonSerialization.js";
+import { isImmutableEvidence } from "../../domain/evidence.js";
+import { readImmutableEvidence } from "../../domain/evidenceValidation.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { jsonValueValidationIssue } from "../../domain/jsonValue.js";
+import { err } from "../../domain/result.js";
+import type { EvidenceInputPath } from "../../domain/evidenceInputContract.js";
 import {
   androidDeclarationOccurrence,
   ANDROID_DECLARATION_COMPARISON_REASONS,
@@ -9,6 +15,32 @@ import {
   estimateJsonStorage,
   requireAuthenticationHeadroom,
 } from "../JsonAuthenticationHeadroom.js";
+
+/** Admit complete mutable source representations before authentication copies or hashes them. */
+export const readAndroidDeclarationSource = (
+  input: unknown,
+  path: EvidenceInputPath,
+) => {
+  const side = path[0] === "left" || path[0] === "right" ? path[0] : undefined;
+  const location = side === undefined ? undefined : { side };
+  // Only the Evidence owner's authenticated snapshot proof permits borrowing.
+  // A retained selector or an independently frozen JSON object is insufficient.
+  if (isImmutableEvidence(input)) return readImmutableEvidence(input, location);
+  const issue = jsonValueValidationIssue(input);
+  if (issue !== undefined)
+    return err(
+      new EvidenceIntegrityError("Android source is not ordinary JSON", {
+        userMessage: issue,
+        ...location,
+      }),
+    );
+  const admission = requireAuthenticationHeadroom(input, {
+    operation: "compare_android_declarations",
+    path: path.join("."),
+    description: "Complete Android source Evidence cannot be authenticated",
+  });
+  return admission.ok ? readImmutableEvidence(input, location) : admission;
+};
 
 /**
  * Admit an upper bound before retaining groups, copied occurrences or sets.

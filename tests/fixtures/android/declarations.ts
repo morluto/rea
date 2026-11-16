@@ -7,6 +7,15 @@ export const androidDeclarationFacts = (
   declarations = '<activity android:name=".Main" android:exported="false"/>',
 ): AndroidPackageDeclarations => {
   const text = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="example.fixture"><application>${declarations}</application></manifest>`;
+  return androidDeclarationFactsFromManifest(text, "35", "23");
+};
+
+/** Keep real manifest parsing in the producer fixture, outside pure domain tests. */
+export const androidDeclarationFactsFromManifest = (
+  text: string,
+  targetSdk: string | null,
+  minimumSdk: string | null,
+): AndroidPackageDeclarations => {
   return {
     engine: {
       name: "jadx",
@@ -19,15 +28,20 @@ export const androidDeclarationFacts = (
     package_name: "example.fixture",
     version_name: "1.0",
     version_code: "1",
-    min_sdk: "23",
-    target_sdk: "35",
+    min_sdk: minimumSdk,
+    target_sdk: targetSdk,
     permissions: ["android.permission.INTERNET"],
     manifest: {
       status: "complete",
       text,
       reported_total_bytes: Buffer.byteLength(text),
     },
-    components: parseAndroidManifestComponents(text, "complete", "35", "23"),
+    components: parseAndroidManifestComponents(
+      text,
+      "complete",
+      targetSdk,
+      minimumSdk,
+    ),
     class_count: 1,
     resource_count: 0,
     signature_verification: "not_performed",

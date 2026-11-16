@@ -159,15 +159,22 @@ const sameSet = (left: readonly string[], right: readonly string[]) => {
   return a.size === b.size && [...a].every((value) => b.has(value));
 };
 
-/** Compare the producer's declaration/default pair without deriving effective access. */
+/** Compare established declaration and default facts without deriving effective access. */
 const exportedState = (left: Occurrence, right: Occurrence): FieldState => {
-  const known = (value: Occurrence) =>
+  // A literal establishes the declaration; a known default beside a null
+  // literal preserves the producer's omitted declaration. Null/null remains
+  // ambiguous, including unresolved nonliteral declarations.
+  const knownDeclaration = (value: Occurrence) =>
     value.exported !== null || value.exported_default !== null;
-  if (!known(left) || !known(right)) return "unknown";
-  return left.exported === right.exported &&
-    left.exported_default === right.exported_default
-    ? "unchanged"
-    : "changed";
+  const declarationsKnown = knownDeclaration(left) && knownDeclaration(right);
+  const defaultsKnown =
+    left.exported_default !== null && right.exported_default !== null;
+  if (declarationsKnown && left.exported !== right.exported) return "changed";
+  if (defaultsKnown && left.exported_default !== right.exported_default)
+    return "changed";
+  // A known literal must not turn an unknown default into evidence of either
+  // difference or equality. A separate established difference still wins.
+  return declarationsKnown && defaultsKnown ? "unchanged" : "unknown";
 };
 const permissionState = (left: Occurrence, right: Occurrence): FieldState => {
   if (
@@ -230,6 +237,7 @@ export const compareAndroidDeclarationFacts = (
     unknown: 0,
   };
   const changes: AndroidDeclarationComparison["components"]["changes"] = [];
+  let hasUnknownAttributes = false;
   for (const group of groups.values()) {
     const l = group.left[0];
     const r = group.right[0];
@@ -260,13 +268,19 @@ export const compareAndroidDeclarationFacts = (
         authorities: authoritiesState(l, r),
       };
       const states = Object.values(fields);
+      const unresolvedAttributes =
+        states.includes("unknown") ||
+        l.exported_default === null ||
+        r.exported_default === null;
       state = states.includes("changed")
         ? "changed"
         : states.includes("unknown")
           ? "unknown"
           : "unchanged";
-      if (states.includes("unknown"))
+      if (unresolvedAttributes) {
+        hasUnknownAttributes = true;
         reason = ANDROID_DECLARATION_COMPARISON_REASONS.attribute;
+      }
     }
     summary[state]++;
     if (state !== "unchanged")
@@ -299,12 +313,7 @@ export const compareAndroidDeclarationFacts = (
         left.components.status === "unavailable" ||
         right.components.status === "unavailable"
           ? "unknown"
-          : complete &&
-              summary.unknown === 0 &&
-              changes.every(
-                ({ fields }) =>
-                  fields === null || !Object.values(fields).includes("unknown"),
-              )
+          : complete && summary.unknown === 0 && !hasUnknownAttributes
             ? "complete-within-inputs"
             : "partial",
       changes,
