@@ -40,6 +40,7 @@ import {
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { launcherFailureOf, type LauncherFailure } from "./launchFailure.js";
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
@@ -197,6 +198,29 @@ function throwCommandPreparationFailure(
     );
   throw cause;
 }
+
+/**
+ * Ownership preparation could not start a process it needed, such as the
+ * macOS ownership helper's compiler, because the host lacked capacity. The
+ * command cannot start for the same reason, so callers report it as their own
+ * host-capacity launch failure. Other preparation failures, including a
+ * missing helper compiler, say nothing about the command's executable.
+ */
+export const preparationHostCapacityFailure = (
+  cause: unknown,
+): LauncherFailure | undefined => {
+  if (cause instanceof OwnedCommandFailure && cause.cancellation !== undefined)
+    return undefined;
+  const preparation =
+    cause instanceof OwnedCommandFailure ? cause.preparationFailure : cause;
+  if (
+    !(preparation instanceof DarwinProcessOwnershipInspectionError) ||
+    preparation.cancellation !== undefined
+  )
+    return undefined;
+  const launch = launcherFailureOf(preparation.cause);
+  return launch?.kind === "host-exhausted" ? launch : undefined;
+};
 
 /** Execute a single owned process with independent cleanup and bounded diagnostic retention. */
 export const runOwnedCommand = async (

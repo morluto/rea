@@ -23,6 +23,7 @@ import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -98,7 +99,7 @@ const APKTOOL_JVM: ExternalJvm = {
   smaller: "decode a smaller APK",
 };
 
-const STDERR_EXCERPT_BYTES = 512;
+const STDERR_EXCERPT_CHARACTERS = 512;
 
 const apktoolDecodeTimeoutGuidance = (timeoutMs: number) => ({
   userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
@@ -261,9 +262,10 @@ const apktoolCommandFailure = (
       return new AnalysisUnsupportedTargetError(
         operation,
         targetPath,
-        exit.output.snapshot.stderr.text
-          .trim()
-          .slice(0, STDERR_EXCERPT_BYTES) ||
+        ellipsisExcerpt(
+          exit.output.snapshot.stderr.text.trim(),
+          STDERR_EXCERPT_CHARACTERS,
+        ) ||
           `apktool exited with code ${String(exit.exitCode)} for ${operation}`,
         details,
       );

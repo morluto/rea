@@ -15,6 +15,7 @@ import {
   processOwnershipAdmissionRecovery,
 } from "../process/ProcessOwnershipObservation.js";
 import { ownedProcessPrerequisiteAvailability } from "./ownedProcessAvailability.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 
 describe("Linux process table prerequisite discovery", () => {
   it.each(["ENOENT", "EACCES", "EIO"])(
@@ -258,5 +259,21 @@ describe("Linux ownership prerequisite discovery", () => {
         admission_code: "current_process_unreported",
       },
     });
+  });
+
+  it("does not report macOS ownership helper capacity exhaustion as missing Command Line Tools", () => {
+    const emfile = spawnFailure("EMFILE", "/usr/bin/swiftc");
+    const darwin = new DarwinProcessOwnershipInspectionError(
+      "helper compiler capacity exhausted",
+      { cause: emfile },
+    );
+    expect(ownedProcessPrerequisiteAvailability(darwin)).toBeUndefined();
+    expect(
+      ownedProcessPrerequisiteAvailability(
+        new OwnedCommandFailure("process", "preparation failed", null, null, {
+          preparationFailure: darwin,
+        }),
+      ),
+    ).toBeUndefined();
   });
 });

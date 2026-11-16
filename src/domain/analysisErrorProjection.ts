@@ -10,6 +10,7 @@ import { isImmutableJsonSnapshot } from "./immutableJson.js";
 import {
   analysisErrorCategory,
   UNRETAINED_EVIDENCE_EXPORT_GUIDANCE,
+  analysisErrorRelatedInputs,
   analysisErrorRemediationAction,
   analysisErrorUserMessage,
   assertKnownAnalysisError,
@@ -448,7 +449,7 @@ const projectError = (
     ...(refusal === undefined
       ? {}
       : { refusal: analysisRefusalDetails(refusal) }),
-    ...relatedInputDetails(primary.related),
+    ...relatedInputDetails(analysisErrorRelatedInputs(primary)),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {
