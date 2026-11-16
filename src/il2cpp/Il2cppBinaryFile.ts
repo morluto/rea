@@ -142,7 +142,8 @@ export function* linkIl2cppBinarySteps(
         "invalid-method-pointer",
         `module ${metadata.images[owner]!.name} method pointer ${row - 1} is not file mapped`,
       );
-    if (address === "unknown") return "unknown";
+    // Code bound in another loaded object has no address in this image.
+    if (address === "unknown" || address === "imported") return "unknown";
     if (address === 0n) return "no-body";
     if (!isExecutable(image, address))
       throw new Il2cppBinaryFormatFailure(
@@ -193,7 +194,8 @@ export function* linkIl2cppBinarySteps(
     // 27.0/27.1 and 27.2 share header version 27 but place byref differently.
     if (version === 27) return { type, name: null };
     const address = readSlot(image, registration.types + BigInt(type * 8));
-    if (address === "unknown") return { type, name: null };
+    if (address === "unknown" || address === "imported")
+      return { type, name: null };
     if (address === null)
       throw new Il2cppBinaryFormatFailure(
         "invalid-type",
