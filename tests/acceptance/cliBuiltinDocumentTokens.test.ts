@@ -3,6 +3,44 @@ import { expect } from "vitest";
 
 import { workspaceCliTest } from "../support/cli/workspaceCliFixture.js";
 
+const structuredDocuments = [
+  { flag: "--schema", path: "args.required" },
+  { flag: "--llms", path: "commands" },
+  { flag: "--llms-full", path: "commands" },
+] as const;
+
+workspaceCliTest.for(
+  structuredDocuments.flatMap((document) =>
+    ["csv", "tsv"].map((format) => ({ ...document, format })),
+  ),
+)(
+  "refuses $format for $flag even when all row options are supplied",
+  async ({ flag, path, format }, { cli }) => {
+    const result = await cli.run({
+      arguments: [
+        "inspect-artifact",
+        flag,
+        "--format",
+        format,
+        "--filter-output",
+        path,
+        "--columns",
+        "name",
+      ],
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      ok: false,
+      error: {
+        code: "UNSUPPORTED_OUTPUT_COMBINATION",
+        message: expect.stringContaining(flag),
+      },
+    });
+    expect(result.stderr).toBe("");
+  },
+);
+
 workspaceCliTest(
   "applies token controls to SDK manifest and schema documents",
   async ({ cli }) => {

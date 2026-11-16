@@ -1403,7 +1403,11 @@ treated as malformed.
 
 `--format csv` and `--format tsv` export one selected row collection. Select an
 exact array path with `--filter-output` and provide comma-separated direct
-scalar columns with `--columns`; column order is the output column order:
+scalar columns with `--columns`; column order is the output column order.
+
+The `--schema`, `--llms`, and `--llms-full` modes produce discovery documents.
+They refuse CSV/TSV even when `--filter-output` and `--columns` are supplied.
+Use `--format json` for a machine-readable discovery document.
 
 For an artifact inventory request that selects the `occurrences` collection
 and includes `logical_path` and `artifact_id` in its view fields:

@@ -43,6 +43,7 @@ export const CLI_OUTPUT_FORMATS = [
 ] as const;
 export type CliOutputFormat = (typeof CLI_OUTPUT_FORMATS)[number];
 const CLI_OUTPUT_FORMAT_SET: ReadonlySet<string> = new Set(CLI_OUTPUT_FORMATS);
+const DISCOVERY_DOCUMENT_FLAGS = ["--llms-full", "--llms", "--schema"] as const;
 
 const isCliOutputFormat = (value: string): value is CliOutputFormat =>
   CLI_OUTPUT_FORMAT_SET.has(value);
@@ -219,9 +220,14 @@ export const readCliOutputArguments = (
     tokenLimit: parseError ? undefined : tokenLimit,
     tokenOffset: parseError ? undefined : tokenOffset,
   };
+  // Refuse row formats while the requested format and builtin flags are
+  // both still known, before the dispatcher adapts CSV/TSV to JSON.
+  const documentFlag = rootVersion
+    ? "--version"
+    : DISCOVERY_DOCUMENT_FLAGS.find((flag) => global.flags.has(flag));
   return {
     ...controls,
-    validation: validateCliOutputControls(controls, rootVersion),
+    validation: validateCliOutputControls(controls, documentFlag),
     versionReportFormat:
       rootVersion &&
       versionEligible &&
@@ -252,7 +258,7 @@ const validateCliOutputControls = (
     tokenWindow,
     tokenCount,
   }: CliOutputControls,
-  rootVersion: boolean,
+  documentFlag: string | undefined,
 ): CliOutputArgumentValidation => {
   if (invalidValue !== undefined)
     return {
@@ -279,13 +285,12 @@ const validateCliOutputControls = (
       code: "MISSING_OUTPUT_VALUE",
       message: missingCliOutputValueMessage(missingValue),
     };
-  if (delimited && rootVersion)
+  if (delimited && documentFlag !== undefined)
     return {
       ok: false,
       format: "json",
       code: "UNSUPPORTED_OUTPUT_COMBINATION",
-      message:
-        "CSV/TSV output is available only for selected row collections, not --version.",
+      message: `CSV/TSV output is available only for selected row collections, not ${documentFlag}.`,
     };
   if (delimited && (filterOutput === undefined || columns === undefined))
     return {
