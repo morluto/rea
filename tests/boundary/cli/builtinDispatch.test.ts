@@ -188,3 +188,27 @@ cliTest(
     expect(reply.stdout).toContain("MCP_MODE_REMOVED");
   },
 );
+
+it.for([
+  [["--llms", "--format", "csv"], "--llms", "csv"],
+  [["--llms", "--format", "tsv"], "--llms", "tsv"],
+  [["--llms-full", "--format", "csv"], "--llms-full", "csv"],
+  [["--llms-full", "--format", "tsv"], "--llms-full", "tsv"],
+  [["fixture", "--schema", "--format", "csv"], "--schema", "csv"],
+  [["fixture", "--schema", "--format", "tsv"], "--schema", "tsv"],
+] as const)(
+  "refuses row-only output formats on discovery manifests and schemas: %j",
+  async ([arguments_, flag, format]) => {
+    const reply = await serveInProcessCli(shell(), arguments_);
+    expect(reply.exitCode).toBe(1);
+    expect(JSON.parse(reply.stdout)).toMatchObject({
+      ok: false,
+      error: {
+        code: "UNSUPPORTED_OUTPUT_COMBINATION",
+        message: expect.stringMatching(
+          new RegExp(`${flag}.*--format ${format}`, "u"),
+        ),
+      },
+    });
+  },
+);
