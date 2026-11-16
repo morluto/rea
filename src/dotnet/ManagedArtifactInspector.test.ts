@@ -1,6 +1,42 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/** MethodDef member-list lookups, each the start of a declaring-type index build. */
+const methodListLookups = vi.hoisted(() => ({ count: 0, budget: Infinity }));
+vi.mock(
+  "../domain/managed/managedMemberPointers.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../domain/managed/managedMemberPointers.js")
+      >();
+    return {
+      ...actual,
+      memberListRowLookup: (
+        ...args: Parameters<typeof actual.memberListRowLookup>
+      ) => {
+        if (
+          args[2] === 6 &&
+          ++methodListLookups.count > methodListLookups.budget
+        )
+          throw new Error("Method owner index rebuilt");
+        return actual.memberListRowLookup(...args);
+      },
+    };
+  },
+);
+
+/** Run `inspect` while more than `budget` MethodDef list lookups fail at once. */
+const withMethodListLookupBudget = <T>(budget: number, inspect: () => T): T => {
+  methodListLookups.count = 0;
+  methodListLookups.budget = budget;
+  try {
+    return inspect();
+  } finally {
+    methodListLookups.budget = Infinity;
+  }
+};
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
@@ -554,8 +590,9 @@ describe("managed artifact coded indexes", () => {
   });
 
   it("resolves local attribute constructors without rescanning TypeDef rows", () => {
-    // The owning type follows every empty type. A per-attribute TypeDef scan
-    // took about 38 s here; the owner index is built once per layout.
+    // The owning type follows every empty type. The method owner index is
+    // built once per layout; rebuilding it per attribute scans every TypeDef
+    // row 16,000 times.
     const bytes = buildManagedPeFixture({
       additionalEmptyTypes: 16_000,
       customAttributeRowCount: 16_000,
@@ -566,13 +603,10 @@ describe("managed artifact coded indexes", () => {
       methodFlags: 0x1886,
       methodSignature: Buffer.from([0x20, 0x01, 0x01, 0x0e]),
     });
-    const start = performance.now();
-    const artifact = inspectManagedArtifactBytes(
-      bytes,
-      managedPeFixtureTarget(bytes),
+    const artifact = withMethodListLookupBudget(2, () =>
+      inspectManagedArtifactBytes(bytes, managedPeFixtureTarget(bytes)),
     );
-
-    expect(performance.now() - start).toBeLessThan(2000);
+    expect(methodListLookups.count).toBe(1);
     expect(artifact.coverage).toEqual({ state: "complete", issues: [] });
     expect(artifact.attributes).toHaveLength(16_000);
     expect(
