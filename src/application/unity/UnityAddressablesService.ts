@@ -7,8 +7,8 @@ import {
 import type { UnityAddressablesPort } from "../../ports/unity/UnityAddressablesPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
-  AnalysisInputError,
+  cancelledBy,
+  isAborted,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -22,6 +22,7 @@ import {
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_unity_addressables";
 const NO_RETENTION: AnalysisViewRetention = {
@@ -41,7 +42,7 @@ export class UnityAddressablesService {
       throw new ProviderCleanupError(
         this.provider.identity.id,
         [],
-        { reason: cause instanceof Error ? cause.message : String(cause) },
+        { reason: errorMessage(cause) },
         { cause, operation: OPERATION },
       );
     }
@@ -53,10 +54,8 @@ export class UnityAddressablesService {
     options?: ExecutionOptions,
     retention: AnalysisViewRetention = NO_RETENTION,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+    if (isAborted(options?.signal))
+      return err(cancelledBy(OPERATION, options.signal));
     const input = inspectUnityAddressablesInputSchema.safeParse(rawInput);
     if (!input.success)
       return err(
@@ -85,10 +84,9 @@ export class UnityAddressablesService {
         ),
       );
     const evidence = this.#evidence(report.data, providerInput);
-    if (options?.signal?.aborted)
+    if (isAborted(options?.signal))
       return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
+        cancelledBy(OPERATION, options.signal, {
           partialObservation: evidence,
         }),
       );

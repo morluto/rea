@@ -1,12 +1,5 @@
 import {
-  UNITY_ADDRESSABLES_BINARY_VERSIONS,
-  type UnityAddressablesKey,
-  type UnityAddressablesLocation,
-  type UnityAddressablesProvider,
-} from "../domain/unity/unityAddressables.js";
-import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
-import { UnityAddressablesFormatFailure } from "./UnityAddressablesFormat.js";
-import {
+  littleEndian,
   ASSET_BUNDLE_REQUEST_OPTIONS,
   ROWS_PER_YIELD,
   hash128Text,
@@ -14,6 +7,14 @@ import {
   type UnityAddressablesSteps,
   beforeStoredText,
 } from "./UnityAddressablesShared.js";
+import {
+  UNITY_ADDRESSABLES_BINARY_VERSIONS,
+  type UnityAddressablesKey,
+  type UnityAddressablesLocation,
+  type UnityAddressablesProvider,
+} from "../domain/unity/unityAddressables.js";
+import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
+import { UnityAddressablesFormatFailure } from "./UnityAddressablesFormat.js";
 
 /** Scratch held per chain part before the join: one array slot. */
 const PART_SLOT_BYTES = 8;
@@ -39,7 +40,7 @@ class BinaryReader {
 
   u32(offset: number, label: string): number {
     this.need(offset, 4, label);
-    return this.bytes.readUInt32LE(offset);
+    return littleEndian(this.bytes).u32(offset);
   }
 
   need(offset: number, length: number, label: string): void {
@@ -192,9 +193,9 @@ const key = (
       return { kind: "string", value: null, type_name: null, locations };
     // ObjectToStringRemap {uint stringId; char separator}.
     reader.need(value, 6, "string key");
-    const separator = reader.bytes.readUInt16LE(value + 4);
+    const separator = littleEndian(reader.bytes).u16(value + 4);
     const text = reader.string(
-      reader.bytes.readUInt32LE(value),
+      littleEndian(reader.bytes).u32(value),
       separator === 0 ? "" : String.fromCharCode(separator),
       "string key",
     );
@@ -204,7 +205,7 @@ const key = (
     reader.need(value, 4, "int key");
     return {
       kind: "int32",
-      value: String(reader.bytes.readInt32LE(value)),
+      value: String(littleEndian(reader.bytes).u32(value) | 0),
       type_name: null,
       locations,
     };
@@ -231,18 +232,18 @@ const locationData = (
     return { kind: "other", type_name: object.type };
   const at = object.value;
   reader.need(at, BUNDLE_OPTIONS_BYTES, "bundle options");
-  const hashId = reader.bytes.readUInt32LE(at);
+  const hashId = littleEndian(reader.bytes).u32(at);
   reader.need(hashId, 16, "bundle hash");
   return {
     kind: "asset-bundle",
     hash: hash128Text(reader.bytes, hashId),
-    crc: reader.bytes.readUInt32LE(at + 8),
+    crc: littleEndian(reader.bytes).u32(at + 8),
     bundle_name: reader.string(
-      reader.bytes.readUInt32LE(at + 4),
+      littleEndian(reader.bytes).u32(at + 4),
       "_",
       "bundle name",
     ),
-    bundle_size: reader.bytes.readUInt32LE(at + 12),
+    bundle_size: littleEndian(reader.bytes).u32(at + 12),
   };
 };
 
@@ -253,10 +254,13 @@ const provider = (
 ): UnityAddressablesProvider | null => {
   if (id === NONE) return null;
   reader.need(id, 12, "provider data");
-  const type = reader.type(reader.bytes.readUInt32LE(id + 4), "provider type");
+  const type = reader.type(
+    littleEndian(reader.bytes).u32(id + 4),
+    "provider type",
+  );
   return {
     role,
-    id: reader.string(reader.bytes.readUInt32LE(id), "", "provider id"),
+    id: reader.string(littleEndian(reader.bytes).u32(id), "", "provider id"),
     type_name: type.name,
     assembly: type.assembly,
   };
@@ -280,7 +284,7 @@ function* binaryProviders(
   add(scene, "scene");
   const providerCount = reader.count(initObjects, 4, "resource providers");
   for (let index = 0; index < providerCount; index++) {
-    add(reader.bytes.readUInt32LE(initObjects + index * 4), "resource");
+    add(littleEndian(reader.bytes).u32(initObjects + index * 4), "resource");
     if ((index + 1) % ROWS_PER_YIELD === 0) yield;
   }
   return providers;
@@ -293,7 +297,7 @@ export function* readBinaryCatalogSteps(
 ): UnityAddressablesSteps {
   const reader = new BinaryReader(bytes, options);
   reader.need(0, HEADER_BYTES, "header");
-  const version = bytes.readInt32LE(4);
+  const version = littleEndian(bytes).u32(4) | 0;
   if (
     !(UNITY_ADDRESSABLES_BINARY_VERSIONS as readonly number[]).includes(version)
   )
@@ -301,7 +305,9 @@ export function* readBinaryCatalogSteps(
       "unsupported-version",
       `binary catalog version ${version} is not one of ${UNITY_ADDRESSABLES_BINARY_VERSIONS.join(", ")}`,
     );
-  const header = [8, 12, 16, 20, 24, 28].map((at) => bytes.readUInt32LE(at));
+  const header = [8, 12, 16, 20, 24, 28].map((at) =>
+    littleEndian(bytes).u32(at),
+  );
   const [keysOffset, idOffset, instance, scene, initObjects, buildHash] =
     header as [number, number, number, number, number, number];
   // Refuse an oversized key table from its length prefix, before any per-key
@@ -347,7 +353,7 @@ export function* readBinaryCatalogSteps(
         );
       indices = [];
       for (let item = 0; item < length; item++)
-        indices.push(indexOf(bytes.readUInt32LE(id + item * 4)));
+        indices.push(indexOf(littleEndian(bytes).u32(id + item * 4)));
       sets.set(id, indices);
     }
     return indices;
@@ -380,7 +386,7 @@ export function* readBinaryCatalogSteps(
   const keys: UnityAddressablesKey[] = [];
   for (let index = 0; index < keyCount; index++) {
     const at = keysOffset + index * 8;
-    const row = key(reader, bytes.readUInt32LE(at), keyLocations[index]!);
+    const row = key(reader, littleEndian(bytes).u32(at), keyLocations[index]!);
     options.onRow?.(row);
     keys.push(row);
     if ((index + 1) % ROWS_PER_YIELD === 0) yield;
@@ -390,25 +396,29 @@ export function* readBinaryCatalogSteps(
     const at = order[index]!;
     const dependencies = locationDependencies[index]!;
     const row: UnityAddressablesLocation = {
-      primary_key: reader.string(bytes.readUInt32LE(at), "/", "primary key"),
+      primary_key: reader.string(
+        littleEndian(bytes).u32(at),
+        "/",
+        "primary key",
+      ),
       internal_id: reader.string(
-        bytes.readUInt32LE(at + 4),
+        littleEndian(bytes).u32(at + 4),
         "/",
         "internal id",
       ),
       provider_id: reader.string(
-        bytes.readUInt32LE(at + 8),
+        littleEndian(bytes).u32(at + 8),
         ".",
         "provider id",
       ),
       resource_type: reader.typeName(
-        bytes.readUInt32LE(at + 24),
+        littleEndian(bytes).u32(at + 24),
         "resource type",
       ),
       dependencies,
       dependency_key: null,
-      dependency_hash: bytes.readInt32LE(at + 16),
-      data: locationData(reader, bytes.readUInt32LE(at + 20)),
+      dependency_hash: littleEndian(bytes).u32(at + 16) | 0,
+      data: locationData(reader, littleEndian(bytes).u32(at + 20)),
       offset: at,
     };
     options.onRow?.(row);

@@ -1,3 +1,12 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import {
+  littleEndian,
+  ASSET_BUNDLE_REQUEST_OPTIONS,
+  ROWS_PER_YIELD,
+  type UnityAddressablesReadOptions,
+  type UnityAddressablesSteps,
+  beforeStoredText,
+} from "./UnityAddressablesShared.js";
 import type {
   UnityAddressablesKey,
   UnityAddressablesLocation,
@@ -5,13 +14,6 @@ import type {
 } from "../domain/unity/unityAddressables.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { UnityAddressablesFormatFailure } from "./UnityAddressablesFormat.js";
-import {
-  ASSET_BUNDLE_REQUEST_OPTIONS,
-  ROWS_PER_YIELD,
-  type UnityAddressablesReadOptions,
-  type UnityAddressablesSteps,
-  beforeStoredText,
-} from "./UnityAddressablesShared.js";
 
 // Entry record: internalId, provider, dependencyKey, depHash, dataIndex, primaryKey, resourceType.
 const ENTRY_FIELDS = 7;
@@ -71,7 +73,7 @@ const int32 = (data: Buffer, offset: number, label: string): number => {
       "truncated-record",
       `${label} at ${offset} is outside ${data.length} bytes`,
     );
-  return data.readInt32LE(offset);
+  return littleEndian(data).u32(offset) | 0;
 };
 
 const slice = (data: Buffer, offset: number, length: number, label: string) => {
@@ -131,12 +133,12 @@ const readObject = (
     case TAG.uint16:
       return {
         kind: "uint16",
-        value: String(slice(data, at, 2, label).readUInt16LE(0)),
+        value: String(littleEndian(slice(data, at, 2, label)).u16(0)),
       };
     case TAG.uint32:
       return {
         kind: "uint32",
-        value: String(slice(data, at, 4, label).readUInt32LE(0)),
+        value: String(littleEndian(slice(data, at, 4, label)).u32(0)),
       };
     case TAG.int32:
       return { kind: "int32", value: String(int32(data, at, label)) };
@@ -289,12 +291,11 @@ const indexIn = (
 };
 
 // Fatal decoding: a replacement character would report a changed path.
-const UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 const parseCatalog = (bytes: Buffer): Json => {
   let text: string;
   try {
-    text = UTF8.decode(bytes);
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch (cause) {
     throw new UnityAddressablesFormatFailure(
       "invalid-string",
@@ -459,7 +460,7 @@ const jsonLocation = (
 ): UnityAddressablesLocation => {
   const base = 4 + index * ENTRY_FIELDS * 4;
   const value = (fieldIndex: number) =>
-    tables.entryData.readInt32LE(base + fieldIndex * 4);
+    littleEndian(tables.entryData).u32(base + fieldIndex * 4) | 0;
   const internalId = indexIn(
     value(0),
     tables.internalIds.length,

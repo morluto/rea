@@ -240,8 +240,10 @@ it("admits one inspection at a time and none after close", async () => {
     await awaitAcknowledgement(yielded, first, "first decoding yield");
     const second = await provider.inspect({ path });
     expect(second.ok).toBe(false);
-    if (!second.ok)
-      expect(second.error).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!second.ok) {
+      expect(second.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+      expect(second.error).toMatchObject({ retryable: true });
+    }
     release();
     expect((await first).ok).toBe(true);
   } finally {

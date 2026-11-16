@@ -1,3 +1,4 @@
+import { littleEndian } from "./UnityAddressablesShared.js";
 import { UNITY_ADDRESSABLES_BINARY_MAGIC } from "../domain/unity/unityAddressables.js";
 import { readBinaryCatalogSteps } from "./UnityAddressablesBinaryCatalog.js";
 import { UnityAddressablesFormatFailure } from "./UnityAddressablesFormat.js";
@@ -26,7 +27,7 @@ export function* readUnityAddressablesCatalogSteps(
   if (isJsonStart(bytes)) return yield* readJsonCatalogSteps(bytes, options);
   if (
     bytes.length >= 4 &&
-    bytes.readInt32LE(0) === UNITY_ADDRESSABLES_BINARY_MAGIC
+    (littleEndian(bytes).u32(0) | 0) === UNITY_ADDRESSABLES_BINARY_MAGIC
   )
     return yield* readBinaryCatalogSteps(bytes, options);
   throw new UnityAddressablesFormatFailure(

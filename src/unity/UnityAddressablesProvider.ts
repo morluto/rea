@@ -1,4 +1,5 @@
 import { UNITY_ADDRESSABLES_PROVIDER_IDENTITY } from "./UnityAddressablesProviderIdentity.js";
+import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -8,7 +9,6 @@ import { setImmediate } from "node:timers/promises";
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
-  artifactFileCancellationCause,
   assertArtifactReadActive,
   bindArtifactFileCleanup,
   completedStableArtifact,
@@ -24,17 +24,15 @@ import {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
+  cancelledBy,
+  fixedCeilingConstraint,
+  isAborted,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { unityAddressablesCatalogEvidence } from "../domain/unity/unityAddressablesEvidence.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -46,7 +44,6 @@ import {
 } from "../domain/unity/unityAddressables.js";
 import { createUnityAddressablesAdmission } from "./UnityAddressablesAdmission.js";
 import { readUnityAddressablesCatalogSteps } from "./UnityAddressablesCatalog.js";
-import { UnityAddressablesFormatFailure } from "./UnityAddressablesFormat.js";
 import type { UnityAddressablesRowCounts } from "./UnityAddressablesShared.js";
 
 /** Bundled format reader identity; the catalog format version is a separate observed fact. */
@@ -79,82 +76,6 @@ interface FailureSite {
   readonly field: Field;
   readonly maximum: number;
 }
-
-const formatFailure = (
-  cause: UnityAddressablesFormatFailure,
-  { path, field }: FailureSite,
-): AnalysisError => {
-  switch (cause.kind) {
-    case "capacity":
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        cause.message,
-        {},
-        {
-          cause,
-          ...fixedAllowanceOptions(
-            "The Unity Addressables catalog allowance",
-            "count",
-          ),
-        },
-      );
-    case "unsupported":
-      return new AnalysisUnsupportedTargetError(
-        OPERATION,
-        path,
-        cause.message,
-        {
-          cause,
-        },
-      );
-    case "malformed":
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: [field],
-          reason: "invalid_format",
-          message: `Selected catalog ${path} is malformed: ${cause.message}`,
-        },
-      ]);
-  }
-};
-
-/** Typed refusal for a bounded stable read; undefined leaves the cause to later mappings. */
-const readFailure = (
-  cause: ArtifactReaderFailure,
-  { path, field, maximum }: FailureSite,
-): AnalysisError | undefined => {
-  switch (cause.reason) {
-    case "integrity":
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
-    case "cancelled":
-      return new AnalysisCancelledError(OPERATION, {
-        cause: artifactFileCancellationCause(cause),
-      });
-    case "limit":
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { maximum_input_bytes: maximum },
-        {
-          cause,
-          ...fixedAllowanceOptions(
-            "the fixed Unity Addressables input allowance",
-            "input",
-          ),
-        },
-      );
-    case "path":
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: [field], reason: "invalid_format", message: cause.message },
-      ]);
-    default:
-      return undefined;
-  }
-};
 
 const UNREADABLE_PATH_CODES = new Set([
   "ENOENT",
@@ -202,13 +123,12 @@ const unityAddressablesFailureDialect = (
   const site = { path, field, maximum };
   // Provider-owned typed refusals, examined before the shared file facts.
   const recognise = (cause: unknown) =>
-    cause instanceof UnityAddressablesFormatFailure
-      ? formatFailure(cause, site)
-      : cause instanceof ArtifactReaderFailure
-        ? readFailure(cause, site)
-        : cause instanceof Error && "code" in cause
-          ? systemFailure(cause, site)
-          : undefined;
+    parseFailureAnalysisError(OPERATION, path, cause, field) ??
+    (cause instanceof ArtifactReaderFailure
+      ? undefined
+      : cause instanceof Error && "code" in cause
+        ? systemFailure(cause, site)
+        : undefined);
   const unclassified = (cause: unknown, details: AnalysisErrorOptions) => {
     const failure = new ProviderAdapterError(
       UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
@@ -225,6 +145,24 @@ const unityAddressablesFailureDialect = (
   return {
     providerId: UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
     operation: OPERATION,
+    file: {
+      path,
+      field,
+      description: field === "path" ? "catalog" : "catalog hash file",
+      fileSize: (cause, details) =>
+        fixedCeilingConstraint(
+          OPERATION,
+          "file-size",
+          cause.message,
+          {
+            name: "the fixed Unity Addressables input allowance",
+            kind: "input",
+            limit: maximum,
+            unit: "bytes",
+          },
+          { ...details, cause },
+        ),
+    },
     recognise: (cause) => {
       const failure = recognise(cause);
       if (failure !== undefined) retainReadObservation(cause, failure);
@@ -251,32 +189,34 @@ const unityAddressablesFailureDialect = (
   };
 };
 
-const completeReportRecovery =
-  "The Unity Addressables complete-report allowance is a fixed report allowance. No complete catalog inventory is retained. Source facts already observed stay with this refusal, and complete CLI JSON does not raise the allowance. Repeating the unchanged request fails the same way.";
-
 const reportLimit = (path: string, maximumBytes: number) =>
-  new AnalysisResourceConstraintError(
+  fixedCeilingConstraint(
     OPERATION,
     "memory",
     `The complete Addressables catalog report for ${path} exceeds the retained report budget; no complete inventory is retained.`,
-    { maximum_report_bytes: maximumBytes },
-    { retryable: false, remediationAction: completeReportRecovery },
+    {
+      name: "The Unity Addressables complete-report allowance",
+      kind: "bytes",
+      limit: maximumBytes,
+      unit: "bytes",
+    },
   );
-
-const hashReportRecovery =
-  "The Unity Addressables complete-report allowance is a fixed report allowance. The decoded catalog stays with this refusal as catalog Evidence without the selected hash file, and complete CLI JSON does not raise the allowance. Repeating the unchanged request fails the same way.";
 
 const hashReportLimit = (
   path: string,
   hashPath: string,
   maximumBytes: number,
 ) =>
-  new AnalysisResourceConstraintError(
+  fixedCeilingConstraint(
     OPERATION,
     "memory",
     `The Addressables catalog report for ${path} exceeds the retained report budget with the selected hash file ${hashPath}; the decoded catalog is retained without it.`,
-    { maximum_report_bytes: maximumBytes },
-    { retryable: false, remediationAction: hashReportRecovery },
+    {
+      name: "The Unity Addressables complete-report allowance",
+      kind: "bytes",
+      limit: maximumBytes,
+      unit: "bytes",
+    },
   );
 
 const sourceArtifact = (
@@ -489,8 +429,7 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
 
   /** Admission order: caller cancellation, then a closed reader, then the one active inspection. */
   #refusal(signal: AbortSignal | undefined): AnalysisError | undefined {
-    if (signal?.aborted)
-      return new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+    if (isAborted(signal)) return cancelledBy(OPERATION, signal);
     if (this.#admissionStopped)
       return new AnalysisCapabilityUnavailableError(
         UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
@@ -502,12 +441,12 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
         },
       );
     if (!this.#inspecting) return undefined;
-    return new AnalysisResourceConstraintError(
+    return new AnalysisCapabilityUnavailableError(
+      UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
       OPERATION,
-      "capacity",
       "Only one Unity Addressables catalog inspection is admitted per reader.",
-      { maximum_concurrent_inspections: 1 },
       {
+        retryable: true,
         remediationAction:
           "Retry after the active Unity Addressables catalog inspection on this reader completes.",
       },

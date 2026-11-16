@@ -1,3 +1,8 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
+
+/** Format name carried by every catalog parse failure. */
+export const UNITY_ADDRESSABLES_FORMAT = "unity-addressables-catalog";
+
 /** Stable machine-readable reason for each rejected catalog. */
 export const UNITY_ADDRESSABLES_FAILURE_REASONS = {
   unsupported: ["unrecognized-format", "unsupported-version"],
@@ -15,7 +20,6 @@ export const UNITY_ADDRESSABLES_FAILURE_REASONS = {
     "location-set-overlap",
     "string-overlap",
   ],
-  capacity: [],
 } as const;
 export type UnityAddressablesFailureKind =
   keyof typeof UNITY_ADDRESSABLES_FAILURE_REASONS;
@@ -35,16 +39,27 @@ const kindOf = (
     ),
   )!;
 
-/** Distinguish catalogs outside decoder coverage from damaged ones and from reader allowances. */
-export class UnityAddressablesFormatFailure extends Error {
-  readonly kind: UnityAddressablesFailureKind;
+/** Distinguish catalogs outside decoder coverage from damaged ones, keeping the stable reason. */
+export class UnityAddressablesFormatFailure extends ParseFailureError<
+  "malformed" | "unsupported"
+> {
   constructor(
     readonly reason: UnityAddressablesFailureReason,
     message: string,
     options?: ErrorOptions,
   ) {
-    super(`${reason}: ${message}`, options);
+    const detail = `${reason}: ${message}`;
+    super(
+      kindOf(reason) === "unsupported"
+        ? {
+            kind: "unsupported",
+            format: UNITY_ADDRESSABLES_FORMAT,
+            detail,
+            undecodedContent: false,
+          }
+        : { kind: "malformed", format: UNITY_ADDRESSABLES_FORMAT, detail },
+      options,
+    );
     this.name = "UnityAddressablesFormatFailure";
-    this.kind = kindOf(reason);
   }
 }
