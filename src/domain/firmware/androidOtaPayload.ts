@@ -817,9 +817,16 @@ const decodeManifest = (
       return;
     }
     if (field === 5 && wire === WireType.Varint) {
-      draft.signaturesSize = unwrap(
-        asSafeUint(reader.uint64(), "signatures_size"),
-      );
+      const size = unwrap(asSafeUint(reader.uint64(), "signatures_size"));
+      if (size > ANDROID_OTA_MAX_SIGNATURE_BYTES)
+        fail(
+          capacity(
+            "payload signature size",
+            ANDROID_OTA_MAX_SIGNATURE_BYTES,
+            "byte",
+          ),
+        );
+      draft.signaturesSize = size;
       return;
     }
     if (field === 12 && wire === WireType.Varint) {

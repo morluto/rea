@@ -434,6 +434,20 @@ it("refuses an oversize manifest and metadata signature as capacity limits", () 
   });
 });
 
+it("refuses an oversize manifest signatures_size before any signature read", () => {
+  const bytes = buildAndroidOtaPayload({
+    partitions: [],
+    signaturesSize: ANDROID_OTA_MAX_SIGNATURE_BYTES + 1,
+  });
+  expect(parse(bytes)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AndroidOtaPayloadCapacityFailure",
+      limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+    },
+  });
+});
+
 it("reports a reconstructed hash mismatch without inventing a matching digest", () => {
   const bytes = buildAndroidOtaPayload({
     partitions: [
