@@ -219,19 +219,6 @@ const sortedCommands = (cli: CliInstance): readonly CliCommandEntry[] =>
     left.name.localeCompare(right.name),
   );
 
-const unsupportedRowFormatAnswer = (
-  flag: "--llms" | "--llms-full" | "--schema",
-  format: "csv" | "tsv",
-): DiscoveryAnswer =>
-  renderedAnswer(
-    renderCliOutputArgumentError({
-      format: "json",
-      code: "UNSUPPORTED_OUTPUT_COMBINATION",
-      message: `${flag} returns a complete document and does not support --format ${format}. Use --format json, yaml, md, toon, or jsonl; CSV/TSV output is available only for selected row collections.`,
-    }),
-    1,
-  );
-
 /**
  * `--llms` and `--llms-full`: Markdown unless a structured format is chosen.
  * A known command first scopes the manifest to that command.
@@ -241,9 +228,9 @@ const llmsAnswer = (
   global: CliGlobalArguments,
   full: boolean,
 ): DiscoveryAnswer => {
-  const { format, formatExplicit } = readCliOutputArguments(global);
-  if (format === "csv" || format === "tsv")
-    return unsupportedRowFormatAnswer(full ? "--llms-full" : "--llms", format);
+  const { format, formatExplicit, validation } = readCliOutputArguments(global);
+  if (!validation.ok)
+    return renderedAnswer(renderCliOutputArgumentError(validation), 1);
   const scoped = cliCommands(cli).find(
     ({ name }) => name === global.command[0],
   );
@@ -285,9 +272,9 @@ const schemaAnswer = (
     });
     return answer(`Error: ${failure.message}`, 1);
   }
-  const { format, formatExplicit } = readCliOutputArguments(global);
-  if (format === "csv" || format === "tsv")
-    return unsupportedRowFormatAnswer("--schema", format);
+  const { format, formatExplicit, validation } = readCliOutputArguments(global);
+  if (!validation.ok)
+    return renderedAnswer(renderCliOutputArgumentError(validation), 1);
   return documentAnswer(
     commandSchemaDocument(entry, CLI_CUSTOM_GLOBAL_OPTIONS),
     formatExplicit ? format : "toon",

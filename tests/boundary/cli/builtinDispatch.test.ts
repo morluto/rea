@@ -212,3 +212,27 @@ it.for([
     });
   },
 );
+
+cliTest(
+  "refuses bare CSV/TSV discovery requests through the public CLI without suggesting row flags",
+  async ({ cli }) => {
+    for (const [arguments_, flag, format] of [
+      [["--llms", "--format", "csv"], "--llms", "csv"],
+      [["--llms-full", "--format", "tsv"], "--llms-full", "tsv"],
+      [["doctor", "--schema", "--format", "csv"], "--schema", "csv"],
+    ] as const) {
+      const reply = await cli.run({ arguments: arguments_ });
+      expect(reply.exitCode).toBe(1);
+      expect(reply.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "UNSUPPORTED_OUTPUT_COMBINATION",
+          message: expect.stringMatching(
+            new RegExp(`${flag}.*--format ${format}`, "u"),
+          ),
+        },
+      });
+      expect(reply.stdout).not.toContain("--filter-output");
+    }
+  },
+);
