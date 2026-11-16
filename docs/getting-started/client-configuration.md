@@ -347,6 +347,18 @@ entry was still present, doctor reported it aligned, and Claude Desktop's MCP
 log showed REA starting and answering `tools/list`. Uninstall against the real
 app is unverified.
 
+On macOS, Claude Desktop starts MCP servers through
+`Claude.app/Contents/Helpers/disclaimer`, which disclaims TCC responsibility.
+macOS then attributes Hopper's Apple Events to REA's runtime (`node` or `bun`)
+instead of Claude Desktop and denies them without prompting, although Claude
+Desktop itself has the Apple Events entitlement. Hopper-backed analysis from
+this registration therefore fails; static and non-Hopper operations still work.
+When a Hopper launcher is configured or detected, doctor reports a non-blocking
+`registration_apple_events:claude_desktop` advisory. Register REA with a client
+that keeps TCC responsibility, such as Claude Code, or start it from Terminal
+for Hopper work. This was observed on macOS 26.6.2 with Claude Desktop
+5.11492.5; see [#11597](https://github.com/morluto/rea/issues/11597).
+
 ## Claude Code
 
 Claude Code normally defers MCP tool definitions through tool search. It

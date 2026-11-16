@@ -958,6 +958,105 @@ it("keeps a caller-selected short timeout healthy and reports its advisory as in
   );
 });
 
+describe("Apple Events attribution advisory", () => {
+  const hopper = "/Applications/Hopper Disassembler.app/Contents/MacOS/hopper";
+  const registration = (client: string): ClientRegistrationStatus => ({
+    client,
+    config_path: `/fixture/home/${client}.json`,
+    command_identity: "owned",
+    command: ["/current/rea", "mcp"],
+    state: "aligned",
+    remediation: null,
+  });
+  const appleEventsChecks = (checks: readonly { readonly name: string }[]) =>
+    checks.filter(({ name }) => name.startsWith("registration_apple_events:"));
+
+  it("advises against Hopper from a TCC-disclaiming client on macOS without affecting health", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        configuredHopperPath: hopper,
+        clientRegistrations: () =>
+          Promise.resolve([registration("claude_desktop")]),
+      }),
+      { clients: ["claude_desktop"] },
+    );
+
+    expect(result.healthy).toBe(true);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration:claude_desktop",
+        ok: true,
+      }),
+    );
+    expect(result.informational_checks).toContainEqual(
+      expect.objectContaining({
+        name: "registration_apple_events:claude_desktop",
+        ok: true,
+        classification: "healthy",
+        detail: expect.stringContaining("Claude Desktop starts MCP servers"),
+      }),
+    );
+  });
+
+  it.each<{
+    readonly case: string;
+    readonly overrides: Partial<DoctorHost>;
+    readonly client: string;
+  }>([
+    {
+      case: "on Linux",
+      overrides: { platform: "linux", configuredHopperPath: hopper },
+      client: "claude_desktop",
+    },
+    {
+      case: "without a configured or detected Hopper launcher",
+      overrides: {
+        validTarget: () => Promise.resolve(false),
+        executable: () => Promise.resolve(false),
+      },
+      client: "claude_desktop",
+    },
+    {
+      case: "for a client that keeps TCC responsibility",
+      overrides: { configuredHopperPath: hopper },
+      client: "claude_code",
+    },
+  ])("adds no advisory $case", async ({ overrides, client }) => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        clientRegistrations: () => Promise.resolve([registration(client)]),
+        ...overrides,
+      }),
+    );
+
+    expect(appleEventsChecks(result.checks)).toEqual([]);
+  });
+
+  it("adds no advisory when the client has no REA registration", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        configuredHopperPath: hopper,
+        clientRegistrations: () =>
+          Promise.resolve([
+            {
+              client: "claude_desktop",
+              config_path: "/fixture/home/claude_desktop.json",
+              command_identity: "unknown",
+              command: [],
+              state: "missing",
+              remediation: "Run rea setup.",
+            },
+          ]),
+      }),
+    );
+
+    expect(appleEventsChecks(result.checks)).toEqual([]);
+  });
+});
+
 describe("Grok Bot readiness", () => {
   it("does not treat a Grok Bot data directory as an aligned registration", async () => {
     const registrations: readonly ClientRegistrationStatus[] = [
