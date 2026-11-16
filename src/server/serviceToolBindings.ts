@@ -121,6 +121,12 @@ import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
+import {
+  RIZIN_DEBUG_SESSION_TOOLS,
+  unknownDebuggerSessionError,
+} from "../domain/debuggerSessionErrors.js";
+import type { ExternalMutationAdmission } from "./externalMutationAdmission.js";
 import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 import {
   analyzeWebBundle,
@@ -201,6 +207,15 @@ const committedUnknown = (
         }),
       )
     : result;
+
+/** Rizin debugger sessions a manager owns and the session they may change. */
+export interface RizinDebugToolOptions {
+  readonly manager: Pick<
+    RizinDebugSessionManager,
+    "start" | "execute" | "status" | "close" | "retryCleanupFailures"
+  >;
+  readonly session: ExternalMutationAdmission | undefined;
+}
 
 /** The browser observation provider, or why it failed to load. */
 export interface BrowserObservationToolOptions {
@@ -1179,6 +1194,78 @@ const SERVICE_TOOL_BINDINGS = {
       value: async (input) => session.verifyUnknownResolution(input.unknown_id),
     },
   })) satisfies Bind<SessionDerivedToolOptions>,
+  // Rizin debugger sessions may change the bound artifact; each command
+  // runs under external-mutation admission and keeps a failed cleanup owned.
+  rizinDebug: (({ manager, session }) => {
+    const retryCleanup = () => manager.retryCleanupFailures();
+    return {
+      start_rizin_debug_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "value",
+          retryCleanup,
+          run: async (input, signal) => {
+            const started = await manager.start(
+              {
+                path: input.path,
+                inferior_tty: input.inferior_tty,
+                ...(input.backend === undefined
+                  ? {}
+                  : { backend: input.backend }),
+              },
+              signal,
+            );
+            return started.ok
+              ? ok({
+                  value: started.value,
+                  retained: { session_id: started.value.session_id },
+                })
+              : started;
+          },
+        },
+      },
+      rizin_debug_command: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "evidence",
+          retryCleanup,
+          run: async (input, signal) => {
+            const executed = await manager.execute(
+              input.session_id,
+              input.command,
+              signal,
+            );
+            return executed.ok ? ok(executed.value.evidence) : executed;
+          },
+        },
+      },
+      rizin_debug_session_status: {
+        admission: "sdk",
+        value: async (input) => {
+          const status = manager.status(input.session_id);
+          return status === undefined
+            ? err(
+                unknownDebuggerSessionError(
+                  RIZIN_DEBUG_SESSION_TOOLS,
+                  "rizin_debug_session_status",
+                ),
+              )
+            : ok({ ...status, recent_output: [...status.recent_output] });
+        },
+      },
+      close_rizin_debug_session: {
+        admission: "sdk",
+        session,
+        mutation: {
+          kind: "owned-cleanup",
+          resource: (input) => input.session_id,
+          run: (input) => manager.close(input.session_id),
+        },
+      },
+    };
+  }) satisfies Bind<RizinDebugToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation: (({ browser, loadFailure }, retention) => {

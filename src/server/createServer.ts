@@ -56,7 +56,6 @@ import {
 import { registerReverseEngineeringTools } from "./registerReverseEngineeringTools.js";
 import { registerCutterTools } from "./registerCutterTools.js";
 import { registerGdbTools } from "./registerGdbTools.js";
-import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
@@ -412,13 +411,10 @@ export const createServer = (
         session,
         evidenceById,
       );
-      registerRizinDebugTools(
+      registerServiceTools(
         server,
-        rizinDebugSessions,
-        toolLogger,
-        delivery,
-        recordSessionEvidence,
-        session,
+        { rizinDebug: { manager: rizinDebugSessions, session } },
+        { logger: toolLogger, recordEvidence, evidenceById },
       );
       registerBinaryDiagnosticsTools(
         server,

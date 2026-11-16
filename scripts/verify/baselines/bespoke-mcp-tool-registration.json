@@ -12,6 +12,5 @@
   "src/server/registerNativeFunctionMatchingTool.ts": 1,
   "src/server/registerResetInvestigationTool.ts": 1,
   "src/server/registerReverseEngineeringTools.ts": 2,
-  "src/server/registerRizinDebugTools.ts": 4,
   "src/server/registerSessionTools.ts": 5
 }
