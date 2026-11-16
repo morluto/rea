@@ -1,5 +1,5 @@
+import { Budget } from "../budget.js";
 import { observeMzWindowsHeader } from "../dosMz.js";
-import { createHash } from "node:crypto";
 import { readPeOptionalHeaderFixedFields } from "../peOptionalHeader.js";
 import { readPeCoffHeader } from "../peCoffHeader.js";
 import { readPeSectionHeader } from "../peSectionHeader.js";
@@ -19,6 +19,7 @@ import {
   type NativeAotReason,
   type NativeAotTruncationReason,
 } from "./nativeAotReason.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const RTR_SIGNATURE = 0x00525452;
 const RTR_ROW_SIZE = 24;
@@ -37,9 +38,6 @@ export const NATIVE_AOT_BASE_WORK_UNITS = 64 * 1024 * 1024;
  */
 export const NATIVE_AOT_WORK_UNITS_PER_SOURCE_BYTE = 8;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
-/** Version of the built-in read-only PE metadata interpretation in profiles. */
-export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v11";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;
@@ -63,8 +61,8 @@ export const DEFAULT_NATIVE_AOT_PARSER_LIMITS: NativeAotParserLimits =
   nativeAotParserLimitsFor(NATIVE_AOT_MAX_SOURCE_BYTES);
 
 class NativeAotParserBudget {
-  workUnits = 0;
-  workingMemoryBytes = 0;
+  readonly #work: Budget;
+  readonly #workingMemory: Budget;
   workingMemoryBytesPeak = 0;
   truncationReason:
     | "work-unit-budget"
@@ -72,40 +70,41 @@ class NativeAotParserBudget {
     | "response-budget"
     | undefined;
 
-  constructor(readonly limits: NativeAotParserLimits) {}
+  constructor(readonly limits: NativeAotParserLimits) {
+    this.#work = new Budget(limits.workUnits);
+    this.#workingMemory = new Budget(limits.workingMemoryBytes);
+  }
+
+  /** Work units consumed so far. */
+  get workUnits(): number {
+    return this.#work.used;
+  }
+
+  /** Working-memory bytes still available. */
+  get remainingWorkingMemoryBytes(): number {
+    return this.#workingMemory.remaining;
+  }
 
   consumeWork(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.limits.workUnits - this.workUnits
-    ) {
-      this.truncationReason ??= "work-unit-budget";
-      return false;
-    }
-    this.workUnits += bytes;
-    return true;
+    if (this.#work.tryCharge(bytes)) return true;
+    this.truncationReason ??= "work-unit-budget";
+    return false;
   }
 
   reserveWorkingMemory(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.limits.workingMemoryBytes - this.workingMemoryBytes
-    ) {
+    if (!this.#workingMemory.tryCharge(bytes)) {
       this.truncationReason ??= "working-memory-budget";
       return false;
     }
-    this.workingMemoryBytes += bytes;
     this.workingMemoryBytesPeak = Math.max(
       this.workingMemoryBytesPeak,
-      this.workingMemoryBytes,
+      this.#workingMemory.used,
     );
     return true;
   }
 
   releaseWorkingMemory(bytes: number): void {
-    this.workingMemoryBytes = Math.max(0, this.workingMemoryBytes - bytes);
+    this.#workingMemory.refund(bytes);
   }
 }
 
@@ -1103,7 +1102,7 @@ const hydrate = (
   const initialCapacity = Math.min(
     outputLimit,
     64 * 1024,
-    budget.limits.workingMemoryBytes - budget.workingMemoryBytes,
+    budget.remainingWorkingMemoryBytes,
   );
   if (!budget.reserveWorkingMemory(initialCapacity))
     parserBudgetExhausted(budget, "working-memory");
@@ -1291,7 +1290,7 @@ const hydrate = (
     throw cause;
   }
   const hydrated = output.subarray(0, outputLength);
-  const sha256 = createHash("sha256").update(hydrated).digest("hex");
+  const sha256 = sha256Hex(hydrated);
   image.addOverlay({ base, sizeBytes: outputLength, sha256, bytes: hydrated });
   return { base, sizeBytes: outputLength, sha256 };
 };
@@ -1485,7 +1484,7 @@ export const parseNativeAotPe = (
       ),
       maximumSummaryBytes,
     );
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const sha256 = sha256Hex(bytes);
   if (sha256 !== expectedSha256)
     throw new NativeAotSnapshotIdentityError(expectedSha256, sha256);
   let image: PeImage;
@@ -2062,7 +2061,7 @@ export const parseNativeAotPe = (
       if (raw !== null) {
         metadata.derived_memory = {
           ...descriptor,
-          sha256: createHash("sha256").update(raw).digest("hex"),
+          sha256: sha256Hex(raw),
         };
         remaining -= descriptorBytes;
       }

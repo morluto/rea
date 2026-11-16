@@ -1,10 +1,13 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import { validateCliArguments } from "../../../src/cli/strictPositionals.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import {
   excludeDeclaredSensitiveArguments,
   explicitSensitiveValueOptions,
@@ -30,10 +33,14 @@ const installAdmission = (cli: CliInstance) => {
   const strict = validateCliArguments(cli);
   const declared = excludeDeclaredSensitiveArguments(cli);
   const original = cli.serve.bind(cli);
-  cli.serve = (argv = [], options = {}) =>
-    strict(argv, options, (tokens, selected) =>
-      declared(tokens, selected, original),
+  cli.serve = (argv = [], options = {}) => {
+    const global = parseCliGlobalArguments(argv);
+    return strict(global, options, (selected) =>
+      declared(global, selected, (declaredOptions) =>
+        original([...global.arguments], declaredOptions),
+      ),
     );
+  };
 };
 
 it("rejects surplus public CLI inputs before importing and retains the one-path control", async () => {
@@ -44,7 +51,7 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
   await writeFile(
     path,
     JSON.stringify({
-      evidence_format: 1,
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       captures: [],
       environments: [],

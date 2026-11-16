@@ -1,5 +1,4 @@
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
-import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { isCallToolResult } from "@modelcontextprotocol/server";
@@ -17,6 +16,7 @@ import {
   runOwnedCommand,
 } from "../../../src/process/OwnedCommand.js";
 import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 beforeAll(
   () => prepareOwnedCommand(),

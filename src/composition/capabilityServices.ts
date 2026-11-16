@@ -1,4 +1,4 @@
-import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
   selectWiresharkTool,
@@ -41,7 +41,7 @@ import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
 import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
 import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
 import type {
   ReverseEngineeringService,
@@ -99,23 +99,23 @@ import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
-import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
-import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { JavaScriptRecoveryPort } from "../ports/javascript/JavaScriptRecoveryPort.js";
+import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
-import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
@@ -187,7 +187,7 @@ export interface CapabilityHostContext {
   readonly settings: AnalysisSettingsReader;
   readonly options: CapabilityServiceOptions;
   readonly platform: NodeJS.Platform;
-  readonly arch: string;
+  readonly arch: NodeJS.Architecture;
 }
 
 interface CapabilityInstance<Value> {
@@ -257,8 +257,9 @@ const modules = {
     apkSignatureModule.create(environment, options.apkSignature),
   ),
   evmInterface: service(
-    ({ environment, options }) =>
-      options.evmInterface ?? evmInterfaceModule.create(environment),
+    ({ environment, options, platform, arch }) =>
+      options.evmInterface ??
+      evmInterfaceModule.create(environment, { platform, architecture: arch }),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
         evmInterface: outsideHost(
@@ -277,7 +278,7 @@ const modules = {
         : {
             probes: {
               evmLimiterAvailability: (signal: AbortSignal) =>
-                evmLimiterAvailability(environment, { signal }),
+                evmLimiterAvailability(environment, { platform, arch, signal }),
             },
           }),
     }),
@@ -287,8 +288,9 @@ const modules = {
       options.sqliteDatabase ?? createSqliteDatabaseService(environment),
   ),
   binaryLayout: service(
-    ({ environment, options }) =>
-      options.binaryLayout ?? createBinaryLayoutService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.binaryLayout ??
+      createBinaryLayoutService(environment, { platform, architecture: arch }),
     (context) => ({
       hostUnsupported: {
         binaryLayout: outsideHost(
@@ -304,8 +306,12 @@ const modules = {
     }),
   ),
   recordedCrash: service(
-    ({ environment, options }) =>
-      options.recordedCrash ?? createRecordedCrashService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.recordedCrash ??
+      createRecordedCrashService(environment, {
+        platform,
+        architecture: arch,
+      }),
     (context) => ({
       hostUnsupported: {
         recordedCrash: outsideHost(
@@ -392,9 +398,12 @@ const modules = {
       createWebNetworkCaptureService(environment, settings),
   ),
   javascriptRecovery: capability(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       options.javascriptRecovery ??
-      createJavaScriptRecoveryProvider(environment),
+      createJavaScriptRecoveryProvider(environment, undefined, {
+        platform,
+        architecture: arch,
+      }),
     (value) => value.close?.() ?? Promise.resolve(),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
@@ -421,9 +430,13 @@ const modules = {
     }),
   ),
   firmwareAnalysis: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       new FirmwareAnalysisService(
-        options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
+        options.firmwareAnalysis ??
+          createFirmwareAnalysisProvider(environment, undefined, {
+            platform,
+            architecture: arch,
+          }),
       ),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
@@ -449,7 +462,8 @@ const modules = {
     }),
   ),
   gdbSessions: capability(
-    ({ providerEnvironment }) => createGdbSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createGdbSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
     ({ platform }) => ({
       hostUnsupported: {
@@ -458,8 +472,8 @@ const modules = {
     }),
   ),
   rizinDebugSessions: capability(
-    ({ providerEnvironment }) =>
-      createRizinDebugSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createRizinDebugSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
   ),
   android: service(
@@ -474,8 +488,8 @@ const modules = {
     }),
   ),
   pcap: service(
-    ({ environment, options }) =>
-      options.pcapAnalysis ?? createPcapAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.pcapAnalysis ?? createPcapAnalysisProvider(environment, platform),
     ({ options, platform }) => ({
       hostUnsupported: {
         pcapCapture: outsideHost(
@@ -503,8 +517,9 @@ const modules = {
     }),
   ),
   packetCapture: service(
-    ({ environment, options }) =>
-      options.packetCapture ?? createPacketCaptureService(environment),
+    ({ environment, options, platform }) =>
+      options.packetCapture ??
+      createPacketCaptureService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         packetCapture: outsideHost(
@@ -520,8 +535,9 @@ const modules = {
     }),
   ),
   signalRecording: service(
-    ({ environment, options }) =>
-      options.signalRecording ?? createSignalRecordingService(environment),
+    ({ environment, options, platform }) =>
+      options.signalRecording ??
+      createSignalRecordingService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         signalRecording: outsideHost(
@@ -542,9 +558,9 @@ const modules = {
     (value) => value.provider.close?.() ?? Promise.resolve(),
   ),
   apktool: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform }) =>
       options.apktoolAnalysis ??
-      createApktoolResourceAnalysisProvider(environment),
+      createApktoolResourceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         apktoolAnalysisAvailability: (signal: AbortSignal) =>
@@ -563,8 +579,9 @@ const modules = {
     }),
   ),
   adbDevice: service(
-    ({ environment, options }) =>
-      options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.adbDeviceAnalysis ??
+      createAdbDeviceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         adbAnalysisAvailability: (signal: AbortSignal) =>
