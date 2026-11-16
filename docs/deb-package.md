@@ -72,6 +72,12 @@ Caller-selected budgets (`max_file_bytes`, `max_ar_members`,
 `max_data_bytes`) fail as `resource_constraint` when exceeded and name the
 option that may move.
 
+Fixed reader allowances (4096 bytes for one resolved ar member name, 8 PAX
+or GNU extension headers before one tar entry, 65,536 relationship
+alternatives across the control file) also fail as `resource_constraint`, not
+as invalid input, with the partial report attached. No request option raises
+them.
+
 ## Relationship to other tools
 
 - `inspect_artifact` inventories a file without decoding Debian control or

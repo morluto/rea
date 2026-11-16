@@ -25,7 +25,10 @@ import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import {
+  DEB_PACKAGE_FIXED_ALLOWANCES,
+  DebPackageAllowanceFailure,
   DebPackageCapacityFailure,
   DebPackageFormatFailure,
 } from "./DebPackage.errors.js";
@@ -52,7 +55,8 @@ const parserLimitRecovery = (
 const partialDiagnostics = (cause: unknown) => {
   if (
     !(cause instanceof DebPackageFormatFailure) &&
-    !(cause instanceof DebPackageCapacityFailure)
+    !(cause instanceof DebPackageCapacityFailure) &&
+    !(cause instanceof DebPackageAllowanceFailure)
   )
     return {};
   const partial = cause.partial;
@@ -84,6 +88,25 @@ const capacityConstraint = (
   );
 
 /**
+ * The refusal for a fixed reader allowance, such as ar name bytes or
+ * relationship alternatives. No request budget raises it, so the recovery
+ * names the allowance rather than an option.
+ */
+const allowanceConstraint = (
+  cause: DebPackageAllowanceFailure,
+  details: Omit<AnalysisErrorOptions, "cause">,
+) =>
+  parseLimitConstraint(OPERATION, "capacity", cause, {
+    ...details,
+    ...fixedAllowanceOptions(
+      DEB_PACKAGE_FIXED_ALLOWANCES[cause.allowance],
+      "parser",
+      { limit: cause.maximum },
+    ),
+    ...partialDiagnostics(cause),
+  });
+
+/**
  * Debian's dialect for the shared provider failure classifier. Parser limit
  * and format refusals, and the recovery text for those limits, are the only
  * cases this provider names.
@@ -96,6 +119,8 @@ const failureDialect = (
   recognise: (cause, details) => {
     if (cause instanceof DebPackageCapacityFailure)
       return capacityConstraint(cause, details);
+    if (cause instanceof DebPackageAllowanceFailure)
+      return allowanceConstraint(cause, details);
     return parseFailureAnalysisError(
       OPERATION,
       input.path,

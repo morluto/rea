@@ -20,10 +20,17 @@ import {
   type InspectDebPackageInput,
 } from "../domain/deb/debPackage.js";
 import {
+  DebPackageAllowanceFailure,
   DebPackageCapacityFailure,
   DebPackageFormatFailure,
 } from "./DebPackage.errors.js";
 import { decodeXz } from "./xzDecoder.js";
+
+/** A refusal a member walk returns with the facts it read before stopping. */
+type DebPackageReadFailure =
+  | DebPackageFormatFailure
+  | DebPackageCapacityFailure
+  | DebPackageAllowanceFailure;
 
 const AR_MAGIC = Buffer.from("!<arch>\n", "ascii");
 const AR_HEADER = 60;
@@ -33,9 +40,10 @@ const AR_HEADER = 60;
  * so an unbounded name lets a small table expand into large report text.
  */
 const MAX_AR_MEMBER_NAME_BYTES = 4096;
-const memberNameTooLong = (length: number): DebPackageFormatFailure =>
-  new DebPackageFormatFailure(
-    "malformed",
+const memberNameTooLong = (length: number): DebPackageAllowanceFailure =>
+  new DebPackageAllowanceFailure(
+    "ar_member_name_bytes",
+    MAX_AR_MEMBER_NAME_BYTES,
     `ar member name of ${String(length)} bytes exceeds the ${String(MAX_AR_MEMBER_NAME_BYTES)}-byte name limit.`,
   );
 const TAR_BLOCK = 512;
@@ -237,7 +245,7 @@ type ParsedArMember = DebArMember & { readonly bytes: Uint8Array };
 
 type ArParse = {
   readonly members: ParsedArMember[];
-  readonly error?: DebPackageFormatFailure | DebPackageCapacityFailure;
+  readonly error?: DebPackageReadFailure;
 };
 
 const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
@@ -379,7 +387,7 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
 type TarParse = {
   readonly entries: DebTarEntry[];
   readonly files: ReadonlyMap<string, Uint8Array>;
-  readonly error?: DebPackageFormatFailure | DebPackageCapacityFailure;
+  readonly error?: DebPackageReadFailure;
   /** Entry names or link targets that are not UTF-8. */
   readonly undecodableNames: number;
 };
@@ -532,8 +540,9 @@ const parseTar = (
           entries,
           files,
           undecodableNames,
-          error: new DebPackageFormatFailure(
-            "malformed",
+          error: new DebPackageAllowanceFailure(
+            "tar_extension_headers",
+            MAX_TAR_EXTENSION_HEADERS,
             `${memberName} has more than ${String(MAX_TAR_EXTENSION_HEADERS)} extension headers before an entry at offset ${String(offset)}.`,
           ),
         };
@@ -869,8 +878,9 @@ const parseControl = (tar: TarParse, issues: DebPackageIssue[]): DebControl => {
       if (code === 0x2c || code === 0x7c) alternatives += 1;
     }
     if (alternatives > MAX_RELATIONSHIP_ALTERNATIVES)
-      throw new DebPackageFormatFailure(
-        "malformed",
+      throw new DebPackageAllowanceFailure(
+        "relationship_alternatives",
+        MAX_RELATIONSHIP_ALTERNATIVES,
         `control relationship fields declare more than ${String(MAX_RELATIONSHIP_ALTERNATIVES)} alternatives.`,
       );
   }
@@ -990,6 +1000,16 @@ const attachPartial = (cause: unknown, partial: DebPackage): never => {
   if (cause instanceof DebPackageCapacityFailure && cause.partial === undefined)
     throw new DebPackageCapacityFailure(
       cause.resource,
+      cause.maximum,
+      cause.message,
+      partial,
+    );
+  if (
+    cause instanceof DebPackageAllowanceFailure &&
+    cause.partial === undefined
+  )
+    throw new DebPackageAllowanceFailure(
+      cause.allowance,
       cause.maximum,
       cause.message,
       partial,

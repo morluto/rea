@@ -4,6 +4,7 @@ import { gzipSync } from "node:zlib";
 import { inspectDebPackageInputSchema } from "../domain/deb/debPackage.js";
 import { projectDebPackageView } from "../domain/analysisView/debPackageView.js";
 import {
+  DebPackageAllowanceFailure,
   DebPackageCapacityFailure,
   DebPackageFormatFailure,
 } from "./DebPackage.errors.js";
@@ -694,9 +695,12 @@ it("refuses a run of PAX headers with no entry before it costs work", () => {
           dataEntries: [...headers, { name: "./usr/bin/h", content: "" }],
         }),
       ),
-    DebPackageFormatFailure,
+    DebPackageAllowanceFailure,
   );
-  expect(error.kind).toBe("malformed");
+  expect(error.failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "tar_extension_headers", maximum: 8 },
+  });
   expect(error.partial?.control?.package).toBe("hello");
 });
 
@@ -774,10 +778,15 @@ it("refuses a GNU ar long name above the name limit before repeating it", () => 
       ],
     }),
   );
-  const error = expectFailure(() => parse(bytes), DebPackageFormatFailure);
+  const error = expectFailure(() => parse(bytes), DebPackageAllowanceFailure);
+  expect(error.failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "ar_member_name_bytes", maximum: 4096 },
+  });
   expect(error.message).toContain(
     "4097 bytes exceeds the 4096-byte name limit",
   );
+  expect(error.partial?.ar.format_version).toBe("2.0");
 });
 
 it("resolves a GNU ar long name at the name limit", () => {
@@ -1011,8 +1020,12 @@ it("refuses relationship fields past the alternatives allowance before building 
           controlText: `${DEFAULT_CONTROL_TEXT}Depends: ${Array(65_537).fill("a").join("|")}\n`,
         }),
       ),
-    DebPackageFormatFailure,
+    DebPackageAllowanceFailure,
   );
-  expect(error.kind).toBe("malformed");
+  expect(error.failure).toMatchObject({
+    kind: "limit",
+    limit: { name: "relationship_alternatives", maximum: 65_536 },
+  });
   expect(error.message).toMatch(/more than 65536 alternatives/u);
+  expect(error.partial?.ar.format_version).toBe("2.0");
 });

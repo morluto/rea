@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { createDebPackageService } from "../../../src/composition/debPackage.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
+  DEFAULT_CONTROL_TEXT,
   debPackageFixture,
   notArBytes,
 } from "../../../src/deb/DebPackage.fixture.js";
@@ -68,4 +69,33 @@ it("returns typed resource and cancellation failures", async () => {
   );
   if (cancelled.ok) throw new Error("Expected cancellation");
   expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+});
+
+it("reports a fixed reader allowance as a limit with the partial report", async () => {
+  const root = await createTestTempDirectory("rea-deb-allowance-");
+  const path = join(root, "wide.deb");
+  await writeFile(
+    path,
+    debPackageFixture({
+      controlText: `${DEFAULT_CONTROL_TEXT}Depends: ${Array(65_537).fill("a").join("|")}\n`,
+    }),
+  );
+  const result = await createDebPackageService().inspect({ path });
+  if (result.ok) throw new Error("Expected relationship allowance failure");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+  });
+  expect(result.error).toMatchObject({
+    reportedLimits: { relationship_alternatives: 65_536 },
+    recovery: {
+      fixedAllowance: {
+        name: "The control relationship alternatives allowance",
+        kind: "parser",
+        limit: 65_536,
+      },
+    },
+    diagnostics: { partial: { ar: { format_version: "2.0" } } },
+  });
 });
