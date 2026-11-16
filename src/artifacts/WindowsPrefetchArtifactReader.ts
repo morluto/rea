@@ -10,17 +10,15 @@ import {
   parsePrefetchFile,
 } from "../domain/windows/prefetchFormat.js";
 import {
+  ArtifactFileSource,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
   assertArtifactReadActive,
   artifactReadCancelledBy,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
-import {
-  ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+} from "../resources/index.js";
 
 /** Windows Prefetch file whose header facts become the root occurrence. */
 export class WindowsPrefetchArtifactReader implements ArtifactReader {
