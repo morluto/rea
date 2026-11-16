@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -65,11 +66,15 @@ type FinalClose =
 
 const fixture = async (dependencyText = "Synthetic dependency") => {
   const root = await createTestTempDirectory("rea-source-closure-");
-  const dependency = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { source: dependencyText },
-  });
+  const dependency = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { source: dependencyText },
+    },
+  );
   const left = nativeMatchingInventory(
     "1",
     [{ address: "0x10", value: "main" }],
@@ -271,20 +276,28 @@ it("keeps the fault on the final close when another scope closes first", async (
 
 it("keeps cancellation typed for a captured source with a data-sized link set", async () => {
   // Repeated links are valid Evidence, and only one distinct record backs them.
-  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_ancestor",
-    parameters: {},
-    result: { source: "Synthetic ancestor" },
-  });
-  const wide = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { source: "Synthetic wide dependency" },
-    evidenceLinks: Array.from(
-      { length: DATA_SIZED_LINKS },
-      () => ancestor.evidence_id,
-    ),
-  });
+  const ancestor = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_ancestor",
+      parameters: {},
+      result: { source: "Synthetic ancestor" },
+    },
+  );
+  const wide = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { source: "Synthetic wide dependency" },
+      evidenceLinks: Array.from(
+        { length: DATA_SIZED_LINKS },
+        () => ancestor.evidence_id,
+      ),
+    },
+  );
   const input = await fixture();
   const left = nativeMatchingInventory(
     "1",

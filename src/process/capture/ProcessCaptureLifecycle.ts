@@ -64,7 +64,7 @@ import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.j
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import type { ProcessSensitiveOutput } from "./ProcessSensitiveOutput.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   hasCaptureTruncation,
@@ -90,8 +90,10 @@ import type {
   ProcessCaptureEventJournalEntry,
   RecordProcessCaptureEvent,
   TerminalFrame,
+  ProcessCaptureRootProcess,
 } from "../../domain/process/processCapture.js";
 import { partialProcessCaptureObservationSchema } from "../../domain/process/processCapture.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 interface TerminalExitOptions {
   readonly terminal: Pick<IPty, "onExit" | "kill">;
   readonly scenario: ProcessScenario;
@@ -703,6 +705,7 @@ export const createRunManifest = async (
   startedAt: Date,
   completedAt: Date,
   executable: LaunchedExecutableObservation,
+  rootProcess: ProcessCaptureRootProcess,
   host: {
     readonly platform: NodeJS.Platform;
     readonly architecture: NodeJS.Architecture;
@@ -731,6 +734,7 @@ export const createRunManifest = async (
       state: executable.state,
       reason: executable.reason,
     },
+    root_process: rootProcess,
     normalization_sha256: digestProcessCommitment(scenario.normalization),
   };
 };
@@ -822,7 +826,7 @@ export const describeUnverifiedCause = (
   cause: unknown,
   fallback: string,
 ): string => {
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return message.trim() === "" ? fallback : message;
 };
 
@@ -1871,11 +1875,11 @@ export const resolveProcessResult = (
     if (executionFailure instanceof AnalysisError) {
       if (partialObservation !== undefined)
         executionFailure.retainPartialObservation(partialObservation);
-      throw analysisErrorWithCleanupFailure(
+      throw analysisErrorWithCleanupDependencies(
         executionFailure,
         cleanupError,
         "capture_process",
-      ).bindCleanupDependencies([executionFailure, cleanupError]);
+      );
     }
     throw cleanupError;
   }

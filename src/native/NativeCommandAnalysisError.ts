@@ -27,7 +27,7 @@ import {
 import {
   NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   type NativeCommandFailure,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
 
 /** Operation-owned text for a command deadline or unavailable requirement. */
@@ -218,7 +218,8 @@ export const translateNativeCommandFailure = (
           ...fixedNativeAllowance(
             "The native command output capture allowance",
             "capture",
-            `${String(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)} bytes`,
+            NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
+            "bytes",
           ),
         },
       ),

@@ -2,12 +2,12 @@ import { mkdir, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { desktopApplicationSchema } from "../../../src/domain/desktopApplication.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 it.each(["before-open", "during-inspection", "during-stream"] as const)(
   "rejects replacement of the admitted physical root %s even when file identity survives",

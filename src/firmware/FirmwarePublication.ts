@@ -1,4 +1,9 @@
-import { AnalysisCleanupLease } from "../resources/index.js";
+import {
+  AnalysisCleanupLease,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
@@ -8,11 +13,6 @@ import {
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { z } from "zod";
-import {
-  SafeOutputTree,
-  outputDirectoryAdmissionRefusal,
-  SafeOutputTreeCreationFailure,
-} from "../resources/index.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -49,6 +49,7 @@ const UNNAMED_DEPENDENCY_CONTINUATION =
 
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const depthContinuation = (
   maxDepth: number,
@@ -257,12 +258,8 @@ export const publishFirmwareExtraction = async (context: {
         "unblob",
         [context.outputDirectory, context.workspacePath],
         {
-          reason:
-            cleanupCause instanceof Error
-              ? cleanupCause.message
-              : String(cleanupCause),
-          previous_error:
-            cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cleanupCause),
+          previous_error: errorMessage(cause),
         },
         {
           cause: cleanupCause,

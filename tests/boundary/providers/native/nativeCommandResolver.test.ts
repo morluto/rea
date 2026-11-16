@@ -7,7 +7,7 @@ import { phaseArrival } from "../../../support/lifecycleHarness.js";
 import {
   resolveXcrunTool,
   type NativeCommandLauncher,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 
 const realpathState = vi.hoisted(() => ({
   resolve: undefined as ((path: string) => Promise<string>) | undefined,

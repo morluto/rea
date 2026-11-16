@@ -11,7 +11,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import {
+  analysisErrorWithCloseRejection,
+  analysisErrorWithCloseRejections,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -71,6 +75,8 @@ import {
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
+import { retainProcessInspectionOwners } from "../providers/OwnedCommandCleanup.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperDiagnostic } from "./HopperDiagnostics.js";
@@ -110,6 +116,7 @@ import {
   hopperReplyEnvelope,
   responseResult,
 } from "./protocol.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Aggregate in-memory retention budget for this provider's launcher output. */
 const HOPPER_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
@@ -193,6 +200,7 @@ export class HopperClient<
     runtimeRoot: undefined,
     shutdownConfirmed: false,
     externalApplication: undefined,
+    inspections: new ArtifactResourceScope(),
   };
   #token: string | undefined;
   /** Reply ceiling admitted with the request on the wire; the default before any. */
@@ -210,6 +218,15 @@ export class HopperClient<
   #runId: string | undefined;
   #startupAttempt: HopperStartupAttempt | undefined;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
+  /**
+   * Confirm the failures a close of this client reported, one release per
+   * part: the next close retries the same retained session and launcher, and
+   * each part's success releases only the failures that part reported.
+   */
+  readonly #closeRetries: {
+    session: AnalysisCleanupRelease | undefined;
+    launcher: AnalysisCleanupRelease | undefined;
+  } = { session: undefined, launcher: undefined };
   readonly #onSocketData = (chunk: Buffer): void => {
     this.#responses.push(chunk);
   };
@@ -457,7 +474,7 @@ export class HopperClient<
       },
       (cause: unknown) => {
         this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Hopper startup promise rejected during bookkeeping",
         );
         if (this.#startupAttempt === attempt) this.#startupAttempt = undefined;
@@ -688,6 +705,13 @@ export class HopperClient<
       try {
         identity = await observeProcessStartIdentity(parsed.value.processId);
       } catch (cause: unknown) {
+        // The identity stays unavailable; descriptors the read left open stay
+        // owned until session cleanup releases them.
+        retainProcessInspectionOwners(
+          cause,
+          this.#resources.inspections,
+          "open_binary",
+        );
         identity = {
           state: "unavailable" as const,
           reason:
@@ -716,7 +740,7 @@ export class HopperClient<
     const closed = await this.#cleanup();
     const failure = closed.ok
       ? primary
-      : analysisErrorWithCleanupFailure(primary, closed.error, "open_binary");
+      : analysisErrorWithCloseRejection(primary, closed.error, "open_binary");
     this.#startupFailureResult = failure;
     return err(failure);
   }
@@ -964,17 +988,39 @@ export class HopperClient<
               "hopper",
               ["hopper-launcher"],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { cause },
             ),
           ),
         );
-      if (launcherClosed === undefined || launcherClosed.ok) return closed;
+      // Each part confirms its own earlier failures when it succeeds; an
+      // ownerless failed part binds to its part's retry before composing, so
+      // the composite reports only the parts still unreleased. A part that
+      // already follows its own owner keeps reading that owner.
+      const retries = this.#closeRetries;
+      if (closed.ok) {
+        retries.session?.confirm();
+        retries.session = undefined;
+      } else
+        (retries.session ??= new AnalysisCleanupRelease()).bindUnowned(
+          closed.error,
+        );
+      if (launcherClosed === undefined || launcherClosed.ok) {
+        retries.launcher?.confirm();
+        retries.launcher = undefined;
+        return closed;
+      }
+      (retries.launcher ??= new AnalysisCleanupRelease()).bindUnowned(
+        launcherClosed.error,
+      );
       return closed.ok
         ? launcherClosed
         : err(
-            analysisErrorWithCleanupFailure(closed.error, launcherClosed.error),
+            analysisErrorWithCloseRejections(
+              closed.error,
+              launcherClosed.error,
+            ),
           );
     } finally {
       if (this.#socket?.destroyed === true) this.#socket = undefined;

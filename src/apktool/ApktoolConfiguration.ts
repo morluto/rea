@@ -553,8 +553,9 @@ const versionProbeFailure = (
         },
         ...(output === undefined ? {} : { capturedOutput: output }),
         ...fixedAllowanceOptions(
-          `The apktool version-output capture allowance of ${String(VERSION_MAX_OUTPUT_BYTES)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+          "The apktool version-output capture allowance (decode_timeout_ms does not raise it)",
           "capture",
+          { limit: VERSION_MAX_OUTPUT_BYTES, unit: "bytes" },
         ),
       },
     );

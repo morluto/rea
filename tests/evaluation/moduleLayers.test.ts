@@ -174,7 +174,7 @@ describe("provider boundaries", () => {
       providerBoundaryFacts([
         edge("src/inspector/A.ts", "src/browser/CdpConnection.js"),
         edge("src/inspector/A.ts", "src/browser/protocol/CdpEvents.js"),
-        edge("src/inspector/A.ts", "src/browser/ElectronFileScope.js"),
+        edge("src/inspector/A.ts", "src/browser/CdpBrowserProvider.js"),
         edge("src/electron/B.ts", "src/browser/CdpConnection.js"),
       ]).crossProvider,
     ).toEqual({ "electron -> browser": 1, "inspector -> browser": 1 });

@@ -32,13 +32,15 @@ import {
   bigLstat,
 } from "./ReferenceSourceReaderValidate.js";
 import type {
-  PendingDirectory,
   ReferenceSourceEntry,
   ReferenceSourceExclusionKind,
   ReferenceSourceFailureCode,
   ReferenceSourceResult,
-  TraversalState,
 } from "./ReferenceSourceReaderTypes.js";
+import type {
+  PendingDirectory,
+  TraversalState,
+} from "./ReferenceSourceReaderTraversal.js";
 
 const recordDirectoryFailure = (
   state: TraversalState,
@@ -62,16 +64,64 @@ const recordDirectoryFailure = (
     );
 };
 
+/**
+ * How many identity observations run ahead of their turn: the next pending
+ * directories' opening admissions, the metadata of the next listed names
+ * within a directory, and the closing admissions of directories already
+ * enumerated. Each is a read-only lookup. Callbacks run and the first error
+ * is returned in traversal order, every started lookup settles before the
+ * read returns, and the inventory is sorted; only the syscalls overlap.
+ * Measured on macOS (#11365), 4 gives the gain of 8, 16 and 32: libuv runs
+ * four filesystem calls at once by default.
+ */
+const OBSERVATION_WINDOW = 4;
+
+/** A started observation stays handled until its turn consumes it. */
+const ahead = <T>(observation: Promise<T>): Promise<T> => {
+  observation.catch(() => undefined);
+  return observation;
+};
+
+/**
+ * Start identity admission for the directories traversal pops next. Children
+ * pushed later bury older siblings whose lookups may still run, so the count
+ * of running lookups, not only the stack positions, is bounded.
+ */
+export const prefetchDirectoryValidations = (state: TraversalState): void => {
+  const { pending } = state;
+  for (
+    let index = pending.length - 1;
+    index >= Math.max(0, pending.length - OBSERVATION_WINDOW) &&
+    state.openingLookups < OBSERVATION_WINDOW;
+    index -= 1
+  ) {
+    const directory = pending[index]!;
+    if (directory.validation !== undefined) continue;
+    state.openingLookups += 1;
+    directory.validation = ahead(
+      validateDirectory(
+        state.root,
+        state.rootIdentity,
+        directory.path,
+        state.signal,
+      ).finally(() => {
+        state.openingLookups -= 1;
+      }),
+    );
+  }
+};
+
 export const traverseDirectory = async (
   state: TraversalState,
   current: PendingDirectory,
 ): Promise<ReferenceSourceResult<undefined>> => {
-  const before = await validateDirectory(
-    state.root,
-    state.rootIdentity,
-    current.path,
-    state.signal,
-  );
+  const before = await (current.validation ??
+    validateDirectory(
+      state.root,
+      state.rootIdentity,
+      current.path,
+      state.signal,
+    ));
   if (!before.ok) {
     recordDirectoryFailure(
       state,
@@ -119,6 +169,17 @@ export const traverseDirectory = async (
     const owner = new OwnedDirectoryHandle(handle);
     let result: ReferenceSourceResult<undefined> = ok(undefined);
     let cleanup: ArtifactCleanupAttempt;
+    // Names listed ahead of processing, each with its metadata lookup started.
+    const listed: { readonly name: string; readonly metadata: Metadata }[] = [];
+    let listingComplete = false;
+    // A listing failure takes effect after the names listed before it, as if
+    // each had been processed before the next read.
+    let listingFailure:
+      | {
+          readonly detail: FilesystemFailureDetail;
+          readonly cause?: { readonly value: unknown };
+        }
+      | undefined;
     try {
       // A directory that cannot be opened retains its ordinary partial-entry
       // failure; only an opened directory needs policy before enumeration.
@@ -130,32 +191,60 @@ export const traverseDirectory = async (
       if (result.ok && isAborted(state.signal))
         result = err(cancelled(state.signal));
       while (result.ok) {
-        let child: Dirent | null;
-        try {
-          child = await handle.read();
-        } catch (cause: unknown) {
-          readFailureCause = { value: cause };
-          if (current.path === state.root)
-            state.rootFailureCause = readFailureCause;
-          readFailure = recordReadFailure(directoryReadFailure(cause));
-          break;
-        }
-        if (child === null) break;
-        if (!Buffer.isBuffer(child.name)) {
-          readFailure = recordReadFailure({
-            message: "Directory entry name was not returned as raw bytes",
+        while (!listingComplete && listed.length < OBSERVATION_WINDOW) {
+          let child: Dirent | null;
+          try {
+            child = await handle.read();
+          } catch (cause: unknown) {
+            listingFailure = {
+              detail: directoryReadFailure(cause),
+              cause: { value: cause },
+            };
+            listingComplete = true;
+            break;
+          }
+          if (child === null) {
+            listingComplete = true;
+            break;
+          }
+          if (!Buffer.isBuffer(child.name)) {
+            listingFailure = {
+              detail: {
+                message: "Directory entry name was not returned as raw bytes",
+              },
+            };
+            listingComplete = true;
+            break;
+          }
+          const decoded = decodeDirectoryEntryName(child.name);
+          if (decoded.kind === "unrepresentable") {
+            unrepresentableNameCount += 1;
+            firstUnrepresentableNameHex ??= decoded.rawHex;
+            continue;
+          }
+          listed.push({
+            name: decoded.name,
+            metadata: ahead(readMetadata(join(current.path, decoded.name))),
           });
-          break;
         }
-        const decoded = decodeDirectoryEntryName(child.name);
-        if (decoded.kind === "unrepresentable") {
-          unrepresentableNameCount += 1;
-          firstUnrepresentableNameHex ??= decoded.rawHex;
-          continue;
-        }
-        result = await processEntry(state, current, decoded.name, directories);
+        const next = listed.shift();
+        if (next === undefined) break;
+        result = await processEntry(
+          state,
+          current,
+          next.name,
+          next.metadata,
+          directories,
+        );
+      }
+      if (result.ok && listingFailure !== undefined) {
+        readFailureCause = listingFailure.cause;
+        if (current.path === state.root && readFailureCause !== undefined)
+          state.rootFailureCause = readFailureCause;
+        readFailure = recordReadFailure(listingFailure.detail);
       }
     } finally {
+      await Promise.allSettled(listed.map(({ metadata }) => metadata));
       cleanup = await state.resources.release({
         kind: "directory-handle",
         handle: owner,
@@ -214,41 +303,53 @@ export const traverseDirectory = async (
       : ok(undefined);
   }
   if (isAborted(state.signal)) return err(cancelled(state.signal));
-  const after = await validateDirectory(
+  // The closing admission decides only this directory's own record; its
+  // children are scheduled either way, so traversal continues while it runs.
+  const settled = validateDirectory(
     state.root,
     state.rootIdentity,
     current.path,
     state.signal,
-  );
-  if (!after.ok || !sameFile(before.stats, after.stats)) {
-    recordDirectoryFailure(
-      state,
-      current.path,
-      after.ok ? "changed" : after.code,
-      after.ok ? "Directory changed while it was read" : after.message,
-      after.ok ? undefined : after.localDiagnostic,
-    );
-    scheduleObservedDirectories(state, directories);
-    return isAborted(state.signal)
-      ? err(cancelled(state.signal))
-      : ok(undefined);
-  }
-  if (isAborted(state.signal)) return err(cancelled(state.signal));
-  if (unrepresentableNameCount > 0) {
-    recordDirectoryFailure(
-      state,
-      current.path,
-      "unsupported",
-      `Directory contains ${String(unrepresentableNameCount)} entry name(s) that are not valid UTF-8; no filesystem operations were performed for them. First raw basename bytes: ${firstUnrepresentableNameHex ?? "unknown"}.`,
-    );
-  } else if (current.path !== state.root)
-    state.entries.push({
-      status: "read",
-      kind: "directory",
-      path: pathFromRoot(state.root, current.path),
-    });
+  ).then((after) => {
+    if (!after.ok || !sameFile(before.stats, after.stats))
+      recordDirectoryFailure(
+        state,
+        current.path,
+        after.ok ? "changed" : after.code,
+        after.ok ? "Directory changed while it was read" : after.message,
+        after.ok ? undefined : after.localDiagnostic,
+      );
+    else if (isAborted(state.signal)) return;
+    else if (unrepresentableNameCount > 0)
+      recordDirectoryFailure(
+        state,
+        current.path,
+        "unsupported",
+        `Directory contains ${String(unrepresentableNameCount)} entry name(s) that are not valid UTF-8; no filesystem operations were performed for them. First raw basename bytes: ${firstUnrepresentableNameHex ?? "unknown"}.`,
+      );
+    else if (current.path !== state.root)
+      state.entries.push({
+        status: "read",
+        kind: "directory",
+        path: pathFromRoot(state.root, current.path),
+      });
+  });
   scheduleObservedDirectories(state, directories);
-  return { ok: true, value: undefined };
+  state.settling.push(ahead(settled));
+  if (state.settling.length > OBSERVATION_WINDOW) await state.settling.shift();
+  return ok(undefined);
+};
+
+/**
+ * Wait for every directory's closing admission. One that threw precedes, in
+ * traversal order, any result returned after it, so its throw wins.
+ */
+export const settleDirectoryAdmissions = async (
+  state: TraversalState,
+): Promise<void> => {
+  const settled = await Promise.allSettled(state.settling.splice(0));
+  const thrown = settled.find((outcome) => outcome.status === "rejected");
+  if (thrown !== undefined) throw thrown.reason;
 };
 
 const scheduleObservedDirectories = (
@@ -264,12 +365,13 @@ const directoryReadFailure = (cause: unknown): FilesystemFailureDetail => {
   return detail;
 };
 
-const readMetadata = async (
-  path: string,
-): Promise<
+/** One entry's no-follow metadata lookup, started when its name was listed. */
+type Metadata = Promise<
   | { readonly ok: true; readonly value: BigIntStats }
   | ({ readonly ok: false } & FilesystemFailureDetail)
-> => {
+>;
+
+const readMetadata = async (path: string): Metadata => {
   try {
     return { ok: true, value: await bigLstat(path) };
   } catch (cause: unknown) {
@@ -286,13 +388,14 @@ const processEntry = async (
   state: TraversalState,
   current: PendingDirectory,
   name: string,
+  metadataLookup: Metadata,
   directories: PendingDirectory[],
 ): Promise<ReferenceSourceResult<undefined>> => {
-  if (isAborted(state.signal))
-    return { ok: false, error: cancelled(state.signal) };
   const absolute = join(current.path, name);
   const path = pathFromRoot(state.root, absolute);
-  const metadata = await readMetadata(absolute);
+  // The lookup started when the name was listed; a failure it observed is
+  // retained even if cancellation arrived meanwhile.
+  const metadata = await metadataLookup;
   if (!metadata.ok) {
     const excluded = applyExclusion(state.shouldExclude, path, "unknown");
     if (!excluded.ok)

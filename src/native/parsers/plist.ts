@@ -45,6 +45,7 @@ import {
   XmlPlistTextDecodeError,
 } from "../../domain/propertyListXmlText.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /**
  * Input ceiling matches native command output; projection is bounded separately.
@@ -54,11 +55,12 @@ export const MAX_NATIVE_PLIST_BYTES = 64 * 1024 * 1024;
 /** Provisional decode allowance. This release has no runtime override. */
 const MAX_NATIVE_PLIST_DECODE_BYTES = 64 * 1024 * 1024;
 
-const mebibytes = (bytes: number): string =>
-  `${String(bytes / (1024 * 1024))} MiB`;
-
-/** Recovery name for the fixed source-size ceiling. */
-export const NATIVE_PLIST_INPUT_ALLOWANCE = `the fixed ${mebibytes(MAX_NATIVE_PLIST_BYTES)} (${String(MAX_NATIVE_PLIST_BYTES)}-byte) native plist input allowance (no runtime override)`;
+/** Recovery for the fixed source-size ceiling. */
+export const nativePlistInputAllowance = () =>
+  fixedAllowanceOptions("The native plist input allowance", "input", {
+    limit: MAX_NATIVE_PLIST_BYTES,
+    unit: "bytes",
+  });
 
 /** Stable bundle metadata projected from one plist value. */
 export interface PlistBundleMetadata {
@@ -102,14 +104,14 @@ const plistNestingError = (cause: unknown): AnalysisResourceConstraintError =>
   new AnalysisResourceConstraintError(
     "inspect_plist",
     "memory",
-    cause instanceof Error ? cause.message : String(cause),
+    errorMessage(cause),
     { maximum_nesting_depth: MAX_NATIVE_PLIST_NESTING_DEPTH },
     {
       cause,
-      ...fixedAllowanceOptions(
-        `The ${String(MAX_NATIVE_PLIST_NESTING_DEPTH)}-level native plist nesting allowance (no runtime override)`,
-        "parser",
-      ),
+      ...fixedAllowanceOptions("The native plist nesting allowance", "parser", {
+        limit: MAX_NATIVE_PLIST_NESTING_DEPTH,
+        unit: "levels",
+      }),
     },
   );
 
@@ -125,8 +127,9 @@ const plistDecodeBudgetError = (
     {
       cause,
       ...fixedAllowanceOptions(
-        `The ${mebibytes(MAX_NATIVE_PLIST_DECODE_BYTES)} (${String(MAX_NATIVE_PLIST_DECODE_BYTES)}-byte) native ${encoding} plist decode allowance (no runtime override)`,
+        `The native ${encoding} plist decode allowance`,
         "parser",
+        { limit: MAX_NATIVE_PLIST_DECODE_BYTES, unit: "bytes" },
       ),
     },
   );
@@ -139,11 +142,9 @@ const plistOutputError = (cause: unknown, reason?: string): PlistParseError => {
   if (cause instanceof InternalInvariantError) throw cause;
   return cause instanceof PlistNestingLimitError
     ? plistNestingError(cause)
-    : new AnalysisOutputError(
-        "inspect_plist",
-        reason ?? (cause instanceof Error ? cause.message : String(cause)),
-        { cause },
-      );
+    : new AnalysisOutputError("inspect_plist", reason ?? errorMessage(cause), {
+        cause,
+      });
 };
 
 /**

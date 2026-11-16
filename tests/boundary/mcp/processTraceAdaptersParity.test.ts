@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ const temporaryRoots: string[] = [];
 const { capture, traceSpecification } = processTraceCaptureFixture();
 
 const captureEvidence = (side: "left" | "right") =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },

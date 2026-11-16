@@ -7,16 +7,16 @@ import type { EvidenceWriter } from "../application/investigation/InvestigationR
 import {
   catalogIdentityForToolFamilies,
   type createCatalogIdentity,
-} from "../catalogIdentity.js";
+} from "../contracts/catalog/catalogIdentity.js";
 import { toolFamilyId } from "../contracts/toolFamilies.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
+import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import {
   resolveMcpOutputSchemaProfile,
   type McpOutputSchemaProfile,
-} from "../config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
-import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Canonical composition retains the constructor's existing identity defaults. */
 export class EvidenceMcpServer extends EvidenceMcpServerCore {

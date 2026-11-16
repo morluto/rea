@@ -95,17 +95,39 @@ it("reads a refused launch with the operating system's code", async () => {
     { timeoutMs: 10_000, diagnosticBytes: 1024 },
   );
   expect(outcome).toMatchObject({
-    kind: "launch-refused",
-    refusal: { kind: "missing", code: "ENOENT" },
+    kind: "launch-failed",
+    failure: { kind: "missing", code: "ENOENT" },
     output: undefined,
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "reads a real oversized argument list as an argument-list launch failure",
+  async () => {
+    // One 4 MiB argument exceeds the POSIX launch limit (ARG_MAX on macOS,
+    // MAX_ARG_STRLEN on Linux), so the operating system refuses the exec.
+    const outcome = await outcomeOf(
+      { ...node(""), arguments: ["-e", "", "x".repeat(4 * 1024 * 1024)] },
+      { timeoutMs: 10_000, diagnosticBytes: 1024 },
+    );
+    expect(outcome).toMatchObject({
+      kind: "launch-failed",
+      failure: {
+        kind: "argument-list",
+        code: "E2BIG",
+        executable: process.execPath,
+        syscall: `spawn ${process.execPath}`,
+      },
+      output: undefined,
+    });
+  },
+);
 
 it("is undefined for a failure that is not an owned command outcome", () => {
   expect(providerOutcomeOf(new Error("parse failure"))).toBeUndefined();
 });
 
-it("does not read a file errno as a launch refusal", async () => {
+it("does not read a file errno as a launch failure", async () => {
   const read = await readFile(`/nonexistent-${randomUUID()}/carrier`).then(
     () => undefined,
     (cause: unknown) => cause,

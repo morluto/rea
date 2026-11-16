@@ -1,6 +1,7 @@
 import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
 import type { MachoLayout } from "../domain/apple/appleMachoSelection.js";
 import type { MachoImportBinding } from "../domain/native/objcSwiftMetadata.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];
@@ -107,9 +108,7 @@ export const inspectObjcClassImportBindings = (input: {
         addend: decoded.addend.toString(10),
       });
     } catch (cause: unknown) {
-      reasons.add(
-        `${requestedAddress}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      reasons.add(`${requestedAddress}: ${errorMessage(cause)}`);
     }
   }
 

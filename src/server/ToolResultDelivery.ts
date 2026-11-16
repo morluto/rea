@@ -3,7 +3,6 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { BinaryOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
@@ -17,7 +16,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { NoBinaryOpenError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { estimateJsonStorage } from "../application/JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
@@ -31,6 +29,7 @@ import {
 } from "../config/mcpResponseBudget.js";
 import {
   encodeToolResult,
+  errorTextWireBytes,
   measureMcpResultWithinBudget,
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
@@ -212,12 +211,20 @@ export class ToolResultDelivery {
       budgetBytes: number,
     ) => Iterable<JsonValue>,
   ): CallToolResult {
+    // A session tool's result is delivered inside `result`, alternatives too.
+    const shaped = (value: JsonValue): JsonValue =>
+      contract.kind === "session" ? { result: value } : value;
     return result.ok
       ? this.successResult(
-          contract.kind === "session" ? { result: result.value } : result.value,
+          shaped(result.value),
           contract,
           recovery,
-          alternatives,
+          alternatives === undefined
+            ? undefined
+            : function* (failure, budgetBytes) {
+                for (const alternative of alternatives(failure, budgetBytes))
+                  yield shaped(alternative);
+              },
         )
       : this.toErrorToolResult(result.error, contract.returnsTargetContent);
   }
@@ -351,22 +358,18 @@ export class ToolResultDelivery {
     return this.projectedErrorResult(projected, targetContent);
   }
 
-  /** Include the session owner's selection at the end of this open attempt. */
-  toOpenFailureToolResult(
-    failure: Extract<BinaryOpenResult, { ok: false }>,
+  /**
+   * Deliver an error with facts its operation observed alongside it (an
+   * open's selection at failure, say) added to the error's own details.
+   */
+  toDetailedErrorToolResult(
+    error: AnalysisError,
+    details: Readonly<Record<string, JsonValue>>,
     targetContent: boolean,
   ): CallToolResult {
-    const projected = projectAnalysisError(failure.error);
+    const projected = projectAnalysisError(error);
     return this.projectedErrorResult(
-      {
-        ...projected,
-        details: {
-          ...projected.details,
-          selection_at_failure: failure.selection,
-          target_at_open_completion: failure.targetAtCompletion,
-          provider_id_at_open_completion: failure.providerIdAtCompletion,
-        },
-      },
+      { ...projected, details: { ...projected.details, ...details } },
       targetContent,
     );
   }
@@ -440,10 +443,7 @@ export class ToolResultDelivery {
       const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
         .map((candidate) => ({
           candidate,
-          size: estimateJsonStorage(candidate.value, {
-            maximumValueBytes: this.resultBudgetBytes,
-            includeSerialized: false,
-          }).valueBytes,
+          size: errorTextWireBytes(candidate.value, this.resultBudgetBytes),
         }))
         .sort((left, right) => right.size - left.size);
       let next: AnalysisErrorProjection | undefined;

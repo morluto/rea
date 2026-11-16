@@ -211,7 +211,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       launch: covered(
         test(
           "src/apktool/ApktoolProvider.test.ts",
-          "reports launcher disappearance after version admission as a provider failure",
+          "reports launcher disappearance after version admission as apktool unavailable",
         ),
       ),
       handshake: ONE_SHOT,
@@ -1435,7 +1435,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step beyond the former action ceiling",
+          "returns an initial state and every step of a long scenario",
         ),
       ),
       cancel: covered(

@@ -3,7 +3,7 @@ import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js
 import {
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
-} from "../../../src/catalogDiscovery.js";
+} from "../../../src/contracts/catalog/catalogDiscovery.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { execFile, spawn } from "node:child_process";
@@ -25,8 +25,7 @@ import {
   DEFAULT_CATALOG_IDENTITY,
   catalogIdentityForToolFamilies,
   createCatalogIdentity,
-} from "../../../src/catalogIdentity.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/config/mcpInputSchemaProfile.js";
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
 import { ok } from "../../../src/domain/result.js";
@@ -40,6 +39,7 @@ import {
 } from "../../../src/config/mcpStartupPolicy.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { waitFor } from "../../support/testWait.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
@@ -211,9 +211,9 @@ describe("production MCP doctor", () => {
         "--eval",
         `
         import assert from "node:assert/strict";
-        import { createCatalogIdentity, createCatalogDigests } from "./dist/catalogIdentity.js";
-        import { RECORDED_CATALOG_DIGEST_PROFILES as profiles } from "./dist/recordedCatalogDigests.js";
-        import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES as budgetBytes } from "./dist/config/mcpInputSchemaProfile.js";
+        import { createCatalogIdentity, createCatalogDigests } from "./dist/contracts/catalog/catalogIdentity.js";
+        import { RECORDED_CATALOG_DIGEST_PROFILES as profiles } from "./dist/contracts/catalog/recordedCatalogDigests.js";
+        import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES as budgetBytes } from "./dist/contracts/mcpSchemaPresentation.js";
         assert.ok(Object.isFrozen(profiles));
         assert.deepEqual(Object.keys(profiles).sort(), ["compact", "off"]);
         for (const output of ["compact", "off"]) {

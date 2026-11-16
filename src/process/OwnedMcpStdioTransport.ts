@@ -31,6 +31,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Injectable acquisition seam; production owns a POSIX group or Windows job. */
 export type OwnedMcpLauncher = (
@@ -318,7 +319,7 @@ export class OwnedMcpStdioTransport implements Transport {
         this.#releasedPreparations.add(owner);
         return;
       } catch (cause: unknown) {
-        reason = cause instanceof Error ? cause.message : String(cause);
+        reason = errorMessage(cause);
       }
     const failure = new ProviderCleanupError(
       this.settings.provider,

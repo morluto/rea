@@ -1,0 +1,34 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "paths": {
+      "#dist/*": ["./src/*"]
+    }
+  },
+  "files": [
+    "scripts/fixtures/managed/function-dossier.mjs",
+    "scripts/fixtures/managed/pe.mjs",
+    "scripts/lib/canonical-temporary-directory.mjs",
+    "scripts/lib/mcp-verifier-results.mjs",
+    "scripts/lib/real-ghidra-snapshot-lifecycle.mjs",
+    "scripts/lib/verifier-artifact-scope.mjs",
+    "scripts/lib/verifier-cleanup.mjs",
+    "scripts/lib/verifier-fixture.mjs",
+    "scripts/lib/verifier-run.mjs",
+    "scripts/lib/verifier-source-loader.mjs",
+    "scripts/verify-package-evidence.mjs",
+    "scripts/verify/javascript/digests.mjs",
+    "scripts/verify/javascript/output.mjs",
+    "scripts/verify/managed/completion-report.mjs",
+    "scripts/verify/managed/config.mjs",
+    "scripts/verify/managed/conformance.mjs",
+    "scripts/verify/managed/manifest-parser.mjs",
+    "scripts/verify/managed/manifest.mjs",
+    "scripts/verify/managed/oracles.mjs",
+    "scripts/verify/managed/support.mjs"
+  ],
+  "include": []
+}

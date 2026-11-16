@@ -1,7 +1,9 @@
-import { fixedAllowanceRemediation } from "../../domain/fixedAllowanceRemediation.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
-import { normalizeArtifactPath } from "../../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
+  normalizeArtifactPath,
+  abortIfNeeded,
+} from "../../resources/index.js";
 
 /** Directory, file, and symlink records admitted from one virtual filesystem. */
 const MAX_DENO_VFS_ENTRIES = 100_000;
@@ -495,29 +497,36 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined => {
   return Object.fromEntries(Object.entries(value));
 };
 
-const denoVfsEntryLimit = (count: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem entry allowance of ${String(MAX_DENO_VFS_ENTRIES)} entries`;
-  const message = `Deno compile virtual filesystem claims ${String(count)} entries, exceeding MAX_DENO_VFS_ENTRIES (${String(MAX_DENO_VFS_ENTRIES)} entries). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "capacity",
-    userMessage: message,
-  });
-};
+const denoVfsEntryLimit = (count: number): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: "The Deno compile virtual filesystem entry allowance",
+      kind: "count",
+      limit: MAX_DENO_VFS_ENTRIES,
+      unit: "entries",
+    },
+    `Deno compile virtual filesystem claims ${String(count)} entries, exceeding MAX_DENO_VFS_ENTRIES (${String(MAX_DENO_VFS_ENTRIES)} entries).`,
+  );
 
-const denoVfsDepthLimit = (depth: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem depth allowance of ${String(MAX_DENO_VFS_DEPTH)} levels`;
-  const message = `Deno compile virtual filesystem nests ${String(depth)} levels, exceeding MAX_DENO_VFS_DEPTH (${String(MAX_DENO_VFS_DEPTH)} levels). ${fixedAllowanceRemediation(allowance, "count")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "capacity",
-    userMessage: message,
-  });
-};
+const denoVfsDepthLimit = (depth: number): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: "The Deno compile virtual filesystem depth allowance",
+      kind: "count",
+      limit: MAX_DENO_VFS_DEPTH,
+      unit: "levels",
+    },
+    `Deno compile virtual filesystem nests ${String(depth)} levels, exceeding MAX_DENO_VFS_DEPTH (${String(MAX_DENO_VFS_DEPTH)} levels).`,
+  );
 
-const denoVfsRetainedLimit = (units: number): ArtifactReaderFailure => {
-  const allowance = `Deno compile virtual filesystem retained name allowance of ${String(MAX_DENO_VFS_RETAINED_UNITS)} UTF-16 code units`;
-  const message = `Deno compile virtual filesystem paths use ${String(units)} UTF-16 code units, exceeding MAX_DENO_VFS_RETAINED_UNITS (${String(MAX_DENO_VFS_RETAINED_UNITS)} units). ${fixedAllowanceRemediation(allowance, "bytes")} This release has no runtime override. Host memory and NODE_OPTIONS do not raise it.`;
-  return new ArtifactReaderFailure("limit", message, {
-    boundary: "memory",
-    userMessage: message,
-  });
-};
+const denoVfsRetainedLimit = (units: number): ArtifactReaderFailure =>
+  artifactFixedLimitFailure(
+    {
+      name: "The Deno compile virtual filesystem retained name allowance",
+      kind: "bytes",
+      limit: MAX_DENO_VFS_RETAINED_UNITS,
+      unit: "UTF-16 code units",
+    },
+    `Deno compile virtual filesystem paths use ${String(units)} UTF-16 code units, exceeding MAX_DENO_VFS_RETAINED_UNITS (${String(MAX_DENO_VFS_RETAINED_UNITS)} units).`,
+    "memory",
+  );

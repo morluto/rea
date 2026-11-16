@@ -14,6 +14,7 @@ import type {
   AnalysisCleanupResourceOwner,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface OwnedWorkerRuntimeOptions {
   readonly rootPrefix: string;
@@ -431,7 +432,7 @@ export class OwnedWorkerRuntime {
         this.#cleanupEpoch = undefined;
       } catch (cause: unknown) {
         this.#registry.add(this);
-        throw this.#cleanupError(message(cause), cause);
+        throw this.#cleanupError(errorMessage(cause), cause);
       }
     }
     this.#closed = true;
@@ -483,6 +484,3 @@ export class OwnedWorkerRuntime {
     );
   }
 }
-
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

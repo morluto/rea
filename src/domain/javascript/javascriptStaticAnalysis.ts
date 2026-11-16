@@ -36,7 +36,10 @@ import {
   hasPossibleCommonJsDelegateWrite,
   semanticFactoryLoaderMemberAt,
 } from "./javascriptSemanticRequireOrigin.js";
-import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
+import {
+  semanticPrecisionControls,
+  semanticResourceLimitReason,
+} from "./javascriptSemanticResourceLimits.js";
 import { createStaticPathIntrinsicQuery } from "./javascriptStaticPathIntrinsics.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
@@ -264,6 +267,11 @@ const finalizeStaticAnalysis = (
       value.loader !== "factory-loader",
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const controls = semanticPrecisionControls(
+    resourceLimits,
+    accumulator.electronCallPathLimits ?? [],
+    bindings.precision,
+  );
   const candidateElectron = [
     ...accumulator.browserWindows,
     ...accumulator.contextBridgeApis,
@@ -303,6 +311,7 @@ const finalizeStaticAnalysis = (
         : { semantic_precision: bindings.precision }),
       electron_call_paths_limited:
         (accumulator.electronCallPathLimits?.size ?? 0) > 0,
+      ...(controls.length === 0 ? {} : { controls }),
     },
     applicability: { electron: electronObserved ? "observed" : "unknown" },
   };
@@ -322,7 +331,7 @@ const finalizeStaticAnalysis = (
       .sort()
       .map(
         (control) =>
-          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call (--semantic-precision JSON); no REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
+          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call; coverage records the control. No REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
       ),
     ...(parserErrors === 0
       ? []

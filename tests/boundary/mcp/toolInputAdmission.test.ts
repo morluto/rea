@@ -8,6 +8,7 @@ import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 // The server advertises its one (compact) input presentation.
 const createServer = (): EvidenceMcpServer =>

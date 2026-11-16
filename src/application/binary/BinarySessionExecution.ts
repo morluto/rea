@@ -9,6 +9,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { EvidenceSubjectTarget } from "../../domain/evidence.js";
+import { binaryTargetSelection } from "../../domain/targetIdentity.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisClient,
@@ -203,16 +204,15 @@ export const bindExecutionTarget = (
   target: BinaryTarget,
 ): Result<AnalysisExecution, AnalysisError> => {
   if (!result.ok) return result;
+  const selection = binaryTargetSelection(target);
   const subject: EvidenceSubjectTarget = {
     path: target.path,
     sha256: target.sha256,
-    format:
-      target.format === "analysis-database"
-        ? "analysis-database"
-        : target.format,
+    format: target.format,
     ...(target.architecture === undefined
       ? {}
       : { architecture: target.architecture }),
+    ...(selection === null ? {} : { selection }),
   };
   if (
     result.value.subject !== undefined &&
@@ -226,8 +226,16 @@ export const bindExecutionTarget = (
         `${operation}:subject`,
       ),
     );
-  return result.value.subject === undefined
-    ? ok({ ...result.value, subject })
+  const provided = result.value.subject;
+  if (provided === undefined) return ok({ ...result.value, subject });
+  // A provider subject naming the target's own bytes and format is the
+  // target, so it makes the target's selection.
+  return provided !== null &&
+    provided.selection === undefined &&
+    selection !== null &&
+    provided.sha256 === target.sha256 &&
+    provided.format === target.format
+    ? ok({ ...result.value, subject: { ...provided, selection } })
     : result;
 };
 

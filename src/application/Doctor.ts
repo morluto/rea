@@ -61,7 +61,7 @@ import {
   type InstalledSkillIdentity,
   type SkillPathIssue,
 } from "./SetupSkill.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
@@ -85,6 +85,7 @@ import type {
   DesktopBuildFactsInput,
   OwnedProviderSetting,
 } from "../ports/DesktopBuildHost.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
@@ -411,7 +412,7 @@ const closeDoctorHost = async (
     return await host.close?.();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    return `Doctor host cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    return `Doctor host cleanup failed: ${errorMessage(cause)}`;
   }
 };
 

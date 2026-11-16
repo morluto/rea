@@ -20,13 +20,13 @@ import {
   isSourceLessAppKitAnnotationConnector,
   isUIKitRuntimeConnectionClass,
 } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
-import { streamChunkToBuffer } from "../../resources/index.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
+  streamChunkToBuffer,
   ArtifactResourceScope,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
+  DirectoryArtifactReader,
 } from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
@@ -558,7 +558,10 @@ const finalizeHierarchyCoverage = (
                 // it, so that cause keeps the reason the graph already named.
                 // Only a facet with no other cause reports the omission.
                 reason: facet.reason ?? "connection_unresolved",
-                omitted: facet.omitted + omittedConnection,
+                omitted:
+                  facet.omitted === null
+                    ? null
+                    : facet.omitted + omittedConnection,
               }
             : facet;
         }),

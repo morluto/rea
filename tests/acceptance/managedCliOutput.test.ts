@@ -58,8 +58,20 @@ cliTest(
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { max_snapshot_bytes: bytes.length - 1 } },
+      details: {
+        reported_limits: { max_snapshot_bytes: bytes.length - 1 },
+        // The provider names the field; the CLI adds the flag that sets it.
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_snapshot_bytes",
+          effective_value: bytes.length - 1,
+          cli_flag: "--max-snapshot-bytes",
+        },
+      },
     });
+    expect(
+      JSON.stringify((refused.json as { remediation: unknown }).remediation),
+    ).not.toContain("--");
     const admitted = ["--max-snapshot-bytes", String(bytes.length)];
     const partial = await cli.run({
       arguments: [
@@ -67,19 +79,36 @@ cliTest(
         ...admitted,
         "--max-metadata-representation-bytes",
         "1",
+        "--full-output",
         "--json",
       ],
     });
     expect(partial.exitCode, partial.stderr).toBe(0);
     expect(partial.json).toMatchObject({
-      parameters: {
-        max_snapshot_bytes: bytes.length,
-        max_metadata_representation_bytes: 1,
+      data: {
+        parameters: {
+          max_snapshot_bytes: bytes.length,
+          max_metadata_representation_bytes: 1,
+        },
+        normalized_result: {
+          coverage: {
+            state: "partial",
+            issues: [
+              expect.objectContaining({
+                code: "resource-limit",
+                limit: expect.objectContaining({
+                  parameter: "max_metadata_representation_bytes",
+                }),
+              }),
+            ],
+          },
+        },
       },
-      normalized_result: {
-        coverage: {
-          state: "partial",
-          issues: [expect.objectContaining({ code: "resource-limit" })],
+      // The CLI names its option for the recorded control outside the result.
+      meta: {
+        cli_controls: {
+          max_metadata_representation_bytes:
+            "--max-metadata-representation-bytes",
         },
       },
     });
@@ -95,7 +124,7 @@ cliTest(
     expect(complete.exitCode, complete.stderr).toBe(0);
     expect(complete.json).toMatchObject({
       subject: {
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       },
       parameters: {
         max_snapshot_bytes: bytes.length,

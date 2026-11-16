@@ -30,8 +30,6 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   type SafeOutputTree,
   readArtifactFileChunks,
-} from "../resources/index.js";
-import {
   ArtifactResourceScope,
   withArtifactRegularFile,
   assertArtifactReadActive,
