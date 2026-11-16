@@ -1,7 +1,11 @@
 import { UNITY_ADDRESSABLES_PROVIDER_IDENTITY } from "./UnityAddressablesProviderIdentity.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { setImmediate } from "node:timers/promises";
 import {
-  ArtifactFileCleanupFailure,
   ArtifactReaderFailure,
   ArtifactResourceScope,
   artifactFileCancellationCause,
@@ -13,7 +17,10 @@ import {
 } from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { UnityAddressablesPort } from "../ports/unity/UnityAddressablesPort.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
@@ -174,74 +181,74 @@ const systemFailure = (
   ]);
 };
 
-const failureForPrimary = (
+/** A read's completed facts stay on whatever the failure is reported as. */
+const retainReadObservation = (
   cause: unknown,
-  path: string,
-  field: Field,
-  maximum: number,
-): AnalysisError => {
-  const site = { path, field, maximum };
-  if (cause instanceof AnalysisError) return cause;
-  if (cause instanceof UnityAddressablesFormatFailure)
-    return formatFailure(cause, site);
-  const typed =
-    cause instanceof ArtifactReaderFailure
-      ? readFailure(cause, site)
-      : cause instanceof Error && "code" in cause
-        ? systemFailure(cause, site)
-        : undefined;
-  return (
-    typed ??
-    new ProviderAdapterError(
-      UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
-      OPERATION,
-      {
-        cause,
-        diagnostics: {
-          path,
-          reason: cause instanceof Error ? cause.message : String(cause),
-        },
-      },
-    )
-  );
-};
-
-const failureFor = (
-  cause: unknown,
-  path: string,
-  signal: AbortSignal | undefined,
-  field: Field = "path",
-  maximum = INPUT_BYTES,
-): AnalysisError => {
-  const primary =
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-      ? failureForPrimary(
-          cause.fileCleanupFailure.outcome.cause,
-          path,
-          field,
-          maximum,
-        )
-      : cause instanceof ArtifactFileCleanupFailure && signal?.aborted
-        ? new AnalysisCancelledError(OPERATION, { cause: signal.reason })
-        : failureForPrimary(cause, path, field, maximum);
+  failure: AnalysisError,
+): void => {
   if (
     cause instanceof ArtifactReaderFailure &&
     cause.partialObservation !== undefined &&
-    primary.partialObservation === undefined
+    failure.partialObservation === undefined
   )
-    primary.retainPartialObservation(cause.partialObservation);
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
-    UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
-  );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
+    failure.retainPartialObservation(cause.partialObservation);
+};
+
+const unityAddressablesFailureDialect = (
+  path: string,
+  field: Field = "path",
+  maximum = INPUT_BYTES,
+): ProviderFailureDialect => {
+  const site = { path, field, maximum };
+  // Provider-owned typed refusals, examined before the shared file facts.
+  const recognise = (cause: unknown) =>
+    cause instanceof UnityAddressablesFormatFailure
+      ? formatFailure(cause, site)
+      : cause instanceof ArtifactReaderFailure
+        ? readFailure(cause, site)
+        : cause instanceof Error && "code" in cause
+          ? systemFailure(cause, site)
+          : undefined;
+  const unclassified = (cause: unknown, details: AnalysisErrorOptions) => {
+    const failure = new ProviderAdapterError(
+      UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
+      OPERATION,
+      {
+        ...details,
+        cause,
+        diagnostics: { path, reason: errorMessage(cause) },
+      },
+    );
+    retainReadObservation(cause, failure);
+    return failure;
+  };
+  return {
+    providerId: UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
+    operation: OPERATION,
+    recognise: (cause) => {
+      const failure = recognise(cause);
+      if (failure !== undefined) retainReadObservation(cause, failure);
+      return failure;
+    },
+    readCleanup: (read, primary) => {
+      const reported = primary ?? recognise(read) ?? unclassified(read, {});
+      retainReadObservation(read, reported);
+      const cleanup = new ProviderCleanupError(
+        UNITY_ADDRESSABLES_PROVIDER_IDENTITY.id,
+        read.cleanup.resources,
+        { reason: read.cleanup.reason },
+        { operation: OPERATION, cause: read },
+      );
+      const error = analysisErrorWithCleanupFailure(
+        reported,
+        cleanup,
+        OPERATION,
+      );
+      bindArtifactFileCleanup(read, error);
+      return error;
+    },
+    unclassified,
+  };
 };
 
 const completeReportRecovery =
@@ -578,7 +585,10 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
         return ok(report);
       });
     } catch (cause: unknown) {
-      const failure = failureFor(cause, input.path, options?.signal);
+      const failure = classifyProviderFailure(
+        cause,
+        unityAddressablesFailureDialect(input.path),
+      );
       const partial = partialEvidence(input, observed, this.outputBytes);
       if (partial !== undefined) failure.partialObservation = partial;
       return err(failure);
@@ -607,12 +617,9 @@ export class UnityAddressablesProvider implements UnityAddressablesPort {
       assertArtifactReadActive(signal);
       return hashFileFrom(hashPath, snapshot);
     } catch (cause: unknown) {
-      const error = failureFor(
+      const error = classifyProviderFailure(
         cause,
-        hashPath,
-        signal,
-        "hash_path",
-        HASH_BYTES,
+        unityAddressablesFailureDialect(hashPath, "hash_path", HASH_BYTES),
       );
       const partial = partialEvidence(input, observed, this.outputBytes);
       if (partial !== undefined) error.partialObservation = partial;
