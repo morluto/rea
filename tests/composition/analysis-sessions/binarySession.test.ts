@@ -49,6 +49,12 @@ const client = (fail = false): AnalysisClient => ({
   close: () => Promise.resolve(resultOk(null)),
 });
 
+/** The selection a session records when one provider candidate is the only one. */
+const autoSingleCandidateSelection = Object.freeze({
+  selection_source: "auto-single-candidate",
+  candidates: [{ selected: true }],
+});
+
 /** Open a target and run one address_name query, asserting both succeed. */
 const openAndExecuteAddressName = async (
   session: BinarySession,
@@ -1221,10 +1227,7 @@ describe("snapshot cache eligibility", () => {
           expect(records).toHaveLength(1);
           expect(records[0]).toMatchObject({
             evidence_id: source.evidence_id,
-            provider_selection: {
-              selection_source: "auto-single-candidate",
-              candidates: [{ selected: true }],
-            },
+            provider_selection: autoSingleCandidateSelection,
           });
         }
         expect(session.exportAnalysisSnapshot()).toMatchObject({

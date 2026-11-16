@@ -33,26 +33,30 @@ export const unknownMutationEvidence = (
   providerSelection?: ProviderSelectionProvenance,
 ): Evidence =>
   withEvidenceProviderSelection(
-    createEvidence(target ?? unknownTarget("not-observed"), UNKNOWN_REGISTRY_PROVIDER, {
-      predicateType: "rea.residual-unknown-mutation",
-      operation: mutation.operation,
-      parameters: { ...mutation.input },
-      result:
-        mutation.operation === "record_unknown"
-          ? {
-              action: "record",
-              question: mutation.input.question,
-              required_authority: mutation.input.required_authority,
-              required_confidence: mutation.input.required_confidence,
-            }
-          : { action: "update", status: mutation.input.status },
-      confidence: "derived",
-      authority: "analyst-inference",
-      evidenceLinks: unknownEvidenceLinks(mutation.input),
-      limitations: [
-        "Registry mutation evidence records analyst intent, not proof of the answer.",
-      ],
-    }),
+    createEvidence(
+      target ?? unknownTarget("not-observed"),
+      UNKNOWN_REGISTRY_PROVIDER,
+      {
+        predicateType: "rea.residual-unknown-mutation",
+        operation: mutation.operation,
+        parameters: { ...mutation.input },
+        result:
+          mutation.operation === "record_unknown"
+            ? {
+                action: "record",
+                question: mutation.input.question,
+                required_authority: mutation.input.required_authority,
+                required_confidence: mutation.input.required_confidence,
+              }
+            : { action: "update", status: mutation.input.status },
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: unknownEvidenceLinks(mutation.input),
+        limitations: [
+          "Registry mutation evidence records analyst intent, not proof of the answer.",
+        ],
+      },
+    ),
     providerSelection,
   );
 
