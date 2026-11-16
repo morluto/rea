@@ -1,5 +1,5 @@
 import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
-import type { BinarySession } from "../application/binary/BinarySession.js";
+import type { ManagedBinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { runManagedProviderExecution } from "../application/DirectAnalysis.js";
 import { isManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import { artifactExtractionInputSchema } from "../contracts/artifactToolContracts.js";
@@ -18,7 +18,9 @@ import type { ProviderOperation } from "./providerOperationToolHandler.js";
  */
 export const managedAnalysisForAdmission = (
   activeTarget: (() => BinaryTarget | undefined) | undefined,
-  createManagedBinarySession?: () => BinarySession | undefined,
+  createManagedBinarySession: () =>
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>,
 ): ((analysis: AnalysisOperationPort) => AnalysisOperationPort) => {
   let selectedManagedPath: string | undefined;
   return (analysis) => ({
@@ -45,17 +47,13 @@ export const managedAnalysisForAdmission = (
             },
           ]),
         );
-      const managedSession = createManagedBinarySession?.();
-      const execution =
-        managedSession === undefined
-          ? await analysis.execute(operation, parameters, executionOptions)
-          : await runManagedProviderExecution(
-              { createManagedBinarySession: async () => managedSession },
-              path,
-              operation,
-              executionOptions?.signal,
-              parameters,
-            );
+      const execution = await runManagedProviderExecution(
+        { createManagedBinarySession },
+        path,
+        operation,
+        executionOptions?.signal,
+        parameters,
+      );
       if (execution.ok && typeof requestedPath === "string")
         selectedManagedPath = requestedPath;
       return execution;
