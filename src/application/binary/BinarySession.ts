@@ -99,11 +99,11 @@ import {
 } from "../BinaryTargetResolver.js";
 import { resolveAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
-import {
-  BUNDLE_RESOURCE_OPERATIONS,
-  type ActiveBundleResourceSession,
-  type BundleResourceClientFactory,
+import type {
+  ActiveBundleResourceSession,
+  BundleResourceClientFactory,
 } from "./BundleResourceSession.js";
+import { BUNDLE_RESOURCE_OPERATIONS } from "../../ports/BundleResourceOperations.js";
 
 interface SessionRun {
   readonly client: AnalysisClient;

@@ -7,6 +7,7 @@ import {
   artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
+  selectedFileTargetError,
 } from "../resources/index.js";
 import { MODEL_ARTIFACT_PROVIDER_IDENTITY } from "./ModelArtifactProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
@@ -49,11 +50,11 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_model_artifact";
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
@@ -182,8 +183,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           cause,
           diagnostics: {
             path: input.path,
-            reason:
-              primary instanceof Error ? primary.message : String(primary),
+            reason: errorMessage(primary),
           },
         });
       if (

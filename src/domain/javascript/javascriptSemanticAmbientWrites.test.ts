@@ -385,3 +385,136 @@ it.each([
     expect(statuses).toEqual(expected);
   },
 );
+
+// An argument of a directly invoked source function expression reaches only
+// that function's parameter, whose effects are indexed like any other source
+// effect. Only arguments the body may reach another way escape.
+function expectAmbientEffectPaths({
+  source,
+  writes,
+  escapes,
+}: {
+  readonly source: string;
+  readonly writes: readonly (readonly unknown[])[];
+  readonly escapes: readonly (readonly unknown[])[];
+}): void {
+  const parsed = parseJavaScriptSource(source, "app.js");
+  if (parsed === null) throw new Error("Expected ambient effect fixture");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const paths = (effects: readonly { readonly path: unknown }[]) => [
+    ...new Set(effects.map(({ path }) => JSON.stringify(path))),
+  ];
+  expect({
+    writes: paths(index.bindings.ambientWriteEffects),
+    escapes: paths(index.bindings.ambientEscapeEffects),
+  }).toEqual({
+    writes: writes.map((path) => JSON.stringify(path)),
+    escapes: escapes.map((path) => JSON.stringify(path)),
+  });
+}
+
+it.each([
+  { source: "(function(g){})(this);", writes: [], escapes: [] },
+  { source: "(function(){})(this);", writes: [], escapes: [] },
+  {
+    source: "(function(g){g.x=1})(this);",
+    writes: [["global", "x"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){var h=g;h.y=2})(this);",
+    writes: [["global", "y"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){later(function(){g.w=1})})(this);",
+    writes: [["global", "w"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){return g})(this).z=1;",
+    writes: [["global", "z"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g,y){y(1)})(this,function(g){});",
+    writes: [],
+    escapes: [],
+  },
+  {
+    source: "(function(g){patch(g)})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){arguments[0].x=1})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){})(...[this]);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function({x}){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g=d){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(...r){})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  { source: "unknown(this);", writes: [], escapes: [["global", null]] },
+  {
+    source: "(function(g){g.x=1})(globalThis);",
+    writes: [["global", "x"]],
+    escapes: [],
+  },
+  {
+    source: "(function(m){m.exports=1})(module);",
+    writes: [["commonjs-module", "exports"]],
+    escapes: [],
+  },
+  {
+    source: "(function(g){patch(g)})(window);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+  {
+    source: "(function(g){throw g})(this);",
+    writes: [],
+    escapes: [["global", null]],
+  },
+])(
+  "tracks arguments of directly invoked functions through parameters: $source",
+  expectAmbientEffectPaths,
+);
+
+// A value thrown uncaught at the top level reaches the host's
+// uncaught-exception handlers, which may change it.
+it.each([
+  ...[
+    "throw this;",
+    "{ throw this; }",
+    "try { throw this; } finally {}",
+    "try {} catch { throw this; }",
+  ].map((source) => ({
+    source,
+    writes: [],
+    escapes: [["global", null]],
+  })),
+  { source: "try { throw this; } catch {}", writes: [], escapes: [] },
+])(
+  "escapes values thrown uncaught at the top level: $source",
+  expectAmbientEffectPaths,
+);

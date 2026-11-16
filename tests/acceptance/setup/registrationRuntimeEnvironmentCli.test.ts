@@ -787,7 +787,7 @@ for (const [client, provider] of [
           idaConfig,
           JSON.stringify({
             url: "http://127.0.0.1:12345/mcp",
-            protocol: "legacy",
+            protocol: "native",
             headers: { Authorization: "Bearer fixture-credential" },
             timeoutMs,
           }),

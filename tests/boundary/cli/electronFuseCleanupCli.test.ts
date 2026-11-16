@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -55,9 +56,11 @@ cliTest.for([
     if (mode === "normal") {
       expect(result.exitCode, result.stderr).toBe(0);
       expect(
-        toolContract("inspect_electron_fuses").outputSchema.parse(
-          JSON.parse(result.stdout),
-        ).subject?.architecture,
+        fileIdentity(
+          toolContract("inspect_electron_fuses").outputSchema.parse(
+            JSON.parse(result.stdout),
+          ).subject,
+        ).architecture,
       ).toBe("arm64");
     } else {
       expect(result.exitCode, result.stderr).toBe(1);
@@ -87,7 +90,7 @@ cliTest.for([
       }
       if (mode === "close-once")
         expect(parseEvidence(details.partial_observation)).toMatchObject({
-          subject: { local_path: path, architecture: "arm64" },
+          subject: { local_path: path, identity: { architecture: "arm64" } },
           normalized_result: { slices: [{ sentinel_count: 1 }] },
         });
     }

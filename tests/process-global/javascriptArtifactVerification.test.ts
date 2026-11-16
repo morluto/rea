@@ -6,8 +6,8 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { analyzeJavaScriptApplication } from "../../src/application/javascript/JavaScriptApplicationService.js";
 import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { DirectoryArtifactReader } from "../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../src/resources/index.js";
 
 const injected = vi.hoisted(() => ({
   opened: undefined as ((path: unknown, file: FileHandle) => void) | undefined,

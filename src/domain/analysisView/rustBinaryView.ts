@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
+  rustcCommitOmissionSchema,
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
@@ -27,6 +28,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const count = z.number().int().nonnegative();
 export const rustBinarySummarySchema = z.strictObject({
@@ -54,6 +56,7 @@ export const rustBinarySummarySchema = z.strictObject({
     .omit({ hashes: true })
     .extend({ hashes_count: count })
     .nullable(),
+  rustc_commit_omission: rustcCommitOmissionSchema.exactOptional(),
 });
 export const rustBinaryViewContextSchema = z.strictObject({
   source_coverage: z.strictObject({
@@ -108,6 +111,9 @@ const summarize = (
     bytes: artifact.bytes,
     auditable_metadata: section,
     rustc_commit: compilerSummary,
+    ...(report.rustc_commit_omission === undefined
+      ? {}
+      : { rustc_commit_omission: report.rustc_commit_omission }),
   };
 };
 
@@ -132,10 +138,10 @@ export const projectRustBinaryView = (
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
+    subject.sha256 !== report.artifact.sha256 ||
     subject.format !== metadataReportSubjectFormat(report) ||
     subject.architecture !==
       (binaryMetadataArchitecture(report.architecture) ?? null)

@@ -15,11 +15,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import {
-  AGENTENV_PROVIDER,
-  agentEnvInterpreter,
-  type ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
+import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const JUDGE_TIMEOUT_MS = 10 * 60 * 1000;
 const answerSchema = z.object({
@@ -176,7 +175,7 @@ export class ScreenJudgeProcess {
         AGENTENV_PROVIDER,
         [folder],
         {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           ...(outcome === undefined ? {} : { completed_judge_result: outcome }),
         },
         {
@@ -212,7 +211,7 @@ export class ScreenJudgeProcess {
         : new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
             cause,
           });
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     const failure = new ProviderCleanupError(
       AGENTENV_PROVIDER,
       owner.cleanupResources,
@@ -246,7 +245,7 @@ export class ScreenJudgeProcess {
         await item.lease.release();
         this.#retained.delete(item);
       } catch (cause: unknown) {
-        failures.push(cause instanceof Error ? cause.message : String(cause));
+        failures.push(errorMessage(cause));
         resources.push(...(item.lease.cleanupResources ?? []));
       }
     }

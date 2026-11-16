@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { EventEmitter } from "node:events";
 import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import pino from "pino";
@@ -243,7 +244,7 @@ it("retries only failed cleanup owners after concurrent shutdown requests", asyn
   expect(
     session.recordEvidence(
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           id: "fixture",
           name: "Shutdown fixture",

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { knownCoverageStatusSchema } from "../coverage.js";
 import type { CoverageStatus } from "../coverage.js";
 import { digestSchema } from "../digests.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 import { managedFieldConstantSchema } from "./managedFieldConstant.js";
 
 /** Build-local ECMA-335 metadata token emitted as an eight-digit lowercase hex value. */
@@ -459,6 +460,8 @@ const managedParseIssueSchema = z.object({
   scope: z.string().min(1),
   offset: offsetSchema.nullable(),
   detail: z.string().min(1),
+  /** The request parameter that bounded a resource-limit issue. */
+  limit: analysisParameterLimitSchema.exactOptional(),
 });
 
 /** Provider-neutral, execution-free PE/CLI triage and identity result. */

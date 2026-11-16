@@ -7,7 +7,7 @@ export function result(operation,input) {
  const abi=input.abi ?? (process.env.REA_FLUTTER_PROBE === 'wrong' ? 'ghost' : 'x86_64');
  return {target,abi,coverage:'complete',libapp:{coverage:'complete',sha256:'b'.repeat(64),bytes:100,snapshot_hash_sources:2,snapshot_hash:'hash',sections:['_kDartVmSnapshotData','_kDartVmSnapshotInstructions','_kDartIsolateSnapshotData','_kDartIsolateSnapshotInstructions'].map(name=>({name,offset:0,size:64,magic_valid:true,kind:3,header_length:48}))},string_pool:{coverage:'complete',package_uri_count_at_least:1,dart_uri_count_at_least:1}};
 }
-export function envelope(op,input){const resultValue=result(op,input);return {normalized_result:resultValue,subject:{local_path:input.path,digest:{sha256:identity.sha256}},limitations:[]};}
+export function envelope(op,input){const resultValue=result(op,input);return {normalized_result:resultValue,subject:{local_path:input.path,identity:{kind:"file",sha256:identity.sha256}},limitations:[]};}
 `;
 const modelUrl = "data:text/javascript," + encodeURIComponent(model);
 const mocks = {

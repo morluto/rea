@@ -1,12 +1,11 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
 
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { validateDebuggerStatusResponse } from "../../support/reverseDebuggerMcpTestHelpers.js";
@@ -53,7 +52,11 @@ test.each([
         stopProcess: async (session) => {
           stops += 1;
           if (cleanupRetry && stops === 1)
-            return { status: "incomplete", reason: "injected stop pending" };
+            return {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "injected stop pending",
+            };
           if (session.exited) return { status: "already_exited" };
           await session.detachInferior?.();
           injected.control.exit();
@@ -61,13 +64,7 @@ test.each([
         },
       },
     );
-    const server = new McpServer({ name: "rizin-stopped", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
-    );
+    const server = rizinDebugMcpServer("rizin-stopped", manager);
     const client = new Client({ name: "rizin-stopped", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -84,7 +81,7 @@ test.each([
       ).outputSchema.parse(
         (
           await call("start_rizin_debug_session", {
-            path: "fixture.bin",
+            path: "/tmp/fixture.bin",
             inferior_tty: await rizinTestInferiorTty(),
           })
         ).structuredContent,
@@ -95,9 +92,11 @@ test.each([
         command,
       });
       if (cleanupRetry)
-        expect(parseMcpToolError(stopping).error.code).toBe(
-          "cleanup_incomplete",
-        );
+        expect(parseMcpToolError(stopping).error).toMatchObject({
+          code: "cleanup_incomplete",
+          // The returned failure names why cleanup is incomplete at its top level.
+          details: { diagnostics: { debugger_cleanup: "stop-failed" } },
+        });
       else expect(stopping.isError).not.toBe(true);
 
       // The next call retries retained cleanup first, then refuses the

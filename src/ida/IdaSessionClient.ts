@@ -44,9 +44,9 @@ import {
 } from "./IdaProviderMetadata.js";
 import {
   absentDatabaseCloseSchema,
+  attachedMetadataSchema,
   closeDatabaseSchema,
   databaseListSchema,
-  legacyMetadataSchema,
   modernHealthSchema,
   openDatabaseSchema,
   rejectedOpenDatabaseSchema,
@@ -69,19 +69,8 @@ import {
   analysisClientFailureContext,
   analysisClientFailureForOperation,
 } from "../providers/AnalysisClientFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
-const legacyTools = [
-  "get_metadata",
-  "list_functions",
-  "list_strings",
-  "get_function_by_name",
-  "get_function_by_address",
-  "decompile_function",
-  "disassemble_function",
-  "get_callers",
-  "get_callees",
-  "get_xrefs_to",
-];
 const modernTools = [
   "idb_open",
   "idb_list",
@@ -142,9 +131,7 @@ class IdaCleanupError extends ProviderAdapterError {
         failure_reason:
           cause instanceof AnalysisError
             ? (cause.diagnostics?.reason ?? cause.message)
-            : cause instanceof Error
-              ? cause.message
-              : String(cause),
+            : errorMessage(cause),
         workspace: path,
         ...(sessions === undefined
           ? {}
@@ -664,12 +651,11 @@ export class IdaSessionClient implements AnalysisClient {
     const profile = idaCompatibilityProfile(this.config);
     const expected = {
       native: nativeTools,
-      legacy: legacyTools,
       modern: modernTools,
     }[profile.protocol];
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0) {
-      const summary = `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/providers/ida-provider.md.`;
+      const summary = `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the native IDA MCP tool catalog; headless mode requires the database supervisor profile. See docs/providers/ida-provider.md.`;
       // The caller cannot act on a profile mismatch it never sees, so the
       // missing names travel as adapter diagnostics rather than a bare message.
       throw new ProviderAdapterError("ida", "initialize", {
@@ -764,15 +750,8 @@ export class IdaSessionClient implements AnalysisClient {
   ): Promise<JsonValue> {
     let identity: string;
     if (this.config.mode === "attached") {
-      const raw =
-        idaCompatibilityProfile(this.config).protocol === "native"
-          ? await this.#nativeMetadata(options?.signal)
-          : await this.connection.call(
-              "get_metadata",
-              {},
-              { signal: options?.signal },
-            );
-      const metadata = legacyMetadataSchema.parse(raw);
+      const raw = await this.#nativeMetadata(options?.signal);
+      const metadata = attachedMetadataSchema.parse(raw);
       this.#metadata = raw;
       onObserved?.(raw);
       if (metadata.sha256.toLowerCase() !== this.target.sha256.toLowerCase())

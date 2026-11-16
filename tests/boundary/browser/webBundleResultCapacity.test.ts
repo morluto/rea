@@ -111,6 +111,7 @@ const buildWideScriptResult = (
               makeWebMcp("lastTool"),
             )
           : [],
+      unresolved_endpoints: [],
     },
     inferences:
       collection === "inferences"

@@ -51,7 +51,7 @@ import {
   type CarrierPathDialect,
 } from "./pyinstaller/CArchiveMembers.js";
 import { readPyzArchive } from "./pyinstaller/PyzArchive.js";
-import type { PyInstallerFailure } from "./pyinstaller/PyInstallerFailure.js";
+import { pyInstallerReaderFailure as failure } from "./pyinstaller/PyInstallerFailure.js";
 import { readPyInstallerBytes } from "./pyinstaller/PyInstallerBytes.js";
 
 const MAX_PARSED_FACT_BYTES = 32 * 1024 * 1024;
@@ -687,12 +687,3 @@ export class PyInstallerArtifactReader implements ArtifactReader {
     state.charged += bytes;
   }
 }
-
-const failure = (error: PyInstallerFailure): ArtifactReaderFailure =>
-  new ArtifactReaderFailure(
-    error.reason,
-    error.message,
-    error.reason === "integrity"
-      ? { integrityCheck: error.integrityCheck }
-      : undefined,
-  );

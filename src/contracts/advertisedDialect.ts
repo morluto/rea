@@ -3,7 +3,7 @@ import {
   schemaDepth,
   serializedBytes,
 } from "./compactJsonSchema.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import {
   schemaArrays,
   schemaChildren,

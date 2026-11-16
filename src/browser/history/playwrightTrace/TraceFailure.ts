@@ -33,11 +33,13 @@ export const traceFailure = (cause: unknown, path: string): AnalysisError => {
         cause.boundary ?? "memory",
         cause.message,
         null,
-        {
-          cause,
-          remediationAction:
-            "Select a smaller complete recorder chunk. Reply selection does not increase archive parsing allowances.",
-        },
+        cause.fixedAllowance === undefined
+          ? {
+              cause,
+              remediationAction:
+                "Select a smaller complete recorder chunk. Reply selection does not increase archive parsing allowances.",
+            }
+          : { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
       );
     if (cause.reason === "format" || cause.reason === "path")
       return stableArtifactInputFailure(cause, operation);

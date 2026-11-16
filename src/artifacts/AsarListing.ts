@@ -2,7 +2,7 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { setImmediate } from "node:timers/promises";
 import { z } from "zod";
 
-import { asarDeclaredSizeSchema, asarNodeSchema } from "./AsarNode.js";
+import { asarDeclaredSizeSchema, asarNodeSchema } from "../domain/asarNode.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,

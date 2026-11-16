@@ -32,7 +32,7 @@ import type { NativeCallTracer } from "../../../../src/native/LldbCallTracer.js"
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { LldbReadbackFiles } from "../../../../src/native/LldbReadbackFiles.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { createDeferred } from "../../../fixtures/binarySession.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";

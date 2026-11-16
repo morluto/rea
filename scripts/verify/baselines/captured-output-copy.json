@@ -8,9 +8,9 @@
   "src/gdb/GdbSessionManager.ts": 1,
   "src/javascript/recovery/WakaruCommand.ts": 1,
   "src/javascript/sourceMaps/SourceMapCommand.ts": 1,
-  "src/native/CommandRunner.ts": 1,
   "src/native/pwntools/PwntoolsDecoder.ts": 1,
   "src/pcap/PcapCommand.ts": 1,
+  "src/providers/NativeCommandRunner.ts": 1,
   "src/signals/SigrokRecordingProvider.ts": 1,
   "src/wasm/WabtArtifactProvider.ts": 1
 }

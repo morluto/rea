@@ -41,7 +41,7 @@ import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { managedInspectionInputFailure } from "./ManagedReaderFailure.js";
+import { managedInspectionInputFailure } from "../domain/managed/managedReaderFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import {
@@ -50,6 +50,7 @@ import {
   readManagedSnapshot,
   verifyManagedSourceIdentity,
 } from "./ManagedSnapshot.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Execution-free managed PE/CLI auxiliary provider. */
 export class ManagedStaticProvider implements AnalysisProvider {
@@ -199,9 +200,7 @@ class ManagedStaticClient implements AnalysisClient {
       MANAGED_STATIC_PROVIDER.id,
       cleanup?.resources ?? [this.target.path],
       {
-        reason:
-          cleanup?.reason ??
-          (cause instanceof Error ? cause.message : String(cause)),
+        reason: cleanup?.reason ?? errorMessage(cause),
       },
       { cause, operation },
     );

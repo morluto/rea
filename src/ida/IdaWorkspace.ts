@@ -16,6 +16,7 @@ import {
   assertArtifactReadActive,
   withArtifactFileHandle,
 } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Read a file digest with bounded memory rather than retaining binary bytes. */
 export const idaFileDigest = async (path: string): Promise<string> => {
@@ -84,7 +85,7 @@ export class IdaWorkspace {
           settings: [
             {
               setting: "workspaceRoot",
-              constraint: `Select an existing writable and searchable directory: ${cause instanceof Error ? cause.message : String(cause)}`,
+              constraint: `Select an existing writable and searchable directory: ${errorMessage(cause)}`,
             },
           ],
           diagnostics: { workspace_root: root },

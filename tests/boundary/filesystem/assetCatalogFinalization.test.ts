@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import * as processOutput from "../../../src/process/ExecFileOutput.js";
+import * as ownedCommand from "../../../src/process/OwnedCommand.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 it.skipIf(process.platform !== "darwin").each([
   ["success", false, false],
@@ -62,8 +62,13 @@ it.skipIf(process.platform !== "darwin").each([
         }
         await originalClose.call(this);
       });
+    const stream = (text: string) => ({
+      text,
+      bytes: text.length,
+      observedBytes: text.length,
+    });
     const utility = vi
-      .spyOn(processOutput, "execFileOutput")
+      .spyOn(ownedCommand, "runOwnedCommand")
       .mockImplementationOnce(async () => {
         if (primary === "integrity")
           await writeFile(
@@ -71,13 +76,22 @@ it.skipIf(process.platform !== "darwin").each([
             "changed catalog bytes with a different length",
           );
         if (primary === "timeout")
-          throw Object.assign(new Error("controlled assetutil deadline"), {
-            code: "ETIMEDOUT",
-            stdout: "",
-            stderr: "assetutil timeout detail",
-            signal: "SIGTERM",
-          });
-        return { stdout: "[]", stderr: "", stdoutBytes: 2, stderrBytes: 0 };
+          throw new ownedCommand.OwnedCommandFailure(
+            "timeout",
+            "Command deadline elapsed.",
+            {
+              stdout: stream(""),
+              stderr: stream("assetutil timeout detail"),
+              exitCode: null,
+              signal: "SIGKILL",
+            },
+          );
+        return {
+          stdout: stream("[]"),
+          stderr: stream(""),
+          exitCode: 0,
+          signal: null,
+        };
       });
     const client = new ArtifactProvider(
       {},
@@ -164,6 +178,7 @@ it.each(["decode_interface_builder", "inspect_keyed_archive"] as const)(
               throw new ArtifactReaderFailure(
                 "integrity",
                 "controlled Interface Builder source change",
+                { integrityCheck: "container-identity" },
               );
             })
         : undefined;
@@ -202,6 +217,66 @@ it.each(["decode_interface_builder", "inspect_keyed_archive"] as const)(
       await client.close();
       entries?.mockRestore();
       close.mockRestore();
+    }
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "prepares process ownership before the assetutil deadline and bounds each stream separately",
+  async () => {
+    const bundle = await createTestTempDirectory("rea-asset-limits-");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(join(resources, "Assets.car"), "inert catalog bytes");
+    const stages: string[] = [];
+    const prepare = vi
+      .spyOn(ownedCommand, "prepareOwnedCommand")
+      .mockImplementationOnce(async () => {
+        stages.push("prepare");
+      });
+    const run = vi
+      .spyOn(ownedCommand, "runOwnedCommand")
+      .mockImplementationOnce(async (_spawn, limits) => {
+        stages.push("run");
+        // A cold helper build must not spend the command deadline, and
+        // stderr diagnostics must not shrink the stdout allowance.
+        expect(limits).toMatchObject({
+          timeoutMs: 60_000,
+          diagnosticBytes: {
+            stdout: 64 * 1024 * 1024,
+            stderr: 64 * 1024 * 1024,
+          },
+        });
+        const stream = (text: string) => ({
+          text,
+          bytes: text.length,
+          observedBytes: text.length,
+        });
+        return {
+          stdout: stream("[]"),
+          stderr: stream(""),
+          exitCode: 0,
+          signal: null,
+        };
+      });
+    const client = new ArtifactProvider(
+      {},
+      "darwin",
+    ).createBundleResourceClient({
+      callerPath: bundle,
+      canonicalPath: bundle,
+      infoPlistPath: join(bundle, "Contents", "Info.plist"),
+      layout: "contents",
+      executableSha256: null,
+    });
+    try {
+      const result = await client.execute("inspect_asset_catalog", {});
+      if (!result.ok) throw result.error;
+      expect(stages).toEqual(["prepare", "run"]);
+    } finally {
+      await client.close();
+      run.mockRestore();
+      prepare.mockRestore();
     }
   },
 );

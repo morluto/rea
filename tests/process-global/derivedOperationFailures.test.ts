@@ -1,3 +1,5 @@
+import { fileSubjectTarget } from "../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -9,7 +11,13 @@ import { ARTIFACT_COMPARISON_EXAMPLE } from "../../src/contracts/artifactCompari
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../src/contracts/functionComparisonExample.js";
 import { completeReconstructionCoverageData } from "../../src/domain/reconstructionCoverage.fixture.js";
 import { reconstructionClosureResultSchema } from "../../src/domain/reconstructionCoverage.js";
-import { createEvidence } from "../../src/domain/evidence.js";
+import {
+  createEvidence,
+  evidenceSubjectInput,
+} from "../../src/domain/evidence.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
+import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
+import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { functionComparisonResultSchema } from "../../src/domain/functionComparisonSchemas.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
@@ -28,9 +36,6 @@ import { managedReconstructionImportResultSchema } from "../../src/domain/manage
 
 import { captureProcessScenarioFile } from "../../src/application/process/ProcessCli.js";
 import { managedComparisonCommand } from "../fixtures/managedComparisonCommand.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
-import { OwnedFileHandle } from "../../src/filesystem/OwnedFileHandle.js";
-import { primaryAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { wasmArtifactFixture } from "../fixtures/wasm/artifact.js";
@@ -142,15 +147,10 @@ describe.each([
 
 const invalidFunctionOperationEvidence = () => {
   const left = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (left.subject === null) throw new Error("Expected a function subject");
   return createEvidence(
     {
+      ...fileSubjectTarget(left.subject),
       path: "/tmp/wrong-function-operation",
-      sha256: left.subject.digest.sha256,
-      format: left.subject.format,
-      ...(left.subject.architecture === null
-        ? {}
-        : { architecture: left.subject.architecture }),
     },
     left.provider,
     {
@@ -169,15 +169,10 @@ const invalidFunctionOperationEvidence = () => {
 
 const malformedFunctionResultEvidence = () => {
   const left = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (left.subject === null) throw new Error("Expected a function subject");
   return createEvidence(
     {
+      ...fileSubjectTarget(left.subject),
       path: "/tmp/malformed-function-result",
-      sha256: left.subject.digest.sha256,
-      format: left.subject.format,
-      ...(left.subject.architecture === null
-        ? {}
-        : { architecture: left.subject.architecture }),
     },
     left.provider,
     {
@@ -320,35 +315,43 @@ describe("runtime reconciliation failure ownership through the public SDK", () =
     async ({ field, path, reason }) => {
       await withSdk(async ({ client, session }) => {
         const { evidence, result } = activeRuntimeFixture();
-        const runtime = createEvidence(undefined, evidence.provider, {
-          operation: evidence.operation,
-          predicateType: evidence.predicate_type,
-          authority: evidence.authority,
-          confidence: evidence.confidence,
-          parameters:
-            field === "parameters"
-              ? {
-                  ...evidence.parameters,
-                  resolved_paths: {
-                    ...(evidence.parameters.resolved_paths as object),
-                    application_root: 3,
+        const runtime = createEvidence(
+          evidenceSubjectInput(evidence.subject),
+          evidence.provider,
+          {
+            operation: evidence.operation,
+            predicateType: evidence.predicate_type,
+            authority: evidence.authority,
+            confidence: evidence.confidence,
+            parameters:
+              field === "parameters"
+                ? {
+                    ...evidence.parameters,
+                    resolved_paths: {
+                      ...(evidence.parameters.resolved_paths as object),
+                      application_root: 3,
+                    },
+                  }
+                : evidence.parameters,
+            result:
+              field === "parameters"
+                ? result
+                : {
+                    ...result,
+                    application: {
+                      ...result.application,
+                      application_path:
+                        field === "payload"
+                          ? 3
+                          : join(
+                              process.cwd(),
+                              "another-application",
+                              "main.js",
+                            ),
+                    },
                   },
-                }
-              : evidence.parameters,
-          result:
-            field === "parameters"
-              ? result
-              : {
-                  ...result,
-                  application: {
-                    ...result.application,
-                    application_path:
-                      field === "payload"
-                        ? 3
-                        : join(process.cwd(), "another-application", "main.js"),
-                  },
-                },
-        });
+          },
+        );
         const response = await client.callTool({
           name: "reconcile_javascript_runtime",
           arguments: {
@@ -561,11 +564,15 @@ describe.each(managedWorkflows)(
 
     it("rejects a malformed authenticated source payload as Evidence integrity", async () => {
       await withSdk(async ({ client, session }) => {
-        const source = createEvidence(undefined, workflow.source.provider, {
-          operation: workflow.source.operation,
-          parameters: {},
-          result: { malformed: true },
-        });
+        const source = createEvidence(
+          unknownTarget("not-observed"),
+          workflow.source.provider,
+          {
+            operation: workflow.source.operation,
+            parameters: {},
+            result: { malformed: true },
+          },
+        );
         const response = await client.callTool({
           name: workflow.name,
           arguments: { ...workflow.input, [workflow.sourceField]: source },

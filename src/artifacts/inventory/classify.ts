@@ -5,6 +5,7 @@ import {
   openRootArtifact,
   releaseRootArtifact,
   abortIfNeeded,
+  assertArtifactSelectedSource,
 } from "../../resources/index.js";
 import {
   nesContainerFormat,
@@ -22,7 +23,6 @@ import {
   locateEspFlashLayout,
   type EspFlashSelection,
 } from "../../domain/firmware/espFlashLocation.js";
-import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {

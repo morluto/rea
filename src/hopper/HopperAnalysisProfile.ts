@@ -55,6 +55,7 @@ import {
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
 import { hopperProducerIdentity } from "./HopperBridgeSources.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
@@ -380,10 +381,7 @@ const readHopperProfileFile = async <Value>(
     const cleanup =
       cause instanceof RegularFileCleanupFailure
         ? {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           }
         : undefined;
@@ -406,13 +404,13 @@ const readHopperProfileFile = async <Value>(
           : kind === "header"
             ? new BinaryTargetError(
                 path,
-                `Cannot read the Mach-O container header: ${physical instanceof Error ? physical.message : String(physical)}`,
+                `Cannot read the Mach-O container header: ${errorMessage(physical)}`,
                 { cause: physical, cleanup },
               )
             : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
                 cause: physical,
                 cleanup,
-                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${physical instanceof Error ? physical.message : String(physical)}`,
+                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${errorMessage(physical)}`,
                 remediationAction:
                   "Select a readable regular Hopper launcher, then retry provider selection.",
                 diagnostics: {

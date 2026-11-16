@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -312,7 +313,7 @@ it("projects imported inventories with an unknown artifact without inventing a p
     throw new Error("Retained views must not open a provider");
   });
   const source = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "borrowed.native", name: "Borrowed engine", version: "1" },
     {
       operation: "list_procedures",
@@ -351,7 +352,9 @@ it("projects imported inventories with an unknown artifact without inventing a p
     if (reply.isError) throw new Error(JSON.stringify(reply));
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence).toMatchObject({
-      subject: null,
+      subject: {
+        identity: { kind: "unknown", reason: "derived-from-linked-evidence" },
+      },
       locations: [],
       evidence_links: [source.evidence_id],
       normalized_result: {

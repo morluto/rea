@@ -4,7 +4,6 @@ import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
-import { classifyBinaryTargetFilesystemFailure } from "../application/BinaryTargetResolver.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -28,6 +27,8 @@ import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../domain/managed/managedInspect
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 interface ManagedSourceObservation {
   readonly byteLength: number;
@@ -111,7 +112,7 @@ export const readManagedSnapshot = async (
       signal?.throwIfAborted();
       return {
         byteLength: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes,
       };
     },

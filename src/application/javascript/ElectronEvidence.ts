@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { isDeepStrictEqual } from "node:util";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProviderIdentity } from "../../ports/AnalysisProvider.js";
@@ -29,7 +30,7 @@ export const createElectronEvidence = (
   provider: ProviderIdentity,
 ): Evidence => {
   const result = report.facts;
-  return createEvidence(undefined, provider, {
+  return createEvidence(unknownTarget("not-observed"), provider, {
     predicateType:
       operation === "list_electron_targets"
         ? "rea.electron-target-list"

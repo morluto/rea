@@ -180,6 +180,21 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   expect(() =>
     readElfHardening(elfHardeningFixture({ duplicateStack: true })),
   ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  // A file-backed PT_DYNAMIC of 65,537 entries exceeds the entry allowance,
+  // which counts entries, not bytes.
+  const fixture = elfHardeningFixture();
+  const wide = Buffer.concat([fixture, Buffer.alloc(65_537 * 16)]);
+  const programs = Number(wide.readBigUInt64LE(32));
+  const dynamic = Array.from(
+    { length: wide.readUInt16LE(56) },
+    (_, index) => programs + index * wide.readUInt16LE(54),
+  ).find((at) => wide.readUInt32LE(at) === 2);
+  if (dynamic === undefined) throw new Error("Fixture has no PT_DYNAMIC");
+  wide.writeBigUInt64LE(BigInt(fixture.length), dynamic + 8);
+  wide.writeBigUInt64LE(65_537n * 16n, dynamic + 32);
+  expect(() => readElfHardening(wide)).toThrow(
+    expect.objectContaining({ maximum_bytes: 65_536, unit: "entries" }),
+  );
   const overBudget = readElfHardening(
     elfHardeningFixture({ symbolBudget: true }),
   );

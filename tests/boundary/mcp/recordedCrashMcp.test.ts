@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   canonicalOutputSchema,
   withCanonicalOutputSchema,
@@ -84,7 +85,7 @@ it("records inline recorded-core evidence with compact schemas and canonical pat
   );
   const evidence = parseEvidence(parsed);
   expect(evidence.confidence).toBe("observed");
-  expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
+  expect(fileIdentity(evidence.subject).sha256).toBe(value.artifact.sha256);
   expect(parsed.normalized_result).toEqual(value);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const relative = await client.callTool({
