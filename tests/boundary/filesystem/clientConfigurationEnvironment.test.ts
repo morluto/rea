@@ -235,7 +235,7 @@ it.skipIf(process.platform !== "win32")(
           rea: {
             command: staleOwnedCommand[0],
             args: staleOwnedCommand.slice(1),
-            env: { rea_mcp_input_schema_profile: "full" },
+            env: { rea_mcp_input_schema_profile: "compact" },
           },
         },
       }),
@@ -255,7 +255,7 @@ it.skipIf(process.platform !== "win32")(
       "kimi",
     );
     expect(effectiveClientServer(parsed, "rea")).toHaveProperty("env", {
-      rea_mcp_input_schema_profile: "full",
+      rea_mcp_input_schema_profile: "compact",
     });
     const statuses = await readClientRegistrationStatuses(home, command[1], {
       platform: HOST_PLATFORM.platform,

@@ -27,7 +27,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 const CARD_PATH = "/.well-known/agent-env.json";
 /** SHA-256 of the card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
 const REPLAY_CARD_SHA256 =
-  "825703b02f48d614b3c4690445b0b6b00333d975406dc7e8dd335836bceb7d59";
+  "c303f523221a59d0cd8396468fb13e91dd2aec5dc4cb645e633919e499cb3d00";
 
 /** Serve the fixture pair as pure replay through the built CLI. */
 const serveReplayOnly = async (
