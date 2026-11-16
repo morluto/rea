@@ -156,7 +156,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
             if (status === 0) status = 1;
           }
           try {
-            await finishOutput(status);
+            await finishOutput();
           } catch (cause) {
             if (!stdoutClosed)
               process.stderr.write(`${cleanupFailureText(cause)}\n`);

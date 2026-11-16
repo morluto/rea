@@ -64,7 +64,10 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
   const program = join(fixture.root, "program.elf");
   await writeFile(program, elfProgram());
   const targetBytes = await readFile(program);
-  const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+  const delivery = vi.spyOn(
+    ToolResultDelivery.prototype,
+    "toPartialErrorToolResult",
+  );
   try {
     const opened = await call("open_binary", { path: program });
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
@@ -75,8 +78,9 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
 
     const failed = parseMcpToolError(await call("close_binary"));
     const delivered = delivery.mock.calls.at(-1)?.[0];
-    if (delivered === undefined || delivered.ok)
+    if (delivered === undefined)
       throw new Error("Expected the typed close failure at delivery");
+    expect(delivered.cleanupIncomplete).toBe(true);
     expect(failed.error).toMatchObject({
       code: "cleanup_incomplete",
       retryable: false,
@@ -90,7 +94,7 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     });
     // The owner's guidance stays first; the retry offer is appended once.
     expect(failed.error.remediation.action).toBe(
-      `${analysisErrorRemediationAction(delivered.error)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
+      `${analysisErrorRemediationAction(delivered)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
     );
     const pendingStatus = await sessionStatus(client);
     expect(pendingStatus).toMatchObject({
