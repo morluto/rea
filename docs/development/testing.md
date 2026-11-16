@@ -544,9 +544,14 @@ relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
 
-Pull-request scans are cancelled when superseded. Active scans on `main` finish
-so frequent pushes cannot prevent a complete baseline from being uploaded.
-Cancelled runs skip the SARIF artifact upload when no report was produced.
+Pull-request scans are cancelled when superseded, skip pure test/prose diffs via
+`paths-ignore`, and select only the CodeQL languages (`javascript-typescript`,
+`python`, `actions`) whose production inputs changed (failing closed to all
+three languages on shared CodeQL configuration or unclassified paths). Active
+scans on `main`, weekly schedules, and manual dispatches always analyze all
+three languages so frequent pushes cannot prevent a complete baseline from being
+uploaded. Cancelled runs skip the SARIF artifact upload when no report was
+produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.

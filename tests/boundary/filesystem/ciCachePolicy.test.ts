@@ -64,9 +64,7 @@ const assertRetentionPolicy = (expression: string): void => {
             repositoryName === currentRepository &&
             branch === defaultBranch &&
             ["push", "schedule", "workflow_dispatch"].includes(event) &&
-            ["success", "failure", "timed_out", "cancelled"].includes(
-              conclusion,
-            );
+            ["success", "failure", "timed_out"].includes(conclusion);
           expect(
             evaluatePolicy(expression, {
               github: {
@@ -556,6 +554,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
         workflow_run: z.object({
           workflows: z.array(z.literal("CI")),
           types: z.array(z.literal("completed")),
+          branches: z.array(z.literal("main")),
         }),
         workflow_call: z.unknown().optional(),
         pull_request: z.unknown().optional(),

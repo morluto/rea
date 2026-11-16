@@ -22,6 +22,7 @@ const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
+  ".github/workflows/cache-retention.yml",
   ".github/workflows/mutation.yml",
 ]);
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
