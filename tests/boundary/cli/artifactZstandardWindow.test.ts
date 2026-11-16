@@ -23,8 +23,14 @@ const expectRefusal = (diagnostic: unknown, large: boolean): void => {
   if (large) {
     expect(diagnostic).toMatchObject({
       message: expect.stringContaining("fixed 128 MiB allowance"),
-      remediation: {
-        action: expect.stringContaining("cannot be raised at runtime"),
+      details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance: "The ZIP Zstandard decoder window allowance",
+          limit: 2 ** 27,
+          unit: "bytes",
+          narrowing: expect.stringContaining("Recompress the member"),
+        },
       },
     });
     expect(JSON.stringify(diagnostic)).not.toContain("fresh copy");

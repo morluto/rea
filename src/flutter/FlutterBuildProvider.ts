@@ -245,17 +245,24 @@ const mapInputFailure = (
     return new AnalysisAccessDeniedError(operation, path, cause.code, {
       cause,
     });
+  // A reader limit that names its own ceiling (such as the ZIP decoder window)
+  // keeps it; only the unnamed metadata read refusal is this provider's budget.
   if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      operation,
-      "memory",
-      cause.message,
-      { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
-      {
-        cause,
-        ...FLUTTER_ALLOWANCES.apkMetadataRead,
-      },
-    );
+    return cause.fixedAllowance === undefined
+      ? new AnalysisResourceConstraintError(
+          operation,
+          "memory",
+          cause.message,
+          { max_metadata_read_bytes: APK_METADATA_READ_MAX_BYTES },
+          { cause, ...FLUTTER_ALLOWANCES.apkMetadataRead },
+        )
+      : new AnalysisResourceConstraintError(
+          operation,
+          cause.boundary === "file-size" ? "file-size" : "memory",
+          cause.message,
+          null,
+          { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
+        );
   return new AnalysisInputError(operation, { cause }, [
     {
       path: ["path"],

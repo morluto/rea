@@ -47,6 +47,10 @@ import {
   realRm,
 } from "../../fixtures/flutterCleanup.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../fixtures/zipZstandard.js";
 import { ZipArtifactReader } from "../../../src/resources/index.js";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -1279,6 +1283,36 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       limit: 8 * 1024 ** 2,
       unit: "bytes",
     });
+  },
+);
+
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s names the ZIP decoder window, not the metadata read allowance, for a large-window library",
+  async (operation) => {
+    const root = await createTestTempDirectory("rea-flutter-zstd-");
+    const path = join(root, "zstd-window.apk");
+    // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+    const { content, compressed } = zstandardWindowFrameFixture(0x90);
+    await writeFile(
+      path,
+      zstandardZipFixture(content, {
+        compressed,
+        name: "lib/arm64-v8a/libapp.so",
+      }),
+    );
+    const provider = new FlutterBuildProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.execute({ operation, input: { path } });
+    if (result.ok) throw new Error("expected a decoder window refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance: "The ZIP Zstandard decoder window allowance",
+      limit: 128 * 1024 ** 2,
+      unit: "bytes",
+    });
+    expect(projected.remediation.action).not.toContain("metadata read");
   },
 );
 

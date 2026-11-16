@@ -9,6 +9,12 @@ import {
   playwrightTraceFixture,
   playwrightTracePathFixture,
 } from "../../../../tests/fixtures/playwrightTrace.js";
+import { createTestTempDirectory } from "../../../../tests/fixtures/temporaryDirectory.js";
+import {
+  zstandardWindowFrameFixture,
+  zstandardZipFixture,
+} from "../../../../tests/fixtures/zipZstandard.js";
+import { join } from "node:path";
 
 it("imports real v10 recorder text with per-stream identity and resource presence, preserving source bytes", async () => {
   const fixture = await playwrightTraceFixture({ resources: true });
@@ -472,6 +478,32 @@ it("keeps duplicate resource names ambiguous instead of selecting one ZIP occurr
       }),
     );
     expect(result.value.source_coverage.interpretation).toBe("partial");
+  } finally {
+    await resources.close();
+  }
+});
+
+it("names the ZIP decoder window for a large-window recorder stream", async () => {
+  const root = await createTestTempDirectory("rea-trace-zstd-");
+  const path = join(root, "trace.zip");
+  // Window descriptor 0x90 declares 256 MiB, above the ZIP reader's window.
+  const { content, compressed } = zstandardWindowFrameFixture(0x90);
+  await writeFile(
+    path,
+    zstandardZipFixture(content, { compressed, name: "trace.trace" }),
+  );
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await new PlaywrightTraceDecoder(resources).inspect(path);
+    if (result.ok) throw new Error("Expected decoder window refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("resource_constraint");
+    expect(projected.details?.refusal).toMatchObject({
+      kind: "fixed_ceiling",
+      allowance: "The ZIP Zstandard decoder window allowance",
+      limit: 2 ** 27,
+    });
+    expect(projected.remediation.action).not.toContain("recorder chunk");
   } finally {
     await resources.close();
   }
