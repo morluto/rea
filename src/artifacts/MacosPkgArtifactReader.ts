@@ -765,7 +765,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     }
     const members = parsed.value.members;
     const names = members.map((member) => basename(member.name));
-    this.#entries.delete(entry.adapterKey);
+    this.#keepStoredArchive(entry, parsed.value.compression);
     if (role === "scripts")
       this.#mergeScripts(metadata, {
         present: true,
@@ -829,6 +829,23 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       });
     }
     return parsed.value.decodedBytes;
+  }
+
+  /**
+   * Keep an expanded Scripts/Payload archive as evidence (heap location, sizes,
+   * TOC checksums). Its members claim `<path>/...`, so the stored occurrence
+   * moves to a sibling logical path; `sourcePath` keeps the XAR name.
+   */
+  #keepStoredArchive(
+    entry: StoredEntry,
+    compression: PayloadCompression,
+  ): void {
+    const base = `${entry.path}${compression === "gzip-cpio-odc" ? ".cpio.gz" : ".cpio"}`;
+    const taken = new Set([...this.#entries.values()].map((item) => item.path));
+    let path = base;
+    for (let suffix = 2; taken.has(path); suffix += 1)
+      path = `${base}.${String(suffix)}`;
+    this.#entries.set(entry.adapterKey, { ...entry, path });
   }
 
   #mergeScripts(

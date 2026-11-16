@@ -164,6 +164,23 @@ it("inventories a product archive's Distribution, scripts and payload", async ()
     expect((await buffer(await reader.open(hello!))).toString("utf8")).toBe(
       "hello from payload\n",
     );
+    for (const role of ["Scripts", "Payload"]) {
+      const stored = entries.find(
+        (entry) => entry.sourcePath === `Component.pkg/${role}`,
+      );
+      expect(stored).toMatchObject({
+        path: `Component.pkg/${role}.cpio.gz`,
+        kind: "file",
+        byteOffset: expect.any(Number),
+        formatMetadata: expect.objectContaining({
+          role: "xar-file",
+          archived_checksum: expect.anything(),
+          extracted_checksum: expect.anything(),
+        }),
+      });
+      const bytes = await buffer(await reader.open(stored!));
+      expect(bytes.subarray(0, 2).equals(Buffer.from([0x1f, 0x8b]))).toBe(true);
+    }
   } finally {
     await reader.close();
   }
