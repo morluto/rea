@@ -553,6 +553,9 @@ it.each([
       diagnostics: { catalog_path: "Assets.car" },
       capturedOutput: { stderr: "specific catalog diagnostic" },
       ...(code === "ETIMEDOUT" ? { timeoutMs: 60000 } : {}),
+      ...(code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        ? { fixedAllowance: { limit: 64 * 1024 * 1024, unit: "bytes" } }
+        : {}),
     });
   },
 );
