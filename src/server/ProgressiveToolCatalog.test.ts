@@ -292,4 +292,15 @@ it("keeps tools matching every word first and discounts words most tools contain
     "inspect_signature",
     "list_strings",
   ]);
+  // Repeating a word must not add weight: counting plist twice would move
+  // inspect_plist ahead of inspect_macho.
+  const once = await f.discover({
+    query: "plist from architectures",
+    limit: 20,
+  });
+  const repeated = await f.discover({
+    query: "PLIST from plist architectures",
+    limit: 20,
+  });
+  expect(discoveredNames(repeated)).toEqual(discoveredNames(once));
 });
