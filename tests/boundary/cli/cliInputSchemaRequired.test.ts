@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { createCliInventory } from "../../../scripts/lib/catalog-cli.mjs";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -87,7 +88,7 @@ const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
     const mismatches: string[] = [];
-    const primary = createCliInventory(cli).primary;
+    const primary = createCliInventory(cliCommands(cli)).primary;
     expect(primary).toEqual(
       expect.arrayContaining(["inspect-pcap-client", "inspect-pcap-capture"]),
     );
@@ -382,8 +383,8 @@ describe("ADB selector input schemas", () => {
       ["S".repeat(257), false],
     ] as const;
     let checked = 0;
-    for (const command of createCliInventory(cli).primary.filter((name) =>
-      name.includes("-adb-"),
+    for (const command of createCliInventory(cliCommands(cli)).primary.filter(
+      (name) => name.includes("-adb-"),
     )) {
       const parser = parserSchema(cli, command, "args");
       const field = parser?.shape.serial as z.ZodType | undefined;
