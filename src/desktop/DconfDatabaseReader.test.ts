@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +9,8 @@ import {
   ArtifactReaderFailure,
 } from "../resources/index.js";
 import { dumpDconfDatabase } from "./DconfDatabaseReader.js";
+import { runningTestDeadline } from "../../tests/support/runningTestDeadline.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 
 const closeFault = vi.hoisted(() => ({
   path: "",
@@ -318,7 +320,7 @@ it
       if (outcome === "failed")
         expect(failure.fileCleanupFailure.outcome).toMatchObject({
           kind: "failed",
-          cause: { code: 17 },
+          cause: { snapshot: { exitCode: 17 } },
         });
       if (outcome === "cancelled") {
         expect(failure.reason).toBe("cancelled");
@@ -327,6 +329,181 @@ it
     } finally {
       controller.abort(reason);
       const settled = await pending;
+      if (settled instanceof ArtifactFileCleanupFailure)
+        await settled.cleanupLease.release();
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retires a wrapper's signal-resistant helper before closing the selected descriptor",
+  async () => {
+    const root = await createTestTempDirectory("dconf-wrapper-cancel-");
+    const database = join(root, "user");
+    const command = join(root, "wrapper");
+    const helper = join(root, "helper.cjs");
+    const ready = join(root, "ready.json");
+    await writeFile(database, "GVariant");
+    await writeFile(
+      helper,
+      [
+        'const fs = require("node:fs");',
+        'process.on("SIGTERM", () => {});',
+        'const source = fs.readFileSync(process.env.DCONF_PROFILE, "utf8").trim().slice("file-db:".length);',
+        `fs.writeFileSync(${JSON.stringify(ready)}, JSON.stringify({pids: [process.ppid, process.pid], source}));`,
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+    await writeFile(
+      command,
+      [
+        `#!${process.execPath}`,
+        'process.on("SIGTERM", () => process.exit(0));',
+        `require("node:child_process").spawn(process.execPath, [${JSON.stringify(helper)}], {stdio: "inherit"});`,
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const controller = new AbortController();
+    const reason = { kind: "wrapper cancellation" };
+    const pending = dumpDconfDatabase(
+      database,
+      { REA_DCONF_COMMAND: command },
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    const identities: { pid: number; start: string }[] = [];
+    const identity = async (pid: number) =>
+      (await readFile(`/proc/${pid}/stat`, "utf8"))
+        .split(") ")[1]!
+        .split(" ")[19]!;
+    let fence: ReturnType<typeof setTimeout> | undefined;
+    try {
+      let observed: { pids: number[]; source: string } | undefined;
+      await expect
+        .poll(async () => {
+          try {
+            observed = JSON.parse(
+              await readFile(ready, "utf8"),
+            ) as typeof observed;
+            return observed !== undefined;
+          } catch {
+            return false;
+          }
+        })
+        .toBe(true);
+      if (observed === undefined)
+        throw new Error("Helper did not report its source");
+      for (const pid of observed.pids)
+        identities.push({ pid, start: await identity(pid) });
+      const before = await stat(observed.source);
+      controller.abort(reason);
+      const remaining = runningTestDeadline();
+      if (remaining === undefined)
+        throw new Error("Missing running test deadline");
+      const result = await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          fence = setTimeout(
+            () =>
+              reject(
+                new Error("Owned dconf family did not finish cancellation"),
+              ),
+            remaining,
+          );
+        }),
+      ]);
+      expect(result).toBeInstanceOf(ArtifactReaderFailure);
+      if (!(result instanceof ArtifactReaderFailure)) throw result;
+      expect(result.reason).toBe("cancelled");
+      expect(result.cancellation?.reason).toBe(reason);
+      for (const owned of identities) {
+        const current = await readFile(`/proc/${owned.pid}/stat`, "utf8").catch(
+          () => undefined,
+        );
+        if (current !== undefined) {
+          const fields = current.split(") ")[1]!.split(" ");
+          expect(fields[19] !== owned.start || fields[0] === "Z").toBe(true);
+        }
+      }
+      const after = await stat(observed.source).catch(() => undefined);
+      expect(after?.ino === before.ino && after?.dev === before.dev).toBe(
+        false,
+      );
+    } finally {
+      if (fence !== undefined) clearTimeout(fence);
+      controller.abort(reason);
+      for (const owned of identities) {
+        try {
+          if ((await identity(owned.pid)) === owned.start)
+            process.kill(owned.pid, "SIGKILL");
+        } catch {
+          /* Already retired. */
+        }
+      }
+      await pending;
+    }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains the selected descriptor until failed process cleanup can be retried",
+  async () => {
+    const root = await createTestTempDirectory("dconf-process-cleanup-");
+    const database = join(root, "user");
+    const command = join(root, "reader");
+    const ready = join(root, "ready");
+    await writeFile(database, "GVariant");
+    await writeFile(
+      command,
+      [
+        `#!${process.execPath}`,
+        'const fs = require("node:fs");',
+        `fs.writeFileSync(${JSON.stringify(ready)}, fs.readFileSync(process.env.DCONF_PROFILE, "utf8").trim().slice("file-db:".length));`,
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const stop = vi.spyOn(ProviderProcessSupervisor.prototype, "stop");
+    stop.mockResolvedValue({
+      status: "incomplete",
+      reason: "controlled stop refusal",
+    });
+    const controller = new AbortController();
+    const reason = { kind: "cleanup retry cancellation" };
+    const pending = dumpDconfDatabase(
+      database,
+      { REA_DCONF_COMMAND: command },
+      controller.signal,
+    ).catch((cause: unknown) => cause);
+    let failure: unknown;
+    try {
+      await expect
+        .poll(() => readFile(ready, "utf8").catch(() => ""))
+        .toMatch(/^\/proc\/\d+\/fd\/\d+$/u);
+      const source = await readFile(ready, "utf8");
+      const before = await stat(source);
+      controller.abort(reason);
+      failure = await pending;
+      expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+      if (!(failure instanceof ArtifactFileCleanupFailure)) throw failure;
+      expect(failure.cancellation?.reason).toBe(reason);
+      expect(failure.cleanupLease.cleanupResources).toContain(database);
+      expect(failure.cleanupLease.cleanupResources!.length).toBeGreaterThan(1);
+      expect((await stat(source)).ino).toBe(before.ino);
+      await expect(failure.cleanupLease.release()).rejects.toThrow(
+        "controlled stop refusal",
+      );
+      expect(failure.cleanupLease.released).toBe(false);
+      stop.mockRestore();
+      await failure.cleanupLease.release();
+      expect(failure.cleanupLease.released).toBe(true);
+      const after = await stat(source).catch(() => undefined);
+      expect(after?.ino === before.ino && after?.dev === before.dev).toBe(
+        false,
+      );
+    } finally {
+      stop.mockRestore();
+      controller.abort(reason);
+      const settled = failure ?? (await pending);
       if (settled instanceof ArtifactFileCleanupFailure)
         await settled.cleanupLease.release();
     }

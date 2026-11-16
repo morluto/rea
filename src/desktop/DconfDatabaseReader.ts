@@ -1,11 +1,19 @@
-import { open, realpath, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, sep } from "node:path";
-
 import {
-  execFileOutput,
-  execFileOutputFailure,
-  ExecFileOutputCancelledError,
-} from "../process/ExecFileOutput.js";
+  open,
+  realpath,
+  stat,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
+import { dirname, isAbsolute, join, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  runOwnedCommand,
+  ownedCommandResources,
+} from "../process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import { providerOutcomeOf } from "../process/ProviderOutcome.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 
 import {
   assertArtifactReadActive,
@@ -19,6 +27,35 @@ const DCONF_NOT_INSTALLED =
   "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND";
 const DCONF_TIMEOUT_MS = 30_000;
 const DCONF_MAX_BUFFER = 16 * 1024 * 1024;
+
+/** Retire a retained command family before its parent-owned database descriptor. */
+class DconfReadHandle extends OwnedFileHandle {
+  retainedProcess: ProviderProcessSupervisor | undefined;
+
+  constructor(
+    file: FileHandle,
+    readonly path: string,
+  ) {
+    super(file);
+  }
+
+  get cleanupResources(): readonly string[] {
+    const ownership = this.retainedProcess?.launch.ownership;
+    return [
+      this.path,
+      ...(ownership === undefined ? [] : ownedCommandResources(ownership)),
+    ];
+  }
+
+  override async close(): Promise<void> {
+    if (this.retainedProcess !== undefined) {
+      const stopped = await this.retainedProcess.stop();
+      if (stopped.status === "incomplete") throw new Error(stopped.reason);
+      this.retainedProcess = undefined;
+    }
+    await super.close();
+  }
+}
 
 /** The keyfile text of a dconf database, or why it could not be read. */
 export type DconfDump =
@@ -36,13 +73,15 @@ export const dumpDconfDatabase = async (
   signal?: AbortSignal,
 ): Promise<DconfDump> => {
   assertArtifactReadActive(signal);
+  let selectedCommand: string | undefined;
   try {
     const directory = await realpath(dirname(database));
     const profile = join(directory, "profile");
     const file = await open(database, "r");
+    const owner = new DconfReadHandle(file, database);
     return await withArtifactFileHandle(
       database,
-      file,
+      owner,
       undefined,
       signal,
       async (source) => {
@@ -78,41 +117,58 @@ export const dumpDconfDatabase = async (
         let missing: unknown;
         for (const candidate of candidates) {
           assertArtifactReadActive(signal);
+          selectedCommand = candidate.path;
           try {
-            const { stdout } = await execFileOutput(
-              candidate.path,
-              ["dump", "/"],
+            const output = await runOwnedCommand(
               {
-                stopSignal: "SIGTERM",
-                env: { PATH: environment.PATH ?? "", DCONF_PROFILE: profile },
-                timeout: DCONF_TIMEOUT_MS,
-                maxBuffer: DCONF_MAX_BUFFER,
+                command: candidate.path,
+                arguments: ["dump", "/"],
+                runId: randomUUID(),
+                expectedCommand: null,
+                hostEnvironment: {
+                  PATH: environment.PATH ?? "",
+                  DCONF_PROFILE: profile,
+                },
+                sweepTokenOwnedProcesses: true,
+              },
+              {
+                timeoutMs: DCONF_TIMEOUT_MS,
+                diagnosticBytes: {
+                  stdout: DCONF_MAX_BUFFER,
+                  stderr: DCONF_MAX_BUFFER,
+                },
+                termination: { signal: "SIGTERM", graceMs: 5_000 },
+              },
+              {
                 ...(signal === undefined ? {} : { signal }),
+                retainCleanup: (process) => {
+                  owner.retainedProcess = process;
+                },
               },
             );
-            return { ok: true, text: stdout };
+            return { ok: true, text: output.stdout.text };
           } catch (cause: unknown) {
-            const failure = execFileOutputFailure(cause);
+            const failure = providerOutcomeOf(cause);
             // Only POSIX PATH-search spawn failures permit another candidate.
             // An actual child exit, cancellation or host capacity failure is final.
             if (
               !direct &&
-              failure?.spawnFailed === true &&
-              (failure.code === "ENOENT" ||
-                failure.code === "ENOTDIR" ||
-                failure.code === "EACCES")
+              failure?.kind === "launch-failed" &&
+              (failure.failure.code === "ENOENT" ||
+                failure.failure.code === "ENOTDIR" ||
+                failure.failure.code === "EACCES")
             ) {
-              if (failure.code === "EACCES") refusal ??= cause;
+              if (failure.failure.code === "EACCES") refusal ??= cause;
               else missing = cause;
               continue;
             }
-            if (cause instanceof ExecFileOutputCancelledError)
+            if (failure?.kind === "cancelled")
               throw new ArtifactReaderFailure(
                 "cancelled",
                 "dconf dump was cancelled",
                 {
-                  cause: cause.cause,
-                  cancellation: { reason: cause.cause },
+                  cause: failure.reason,
+                  cancellation: { reason: failure.reason },
                 },
               );
             throw cause;
@@ -125,15 +181,21 @@ export const dumpDconfDatabase = async (
     );
   } catch (cause: unknown) {
     if (cause instanceof ArtifactReaderFailure) throw cause;
-    const failure = execFileOutputFailure(cause);
-    if (failure?.code === "ENOENT")
+    const failure = providerOutcomeOf(cause);
+    if (failure?.kind === "launch-failed" && failure.failure.code === "ENOENT")
       return {
         ok: false,
         error: DCONF_NOT_INSTALLED,
       };
     return {
       ok: false,
-      error: failure?.stderr.trim() || String(cause),
+      error:
+        failure?.output?.snapshot.stderr.text.trim() ||
+        (failure?.kind === "exited"
+          ? `Command failed: ${selectedCommand} dump / (exit ${failure.exitCode ?? failure.signal})`
+          : undefined) ||
+        failure?.message ||
+        String(cause),
     };
   }
 };
