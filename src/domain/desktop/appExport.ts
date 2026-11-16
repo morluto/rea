@@ -44,10 +44,9 @@ import { capturedFileUrl, type LaunchDocument } from "./seedDocument.js";
 import { posix } from "node:path";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 import { shellQuote } from "./shellQuote.js";
-export { shellQuote } from "./shellQuote.js";
 
-/** agentenv-framework release the exported class was checked against. */
-export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1464";
+/** agentenv-framework release targeted by the exported class. */
+export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1485";
 
 /** Everything the export renders, decided from a capture and its state view. */
 export interface DesktopAppExportPlan {
@@ -607,7 +606,7 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
   ].join("\n");
 
 /** How the class and README say where the seed came from: made for the task, or the user's own data, kept local. */
-export const seedWording = ({
+const seedWording = ({
   name,
   seedCheckpoint,
   syntheticSeed,
@@ -678,7 +677,7 @@ window and dialogs; the result is read from those files.
 }`;
 
 /** The start of the limitation of a launch that opens no document; its reason follows. */
-export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
+const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
 
 /** The limitation of a launch that opens no document; none when it opens one. */
 export const launchDocumentLimitation = (
@@ -689,7 +688,7 @@ export const launchDocumentLimitation = (
     : undefined;
 
 /** The README line on what the launch opens; none when the captured command names its own file. */
-export const launchDocumentNote = ({
+const launchDocumentNote = ({
   opens,
 }: Pick<DesktopAppExportPlan, "opens">): string =>
   opens.kind === "seed"
@@ -756,7 +755,7 @@ export const renderReadme = (
   `# ${plan.title} computer app
 
 Exported by REA's \`export-desktop-application\` from a capture of the \`${plan.aptPackage}\` ${plan.download === undefined ? "package" : downloadKind(plan.download)}
-(capture Evidence \`${plan.captureEvidenceId}\`). It was checked against agentenv-framework
+(capture Evidence \`${plan.captureEvidenceId}\`). It targets agentenv-framework
 ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for

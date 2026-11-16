@@ -20,8 +20,10 @@ part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
 trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
-the capture, once REA has validated it against the capture; see
-[desktop application tasks](desktop-application-tasks.md). `--package-url`
+the capture, once REA has validated it against the capture; repeat it for
+several tasks, each checked at its own end checkpoint, which
+`--task-end NAME=CHECKPOINT` names; see
+[desktop application tasks](desktop-application-tasks.md#several-tasks). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
 `--download-install FILE` says which AppImage or tarball a build computer
@@ -55,7 +57,11 @@ bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
-Evidence; the bundle itself is complete.
+Evidence; the bundle itself is complete. Cancellation during final output
+handle cleanup also preserves the complete bundle and returns its Evidence
+as a partial observation. If closing the handles fails too, the cleanup
+failure remains primary and cancellation is retained separately. The complete
+bundle remains usable.
 
 ## The bundle
 
@@ -70,7 +76,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/install-download.sh` | With `--download-install`: the run script that unpacks the downloaded AppImage or tarball          |
 | `envs/<name>/applications/`       | With a tarball's `--download-install`: the desktop entry REA wrote for its program                 |
 | `tasks/smoke.json`                | A task that deploys the app                                                                        |
-| `tasks/<task>.json`               | With `--task`: the agent's task, its verifier in `artifacts/` and the eval in `evals/`             |
+| `tasks/<task>.json`               | With `--task`: each of the agent's tasks, its verifier in `artifacts/` and the eval in `evals/`    |
 | `README.md`                       | What was exported, from which capture, and what to keep in mind                                    |
 
 The class file is `<name>_app.py` with hyphens as underscores, for example
@@ -178,7 +184,9 @@ The class declares:
   unless that spelling is outside the captured home, as when the home itself is
   a symbolic link. When a selected link names an application state directory,
   the bundle seeds the application's state path and restores the selected
-  alias at boot. Selections nested under that alias are seeded under the same
+  alias at boot. Targets recorded as directories are created even when the seed
+  has no files there; file targets and targets of unknown kind are not turned
+  into directories. Selections nested under that alias are seeded under the same
   state path. An existing incompatible alias stops setup without replacing it. When two files map to one home path, the export uses the one present
   before the capture, else the first by path, and a limitation names the other.
 - Data hooks, because declaring any hook switches off agentenv's default data
@@ -332,6 +340,9 @@ A withheld file larger than 48 KiB is refused, since its base64 must fit one
 environment variable. `--withheld-copy <folder>` copies the withheld files,
 as captured, into a new or empty folder outside the bundle. The result lists
 them as `withheld_files`, each with its `setting`, `variable` and `handle`.
+REA resolves both destinations before writing either. A path that cannot be
+resolved, including a dangling link, is refused; the copy and bundle cannot
+contain one another, including through symbolic links.
 
 `--consent <file>` ships the person's consents, a `consent.json` that
 `record_build_consent` records, as the bundle's own `consent.json`.
@@ -588,10 +599,11 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 - dconf databases are reported as binary, since REA reads them with `dconf`;
   inside an archive, one is `dconf` with an error, as in REA.
-- Zip entry names: a name in an Info-ZIP Unicode Path extra field is used only
-  where Python's `zipfile` reads it (3.12 and later), and an entry whose local
-  header names it differently from the central directory is damaged rather
-  than read.
+- Zip entries whose local header names them differently from the central
+  directory are damaged rather than read. Entry names follow REA's Unicode
+  Path selection: the final extra field replaces earlier claims, a bad version
+  or CRC falls back to the stored name, and the UTF-8 flag takes precedence.
+  Invalid UTF-8 in the selected name makes the archive view unreadable.
 - SQLite databases are read in place, read-only, rather than from a staged copy;
   a write lock the running app holds is waited out for a quarter of a second
   and then gives the file an `error`, and so does a table or column name that
@@ -599,5 +611,4 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
 user's real data. Keep the bundle local and do not publish it.
-The class was checked against agentenv-framework 0.9.1464 with
-`python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.
+The class targets agentenv-framework 0.9.1485.

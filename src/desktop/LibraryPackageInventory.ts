@@ -9,6 +9,8 @@ import type { DesktopPackage } from "../domain/desktop/desktopCapture.js";
 import {
   readElfDependencies,
   type ElfDependencies,
+  type ElfDependenciesFailure,
+  type ElfLibraryIdentity,
 } from "../domain/desktop/elfDependencies.js";
 import {
   installableLibraryPackages,
@@ -22,12 +24,13 @@ import {
   parseDpkgOwners,
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  RegularFileCleanupFailure,
-  withOwnedRegularFile,
-} from "../filesystem/OwnedRegularFile.js";
+import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import { hostCloseFailure, isHostFile, isRefusedRead } from "./HostFileRead.js";
+import {
+  hostReadFailure,
+  isRefusedRead,
+  probeHostFile,
+} from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
@@ -46,7 +49,8 @@ const elfDependencies = async (
   path: string,
   signal: AbortSignal | undefined,
   policy: DesktopLibraryPolicy,
-): Promise<Result<ElfDependencies, string>> => {
+  expected?: ElfLibraryIdentity,
+): Promise<Result<ElfDependencies, ElfDependenciesFailure>> => {
   const options = {
     symlinks: "follow" as const,
     ...(signal === undefined ? {} : { signal }),
@@ -57,14 +61,18 @@ const elfDependencies = async (
         (offset, length) => readFileHandleRange(handle, offset, length),
         initial.size,
         policy,
+        expected,
       ),
     );
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure)
-      throw hostCloseFailure(cause);
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     if (!isRefusedRead(cause)) throw cause;
-    return err("the file could not be read");
+    return err({
+      kind: "unreadable",
+      identity: null,
+      reason: "the file could not be read",
+    });
   }
 };
 
@@ -157,7 +165,9 @@ export const inspectLibraryPackages = async (
   });
   const root = await elfDependencies(executable, signal, policy);
   if (!root.ok)
-    return none(`the libraries of ${executable} were not read: ${root.error}`);
+    return none(
+      `the libraries of ${executable} were not read: ${root.error.reason}`,
+    );
   const cache = await linkerCache(runQuery, signal);
   if (cache === undefined)
     return none("ldconfig -p did not list the dynamic linker cache");
@@ -165,8 +175,9 @@ export const inspectLibraryPackages = async (
     { path: executable, dependencies: root.value },
     parseLinkerCache(cache),
     {
-      dependencies: (path) => elfDependencies(path, signal, policy),
-      isFile: isHostFile,
+      dependencies: (path, expected) =>
+        elfDependencies(path, signal, policy, expected),
+      isFile: probeHostFile,
     },
     policy.libraries,
   );

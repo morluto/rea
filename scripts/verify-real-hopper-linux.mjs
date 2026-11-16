@@ -1,10 +1,13 @@
-import { access, mkdtemp, rm, symlink } from "node:fs/promises";
+import { access, symlink } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
 createVerifierRun();
@@ -20,16 +23,19 @@ await access("/usr/bin/python3");
 const linked = await execFileAsync("ldd", [launcher]);
 if (`${linked.stdout}\n${linked.stderr}`.includes("not found"))
   throw new Error("Hopper has unresolved shared-library dependencies");
-const alternateDirectory = await mkdtemp(
-  join(tmpdir(), "rea-real-hopper-launcher-"),
-);
-const alternateLauncher = join(alternateDirectory, "Hopper-alternate");
-try {
-  await symlink(launcher, alternateLauncher);
-  process.env.HOPPER_LAUNCHER_PATH = alternateLauncher;
-  await import("./verify-real-hopper.mjs");
-} finally {
-  if (configuredLauncher === undefined) delete process.env.HOPPER_LAUNCHER_PATH;
-  else process.env.HOPPER_LAUNCHER_PATH = configuredLauncher;
-  await rm(alternateDirectory, { recursive: true, force: true });
-}
+const alternateDirectory = await VerifierFixture.open({
+  prefix: "rea-real-hopper-launcher-",
+  private: false,
+});
+const alternateLauncher = join(alternateDirectory.path, "Hopper-alternate");
+await withVerifierFixture(alternateDirectory, async () => {
+  try {
+    await symlink(launcher, alternateLauncher);
+    process.env.HOPPER_LAUNCHER_PATH = alternateLauncher;
+    await import("./verify-real-hopper.mjs");
+  } finally {
+    if (configuredLauncher === undefined)
+      delete process.env.HOPPER_LAUNCHER_PATH;
+    else process.env.HOPPER_LAUNCHER_PATH = configuredLauncher;
+  }
+});

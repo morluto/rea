@@ -85,8 +85,16 @@ export const readElfFixedHeader = (
   totalBytes = bytes.length,
 ): Result<ElfFixedHeader, string> => {
   const parsed = readElfHeaderFacts(bytes, totalBytes);
-  if (!parsed.ok) return parsed;
-  const facts = parsed.value;
+  return parsed.ok
+    ? admitElfFixedHeaderFacts(parsed.value, totalBytes)
+    : parsed;
+};
+
+/** Admit decoded facts without rereading or discarding their identity on failure. */
+export const admitElfFixedHeaderFacts = (
+  facts: ElfHeaderFacts,
+  totalBytes: number,
+): Result<ElfFixedHeader, string> => {
   // NVIDIA CUBIN uses ELFOSABI_CUDA and a vendor ABI version in e_version.
   if (facts.version !== 1 && !(facts.machine === 190 && facts.osAbi === 0x33))
     return err("unsupported ELF header version");
@@ -122,6 +130,8 @@ export const elfArchitecture = (
       return "arm";
     case 164: // EM_HEXAGON: Qualcomm Hexagon DSP (QDSP6).
       return "hexagon";
+    case 94: // EM_XTENSA: Tensilica Xtensa.
+      return "xtensa";
     case 183:
       return "arm64";
     case 243: // EM_RISCV: XLEN, byte order and e_flags remain separate ELF facts.

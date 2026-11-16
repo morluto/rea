@@ -148,13 +148,10 @@ it.each([false, true])(
       vi.advanceTimersByTime(60_000);
       vi.useRealTimers();
       await expect
-        .poll(
-          () => ({
-            fd: owner.handle.fd,
-            cleanupIncomplete: failed.error.cleanupIncomplete,
-          }),
-          { timeout: 5_000 },
-        )
+        .poll(() => ({
+          fd: owner.handle.fd,
+          cleanupIncomplete: failed.error.cleanupIncomplete,
+        }))
         .toEqual({ fd: -1, cleanupIncomplete: false });
       expect(failed.error.cause).toBe(originalCause);
       expect(fixture.attempts.every((attempt) => attempt === owner)).toBe(true);

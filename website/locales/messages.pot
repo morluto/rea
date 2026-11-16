@@ -5116,8 +5116,8 @@ msgstr ""
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE applications"
-" and DLLs on fixed local NTFS drives. Use an existing Ghidra 12.1.x installation and a"
-" 64-bit JDK 21 or newer:"
+" and DLLs on fixed local NTFS/ReFS drives. Use an existing Ghidra 12.1.x installation "
+"and a 64-bit JDK 21 or newer:"
 msgstr ""
 
 #: website/public/get-started/index.html:1184

@@ -109,7 +109,7 @@ it("accepts requested functions distributed across caller targets", async () => 
     cleanup: "complete",
     caller_target_selection: expectedCallerSelection(targets),
   });
-}, 45_000);
+});
 
 test.skipIf(
   process.platform === "win32" || process.env.REA_KUNA_COMMAND === undefined,
@@ -170,7 +170,6 @@ test.skipIf(
     ]);
     expect(await hashes()).toEqual(before);
   },
-  120_000,
 );
 
 it("accepts empty caller inventories but requires source-owned fixture literals", async () => {

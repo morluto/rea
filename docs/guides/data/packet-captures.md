@@ -128,6 +128,16 @@ These are not aggregate process-memory or filesystem quotas. The selected
 limiter is trusted; its path, digest and arguments are retained in Evidence.
 No arbitrary process flags are accepted.
 
+Before parsing TShark's JSON, REA charges a conservative estimate of the
+decoded object graph against `capture.packet_json_expansion_bytes`
+(`REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES`): default and maximum 137438953472
+bytes (128 GiB), floor 1048576. The estimate is at most 130 bytes per
+character of output, so the default cannot refuse any output a Node string
+can hold (at most 69793215440 bytes estimated); it refuses only when lowered.
+Representative selected-field output is charged about 17 to 28 bytes per
+character. A refusal is a typed `adjustable_budget` naming the setting, keeps
+the producer output, and can be retried after `update_analysis_settings`.
+
 Each capture/recording operation accepts `producer_limits` with positive safe
 integer overrides: `input_bytes`, `output_bytes`, `command_timeout_ms`,
 `address_space_bytes`, `file_bytes`, and `cpu_seconds`. The wall-clock timeout

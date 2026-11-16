@@ -1,21 +1,24 @@
+import { timerDurationMsSchema } from "../analysisResourceLimits.js";
 import {
   wasmInterfaceSchema,
   wasmInterfaceByteBudgetSchema,
 } from "./wasmInterface.js";
 import { z } from "zod";
-import { createHash } from "node:crypto";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { constants as bufferConstants } from "node:buffer";
-import type { EvidenceSubjectTarget } from "../evidence.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
-/** Release banners of the admitted WABT range, owned here so this schema stays pure. */
-const WABT_ACCEPTED_MINOR = 42;
-const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+/** Exact upstream release whose tool profile REA verified. */
+export const WABT_VERSION = "1.0.42";
+const WABT_MINIMUM_PATCH = Number(WABT_VERSION.split(".")[2]);
+/** Upstream revision known for the verified release only. */
+export const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
 const wabtReleaseBanner = z
   .string()
   .regex(/^1\.0\.\d+$/u)
-  .refine((release) => Number(release.split(".")[2]) >= WABT_ACCEPTED_MINOR, {
-    message: `Expected one admitted WABT banner (^1.0.${String(WABT_ACCEPTED_MINOR)})`,
+  .refine((release) => Number(release.split(".")[2]) >= WABT_MINIMUM_PATCH, {
+    message: `Expected one admitted WABT banner (^1.0.${String(WABT_MINIMUM_PATCH)})`,
   });
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -26,7 +29,6 @@ const artifact = z.strictObject({
 });
 /** Default execution budget; upper bound is the runtime's signed 32-bit timer range. */
 export const DEFAULT_WASM_COMMAND_TIMEOUT_MS = 30_000;
-export const MAX_WASM_COMMAND_TIMEOUT_MS = 2_147_483_647;
 export const DEFAULT_WASM_ARTIFACT_PATHS = 16;
 export const MAX_WASM_ARTIFACT_PATHS = 0xffff_ffff;
 /** Defaults preserve the original WABT admission and capture envelope. */
@@ -95,11 +97,7 @@ export const inspectWasmArtifactInputSchema = z.strictObject({
     WASM_RESOURCE_DEFAULTS.outputBytes,
     WASM_RESOURCE_MAXIMUMS.outputBytes,
   ),
-  command_timeout_ms: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAX_WASM_COMMAND_TIMEOUT_MS)
+  command_timeout_ms: timerDurationMsSchema
     .exactOptional()
     .describe(
       `Deadline in milliseconds for each WABT version/analysis command (default ${String(DEFAULT_WASM_COMMAND_TIMEOUT_MS)}), not the whole inspection. Allow additional client time for all commands, file checks and cleanup. Does not raise max_input_bytes, max_tool_bytes or max_output_bytes.`,
@@ -133,6 +131,7 @@ export const wasmArtifactSchema = z
     interface: wasmInterfaceSchema.exactOptional(),
     imports: z.array(z.string()),
     exports: z.array(z.string()),
+    // domain-vocabulary: the state of the WebAssembly name section.
     debug_name_metadata: z
       .enum(["unknown", "not-present", "complete", "uninterpretable"])
       .default("unknown"),
@@ -179,7 +178,7 @@ export const wasmArtifactSchema = z
     glue: z.array(
       z.strictObject({
         artifact,
-        parse_status: z.enum(["complete", "partial", "failed"]),
+        parse_status: z.enum([...knownCoverageStatusSchema.options, "failed"]),
         references: z.array(
           z.strictObject({
             value: z.string(),
@@ -201,10 +200,7 @@ export const wasmArtifactSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((value, context) => {
-    if (
-      createHash("sha256").update(value.wat.text, "utf8").digest("hex") !==
-      value.wat.sha256
-    )
+    if (sha256Hex(value.wat.text) !== value.wat.sha256)
       context.addIssue({
         code: "custom",
         path: ["wat", "sha256"],
@@ -226,6 +222,16 @@ export const wasmArtifactSchema = z
         "--ignore-custom-section-errors",
       );
     const releaseVersion = value.tool_profile.release;
+    if (
+      value.tool_profile.source_commit !== null &&
+      releaseVersion !== WABT_VERSION
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["tool_profile", "source_commit"],
+        message:
+          "The known WABT source revision applies only to its verified release; other releases require an unknown source commit.",
+      });
     for (const [index, command] of value.tool_profile.commands.entries()) {
       const expected = ["wasm-validate", "wasm-objdump", "wasm2wat"][index];
       const argumentsExpected =
@@ -262,10 +268,11 @@ export type InspectWasmArtifactInput = z.infer<
 export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
 
 /** Semantic WASM subject identity excludes delivery-only local paths. */
-export type WasmArtifactSubject = Pick<
-  EvidenceSubjectTarget,
-  "sha256" | "format"
->;
+/** The file facts a WASM artifact is matched against (a subject or target identity). */
+export interface WasmArtifactSubject {
+  readonly sha256: string;
+  readonly format: string;
+}
 type WasmArtifactFileSubject = WasmArtifactSubject & {
   readonly format: "file";
 };

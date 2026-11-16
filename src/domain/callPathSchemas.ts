@@ -1,3 +1,4 @@
+import { coverageStatusSchema } from "./coverage.js";
 import { z } from "zod";
 
 import { emptyArraySchema } from "./emptyArraySchema.js";
@@ -62,7 +63,7 @@ const resultContextShape = {
 };
 const searchScope = {
   graph: z.literal("supplied_evidence"),
-  discovery: z.enum(["complete", "partial", "unknown"]),
+  discovery: coverageStatusSchema,
   observed_status: z.enum(["found", "not_found", "unknown"]),
 };
 

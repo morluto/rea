@@ -240,6 +240,7 @@ it("gives cancellation precedence over malformed raw input", async () => {
 it("uses runtime defaults only for omitted budgets, preserving explicit input and reset", async () => {
   const settings = new AnalysisSettings({});
   const accepted: number[] = [];
+  const sources: (string | undefined)[] = [];
   const authored: (number | undefined)[] = [];
   const service = new WasmArtifactService(
     {
@@ -248,6 +249,7 @@ it("uses runtime defaults only for omitted budgets, preserving explicit input an
         const value = wasmArtifactFixture();
         value.tool_profile.timeout_ms = options!.commandTimeoutMs!;
         accepted.push(options!.commandTimeoutMs!);
+        sources.push(options!.commandTimeoutSource);
         authored.push(input.command_timeout_ms);
         return ok(wasmArtifactExecution(value));
       },
@@ -275,6 +277,7 @@ it("uses runtime defaults only for omitted budgets, preserving explicit input an
   });
   expect((await settings.run(() => service.inspect({ path }))).ok).toBe(true);
   expect(accepted).toEqual([123000, 42000, 30000]);
+  expect(sources).toEqual(["runtime", "request", "default"]);
   expect(authored).toEqual([undefined, 42000, undefined]);
 });
 
@@ -325,3 +328,37 @@ it("replays imported rebound WASM Evidence in views and comparisons", async () =
     ).ok,
   ).toBe(true);
 });
+
+it.each([
+  { release: "1.0.42", knownCommit: true, accepted: true },
+  { release: "1.0.42", knownCommit: false, accepted: true },
+  { release: "1.0.44", knownCommit: false, accepted: true },
+  { release: "1.0.44", knownCommit: true, accepted: false },
+])(
+  "admits only release-consistent WABT provenance ($release, known commit $knownCommit)",
+  async ({ release, knownCommit, accepted }) => {
+    const value = wasmArtifactFixture();
+    value.tool_profile.release = release;
+    if (!knownCommit) value.tool_profile.source_commit = null;
+    for (const command of value.tool_profile.commands)
+      command.version_banner = `${release}\n`;
+    const service = new WasmArtifactService({
+      close: async () => {},
+      inspect: async () => ok(wasmArtifactExecution(value)),
+    });
+    const result = await service.inspect({ path: value.artifact.path });
+    if (accepted) {
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        tool_profile: {
+          release,
+          source_commit: value.tool_profile.source_commit,
+        },
+      });
+    } else
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisOutputError" },
+      });
+  },
+);

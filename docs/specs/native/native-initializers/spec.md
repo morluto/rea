@@ -32,7 +32,14 @@ slot's location, resolved target and how that target was obtained. The
   Thumb bit is cleared for target section and file-offset lookup only. A slot with no
   relocation found is `unresolved` when a dynamic table, or a section table
   that could reach it, was not fully read; such a `.ctors` slot is not dropped
-  as a sentinel. A linked image's non-`SHF_ALLOC` relocation sections were
+  as a sentinel. A `COPY` relocation covers the bytes of its symbol's size and
+  a TLS descriptor two words. The size comes from the dynamic symbol table for
+  a dynamic record and from the table's linked symbols for a section record of
+  a linked image; an unread size leaves coverage unknown. A linked image's
+  section record that writes memory with no file bytes covers only the slots
+  it overlaps there when its extent is established, by a fixed width or a
+  `COPY` size, and otherwise leaves its table not fully read. A
+  linked image's non-`SHF_ALLOC` relocation sections were
   applied at link time and are not reapplied. A Mach-O stored pointer word is
   used only when no undecoded bind stream or external relocation could
   replace it.
@@ -62,6 +69,11 @@ slot's location, resolved target and how that target was obtained. The
 - Paging uses `offset` / `limit` (default 64, maximum 4096) over a stable
   ordered index. `coverage.examined_entries` counts every slot read, including
   omitted sentinels; `total_entries` is set only when the inventory is complete.
+  `coverage.status` is `partial` when declared slots or names were examined but
+  not reported (budgets, unreadable arrays, withheld names) and `unknown` when
+  completeness cannot be determined (relocation, fixup, symbol or mapping
+  coverage, duplicate or unterminated dynamic tags); unknown wins when both
+  occur.
 - Malformed headers, multiple `PT_DYNAMIC` segments and truncated dynamic
   sections fail without partial success. Cancellation is honored during slot
   collection, the section relocation walk and the dynamic relocation walk,
@@ -74,8 +86,10 @@ ELF32 REL in-place addends, `ET_REL` section relocations and sentinels,
 unsupported relocation machines, slot, symbol and relocation budgets,
 over-long names, tallied repeated observations, a near-maximal section table
 with a full slot budget, cancellation in the relocation walks, skipped section
-relocation tables, partly overwritten slots, retained link-time relocations,
-unreadable names, Mach-O chained fixups, `LC_DYLD_INFO` rebases, 32-bit images
+relocation tables, partly overwritten slots, `COPY` and TLS descriptor extents,
+section `COPY` records sized by their symbol, section records that write
+memory without file bytes, retained link-time
+relocations, unreadable names, Mach-O chained fixups, `LC_DYLD_INFO` rebases, 32-bit images
 with undecoded binds, `MH_OBJECT` section relocations, `__init_offsets`, the
 shared and repeated `LC_SYMTAB` budget, and universal slices. CLI acceptance, filesystem boundary
 and MCP boundary tests exercise the public workflows and Evidence output.

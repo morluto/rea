@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect } from "vitest";
+import { closeVerifierResources } from "../../../../scripts/lib/verifier-cleanup.mjs";
+import { expect, onTestFinished } from "vitest";
 
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
@@ -60,6 +61,15 @@ const aliasSession = async (
       ],
       "kuna",
     ),
+  );
+  onTestFinished(() =>
+    closeVerifierResources([
+      () => mcp.close(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]),
   );
   const client = await mcp.connect(createServer({ kind: "session", session }));
   const call = async (name: string, arguments_: Record<string, unknown>) => {
@@ -253,7 +263,7 @@ test("reports lookup failures with recovery for the selected target, not the inp
   for (const [procedure, guidance] of [
     ["0x1335", "list_procedures"],
     ["absent_name", "search_procedures"],
-    ["audit_transform", "exact address"],
+    ["audit_transform", "details.refusal.candidates"],
   ]) {
     const response = await client.callTool({
       name: "procedure_address",

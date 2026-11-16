@@ -1,5 +1,6 @@
 import { GraphQLError, Source, parse, visit, type DocumentNode } from "graphql";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import {
   API_CONTRACT_OPERATION,
   API_CONTRACT_MAX_FILE_BYTES,
@@ -61,6 +62,11 @@ export const parseGraphqlDocument = (
             "memory",
             "GraphQL AST nesting exceeds the 128-level traversal allowance.",
             { max_ast_depth: GRAPHQL_CONTRACT_LIMITS.astDepth },
+            fixedAllowanceOptions(
+              `The GraphQL AST nesting allowance of ${String(GRAPHQL_CONTRACT_LIMITS.astDepth)} levels`,
+              "parser",
+              { limit: GRAPHQL_CONTRACT_LIMITS.astDepth, unit: "levels" },
+            ),
           );
       },
       leave() {

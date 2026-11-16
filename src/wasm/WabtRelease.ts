@@ -1,7 +1,6 @@
 import { satisfies, valid } from "semver";
+import { WABT_VERSION } from "../domain/wasm/wasmArtifact.js";
 
-/** Exact upstream release whose producer output this adapter verified. */
-export const WABT_VERSION = "1.0.42";
 /**
  * Releases admitted for caller-configured tools. WABT changes `wasm-validate`,
  * `wasm-objdump` and `wasm2wat` output only by addition within a minor version;
@@ -10,9 +9,7 @@ export const WABT_VERSION = "1.0.42";
  * banners `wasmArtifactSchema` accepts; letting 1.1.0 through would admit a
  * tool profile whose report the schema then rejects after inspection ran.
  */
-export const WABT_ACCEPTED_RANGE = ">=1.0.42 <1.1.0";
-/** Upstream revision of the verified release. */
-export const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
+export const WABT_ACCEPTED_RANGE = `>=${WABT_VERSION} <1.1.0`;
 export const WABT_PROVIDER_IDENTITY = {
   id: "wabt-artifact",
   name: "REA WABT artifact adapter",

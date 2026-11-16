@@ -62,7 +62,10 @@ arguments are present, argument character length, target extension, whether
 `ShowCommand` is minimized, and whether the icon location differs from the
 recorded target path. That comparison is `null` unless the icon and a recorded
 target are both full paths: a stored filename, relative path, or `%VAR%` form
-cannot show that two locations differ. This workflow does not emit verdicts
+cannot show that two locations differ. Windows stores the `LinkInfo` path only
+as ANSI when the system code page can represent it. An ANSI path with non-ASCII
+bytes is therefore not compared with a Unicode icon location, or the reverse,
+because the code page is unobserved. This workflow does not emit verdicts
 about intent.
 
 A missing optional section is observed absence of that structure. It is not

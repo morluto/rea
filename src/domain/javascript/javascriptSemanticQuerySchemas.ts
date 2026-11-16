@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import {
   JAVASCRIPT_SEMANTIC_NODE_KINDS,
@@ -103,7 +104,7 @@ export const javaScriptSemanticQueryResultSchema = z.strictObject({
     relevant_unknowns: z.int().min(0),
   }),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial", "unavailable"]),
+    status: z.enum([...knownCoverageStatusSchema.options, "unavailable"]),
   }),
   limitations: z.array(z.string().min(1)),
 });

@@ -44,6 +44,9 @@ file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`),
 auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
 notes keep `core` null.
 
+An `NT_FILE` descriptor with nonzero bytes after its declared filenames
+retains its raw note evidence and leaves `core` null.
+
 Linux `CORE` decoding requires System V/unspecified (0) or GNU/Linux (3)
 OSABI with ABI version zero. An unspecified OSABI alone does not establish
 Linux origin. An explicitly different OSABI or ABI version leaves `core` null

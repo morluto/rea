@@ -1,3 +1,4 @@
+import { strictUtf8Decoder } from "./strictUtf8.js";
 /**
  * UnityFS (AssetBundle) container structure: a fixed signature header followed
  * by a compressed blocks-and-directory table and a block-compressed data area.
@@ -119,7 +120,7 @@ export interface UnityFsHeaderFacts {
   readonly afterFixed: number;
 }
 
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 
 /**
  * Decode declared fields after the caller admits a prefix covering the

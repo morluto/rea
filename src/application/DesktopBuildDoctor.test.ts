@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
-import { runDoctor, type DoctorCheck, type DoctorHost } from "./Doctor.js";
-import type { DesktopBuildFacts } from "./DesktopBuildDoctor.js";
+import { runDoctor, type DoctorHost } from "./Doctor.js";
+import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";
+import type { DesktopBuildFacts } from "../ports/DesktopBuildHost.js";
 
 const ready: DesktopBuildFacts = {
   ps: { found: true, detail: "/usr/bin/ps" },
@@ -14,7 +15,7 @@ const ready: DesktopBuildFacts = {
     status: "found",
     path: "/home/ada/.local/bin/agent-env",
     source: "path",
-    version: "0.9.1464",
+    version: "0.9.1485",
   },
   archive: {
     path: "/home/ada/.cache/rea/build-computer/rea-6.8.0.tar.xz",
@@ -36,7 +37,7 @@ const buildHost = (
   createDoctorHostFixture({
     platform: "linux",
     architecture: "x64",
-    installationPaths: () => Promise.resolve([]),
+    installationLaunchers: () => Promise.resolve([]),
     clientRegistrations: () => Promise.resolve([]),
     desktopBuildFacts: () => Promise.resolve({ ...ready, ...facts }),
     ...overrides,
@@ -201,7 +202,7 @@ describe("desktop build tool checks", () => {
     );
     expect(check.classification).toBe("missing_dependency");
     expect(check.remediation).toContain(
-      "uv tool install agentenv-framework==0.9.1464",
+      "uv tool install agentenv-framework==0.9.1485",
     );
   });
 
@@ -336,6 +337,7 @@ describe("desktop build registration settings", () => {
       );
       expect(check.detail).toContain(Object.values(fact)[0]![0]);
       expect(check.details).toMatchObject({ registrations: [fact] });
+      expect(check.remediation).toContain("client's REA registration");
     }
   });
   it("names the registration's missing settings, never their values", async () => {

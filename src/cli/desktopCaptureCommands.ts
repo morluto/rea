@@ -1,9 +1,10 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { desktopLibraryPolicyInputSchema } from "../domain/desktop/libraryPolicy.js";
 import { desktopViewPolicyInputSchema } from "../domain/desktop/desktopViewPolicy.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { createInterface } from "node:readline";
 
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
@@ -11,8 +12,10 @@ import type { DesktopStateReaders } from "../application/desktop/DesktopApplicat
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type { Evidence } from "../domain/evidence.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { err, ok } from "../domain/result.js";
@@ -20,15 +23,19 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { cliDecimalField } from "./options.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import {
   DESKTOP_CAPTURE_DEFAULTS,
   type DesktopCaptureProgress,
 } from "../domain/desktop/desktopCapture.js";
+import { createDesktopCaptureProvider } from "../desktop/DesktopCaptureProvider.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
+import { writeCliProgressLine } from "./cliProgress.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** One coherent view policy; invalid JSON and unknown controls fail at admission. */
 const viewPolicyOption = z
@@ -227,8 +234,7 @@ const withStateReaders = async (
                 ? ArtifactReaderFailure.cleanupObservation(cause, [])
                 : {
                     resources: [],
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
+                    reason: errorMessage(cause),
                   };
             const failure = new ProviderCleanupError(
               "rea-desktop",
@@ -263,14 +269,12 @@ const withheldExportOptions = {
     .describe(
       "Seed the withheld files after all, which needs a seed_sign_in consent in --consent",
     ),
-  consent: z
-    .string()
+  consent: localPathStringSchema
     .optional()
     .describe(
       "consent.json holding the person's consents, which the bundle ships",
     ),
-  withheldCopy: z
-    .string()
+  withheldCopy: localPathStringSchema
     .optional()
     .describe(
       "New or empty folder outside the bundle the withheld files are copied into, for whoever supplies them at run time",
@@ -303,7 +307,7 @@ const registerDesktopExportCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.exportDesktopApplication, {
+  registerCliCommand(cli, CLI_COMMANDS.exportDesktopApplication, {
     description:
       "Export a desktop application capture folder as an agentenv computer app bundle: class, env.toml, skill and seed",
     args: z.object({
@@ -326,7 +330,13 @@ const registerDesktopExportCommand = (
         .array(localPathStringSchema)
         .optional()
         .describe(
-          "Task file to validate against the capture and add with its verifier and eval; a capture yields one",
+          "Task file to validate against the capture and add with its verifier and eval; repeat for several tasks, each checked at its own end",
+        ),
+      taskEnd: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "NAME=CHECKPOINT: the checkpoint task NAME's end state is read at, instead of --end-checkpoint; a checkpoint near-NAME, when taken, must fail one of its checks",
         ),
       packageUrl: z
         .string()
@@ -334,8 +344,7 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
-      downloadInstall: z
-        .string()
+      downloadInstall: localPathStringSchema
         .optional()
         .describe(
           "JSON file naming the AppImage or tarball a build computer unpacked the application from: kind, desktop_entry, url, sha256, architecture, and a tarball's program and name",
@@ -352,8 +361,7 @@ const registerDesktopExportCommand = (
         .describe(
           "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
         ),
-      screens: z
-        .string()
+      screens: localPathStringSchema
         .optional()
         .describe(
           "Folder holding checkpoint screenshots for screen-judge examples.",
@@ -382,6 +390,7 @@ const registerDesktopExportCommand = (
                     tasks: (options.task ?? []).map((path) =>
                       absoluteCallerPath(path),
                     ),
+                    taskEnds: options.taskEnd,
                     packageUrl: options.packageUrl,
                     downloadInstall:
                       options.downloadInstall === undefined
@@ -414,7 +423,7 @@ const registerDesktopTaskCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.describeDesktopApplicationTask, {
+  registerCliCommand(cli, CLI_COMMANDS.describeDesktopApplicationTask, {
     description:
       "Describe how a desktop application capture's files changed from the seed checkpoint to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
     args: z.object({
@@ -460,7 +469,7 @@ const registerDesktopStateCommand = (
   logger: Logger,
   environment: NodeJS.ProcessEnv,
 ): void => {
-  cli.command(CLI_COMMANDS.inspectDesktopApplicationState, {
+  registerCliCommand(cli, CLI_COMMANDS.inspectDesktopApplicationState, {
     description:
       "Read a desktop application capture folder into the application's state: roles, typed JSON views of each version and kinds of change",
     args: z.object({
@@ -512,7 +521,7 @@ export const registerDesktopCaptureCommands = (
   registerDesktopStateCommand(cli, logger, environment);
   registerDesktopExportCommand(cli, logger, environment);
   registerDesktopTaskCommand(cli, logger, environment);
-  cli.command(CLI_COMMANDS.captureDesktopApplication, {
+  registerCliCommand(cli, CLI_COMMANDS.captureDesktopApplication, {
     description:
       "Launch a Linux desktop application, watch it while it is used and record its windows and state at checkpoints read from stdin",
     options: captureOptions,
@@ -547,9 +556,10 @@ export const registerDesktopCaptureCommands = (
                       : absoluteCallerPath(options.packageFile),
                 },
                 {
-                  platform: process.platform,
+                  platform: HOST_PLATFORM.platform,
                   environment,
                   callerDirectory: process.cwd(),
+                  desktop: createDesktopCaptureProvider(),
                   nextRequest: () => requests.next(),
                   report: async (message, event) => {
                     const progress: DesktopCaptureProgress = {
@@ -559,7 +569,7 @@ export const registerDesktopCaptureCommands = (
                         ...(event === undefined ? {} : { event }),
                       },
                     };
-                    process.stderr.write(`${JSON.stringify(progress)}\n`);
+                    writeCliProgressLine(progress.rea_progress);
                   },
                 },
                 signal,

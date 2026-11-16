@@ -522,11 +522,15 @@ describe("replayEnvironmentTool bodies", () => {
       });
       expect(typeof result.body).toBe("string");
       const body = result.body as string;
-      expect(
+      const expected = large.subarray(
+        0,
         encoding === "base64"
-          ? Buffer.from(body, "base64").length
-          : Buffer.byteLength(body, "utf8"),
-      ).toBeLessThanOrEqual(REPLAY_BODY_LIMIT_BYTES);
+          ? Math.floor(REPLAY_BODY_LIMIT_BYTES / 3) * 3
+          : REPLAY_BODY_LIMIT_BYTES,
+      );
+      expect(body).toBe(
+        expected.toString(encoding === "base64" ? "base64" : "utf8"),
+      );
     }
     // Under the limit in recorded bytes, even though its base64 spelling is longer.
     const small = Buffer.alloc(200 * 1024, 0xff);

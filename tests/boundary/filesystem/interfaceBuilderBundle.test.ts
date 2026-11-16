@@ -1,16 +1,15 @@
+import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { binaryKeyedArchiveUidShapes } from "../../fixtures/keyedArchiveUidShapes.js";
-import { execFile } from "node:child_process";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { buildBinary } from "plist";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { InterfaceBuilderDecodeBudget } from "../../../src/artifacts/apple/InterfaceBuilderDecodeBudget.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { encodeNibArchiveFixture } from "../../../src/artifacts/apple/NibArchive.fixture.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { xcodeIbtoolAvailable } from "../../fixtures/ibtool.js";
@@ -26,8 +25,23 @@ import {
   invalidInterfaceBuilderEncodings,
 } from "../../fixtures/interfaceBuilderEncoding.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
-const compile = promisify(execFile);
+const compile = async (
+  command: string,
+  arguments_: readonly string[],
+  options: { readonly timeout?: number } = {},
+): Promise<void> => {
+  const commands = await createVerifierCommands();
+  onTestFinished(() => commands.close());
+  await withVerifierCleanup(
+    () =>
+      commands.exec(command, arguments_, {
+        timeout: options.timeout ?? 90_000,
+      }),
+    [() => commands.close()],
+  );
+};
 
 type PlistValue =
   | string
@@ -649,7 +663,6 @@ describe("keyed archive hierarchy coverage", () => {
         analysis.graph.edges.filter(({ relation }) => relation === "contains"),
       ).toHaveLength(41);
     },
-    120_000,
   );
 });
 
@@ -771,6 +784,10 @@ describe("bounded Interface Builder archive decoding", () => {
       const failure = new ArtifactReaderFailure(
         reason,
         "source acquisition failed",
+        {
+          integrityCheck:
+            reason === "integrity" ? "container-identity" : undefined,
+        },
       );
       const open = vi
         .spyOn(DirectoryArtifactReader.prototype, "open")

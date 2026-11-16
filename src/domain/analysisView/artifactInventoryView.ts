@@ -3,6 +3,7 @@ import {
   artifactInventoryCoverageSchema,
   artifactNodeSchema,
   artifactOccurrenceSchema,
+  artifactOccurrenceRelationshipCoverage,
   artifactEdgeSchema,
   integrityContradictionSchema,
 } from "../artifactGraph.js";
@@ -184,7 +185,7 @@ const parseSource = (
   if (cached !== undefined && cached.operation === parent.operation) {
     try {
       validateArtifactInventorySubject(
-        parent.subject ?? null,
+        parent.subject,
         cached.source.inventory.manifest,
       );
     } catch (cause: unknown) {
@@ -209,14 +210,14 @@ const parseSourceUncached = (
       return ok({
         inventory: parseArtifactInventoryResult(
           parent.normalizedResult,
-          parent.subject ?? null,
+          parent.subject,
         ),
         evidenceIds: [],
         inspection: null,
       });
     const parsed = parseArtifactInspectionInventoryResult(
       parent.normalizedResult,
-      parent.subject ?? null,
+      parent.subject,
     );
     return ok({
       inventory: parsed.inventory,
@@ -372,7 +373,7 @@ export const projectArtifactInventoryView = (
               },
         limitation_count: limitations.length,
       },
-      coverage: completeWithinViewCoverage(examined, examined),
+      coverage: completeWithinViewCoverage(examined),
       ...shared,
     });
   }
@@ -574,6 +575,12 @@ const selectOccurrenceFields = (
     ? row
     : {
         ...selectFields(row, fields),
+        ...(fields.includes("relationship_coverage")
+          ? {
+              relationship_coverage:
+                artifactOccurrenceRelationshipCoverage(row),
+            }
+          : {}),
         occurrence_id: row.occurrence_id,
         artifact_id: row.artifact_id,
         parent_occurrence_id: row.parent_occurrence_id,
