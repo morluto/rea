@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { execFile } from "node:child_process";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
@@ -39,6 +40,7 @@ import { z } from "zod";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../../src/domain/javascript/javascriptElectronMemberWrites.js";
 import { javaScriptSemanticTraceResultSchema } from "../../../src/domain/javascript/javascriptSemanticTraceSchemas.js";
 import type { JavaScriptSemanticQueryInput } from "../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const execute = promisify(execFile);
 let cliSession: CliCommandSession | undefined;
@@ -57,10 +59,13 @@ const mcpTransport = new StdioClientTransport({
   stderr: "pipe",
 });
 mcpTransport.stderr?.on("data", () => undefined);
-const mcpClient = new Client({
-  name: "application-workflow-parity",
-  version: "1",
-});
+const mcpClient = new Client(
+  {
+    name: "application-workflow-parity",
+    version: "1",
+  },
+  { jsonSchemaValidator: createMcpSchemaValidation() },
+);
 let mcpConnection: Promise<void> | undefined;
 const connectedMcpClient = async (): Promise<Client> => {
   await (mcpConnection ??= mcpClient.connect(mcpTransport));
@@ -1947,10 +1952,9 @@ const runCliWithRequestFile = async (
 /** The CLI keeps complete trace JSON; the shared view owner selects from the saved file. */
 const assertTraceFileView = async (root: string, traced: unknown) => {
   const parent = parseEvidence(traced);
-  if (parent.subject === null) throw new Error("Expected trace subject");
   const artifact = {
     path: parent.subject.local_path,
-    sha256: parent.subject.digest.sha256,
+    sha256: fileIdentity(parent.subject).sha256,
   };
   const tracePath = join(root, "trace.json");
   await writeFile(tracePath, JSON.stringify(parent));

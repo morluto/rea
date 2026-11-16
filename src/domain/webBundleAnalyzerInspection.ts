@@ -23,7 +23,7 @@ import {
 } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
-import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
+import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticIntrinsicInstances.js";
 import {
   semanticStaticPropertyKey,
   isNullishJavaScriptSyntax,
@@ -242,12 +242,14 @@ const inspectCall = (
     openReceiverFacts.get(node.start ?? -1),
   );
   const mapLookup = isMapLookup(node);
-  const knownRequest =
-    isBrowserNetworkRequest(node, bindings) || isXhrRequest(node);
+  const xhrRequest = isXhrRequest(node);
+  const knownRequest = isBrowserNetworkRequest(node, bindings) || xhrRequest;
   const networkEndpoint =
     endpoint !== undefined && !mapLookup
       ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
       : undefined;
+  if (endpoint === undefined && knownRequest && !mapLookup)
+    addProvenRequestEndpoint(script, node, name, xhrRequest, accumulator);
   if (networkEndpoint?.kind === "candidate")
     addEndpointCandidate(
       script,
@@ -348,6 +350,48 @@ const addEndpointCandidate = (
       confidence: "low",
       basis: [{ ...basis(script, detector), ...locationFields(node) }],
     }),
+  );
+};
+
+/**
+ * A proven browser request whose URL the callee spelling did not classify:
+ * the URL is XMLHttpRequest `open`'s second argument, otherwise the first.
+ * A literal URL is an endpoint; any other present argument is kept as an
+ * unknown endpoint at its call site rather than dropped.
+ */
+const addProvenRequestEndpoint = (
+  script: IncludedScript,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  name: string,
+  xhrRequest: boolean,
+  accumulator: AnalysisAccumulator,
+): void => {
+  const url = xhrRequest ? node.arguments[1] : node.arguments[0];
+  if (url === undefined) return;
+  const mechanism = `call:${name}`;
+  const literal = stringValue(url);
+  if (literal !== undefined) {
+    addFinding({
+      collection: accumulator.endpoints,
+      script,
+      rawValue: literal,
+      mechanism,
+      node,
+      accumulator,
+    });
+    return;
+  }
+  const site = location(script.script_key, node);
+  addUnique(
+    accumulator,
+    compositeKey([
+      "unresolved-endpoint",
+      mechanism,
+      site.script_key,
+      String(site.line),
+      String(site.column),
+    ]),
+    () => accumulator.unresolvedEndpoints.push({ mechanism, location: site }),
   );
 };
 

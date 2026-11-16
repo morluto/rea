@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Cli } from "incur";
 import { expect, it } from "vitest";
 import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
@@ -65,7 +66,7 @@ it.each([false, true])(
   "awaits cleanup retry and preserves completed output when retry failure is %s",
   async (failAgain) => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed decoder fixture", version: "1" },
       {
         operation: "decode_signal_recording",

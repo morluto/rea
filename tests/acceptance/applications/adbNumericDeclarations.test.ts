@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect } from "vitest";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { adbDisplayPartialObservationSchema } from "../../../src/domain/adb/adbDeviceAnalysis.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";

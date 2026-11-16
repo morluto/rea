@@ -3,11 +3,13 @@ import { Ajv } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { INVALID_BASE64_PADDING_PATTERN } from "../domain/stringPatterns.js";
 
-import { portablePatternViolations } from "./advertisedDialect.js";
 import {
-  presentInputJsonSchema,
-  presentOutputJsonSchema,
-} from "./inputSchemaPresentation.js";
+  ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  portablePatternViolations,
+} from "./advertisedDialect.js";
+import { advertiseToolInput } from "./advertisedTool.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { presentOutputJsonSchema } from "./outputSchemaPresentation.js";
 import { projectPortablePattern } from "./portablePattern.js";
 
 // Short strings over an alphabet that reaches every class boundary the
@@ -216,8 +218,13 @@ describe("portable pattern projection", () => {
 const PRESENTERS = [
   [
     "input",
+    // The input schema a client receives: presentation, then the dialect.
     (schema: Record<string, unknown>) =>
-      presentInputJsonSchema(schema, () => undefined),
+      advertiseToolInput(
+        undefined,
+        presentInputJsonSchema(schema, () => undefined),
+        { budgetBytes: ADVERTISED_INPUT_SCHEMA_MAX_BYTES },
+      ).inputSchema,
   ],
   ["output", presentOutputJsonSchema],
 ] as const;
@@ -231,16 +238,23 @@ describe("advertised pattern presentation", () => {
 
   it.each(PRESENTERS)(
     "keeps only widening around a widened %s pattern",
-    (_kind, present) => {
+    (kind, present) => {
       // Widening a pattern under `not` would narrow the enclosing schema.
       const negated = present(
         property({ type: "string", not: { pattern: lookAround } }),
       );
       expect(negated).toEqual(property({ type: "string" }));
-      // Exact re-emission keeps the negation.
+      // Exact re-emission keeps an output negation; the advertised input
+      // dialect has no `not`, so the input drops it.
       expect(
         present(property({ type: "string", not: { pattern: "^\\d+$" } })),
-      ).toEqual(property({ type: "string", not: { pattern: "^[0-9]+$" } }));
+      ).toEqual(
+        property(
+          kind === "input"
+            ? { type: "string" }
+            : { type: "string", not: { pattern: "^[0-9]+$" } },
+        ),
+      );
       // A widened branch could match alongside a sibling, so `oneOf` becomes `anyOf`.
       expect(
         present(
@@ -253,6 +267,8 @@ describe("advertised pattern presentation", () => {
         ),
       ).toEqual(
         property({
+          // The input dialect types a union whose branches share one type.
+          ...(kind === "input" ? { type: "string" } : {}),
           anyOf: [
             { type: "string", pattern: "^[a-z]+$" },
             { type: "string", pattern: "^con$" },

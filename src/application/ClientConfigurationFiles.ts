@@ -1,6 +1,6 @@
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { readRegularFileText } from "./RegularFileRead.js";
+import { readRegularFileText } from "../process/RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
@@ -12,11 +12,12 @@ import {
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * A parsed layer retains its path so rereading the write target replaces only
@@ -89,7 +90,7 @@ export const readConfigurationText = async (
     return err({
       kind: "unreadable",
       path,
-      detail: `Configuration ${path} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `Configuration ${path} could not be read: ${errorMessage(cause)}`,
       ...(cause instanceof RegularFileCleanupFailure
         ? { cleanupFailure: cause }
         : {}),
@@ -115,7 +116,7 @@ export const readConfigurationFile = async (
     return err({
       kind: "malformed",
       path,
-      detail: `Configuration ${path} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `Configuration ${path} is malformed: ${errorMessage(cause)}`,
     });
   }
 };

@@ -1,4 +1,4 @@
-import type { DoctorProviderInspection } from "./Doctor.js";
+import type { DoctorProviderInspection } from "../ports/DoctorProviderInspection.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const SELECTED_REGISTRATION_SETTINGS = [
