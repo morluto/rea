@@ -1,9 +1,5 @@
 import { z } from "zod";
 
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
-import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
-import type { Logger } from "pino";
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
 import type { CliSessionTarget } from "./contractCliDescription.js";
 
@@ -201,32 +197,4 @@ export const nativeTarget = (
       provider_id: { name: "provider", description: NATIVE_OPEN_HELP.provider },
     },
   },
-});
-
-/** Native CLI flags consumed when opening a target for one-shot analysis. */
-export interface NativeOpenCliFlags {
-  readonly snapshot?: string | undefined;
-  readonly provider?: AnalysisProviderSelector | undefined;
-  readonly "target-format"?: ExecutableFormatHint | undefined;
-  readonly architecture?: BinaryArchitecture | undefined;
-  readonly "entry-point"?: string | undefined;
-}
-
-/** Map native CLI flags onto the shared one-shot analysis options. */
-export const directAnalysisOptionsFromCli = (
-  logger: Logger,
-  options: NativeOpenCliFlags,
-) => ({
-  logger,
-  snapshotPath: options.snapshot,
-  ...(options["target-format"] === undefined
-    ? {}
-    : { formatHint: options["target-format"] }),
-  ...(options.architecture === undefined
-    ? {}
-    : { architecture: options.architecture }),
-  ...(options["entry-point"] === undefined
-    ? {}
-    : { entryPoint: options["entry-point"] }),
-  ...(options.provider === undefined ? {} : { providerId: options.provider }),
 });
