@@ -39,7 +39,9 @@ const inspect = (cause: unknown) => {
 
 it("degrades a changed candidate to candidate_unreadable", async () => {
   const result = await inspect(
-    new ArtifactReaderFailure("integrity", "Candidate changed while read"),
+    new ArtifactReaderFailure("integrity", "Candidate changed while read", {
+      integrityCheck: "container-identity",
+    }),
   );
   expect(result.ok).toBe(true);
   if (result.ok)
@@ -50,7 +52,11 @@ it("keeps a failed candidate close visible after an integrity or limit refusal",
   for (const reason of ["integrity", "limit"] as const) {
     const result = await inspect(
       ArtifactReaderFailure.withCleanup(
-        new ArtifactReaderFailure(reason, "Candidate read refused"),
+        reason === "integrity"
+          ? new ArtifactReaderFailure(reason, "Candidate read refused", {
+              integrityCheck: "container-identity",
+            })
+          : new ArtifactReaderFailure(reason, "Candidate read refused"),
         ArtifactReaderFailure.cleanupObservation(
           new Error("close failed"),
           "/artifacts/prog.debug",
@@ -74,8 +80,7 @@ it("degrades a candidate data-read EIO to candidate_unreadable", async () => {
 
 const retainedReport = (error: { partialObservation?: unknown }) => {
   const evidence = error.partialObservation as
-    | { normalized_result?: ElfDebugLink }
-    | undefined;
+    { normalized_result?: ElfDebugLink } | undefined;
   return evidence?.normalized_result;
 };
 
