@@ -93,6 +93,22 @@ describe("axml decoder limits", () => {
     });
   });
 
+  it("fails closed when one attribute's escaped expansion exceeds the bound", async () => {
+    // 7 MiB of '&' is small raw but expands past the 32 MiB output bound
+    // once escaped to '&amp;'; the budget must count the expansion.
+    const attrs = [{ name: "a", value: "&".repeat(7 * 1024 * 1024) }];
+    const events: readonly AxmlEvent[] = [
+      { kind: "start", name: "e", attrs },
+      { kind: "end", name: "e" },
+    ];
+    await withReader(buildAxml(events), async (reader) => {
+      await expect(list(reader)).rejects.toMatchObject({
+        reason: "limit",
+        boundary: "capacity",
+      });
+    });
+  });
+
   it("fails closed on an over-limit declared file", async () => {
     const bytes = buildAxml(AXML_MANIFEST_EVENTS, {
       declaredSize: 64 * 1024 * 1024 + 1,

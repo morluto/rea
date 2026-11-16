@@ -267,6 +267,22 @@ const escapeAttr = (text: string): string =>
     .replaceAll("\t", "&#9;")
     .replaceAll("\n", "&#10;");
 
+/** UTF-8 byte length of escapeAttr(text), without materializing it. */
+const escapedAttrByteLength = (text: string): number => {
+  let bytes = 0;
+  for (const ch of text) {
+    if (ch === "&") bytes += 5;
+    else if (ch === '"') bytes += 6;
+    else if (ch === "<" || ch === ">" || ch === "\t") bytes += 4;
+    else if (ch === "\n" || ch === "\r") bytes += 5;
+    else {
+      const code = ch.codePointAt(0)!;
+      bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    }
+  }
+  return bytes;
+};
+
 const hexRef = (data: number): string =>
   `0x${(data >>> 0).toString(16).padStart(8, "0")}`;
 
@@ -758,13 +774,17 @@ class BufferedAxmlDecoder implements RegionDecoder<AxmlDocumentImage> {
             return limitFailure(
               `attribute count exceeds the ${AXML_MAX_ATTRIBUTES} bound`,
             );
-          const attrText = ` ${aPrefix.value}${aName.value}="${escapeAttr(value)}"`;
-          attrBytes += encoder.encode(attrText).length;
-          if (outBytes + attrBytes > AXML_MAX_OUTPUT_BYTES)
+          // Budget the expanded text before materializing it: a reused
+          // pool value must fail here, not after escaping multiplies it.
+          const leader = ` ${aPrefix.value}${aName.value}="`;
+          const nextBytes =
+            encoder.encode(leader).length + escapedAttrByteLength(value) + 1;
+          if (outBytes + attrBytes + nextBytes > AXML_MAX_OUTPUT_BYTES)
             return limitFailure(
               `decoded XML exceeds the ${AXML_MAX_OUTPUT_BYTES}-byte bound`,
             );
-          attrTexts.push(attrText);
+          attrBytes += nextBytes;
+          attrTexts.push(`${leader}${escapeAttr(value)}"`);
         }
         const parent = stack.at(-1);
         const indent =
