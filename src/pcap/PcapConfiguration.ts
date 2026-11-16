@@ -1,7 +1,10 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
-import { posixPathCandidates } from "../process/executableSearch.js";
+import {
+  posixPathCandidates,
+  windowsPathCandidates,
+} from "../process/executableSearch.js";
 
 import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
@@ -105,14 +108,41 @@ export const selectWiresharkTool = (
   return { command: configured, source: "environment" };
 };
 
+const isRegularFile = (path: string): boolean => {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * The first `.com` or `.exe` image Windows' PATH/PATHEXT search would start
+ * for a bare tool name, from absolute PATH entries only, as on POSIX. The
+ * owned Windows launcher starts only absolute paths, so a bare name has to be
+ * resolved here. Undefined when no such file exists or PATHEXT is invalid.
+ */
+const locateWiresharkToolOnWindowsPath = (
+  tool: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  isFile: (path: string) => boolean,
+): string | undefined => {
+  const candidates = windowsPathCandidates(tool, environment);
+  if (!candidates.ok) return undefined;
+  for (const { path, relativeEntry } of candidates.value)
+    if (!relativeEntry && isFile(path)) return path;
+  return undefined;
+};
+
 /**
  * Resolve the caller-supplied tshark and capinfos binaries to the executables
- * the packet tools would also select. Windows keeps PATH/PATHEXT resolution in
- * the launcher, which the POSIX locator does not model.
+ * the packet tools would also select. A PATH selection becomes the absolute
+ * file found on PATH (PATH/PATHEXT on Windows), or a `<tool>_missing` failure.
  */
 export const resolvePcapTools = (
   environment: Readonly<Record<string, string | undefined>>,
   platform: NodeJS.Platform,
+  isFile: (path: string) => boolean = isRegularFile,
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {
@@ -121,9 +151,11 @@ export const resolvePcapTools = (
   };
   const locate = (tool: "tshark" | "capinfos"): WiresharkToolSelection => {
     const selection = selected[tool];
-    if (selection.source === "environment" || platform === "win32")
-      return selection;
-    const command = locateWiresharkTool(selection, environment);
+    if (selection.source === "environment") return selection;
+    const command =
+      platform === "win32"
+        ? locateWiresharkToolOnWindowsPath(tool, environment, isFile)
+        : locateWiresharkTool(selection, environment);
     if (command === undefined)
       throw new PcapConfigurationFailure(
         `${tool}_missing`,

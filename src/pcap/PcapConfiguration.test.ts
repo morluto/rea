@@ -31,11 +31,25 @@ describe("resolvePcapTools", () => {
     });
   });
 
-  it("keeps bare PATH selections for the Windows PATH/PATHEXT launcher", () => {
-    expect(resolvePcapTools({}, "win32")).toEqual({
-      tshark: { command: "tshark", source: "path" },
-      capinfos: { command: "capinfos", source: "path" },
+  it("resolves Windows PATH selections to absolute images for the owned launcher", () => {
+    // The relative entry holds decoys; like POSIX, only absolute entries count.
+    const files = new Set([
+      "C:\\Wireshark\\tshark.EXE",
+      "C:\\Wireshark\\capinfos.EXE",
+    ]);
+    expect(
+      resolvePcapTools(
+        { Path: "relative-bin;C:\\Wireshark", PATHEXT: ".COM;.EXE;.BAT" },
+        "win32",
+        (path) => files.has(path) || path.includes("relative-bin"),
+      ),
+    ).toEqual({
+      tshark: { command: "C:\\Wireshark\\tshark.EXE", source: "path" },
+      capinfos: { command: "C:\\Wireshark\\capinfos.EXE", source: "path" },
     });
+    expect(() =>
+      resolvePcapTools({ Path: "C:\\Empty" }, "win32", () => false),
+    ).toThrow(/tshark was not found in an absolute PATH entry/u);
   });
 
   it("fails closed when no absolute PATH entry holds the tool", () => {
