@@ -44,6 +44,7 @@ export const ANDROID_OTA_MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 export const ANDROID_OTA_MAX_PARTITIONS = 4096;
 export const ANDROID_OTA_MAX_OPERATIONS = 65_536;
 export const ANDROID_OTA_MAX_OPERATIONS_TOTAL = 262_144;
+export const ANDROID_OTA_MAX_EXTENTS_TOTAL = 1_048_576;
 export const ANDROID_OTA_MAX_SIGNATURE_BYTES = 1024 * 1024;
 export const ANDROID_OTA_MAX_SIGNATURES = 64;
 export const ANDROID_OTA_MAX_GROUPS = 256;
@@ -530,6 +531,7 @@ const decodePartitionInfo = (
 
 const decodeOperation = (
   bytes: Uint8Array,
+  extentTotal: { count: number },
 ): Result<OperationDraft, AndroidOtaPayloadParseError> => {
   const operation: OperationDraft = {
     hasType: false,
@@ -560,6 +562,9 @@ const decodeOperation = (
       return;
     }
     if ((field === 4 || field === 6) && wire === WireType.LengthDelimited) {
+      if (extentTotal.count >= ANDROID_OTA_MAX_EXTENTS_TOTAL)
+        fail(capacity("extent total", ANDROID_OTA_MAX_EXTENTS_TOTAL, "extent"));
+      extentTotal.count += 1;
       (field === 4 ? operation.srcExtents : operation.dstExtents).push(
         unwrap(decodeExtent(reader.bytes())),
       );
@@ -576,6 +581,7 @@ const decodeOperation = (
 const decodePartition = (
   bytes: Uint8Array,
   operationTotal: { count: number },
+  extentTotal: { count: number },
 ): Result<PartitionDraft, AndroidOtaPayloadParseError> => {
   const partition: PartitionDraft = {
     name: undefined,
@@ -631,7 +637,9 @@ const decodePartition = (
             "operation",
           ),
         );
-      partition.operations.push(unwrap(decodeOperation(reader.bytes())));
+      partition.operations.push(
+        unwrap(decodeOperation(reader.bytes(), extentTotal)),
+      );
       operationTotal.count += 1;
       return;
     }
@@ -799,6 +807,7 @@ const decodeManifest = (
     operationTotal: 0,
   };
   const operationTotal = { count: 0 };
+  const extentTotal = { count: 0 };
   const walked = walk(bytes, (field, wire, reader) => {
     if (field === 3 && wire === WireType.Varint) {
       const size = unwrap(asSafeUint(reader.uint64(), "block_size"));
@@ -834,7 +843,7 @@ const decodeManifest = (
           capacity("partition count", ANDROID_OTA_MAX_PARTITIONS, "partition"),
         );
       draft.partitions.push(
-        unwrap(decodePartition(reader.bytes(), operationTotal)),
+        unwrap(decodePartition(reader.bytes(), operationTotal, extentTotal)),
       );
       return;
     }

@@ -70,9 +70,10 @@ not invented as zeros.
 ## Bounded work
 
 The reader admits at most 16 MiB of manifest, 4096 partitions, 65,536
-operations per partition, 262,144 operations in total, 1 MiB per signature
-blob, 64 signatures, 256 dynamic groups and 4096 apex entries. Those
-ceilings are resource policy. Shared artifact identity hashing has separate
+operations per partition, 262,144 operations in total, 1,048,576 source
+and destination extents in total, 1 MiB per signature blob, 64
+signatures, 256 dynamic groups and 4096 apex entries. Those ceilings are
+resource policy. Shared artifact identity hashing has separate
 cost. Partition reconstruction is bounded at 32 MiB per image and runs when
 a member is opened, not during inventory of the manifest. REPLACE_ZSTD
 decode is bounded to destination extent bytes, never above that 32 MiB

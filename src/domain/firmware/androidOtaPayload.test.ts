@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import {
   ANDROID_OTA_HEADER_V2_BYTES,
   ANDROID_OTA_MAGIC,
+  ANDROID_OTA_MAX_EXTENTS_TOTAL,
   ANDROID_OTA_MAX_EXTRACT_BYTES,
   ANDROID_OTA_MAX_MANIFEST_BYTES,
   ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
@@ -457,6 +458,38 @@ it("refuses an oversize manifest signatures_size before any signature read", () 
       failure: {
         kind: "limit",
         limit: { maximum: ANDROID_OTA_MAX_SIGNATURE_BYTES },
+      },
+    },
+  });
+});
+
+it("refuses manifest extents past the total extent budget as a capacity limit", () => {
+  const extents = new Uint8Array((ANDROID_OTA_MAX_EXTENTS_TOTAL + 1) * 2);
+  for (let at = 0; at < extents.length; at += 2) extents[at] = 0x32;
+  const operation = new BinaryWriter()
+    .tag(1, WireType.Varint)
+    .int32(0)
+    .finish();
+  const partition = new BinaryWriter()
+    .tag(1, WireType.LengthDelimited)
+    .string("system")
+    .tag(8, WireType.LengthDelimited)
+    .bytes(Buffer.concat([operation, extents]))
+    .finish();
+  const manifest = new BinaryWriter()
+    .tag(13, WireType.LengthDelimited)
+    .bytes(partition)
+    .finish();
+  const bytes = Buffer.concat([
+    header({ manifestSize: BigInt(manifest.length) }),
+    Buffer.from(manifest),
+  ]);
+  expect(parse(bytes)).toMatchObject({
+    ok: false,
+    error: {
+      failure: {
+        kind: "limit",
+        limit: { maximum: ANDROID_OTA_MAX_EXTENTS_TOTAL },
       },
     },
   });
