@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import { ArtifactResourceScope } from "../resources/index.js";
 import {
   readGuidanceSection,
@@ -13,6 +13,7 @@ import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField } from "./options.js";
 import { ownCliProcessResource } from "./cliResources.js";
@@ -51,7 +52,7 @@ export const registerGuidanceCommands = (
   logger: Logger,
   resources: CliGuidanceResources = processGuidanceResources,
 ): void => {
-  cli.command(CLI_COMMANDS.guidance, {
+  registerCliCommand(cli, CLI_COMMANDS.guidance, {
     description: "Search or read the installed REA workflow guidance",
     args: z.object({}),
     options: z

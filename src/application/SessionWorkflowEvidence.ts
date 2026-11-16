@@ -37,6 +37,15 @@ export type WorkflowSession = Pick<
   | "recordWorkflowSnapshot"
 >;
 
+/**
+ * Completed workflow Evidence and, when the workflow recorded it in the
+ * session, that record's result, so delivery does not record it again.
+ */
+export interface SessionWorkflowOutcome {
+  readonly evidence: Evidence;
+  readonly recorded?: Result<"added" | "duplicate", AnalysisError>;
+}
+
 type WorkflowRequest = Required<Pick<ExecutionOptions, "signal" | "progress">>;
 
 /** The parameters Evidence names: the caller's input without absent fields. */
@@ -54,14 +63,15 @@ const jsonParameters = (
  * Evidence in the session: retain the sources it read (or its partial
  * Evidence when it stops), record the completed Evidence, its replayable
  * workflow snapshot and its residual unknowns. Every provider read reports
- * progress to the caller.
+ * progress to the caller. The outcome carries the session's record of the
+ * Evidence.
  */
 export const executeSessionWorkflowEvidence = async (
   call: ValidatedEnhancedCall,
   admitted: AnalysisOperationPort,
   session: WorkflowSession | undefined,
   { signal, progress }: WorkflowRequest,
-): Promise<Result<Evidence, AnalysisError>> => {
+): Promise<Result<SessionWorkflowOutcome, AnalysisError>> => {
   const { name } = call;
   const parameters = jsonParameters(call.input);
   const analysis: AnalysisOperationPort = {
@@ -110,7 +120,7 @@ export const executeSessionWorkflowEvidence = async (
       ? {}
       : { upstreamEvidenceLinks: result.value.evidenceLinks }),
   });
-  if (session === undefined) return ok(evidence);
+  if (session === undefined) return ok({ evidence });
   const recorded = session.recordEvidence(evidence);
   if (!recorded.ok) return recorded;
   if (name !== "trace_native_ui_action" && session.allowsSnapshotReplay(name)) {
@@ -132,7 +142,7 @@ export const executeSessionWorkflowEvidence = async (
     recordUnknown: (unknown) => session.recordUnknown(unknown),
     evidenceRetained: true,
   });
-  return unknowns.ok ? ok(evidence) : unknowns;
+  return unknowns.ok ? ok({ evidence, recorded }) : unknowns;
 };
 
 /**
@@ -144,8 +154,8 @@ export const executeSessionFunctionAnalysis = async (
   analysis: AnalysisOperationPort,
   session: WorkflowSession | undefined,
   request: WorkflowRequest,
-): Promise<Result<Evidence, AnalysisError>> =>
-  retainAnalysisResultSources(
+): Promise<Result<SessionWorkflowOutcome, AnalysisError>> => {
+  const analyzed = retainAnalysisResultSources(
     "analyze_function",
     session === undefined
       ? undefined
@@ -157,3 +167,5 @@ export const executeSessionFunctionAnalysis = async (
       request,
     ),
   );
+  return analyzed.ok ? ok({ evidence: analyzed.value }) : analyzed;
+};

@@ -29,6 +29,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 
@@ -312,7 +313,10 @@ const connectUnconfiguredSymbolFallback = async (
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "native-dispatch-fallback", version: "1" });
+  const mcp = new Client(
+    { name: "native-dispatch-fallback", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server, { close: () => session.close() });

@@ -40,11 +40,11 @@ import {
   GpuReportCapacityFailure,
   gpuCount,
   nextGpuContainerOffset,
-  gpuSha256,
   readGpuNativeDirectory,
   rejectGpu,
   type GpuSource,
 } from "./GpuSource.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 import {
   readGpuElfKernels,
   readAmdElfMetadata,
@@ -353,7 +353,7 @@ export class GpuInventory {
           );
         }
       }
-      this.#decoded(row, gpuSha256(bytes), bytes.length);
+      this.#decoded(row, sha256Hex(bytes), bytes.length);
       const decoded = new GpuBufferSource(bytes, row.id);
       if (row.kind === "ptx") {
         // NVIDIA appends NUL alignment padding to an uncompressed PTX entry.
@@ -381,7 +381,7 @@ export class GpuInventory {
         const artifact = {
           id: `${row.id}/ptx`,
           object_id: row.id,
-          sha256: gpuSha256(content),
+          sha256: sha256Hex(content),
           media_type: "text/x-ptx" as const,
           encoding: "utf-8" as const,
           byte_length: content.length,
@@ -680,7 +680,7 @@ export class GpuInventory {
             createHash("md5").update(data).digest().readBigUInt64LE(0) !== hash
           )
             rejectGpu("CCOB truncated MD5 does not match decoded bytes");
-          this.#decoded(row, gpuSha256(data), data.length);
+          this.#decoded(row, sha256Hex(data), data.length);
           await this.inspect(new GpuBufferSource(data, row.id), depth + 1);
           row.inspection = "complete";
         } catch (cause) {

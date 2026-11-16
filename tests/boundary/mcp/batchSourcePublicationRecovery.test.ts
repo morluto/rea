@@ -17,6 +17,7 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { recordsWorkflowSession } from "../../fixtures/workflowSession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const source = createEvidence(unknownTarget("not-observed"), provider, {
   operation: "health",
@@ -84,7 +85,10 @@ it.each([
         withAdmittedAnalysis: withAdmittedAnalysis({ kind: "fixed", analysis }),
       },
     );
-    const client = new Client({ name: "batch-overflow-test", version: "1" });
+    const client = new Client(
+      { name: "batch-overflow-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();

@@ -41,13 +41,13 @@ import {
   HopperRemoteError,
   HopperStartError,
   HopperTimeoutError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperStartupFailure,
   type HopperStartupFailureDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import {
   providerRetryAction,
   sharedProviderFailureStage,
@@ -75,6 +75,8 @@ import {
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
 import type { HopperDiagnostic } from "./HopperDiagnostics.js";
@@ -107,6 +109,7 @@ import {
 import {
   HopperRequestQueue,
   type HopperRequestActivity,
+  type HopperRequestFailure,
 } from "./HopperRequestQueue.js";
 import {
   type HopperBridgeEvent,
@@ -198,6 +201,7 @@ export class HopperClient<
     runtimeRoot: undefined,
     shutdownConfirmed: false,
     externalApplication: undefined,
+    inspections: new ArtifactResourceScope(),
   };
   #token: string | undefined;
   /** Reply ceiling admitted with the request on the wire; the default before any. */
@@ -702,6 +706,13 @@ export class HopperClient<
       try {
         identity = await observeProcessStartIdentity(parsed.value.processId);
       } catch (cause: unknown) {
+        // The identity stays unavailable; descriptors the read left open stay
+        // owned until session cleanup releases them.
+        retainArtifactCommandCleanup(
+          cause,
+          this.#resources.inspections,
+          "open_binary",
+        );
         identity = {
           state: "unavailable" as const,
           reason:
@@ -1469,7 +1480,7 @@ export class HopperClient<
     this.#socket?.destroy();
   }
 
-  #failAll(error: HopperError): void {
+  #failAll(error: HopperRequestFailure): void {
     this.#requests.failAll(error);
   }
 
@@ -1486,7 +1497,7 @@ export class HopperClient<
   }
 
   #retainRequestHealth(
-    result: Result<JsonValue, HopperError>,
+    result: Result<JsonValue, AnalysisError>,
     requestId: number,
     operation: string,
   ): void {

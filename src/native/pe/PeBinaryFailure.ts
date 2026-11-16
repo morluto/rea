@@ -1,3 +1,4 @@
+import type { FixedCeilingFacts } from "../../domain/fixedAllowanceRemediation.js";
 import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectSelectedArtifactFileFailure,
@@ -20,6 +21,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   BinaryResourceFailure,
+  binaryResourceCeiling,
   binaryResourceAllowance,
 } from "../../domain/binaryContainer.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
@@ -34,7 +36,11 @@ interface PeBinaryFailureOptions<Limit extends string> {
   readonly fileSizeRemediation: () => string;
   /** The allowances the parser names in its `BinaryResourceFailure`. */
   readonly limits: readonly Limit[];
-  readonly limitRecovery: (limit: Limit | null) => ResourceConstraintRecovery;
+  /** Recovery for the named allowance, or the structural allowance (`null`) at `ceiling`. */
+  readonly limitRecovery: (
+    limit: Limit | null,
+    ceiling: FixedCeilingFacts,
+  ) => ResourceConstraintRecovery;
 }
 
 const peBinaryFailurePrimary = <Limit extends string>(
@@ -68,7 +74,7 @@ const peBinaryFailurePrimary = <Limit extends string>(
       "capacity",
       `Selected artifact ${input.path}: ${cause.message}`,
       { boundary: cause.boundary, maximum: cause.maximum_bytes, limit },
-      { cause, ...options.limitRecovery(limit) },
+      { cause, ...options.limitRecovery(limit, binaryResourceCeiling(cause)) },
     );
   }
   const formatFailure = parseFailureAnalysisError(operation, input.path, cause);

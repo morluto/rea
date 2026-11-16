@@ -1,6 +1,7 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 
 import { ELECTRON_TOOL_CONTRACTS } from "../contracts/javascript/electronToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";

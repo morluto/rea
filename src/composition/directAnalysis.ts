@@ -48,6 +48,13 @@ export const createDirectAnalysis = (
       return createArtifactBinarySession(environment);
     },
   };
+  return bindDirectAnalysis(dependencies);
+};
+
+/** Bind one-shot analysis and status commands to the given session owners. */
+export const bindDirectAnalysis = (
+  dependencies: DirectAnalysisDependencies,
+) => {
   const runDirectAnalysis: BoundOperation<
     DirectAnalysisRuntime["runDirectAnalysis"]
   > = async (...args) => {
@@ -85,7 +92,7 @@ export const createDirectAnalysis = (
 };
 
 /** Bound operations used by CLI command registration. */
-export type DirectAnalysis = ReturnType<typeof createDirectAnalysis>;
+export type DirectAnalysis = ReturnType<typeof bindDirectAnalysis>;
 
 /** Execute managed metadata without configuration or native provider candidates. */
 export const runManagedProviderExecution: BoundOperation<

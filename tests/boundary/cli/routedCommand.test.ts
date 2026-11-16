@@ -1,4 +1,5 @@
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import pino from "pino";
 import { expect, it } from "vitest";
 

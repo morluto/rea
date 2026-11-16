@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { deflateSync } from "node:zlib";
 import { readNativeInitializers } from "./NativeInitializersProvider.js";
 
@@ -6,6 +6,7 @@ import { readNativeInitializers } from "./NativeInitializersProvider.js";
 const mapping = vi.hoisted(() => ({
   scans: vi.fn(),
   indexes: vi.fn(),
+  lookups: { count: 0 },
 }));
 vi.mock("../../domain/binaryContainer.js", async (importOriginal) => {
   const actual =
@@ -22,10 +23,51 @@ vi.mock("../../domain/binaryContainer.js", async (importOriginal) => {
       ...args: Parameters<typeof actual.createFileMappingIndex>
     ) => {
       mapping.indexes(...args);
-      return actual.createFileMappingIndex(...args);
+      const index = actual.createFileMappingIndex(...args);
+      return {
+        ...index,
+        offset: (...lookup: Parameters<typeof index.offset>) => {
+          mapping.lookups.count++;
+          return index.offset(...lookup);
+        },
+      };
     },
   };
 });
+/** Element reads of every parsed ELF section table, so tests can count section walks. */
+const sectionReads = vi.hoisted(() => ({ count: 0, budget: Infinity }));
+vi.mock(
+  "../../domain/native/nativeSectionDirectory.js",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("../../domain/native/nativeSectionDirectory.js")
+      >();
+    return {
+      ...actual,
+      readElfDirectoryFromBuffer: (
+        ...args: Parameters<typeof actual.readElfDirectoryFromBuffer>
+      ) => {
+        const directory = actual.readElfDirectoryFromBuffer(...args);
+        return {
+          ...directory,
+          sections: new Proxy(directory.sections, {
+            get(target, key, receiver) {
+              // Past the budget a walk fails at once instead of finishing.
+              if (
+                typeof key === "string" &&
+                /^\d+$/u.test(key) &&
+                ++sectionReads.count > sectionReads.budget
+              )
+                throw new Error("Section table read budget exceeded");
+              return Reflect.get(target, key, receiver) as unknown;
+            },
+          }),
+        };
+      },
+    };
+  },
+);
 import {
   elf32RelativeInitializers,
   elf64PieInitializers,
@@ -538,9 +580,13 @@ describe("ELF incomplete inputs", () => {
     const bytes = elf64PieInitializers();
     // DT_INIT_ARRAYSZ is the fourth dynamic entry; 2^50 slots is still a safe integer.
     bytes.writeBigUInt64LE(8n << 50n, 0x300 + 3 * 16 + 8);
-    const started = performance.now();
+    mapping.lookups.count = 0;
     const report = await read(bytes);
-    expect(performance.now() - started).toBeLessThan(10_000);
+    // Each admitted slot is located once; the rest of the image adds a few
+    // hundred lookups (66194 here). An unclamped slot loop locates every slot.
+    expect(mapping.lookups.count).toBeLessThan(
+      MAX_NATIVE_INITIALIZER_ENTRIES + 1024,
+    );
     expect(report.status).toBe("incomplete");
     expect(report.coverage).toMatchObject({
       status: "partial",
@@ -950,10 +996,15 @@ describe("ELF section lookups", () => {
       bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 40);
       bytes.writeBigUInt64LE(BigInt(base.length), 0x300 + 2 * 16 + 8);
       bytes.writeBigUInt64LE(BigInt(slots * 8), 0x300 + 3 * 16 + 8);
-      const started = performance.now();
+      // Each consumer walks the table once (about 6 x 65535 reads); a
+      // per-lookup walk would read it once per slot.
+      sectionReads.count = 0;
+      sectionReads.budget = 12 * 65535;
+      onTestFinished(() => {
+        sectionReads.budget = Infinity;
+      });
       const report = await read(bytes);
-      // A per-lookup header walk is about 4e9 comparisons here; the index is a few hundred ms.
-      expect(performance.now() - started).toBeLessThan(10_000);
+      expect(sectionReads.count).toBeLessThanOrEqual(sectionReads.budget);
       expect(report.coverage.examined_entries).toBe(slots);
       const slot = report.entries.find((entry) => entry.kind === "init_array");
       expect(slot).toMatchObject({

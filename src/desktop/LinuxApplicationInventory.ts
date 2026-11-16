@@ -1,7 +1,4 @@
-import {
-  desktopLibraryPolicy,
-  type DesktopLibraryPolicyInput,
-} from "../domain/desktop/libraryPolicy.js";
+import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
 
@@ -42,47 +39,13 @@ import {
 import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
 import { runHostQuery } from "./HostQuery.js";
 import { resolveProgram } from "./ProgramLookup.js";
+import type {
+  LinuxApplicationFacts,
+  LinuxApplicationRefusal,
+  LinuxApplicationRequest,
+} from "../ports/DesktopApplicationSession.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
-
-/** Which application to launch, as the caller named it. */
-export interface LinuxApplicationRequest {
-  readonly libraryPolicy?: DesktopLibraryPolicyInput;
-  readonly desktopEntry: string | undefined;
-  readonly executable: string | undefined;
-  readonly arguments: readonly string[];
-  readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly home: string;
-  /** Where a relative executable is found and an executable launch runs. */
-  readonly callerDirectory: string;
-  /** The absolute path of the `.deb` file the application was installed from, whose facts are recorded. */
-  readonly packageFile?: string | undefined;
-}
-
-/** Why the request does not name a launchable application. */
-export type LinuxApplicationRefusal =
-  | {
-      readonly reason: "desktop_entry_not_found";
-      readonly searched: readonly string[];
-    }
-  | {
-      readonly reason: "desktop_entry_search_incomplete";
-      readonly searched: readonly string[];
-    }
-  | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
-  | { readonly reason: "executable_not_found"; readonly program: string }
-  | {
-      readonly reason: "executable_on_relative_path";
-      readonly program: string;
-    };
-
-/** The inventory plus limitations found while building it. */
-export interface LinuxApplicationFacts {
-  readonly inventory: DesktopApplicationInventory;
-  readonly limitations: readonly string[];
-  /** Verified apt signing keys' bytes by sha256, for the capture to retain. */
-  readonly signingKeys: ReadonlyMap<string, Buffer>;
-}
 
 /** The host commands and apt folders the inventory reads; replaceable in tests. */
 export type LinuxInventoryHost = DebianPackageHost;

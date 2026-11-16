@@ -1,11 +1,12 @@
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
 import {
   adaptCliOutputArgumentsForIncur,
-  normalizeCliArguments,
+  parseCliGlobalArguments,
 } from "../cliBuiltinArguments.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { parseLogLevel } from "../config/processStart.js";
@@ -152,31 +153,31 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   encodeCliArgumentErrors(cli);
   const serve = cli.serve.bind(cli);
-  const complete = createCliCompletions(
-    cli as unknown as Parameters<typeof createCliCompletions>[0],
-    environment,
-  );
+  const completions = createCliCompletions(cli, environment);
   cli.serve = (arguments_ = process.argv.slice(2), serveOptions) => {
-    if (complete(arguments_, serveOptions ?? {})) return Promise.resolve();
-    const normalized = normalizeCliArguments(arguments_);
+    if (completions.complete(arguments_, serveOptions ?? {}))
+      return Promise.resolve();
+    const global = parseCliGlobalArguments(arguments_);
+    if (completions.writeScript(global, serveOptions ?? {}))
+      return Promise.resolve();
     const registration = serveMcpRegistration(
-      normalized,
+      global,
       environment,
       defaultRegistration,
       serveOptions ?? {},
     );
     if (registration !== undefined) return registration;
-    const result = serveStrict(
-      normalized,
-      serveOptions ?? {},
-      (tokens, selected) =>
-        serveDeclared(tokens, selected, (declared, declaredOptions) =>
-          reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
-            ? Promise.resolve()
-            : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
-        ),
+    const result = serveStrict(global, serveOptions ?? {}, (selected) =>
+      serveDeclared(global, selected, (declaredOptions) =>
+        reportUnknownMcpSubcommand(cli.name, global, declaredOptions)
+          ? Promise.resolve()
+          : serve(
+              adaptCliOutputArgumentsForIncur(global.arguments),
+              declaredOptions,
+            ),
+      ),
     );
-    const note = completionHelpNote(normalized);
+    const note = completionHelpNote(global);
     if (note === undefined) return result;
     return result.then(() => {
       const write =

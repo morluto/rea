@@ -729,10 +729,13 @@ it("keeps the caller's own source when a page cannot fit, without retaining its 
     },
     { delivery: createToolResultDelivery(budget) },
   );
-  const fixedClient = new Client({
-    name: "batch-unretained",
-    version: "1.0.0",
-  });
+  const fixedClient = new Client(
+    {
+      name: "batch-unretained",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {

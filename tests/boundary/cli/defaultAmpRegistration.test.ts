@@ -1,11 +1,12 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { Parser, z } from "incur";
+import { Parser } from "incur";
+import { z } from "zod";
 import { decode } from "@toon-format/toon";
 
 import { mcpRegistrationReportSchema } from "../../../src/contracts/mcpRegistration.js";
-import { splitIncurBuiltinArguments } from "../../../src/cliBuiltinArguments.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
@@ -206,10 +207,9 @@ it("timing splitting matches Incur after output values and before the terminator
         undefined,
         { validate: false },
       ).rest;
-      expect(splitIncurBuiltinArguments(command).command).toEqual(expected);
+      expect(parseCliGlobalArguments(command).command).toEqual(expected);
       expect(
-        splitIncurBuiltinArguments(["--filter-output", flag, ...command])
-          .command,
+        parseCliGlobalArguments(["--filter-output", flag, ...command]).command,
       ).toEqual(expected);
     }
   }

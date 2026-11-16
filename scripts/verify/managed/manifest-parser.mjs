@@ -1,4 +1,4 @@
-import { isRecord } from "#dist/domain/isRecord.js";
+import { isRecord } from "#dist/kernel/isRecord.js";
 
 /** @typedef {ReturnType<typeof parseManagedAppManifest>} ManagedAppManifest */
 /** @typedef {ManagedAppManifest["methods"][number]} ManagedAppManifestMethod */
