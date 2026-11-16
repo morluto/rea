@@ -84,9 +84,14 @@ export interface XarFixtureFile {
   readonly path: string;
   readonly type?: "file" | "directory";
   readonly bytes?: Buffer;
-  readonly encoding?: "application/octet-stream" | "application/x-gzip";
+  readonly encoding?:
+    | "application/octet-stream"
+    | "application/x-gzip"
+    | "application/x-bzip2";
   /** TOC `<size>` override. When omitted, the uncompressed member length is stored. */
   readonly extractedSize?: number;
+  /** Zero bytes appended to the archived heap range after encoding. */
+  readonly archivedPadding?: number;
 }
 
 export interface XarFixtureSignature {
@@ -187,8 +192,12 @@ export const buildXar = (options: {
   for (const file of options.files) {
     if ((file.type ?? "file") !== "file" || file.bytes === undefined) continue;
     const encoding = file.encoding ?? "application/octet-stream";
-    const archived =
+    const encoded =
       encoding === "application/x-gzip" ? deflateSync(file.bytes) : file.bytes;
+    const archived =
+      file.archivedPadding === undefined
+        ? encoded
+        : Buffer.concat([encoded, Buffer.alloc(file.archivedPadding)]);
     heapFiles.push({
       path: file.path,
       type: "file",
@@ -435,6 +444,32 @@ export const buildOversizeDeclaredGzipPackage = (): Buffer =>
         bytes: Buffer.from(PACKAGE_INFO),
         encoding: "application/x-gzip",
         extractedSize: MACOS_PKG_MAX_METADATA_XML_BYTES + 1,
+      },
+    ],
+  });
+
+/** Tiny declared gzip member whose archived heap range exceeds the metadata allowance. */
+export const buildOversizeArchivedGzipPackage = (): Buffer =>
+  buildXar({
+    files: [
+      {
+        path: "PackageInfo",
+        bytes: Buffer.from(PACKAGE_INFO),
+        encoding: "application/x-gzip",
+        archivedPadding: 2 * MACOS_PKG_MAX_METADATA_XML_BYTES,
+      },
+    ],
+  });
+
+/** Unsupported-encoding member whose archived heap range exceeds the metadata allowance. */
+export const buildOversizeArchivedUnsupportedPackage = (): Buffer =>
+  buildXar({
+    files: [
+      {
+        path: "PackageInfo",
+        bytes: Buffer.from(PACKAGE_INFO),
+        encoding: "application/x-bzip2",
+        archivedPadding: 2 * MACOS_PKG_MAX_METADATA_XML_BYTES,
       },
     ],
   });

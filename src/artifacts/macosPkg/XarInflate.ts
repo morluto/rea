@@ -31,6 +31,27 @@ export const isXarStoredEncoding = (encoding: string): boolean =>
 export const isXarZlibEncoding = (encoding: string): boolean =>
   ZLIB_ENCODINGS.has(encoding);
 
+/**
+ * Largest archived (heap) length a member may span for a decode allowance.
+ * Stored members are copied as-is; a zlib stream that decodes within the
+ * allowance never needs more than zlib's compressBound of it. Unsupported
+ * encodings are never read, so they have no input allowance.
+ */
+export const maxXarArchivedBytes = (
+  encoding: string,
+  maxOutputBytes: number,
+): number => {
+  if (isXarStoredEncoding(encoding)) return maxOutputBytes;
+  if (!isXarZlibEncoding(encoding)) return 0;
+  return (
+    maxOutputBytes +
+    Math.floor(maxOutputBytes / 4096) +
+    Math.floor(maxOutputBytes / 16384) +
+    Math.floor(maxOutputBytes / 33554432) +
+    13
+  );
+};
+
 export const extractedSizeExceedsBudget = (
   declaredSize: number,
   maxOutputBytes: number,

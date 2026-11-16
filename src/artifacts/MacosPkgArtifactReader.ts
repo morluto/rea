@@ -52,6 +52,7 @@ import {
   inflateXarMemberBytes,
   isXarStoredEncoding,
   isXarZlibEncoding,
+  maxXarArchivedBytes,
 } from "./macosPkg/XarInflate.js";
 import {
   parseDistributionXml,
@@ -931,10 +932,10 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       );
       return undefined;
     }
-    if (
-      isXarStoredEncoding(entry.origin.encoding) &&
-      entry.origin.archivedLength > maxBytes
-    ) {
+    const { encoding, archivedLength, heapOffset } = entry.origin;
+    const supported =
+      isXarStoredEncoding(encoding) || isXarZlibEncoding(encoding);
+    if (supported && archivedLength > maxXarArchivedBytes(encoding, maxBytes)) {
       metadata.refusals.push({
         code: "oversize",
         message: `${entry.path} exceeds the ${String(maxBytes)}-byte decode allowance`,
@@ -942,16 +943,19 @@ export class MacosPkgArtifactReader implements ArtifactReader {
       });
       return undefined;
     }
-    const archived = await readArtifactFileBytes(
-      handle,
-      entry.origin.heapOffset,
-      entry.origin.archivedLength,
-      entry.origin.heapOffset + entry.origin.archivedLength,
-      signal,
-    );
+    // An unsupported encoding is refused by inflateXarMemberBytes; never read its range.
+    const archived = supported
+      ? await readArtifactFileBytes(
+          handle,
+          heapOffset,
+          archivedLength,
+          heapOffset + archivedLength,
+          signal,
+        )
+      : Buffer.alloc(0);
     const decoded = inflateXarMemberBytes(
       archived,
-      entry.origin.encoding,
+      encoding,
       maxBytes,
       entry.path,
     );

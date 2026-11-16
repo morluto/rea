@@ -30,6 +30,8 @@ import {
   buildGzipPackageInfo,
   buildHeapOutOfBoundsPackage,
   buildMultiComponentProductArchive,
+  buildOversizeArchivedGzipPackage,
+  buildOversizeArchivedUnsupportedPackage,
   buildOversizeDeclaredGzipPackage,
   buildOversizeTocPackage,
   buildPbzxPayloadPackage,
@@ -360,6 +362,45 @@ it("refuses an oversize declared gzip member without inflating it", async () => 
     ]);
     expect(entries.map((entry) => entry.path)).toContain("PackageInfo");
     expect(inflateXarMemberBytes).not.toHaveBeenCalled();
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses an oversize archived gzip range without reading or inflating it", async () => {
+  vi.mocked(inflateXarMemberBytes).mockClear();
+  const { reader } = await entriesOf(
+    buildOversizeArchivedGzipPackage(),
+    "oversize-archived-gzip.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.packages).toEqual([]);
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({ code: "oversize", path: "PackageInfo" }),
+    ]);
+    expect(inflateXarMemberBytes).not.toHaveBeenCalled();
+  } finally {
+    await reader.close();
+  }
+});
+
+it("refuses an unsupported member encoding without reading its archived range", async () => {
+  vi.mocked(inflateXarMemberBytes).mockClear();
+  const { reader } = await entriesOf(
+    buildOversizeArchivedUnsupportedPackage(),
+    "oversize-archived-bzip2.pkg",
+  );
+  try {
+    expect(reader.formatMetadata()?.packages).toEqual([]);
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({ path: "PackageInfo" }),
+    ]);
+    expect(inflateXarMemberBytes).toHaveBeenCalledWith(
+      Buffer.alloc(0),
+      "application/x-bzip2",
+      expect.any(Number),
+      "PackageInfo",
+    );
   } finally {
     await reader.close();
   }
