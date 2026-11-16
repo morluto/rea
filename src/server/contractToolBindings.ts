@@ -208,10 +208,11 @@ interface QueryBinding<Input> {
  * `createProviderOperationToolHandler`). A server that admits no analysis
  * refuses the binding at startup.
  */
-interface ProviderBinding {
+interface ProviderBinding<Operation extends ProviderOperation> {
   readonly admission: "sdk";
   readonly provider: ProviderOperationOptions & {
-    readonly operation: ProviderOperation;
+    /** The contract's own name: a binding runs only its named operation. */
+    readonly operation: Operation;
   };
   readonly run?: never;
   readonly summary?: never;
@@ -387,7 +388,8 @@ export type ContractToolBinding<Name extends CatalogToolName> =
   | AnalysisBinding<ContractInput<Name>>
   | ExternalMutationBinding<EvidenceRequestFrameInput<ContractInput<Name>>>
   | QueryBinding<ContractInput<Name>>
-  | ProviderBinding
+  // Only a provider operation binds a provider, and only to its own name.
+  | (Name extends ProviderOperation ? ProviderBinding<Name> : never)
   | (ContractInput<Name> extends { readonly detail: "complete" | "summary" }
       ? RetainedSummaryBinding<ContractInput<Name>>
       : never);
@@ -526,7 +528,7 @@ export const registerContractTools = (
         }
       | ExternalMutationBinding<unknown>
       | QueryBinding<unknown>
-      | ProviderBinding
+      | ProviderBinding<ProviderOperation>
       | RetainedSummaryBinding<Readonly<Record<string, unknown>>>
       | undefined
     >
@@ -537,6 +539,13 @@ export const registerContractTools = (
     const binding = table[contract.name];
     if (binding === undefined) continue;
     unbound.delete(contract.name);
+    if (
+      binding.provider !== undefined &&
+      binding.provider.operation !== contract.name
+    )
+      throw invariantViolation(
+        `MCP tool ${contract.name} binds provider operation ${binding.provider.operation}`,
+      );
     const registration =
       binding.admission === "sdk"
         ? toolRegistrationOptions(contract)

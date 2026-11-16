@@ -1803,7 +1803,7 @@ const SERVICE_TOOL_BINDINGS = {
   })) satisfies Bind<JavaScriptRuntimeToolOptions>,
   // Provider operations whose observation becomes atomic Evidence, run on
   // the analysis admission grants; each family routes its own operations.
-  providerOperations: (({ contracts, ...options }) =>
+  providerOperations: (({ contracts, ...options }): ContractToolBindings =>
     Object.fromEntries(
       contracts.map((contract) => [
         contract.name,
