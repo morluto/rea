@@ -771,6 +771,7 @@ it("treats a fixed command-output cap as a non-retryable capture allowance", asy
       resource: "memory",
       reportedLimits: { output_bytes: 1024 },
       retryable: false,
+      fixedAllowance: { kind: "capture", limit: 1024, unit: "bytes" },
     });
     const projected = projectAnalysisError(error);
     expect(projected.retryable).toBe(false);
