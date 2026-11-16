@@ -1,4 +1,5 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { findDuplicateJsonMember } from "../domain/jsonDuplicateMember.js";
 import { isRecord } from "../kernel/isRecord.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
@@ -517,6 +518,15 @@ const parseGradle = (
       "Gradle module metadata is not well-formed JSON.",
     );
   }
+  // JSON.parse keeps the last of a repeated field, which could hide a
+  // declaration (for example a second empty `dependencies`) while coverage
+  // still read as complete. Refuse the ambiguous document instead.
+  const duplicate = findDuplicateJsonMember(source);
+  if (duplicate !== undefined)
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      `Gradle module metadata declares field ${JSON.stringify(duplicate.name)} more than once in one object (offset ${String(duplicate.offset)}).`,
+    );
   if (!isRecord(parsed))
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,

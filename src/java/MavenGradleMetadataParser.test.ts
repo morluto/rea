@@ -592,6 +592,13 @@ it("refuses unreadable Gradle version and available-at values", () => {
   expectFailure(module({ "available-at": [] }), "malformed");
 });
 
+it("refuses Gradle metadata with a repeated field instead of keeping the last", () => {
+  const source = `{"formatVersion":"1.1","component":{"group":"com.example","module":"demo","version":"1.0.0"},"variants":[{"name":"runtime","dependencies":[{"group":"com.example","module":"lib","version":{"requires":"1.0"}}],"dependencies":[]}]}`;
+  expectFailure(source, "malformed");
+  const root = `{"formatVersion":"1.1","formatVersion":"1.1","component":{"group":"com.example","module":"demo","version":"1.0.0"},"variants":[]}`;
+  expectFailure(root, "malformed");
+});
+
 it("refuses JSON that is not Gradle module metadata", () => {
   expectFailure('{"name":"demo"}', "unsupported");
 });
