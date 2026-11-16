@@ -18,6 +18,7 @@ import { inspectAnalysisView } from "../../../src/application/analysisView/Analy
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
 import { ownedOutput } from "../../support/reverseEngineeringCompositionFixtures.js";
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const capture = {
@@ -97,7 +98,10 @@ const connect = async (retain = true) => {
       recordEvidence: retain ? record : undefined,
     },
   );
-  const client = new Client({ name: "command-view-client", version: "1" });
+  const client = new Client(
+    { name: "command-view-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

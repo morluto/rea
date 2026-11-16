@@ -1,4 +1,3 @@
-import type { FixedAllowance } from "../../domain/fixedAllowanceRemediation.js";
 import {
   observeElfStringTableEntry,
   elfStringTableText,
@@ -10,6 +9,7 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
+  type ArtifactFixedLimit,
 } from "../../resources/index.js";
 import {
   readElfFixedHeader,
@@ -48,7 +48,7 @@ const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
  * The note text, hash, and scan ceiling. It equals the admitted image length
  * plus decoded section names, so host memory cannot raise it.
  */
-const noteTextAllowance = (budget: TextBudget): FixedAllowance => ({
+const noteTextAllowance = (budget: TextBudget): ArtifactFixedLimit => ({
   name: "The ELF note text, hash, and scan allowance (derived from the image length and section names)",
   kind: "parser",
   limit: budget.limit,

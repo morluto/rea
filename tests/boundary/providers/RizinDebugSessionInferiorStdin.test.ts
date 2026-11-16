@@ -21,6 +21,7 @@ import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionMa
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rizinTestTtyPathPattern } from "./RizinTestInferiorTty.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // Real Rizin is not exercised here. These launchers apply `-R` keys the way the
 // #8642 report observed on Rizin 0.9.1, and the target is a real process, so the
@@ -348,7 +349,10 @@ linuxIt.each([
     const current = await createFixture({ target, reportsInferior: true });
     const manager = createManager(current);
     const server = rizinDebugMcpServer("rizin-stdin", manager);
-    const client = new Client({ name: "rizin-stdin", version: "1" });
+    const client = new Client(
+      { name: "rizin-stdin", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);

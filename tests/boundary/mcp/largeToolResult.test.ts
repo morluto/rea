@@ -40,6 +40,7 @@ import {
 } from "../../../src/server/toolResultEncoding.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
@@ -86,7 +87,10 @@ const callPseudoCode = async (
     },
     { logger: silentLogger, recordEvidence, withAdmittedAnalysis },
   );
-  const client = new Client({ name: "complete-evidence-client", version: "1" });
+  const client = new Client(
+    { name: "complete-evidence-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const send = serverTransport.send.bind(serverTransport);

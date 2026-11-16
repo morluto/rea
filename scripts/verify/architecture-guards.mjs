@@ -12,6 +12,7 @@ import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
 import { incurZodImportCount } from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
   optionalFactDefaultCount,
@@ -211,6 +212,34 @@ check(
     "src/domain/unicodeCodePointOrder.ts",
     "src/domain/webBundleAnalyzerInspection.ts",
   ],
+);
+
+// A signal's own abort is the abort error carrying that signal's reason; a bare
+// ABORT_ERR code may come from another signal or a synthetic failure.
+check(
+  "ABORT_ERR code comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  files,
+  /(?:===|!==)\s*["']ABORT_ERR["']|["']ABORT_ERR["']\s*(?:===|!==)/u,
+  ["src/process/SignalAbort.ts"],
+);
+
+// Hopper's error types live with the Hopper adapter. Shared layers read the
+// provider-neutral facts every AnalysisError carries (ownPresentation,
+// providerWide, providerRequest) and never import a provider's error types.
+check(
+  "import of Hopper error types outside src/hopper (use the provider-neutral AnalysisError facts)",
+  files.filter((file) => !file.path.startsWith("src/hopper/")),
+  /from "\.{1,2}\/(?:[\w-]+\/)*HopperErrors\.js"/u,
+);
+
+// An unrecognised command outcome is reported only by the shared outcome
+// classifier, which attaches the outcome it examined; a provider reports it
+// through the dialect's `unclassified` callback.
+check(
+  "UnclassifiedProviderFailure construction outside classifyProviderOutcome (use the dialect's unclassified report)",
+  files,
+  /\bnew\s+UnclassifiedProviderFailure\b/u,
+  ["src/process/classifyProviderOutcome.ts"],
 );
 
 // "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
@@ -431,6 +460,16 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// Whether an abort error is a signal's own cancellation is decided by the
+// signal owner; a name comparison alone accepts another signal's abort.
+checkCounted(
+  "AbortError name comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  "abort-error-name",
+  files,
+  /\.name\s*===\s*["']AbortError["']/gu,
+  ["src/process/SignalAbort.ts"],
 );
 
 // A refusal for a limit a parser stopped at is built from the failure's
@@ -988,6 +1027,29 @@ checkCounted(
   }),
   /\b(?:mkdtemp(?:Sync)?|createCanonicalTemporaryDirectory)\(|\bPrivateRuntimeRoot\.create\(/gu,
   [],
+);
+
+// The MCP SDK client compiles every listed tool's output schema on its first
+// tool call. With the default Ajv options, REA's catalog costs gigabytes of
+// allocation per client, so test clients take the lazy, reference-preserving
+// validation from tests/fixtures/mcpSchemaValidation (directly, or through
+// tests/support/mcp/mcpFixture). Tests of the SDK default itself stay listed.
+// The counter parses each source, so comments need no stripping here. A
+// client built inside a generated child script is string data, not a call, so
+// it is not read (such scripts run over compiled dist/ modules, which cannot
+// load the TypeScript fixture).
+const mcpClientTestFiles = testFiles.filter((file) =>
+  file.path.startsWith("tests/"),
+);
+checkCounted(
+  "MCP SDK client without shared schema validation in tests (pass createMcpSchemaValidation from tests/fixtures/mcpSchemaValidation or use mcpTest)",
+  "test-mcp-client-default-validation",
+  mcpClientTestFiles,
+  countDefaultValidationClients,
+  [
+    // Checks the SDK default validator itself across catalog refreshes.
+    "tests/boundary/mcp/outputValidatorReuse.test.ts",
+  ],
 );
 
 for (const key of baselineTexts.keys())

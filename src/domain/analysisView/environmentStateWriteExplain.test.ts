@@ -994,13 +994,13 @@ it("explains many copied and slugged fields of a wide body without searching it 
 });
 
 it("searches a wide request body for a copied value in linear time", () => {
-  // Shifting each value off the queue made one fruitless search over 500,000 zeros take about a minute.
-  const wide = Array.from({ length: 500_000 }, () => 0);
-  const started = performance.now();
+  // Shifting each value off the queue makes the search quadratic: about 18 s
+  // for 500,000 zeros and about a minute for this body, past the test's
+  // deadline, which is the guard. The linear walk takes well under a second.
+  const wide = Array.from({ length: 1_000_000 }, () => 0);
   const result = explainCreate(
     created({ id: 1, note: "not anywhere in the body" }, { items: wide }),
   );
-  expect(performance.now() - started).toBeLessThan(5_000);
   expect(ruleFor(result.rules, "note")).toBeUndefined();
 });
 

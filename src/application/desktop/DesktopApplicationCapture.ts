@@ -27,11 +27,11 @@ import {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
 import {
-  DesktopSessionCleanupError,
   runDesktopSession,
   runningApplicationWindows,
   type SessionRequest,
 } from "../../desktop/DesktopApplicationSession.js";
+import { DesktopSessionCleanupError } from "../../ports/DesktopApplicationSession.js";
 import { inspectLinuxApplication } from "../../desktop/LinuxApplicationInventory.js";
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";

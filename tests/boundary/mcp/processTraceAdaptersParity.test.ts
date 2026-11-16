@@ -17,6 +17,7 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 const temporaryRoots: string[] = [];
@@ -50,7 +51,10 @@ const comparisonClient = async (
     { kind: "session", session },
     { environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT } },
   );
-  const client = new Client({ name: "trace-parity", version: "1" });
+  const client = new Client(
+    { name: "trace-parity", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

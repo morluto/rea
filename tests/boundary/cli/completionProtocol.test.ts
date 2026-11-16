@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
-import { bashCompletionScript } from "../../../src/cli/bashCompletionRegistration.js";
+import { bashCompletionScript } from "../../../src/cli/completionProtocol.js";
 
 const execute = promisify(execFile);
 

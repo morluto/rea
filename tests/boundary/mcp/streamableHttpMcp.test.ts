@@ -12,10 +12,14 @@ import {
 } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const openSession = async (url: URL, name: string) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(transport);
   expect(transport.sessionId).toEqual(expect.any(String));

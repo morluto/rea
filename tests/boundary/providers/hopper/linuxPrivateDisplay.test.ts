@@ -14,9 +14,9 @@ import {
   MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type HopperStartupDiagnostic,
   type HopperStartupFailureCode,
-} from "../../../../src/domain/hopperStartupFailure.js";
+} from "../../../../src/hopper/HopperStartupFailure.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
+import { HopperProcessError } from "../../../../src/hopper/HopperErrors.js";
 import { analysisErrorProjectionSchema } from "../../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   runLinuxPrivateDisplayProbe,

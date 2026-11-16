@@ -25,6 +25,7 @@ import { registerServiceTools } from "../../../src/server/serviceToolBindings.js
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
   "preserves direct observation identity across the %s session boundary",
@@ -130,7 +131,10 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
         withAdmittedAnalysis: admitted,
       },
     );
-    const client = new Client({ name: "reuse-control", version: "1" });
+    const client = new Client(
+      { name: "reuse-control", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);
@@ -186,7 +190,10 @@ it("preserves the selected path when reusing an identical observation for a diff
   );
   const session = new BinarySession(router);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "reused-subject", version: "1" });
+  const client = new Client(
+    { name: "reused-subject", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   try {
     await server.connect(st);

@@ -143,7 +143,7 @@ const PATH_SCOPES = {
     "tests/boundary/filesystem/inesArtifact.test.ts",
     "tests/boundary/filesystem/inesCancellation.test.ts",
     "src/hopper/BridgeLauncher.ts",
-    "src/domain/hopperErrors.ts",
+    "src/hopper/HopperErrors.ts",
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
     "tests/acceptance/providers/hopperStartupRecovery.test.ts",
     "tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts",

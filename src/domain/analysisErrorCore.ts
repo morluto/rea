@@ -142,6 +142,24 @@ export const reattributedResourceConstraint = (
     },
   );
 
+/**
+ * Refuse at a fixed ceiling that its producer named. The ceiling carries its
+ * own value and recovery, so no other limit is reported beside it, and the
+ * unchanged request is not retryable.
+ */
+export const fixedCeilingConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  ceiling: FixedAllowance,
+  options?: AnalysisErrorOptions,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(operation, resource, reason, null, {
+    ...options,
+    retryable: false,
+    fixedAllowance: ceiling,
+  });
+
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
   error: AnalysisResourceConstraintError,

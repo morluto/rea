@@ -743,6 +743,50 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
+  "keeps the Kuna installation facts on a doctor check whose read and close both failed",
+  async () => {
+    const fixture = await session("rea-kuna-doctor-read-and-close-");
+    const resources = new ArtifactResourceScope();
+    const resourceScope: RetainedResourceScope = {
+      retain: (owner, resource) =>
+        resources.retain({
+          kind: "lease",
+          resource,
+          lease: { release: () => owner.close() },
+        }),
+      run: (operation) => resources.run(operation),
+    };
+    injected.installationPath = fixture.kuna;
+    injected.fingerprintReads = 0;
+    injected.failReadStage = "preProbeFingerprint";
+    try {
+      const inspection = await inspectKunaProvider(
+        {
+          REA_KUNA_COMMAND: fixture.kuna,
+          REA_KUNA_CACHE_DIR: fixture.cacheRoot,
+        },
+        process.platform,
+        { resourceScope },
+      );
+      expect(
+        inspection.checks.find(({ name }) => name === "version"),
+      ).toMatchObject({
+        ok: false,
+        code: "cleanup_incomplete",
+        details: {
+          cleanup_incomplete: true,
+          cleanup_resources: [expect.stringContaining(fixture.kuna)],
+          kuna_installation: { command: fixture.kuna },
+        },
+      });
+    } finally {
+      injected.failReadStage = undefined;
+      await resources.close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "retains a failed Kuna doctor hash in the supplied lifecycle owner",
   async () => {
     const fixture = await session("rea-kuna-doctor-hash-owner-");
@@ -772,6 +816,10 @@ it.skipIf(process.platform === "win32")(
       ).toMatchObject({
         ok: false,
         code: "cleanup_incomplete",
+        details: {
+          cleanup_incomplete: true,
+          cleanup_resources: [expect.stringContaining(fixture.kuna)],
+        },
       });
       expect(injected.closeCalls).toBe(1);
       await resources.close();

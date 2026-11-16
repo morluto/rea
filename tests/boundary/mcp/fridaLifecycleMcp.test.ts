@@ -46,6 +46,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const nativeFixture = () => {
   const created: string[] = [];
@@ -204,7 +205,10 @@ const connectedFixture = async () => {
     { kind: "session", session },
     { fridaInstrumentation: manager },
   );
-  const client = new Client({ name: "frida-lifecycle", version: "1" });
+  const client = new Client(
+    { name: "frida-lifecycle", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     native.controls.detachFailures = 0;
     native.controls.removalFailures = 0;
@@ -793,10 +797,13 @@ const callPartialFridaLoadError = async (
     { frida: new FridaInstrumentationService(provider) },
     { logger: silentLogger, recordEvidence },
   );
-  const client = new Client({
-    name: "frida-partial-probe-client",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "frida-partial-probe-client",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);

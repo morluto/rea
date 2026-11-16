@@ -194,10 +194,13 @@ it("follows native overflow continuations through MCP without repeating provider
     { kind: "session", session },
     { delivery: createToolResultDelivery(32 * 1024) },
   );
-  const client = new Client({
-    name: "native-observation-capacity",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "native-observation-capacity",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
