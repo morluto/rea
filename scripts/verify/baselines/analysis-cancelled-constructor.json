@@ -1,0 +1,4 @@
+{
+  "src/gdb/GdbSessionManager.ts": 1,
+  "src/process/ownedDebuggerSession.ts": 1
+}

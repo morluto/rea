@@ -84,7 +84,6 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
       environment: {
         NODE_OPTIONS: `--max-old-space-size=${String(heapMb)} --max-semi-space-size=8`,
       },
-      timeoutMs: 60_000,
     });
     expect(response.exitCode).toBe(0);
     const result = javascriptApplicationAnalysisResultSchema.parse(
@@ -201,7 +200,6 @@ cliTest.skipIf(process.versions.bun !== undefined)(
       environment: {
         NODE_OPTIONS: "--max-old-space-size=640 --max-semi-space-size=8",
       },
-      timeoutMs: 75_000,
     });
     expect(response.stderr).not.toMatch(/FATAL ERROR:.*heap/iu);
     expect(

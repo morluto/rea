@@ -6,7 +6,6 @@ import {
 } from "../domain/godotPckFormat.js";
 import { observeEmbeddedGodotPck } from "./GodotPckLocation.js";
 import type { FileHandle } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { DesktopFile, DesktopFact } from "../domain/desktopApplication.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
@@ -17,17 +16,17 @@ import {
   parsePeRecordFacts,
   peRvaToFileOffset,
 } from "../domain/binaryTarget.js";
-import { readManagedMetadataLayout } from "../dotnet/ManagedMetadataLayout.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedCliHeaderPrefix } from "../domain/managed/managedCliHeaderPrefix.js";
-import { readAssemblyReferenceName } from "../dotnet/ManagedMetadataInventoryRows.js";
-import { ManagedReaderFailure } from "../dotnet/ManagedReaderFailure.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+import { readAssemblyReferenceName } from "../domain/managed/managedMetadataInventoryRows.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
+import { ArtifactReaderFailure, abortIfNeeded } from "../resources/index.js";
 import { hasMachoMagic } from "../domain/apple/machoContainer.js";
 import {
   hasUnityFsHeader,
   readUnityFsHeaderFacts,
 } from "../domain/unityfsFormat.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface DesktopReadBudget {
   bytes: number;
@@ -122,6 +121,7 @@ export const inspectDesktopFile = async (
         throw new ArtifactReaderFailure(
           "integrity",
           "File ended before its observed extent",
+          { integrityCheck: "read-coverage" },
         );
       consumed += part.bytesRead;
     }
@@ -129,7 +129,7 @@ export const inspectDesktopFile = async (
     row.ranges.push({
       offset,
       bytes,
-      sha256: createHash("sha256").update(result).digest("hex"),
+      sha256: sha256Hex(result),
     });
     return result;
   };

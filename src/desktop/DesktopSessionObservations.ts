@@ -18,7 +18,10 @@ import {
 import { readProcessRunId } from "../process/ProcessOwnership.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { readRunTokenCarriers } from "../process/ProcessRunTokenObservations.js";
-import type { ObservedWindow } from "./X11WindowObserver.js";
+import type {
+  ObservedWindow,
+  WindowMatching,
+} from "../ports/DesktopApplicationSession.js";
 
 const COMMAND_TEXT_LIMIT = 512;
 /** Parent links followed when deciding whether the capture started a process. */
@@ -30,14 +33,6 @@ type TrackedProcess = Omit<DesktopProcess, "started_by_capture"> & {
   /** Kernel start time; the same pid with another start time is another process. */
   readonly startTime: string | undefined;
 };
-
-/** How a window is recognised as the application's. */
-export interface WindowMatching {
-  /** Class or instance names, lowercase. */
-  readonly names: ReadonlySet<string>;
-  /** False when window pids live in another pid namespace, as in a flatpak sandbox. */
-  readonly byPid: boolean;
-}
 
 /** One process's stat facts, or undefined when the process is gone. */
 type ProcessStat =

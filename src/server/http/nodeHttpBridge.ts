@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { finished } from "node:stream";
+import { CallerAbort } from "../../domain/analysisErrorCore.js";
 
 /** Fetch rejects a body on these methods, so their request streams are not forwarded. */
 const BODYLESS_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
@@ -93,7 +94,8 @@ export const toWebRequest = (
 ): Request => {
   const controller = new AbortController();
   response.once("close", () => {
-    if (!response.writableFinished) controller.abort();
+    if (!response.writableFinished)
+      controller.abort(new CallerAbort("client-disconnected"));
   });
   const method = request.method ?? "GET";
   return new Request(requestUrl(request.url ?? "/", origin), {

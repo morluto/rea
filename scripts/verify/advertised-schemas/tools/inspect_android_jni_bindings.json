@@ -1,0 +1,12 @@
+{
+  "schemas": {
+    "input compact": "e5d2cfec1580148e",
+    "output compact": "4bda7c3651bfc579"
+  },
+  "patterns": {
+    "input": [
+      "^[^\\x00]*$",
+      "^\\((?:\\[{0,255}(?:[B-DFIJSZ]|L[^\\(\\);]+;))*\\)(?:V|\\[{0,255}(?:[B-DFIJSZ]|L[^\\(\\);]+;))$"
+    ]
+  }
+}

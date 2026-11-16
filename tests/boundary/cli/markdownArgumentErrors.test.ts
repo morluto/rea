@@ -1,4 +1,5 @@
-import { Cli, Errors, z } from "incur";
+import { Cli, Errors } from "incur";
+import { z } from "zod";
 import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
 import { estimateTokenCount } from "tokenx";
 import { createMarkdownRenderer, disposeMdItInstance } from "vitepress";

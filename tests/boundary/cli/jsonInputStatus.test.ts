@@ -7,22 +7,22 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const JSON_COMMANDS = [
-  ["inspect-analysis-view", "inspect-analysis-view"],
-  ["trace-application-feature", "trace-application-feature"],
-  ["trace-javascript-semantics", "trace-javascript-semantics"],
-  ["compare-application-versions", "compare-application-versions"],
-  ["compare-source-to-bundle", "compare-source-to-bundle"],
-  ["compare-javascript-export-shapes", "compare-javascript-export-shapes"],
+  ["inspect-analysis-view", "inspect_analysis_view"],
+  ["trace-application-feature", "trace_application_feature"],
+  ["trace-javascript-semantics", "trace_javascript_semantics"],
+  ["compare-application-versions", "compare_application_versions"],
+  ["compare-source-to-bundle", "compare_source_to_bundle"],
+  ["compare-javascript-export-shapes", "compare_javascript_export_shapes"],
   [
     "build-reconstruction-obligation-ledger",
-    "build-reconstruction-obligation-ledger",
+    "build_reconstruction_obligation_ledger",
   ],
-  ["evaluate-reconstruction-coverage", "evaluate-reconstruction-coverage"],
-  ["project-android-application-graph", "project-android-application-graph"],
-  ["project-apple-application-graph", "project-apple-application-graph"],
-  ["import-managed-reconstruction", "import-managed-reconstruction"],
-  ["verify-managed-native-boundaries", "verify-managed-native-boundaries"],
-  ["project-managed-application-graph", "project-managed-application-graph"],
+  ["evaluate-reconstruction-coverage", "evaluate_reconstruction_coverage"],
+  ["project-android-application-graph", "project_android_application_graph"],
+  ["project-apple-application-graph", "project_apple_application_graph"],
+  ["import-managed-reconstruction", "import_managed_reconstruction"],
+  ["verify-managed-native-boundaries", "verify_managed_native_boundaries"],
+  ["project-managed-application-graph", "project_managed_application_graph"],
   ["capture-browser-scenario", "capture_browser_scenario"],
   ["capture-electron-scenario", "capture_electron_scenario"],
   ["reconcile-javascript-runtime", "reconcile_javascript_runtime"],
@@ -80,13 +80,215 @@ describe("compiled CLI JSON input failure status", () => {
           input_path: input,
           input_reason: kind === "file" ? "invalid-json" : "read-failed",
           ...(kind === "file"
-            ? { details: { operation: "compare-javascript-export-shapes" } }
+            ? { details: { operation: "compare_javascript_export_shapes" } }
             : {}),
         });
         expect(result.stderr).toBe("");
         expect(result.exitCode).toBe(1);
       },
     );
+});
+
+describe("compiled CLI JSON document omissions", () => {
+  // A one-shot command retains no session Evidence, so a selected view would
+  // otherwise reach an owner that accepts it and be silently dropped.
+  for (const [command, operation] of [
+    ["compare-source-to-bundle", "compare_source_to_bundle"],
+    ["trace-application-feature", "trace_application_feature"],
+  ] as const)
+    cliTest(`${command} refuses an omitted view field`, async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-omitted-");
+      const result = await cli.run({
+        arguments: [
+          command,
+          JSON.stringify({ view: { kind: "summary" } }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          operation,
+          issues: [
+            {
+              path: ["view"],
+              message: expect.stringContaining("inspect-analysis-view"),
+            },
+          ],
+        },
+      });
+      expect(result.exitCode).toBe(1);
+    });
+
+  // Delivery is chosen by options beside the document; a delivery field in
+  // the document names its option instead of being dropped or misread.
+  for (const [command, operation, field, message] of [
+    [
+      "compare-static-and-observed-endpoints",
+      "compare_static_and_observed_endpoints",
+      "detail",
+      "pass --detail beside it",
+    ],
+    [
+      "compare-static-and-observed-endpoints",
+      "compare_static_and_observed_endpoints",
+      "view",
+      "pass --view beside it",
+    ],
+    [
+      "capture-browser-scenario",
+      "capture_browser_scenario",
+      "detail",
+      "pass --detail beside it",
+    ],
+    [
+      "validate-browser-scenario",
+      "capture_browser_scenario",
+      "detail",
+      "pass --detail to capture-browser-scenario",
+    ],
+  ] as const)
+    cliTest(
+      `${command} refuses ${field} inside the document`,
+      async ({ cli }) => {
+        const root = await createTestTempDirectory("rea-cli-json-flagged-");
+        const result = await cli.run({
+          arguments: [
+            command,
+            JSON.stringify({
+              [field]: field === "view" ? { collection: "matches" } : "summary",
+            }),
+            "--json",
+          ],
+          environment: {
+            HOME: root,
+            XDG_CONFIG_HOME: root,
+            XDG_CACHE_HOME: root,
+          },
+        });
+        expect(result.json).toMatchObject({
+          code: "invalid_request",
+          category: "invalid_input",
+          details: {
+            operation,
+            issues: [
+              { path: [field], message: expect.stringContaining(message) },
+            ],
+          },
+        });
+        expect(result.exitCode).toBe(1);
+      },
+    );
+});
+
+describe("compiled CLI JSON document admission order", () => {
+  // The document frame is checked before any Evidence bundle is read, so a
+  // missing bundle cannot hide document errors.
+  cliTest(
+    "compare-static-and-observed-endpoints refuses a malformed document before reading its bundle",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-frame-");
+      const result = await cli.run({
+        arguments: [
+          "compare-static-and-observed-endpoints",
+          "{}",
+          "--evidence-bundle",
+          join(root, "missing.bundle.json"),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_static_and_observed_endpoints",
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: ["application"] }),
+            expect.objectContaining({ path: ["capture"] }),
+          ]),
+        },
+      });
+      expect(JSON.stringify(result.json)).not.toContain("missing.bundle.json");
+      expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
+describe("compiled CLI JSON document caller paths", () => {
+  // A `file:` spelling is a URL, never resolved against the working directory
+  // (#2577); a caller names such a file as `./file:ref.json`.
+  cliTest(
+    "compare-source-to-bundle refuses a file URL reference path",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-url-path-");
+      const result = await cli.run({
+        arguments: [
+          "compare-source-to-bundle",
+          JSON.stringify({
+            reference: { kind: "file", path: "file:ref.json" },
+            application: {},
+          }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_source_to_bundle",
+          issues: [{ path: ["reference", "path"], reason: "invalid_format" }],
+        },
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
+});
+
+describe("compiled CLI session-target JSON documents", () => {
+  cliTest(
+    "observe-native-calls refuses an invalid document before opening its target",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-cli-json-target-");
+      const result = await cli.run({
+        arguments: [
+          "observe-native-calls",
+          join(root, "missing-target"),
+          JSON.stringify({ breakpoints: "main" }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.json).toMatchObject({
+        error: "Analysis failed",
+        code: "invalid_request",
+        details: {
+          operation: "observe_native_calls",
+          issues: expect.arrayContaining([
+            expect.objectContaining({ path: ["breakpoints"] }),
+          ]),
+        },
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
 });
 
 describe("compiled CLI JSON input diagnostic preservation", () => {
@@ -160,7 +362,7 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
         code: "invalid_request",
         category: "invalid_input",
         details: {
-          operation: "compare-javascript-export-shapes",
+          operation: "compare_javascript_export_shapes",
           issues: [{ path: [], reason: "invalid_format", expected: "JSON" }],
         },
       });
@@ -287,7 +489,7 @@ describe("compiled JSON parser and logger success seam", () => {
           [
             "--input-type=module",
             "-e",
-            `import { parseCliJsonInput } from "./dist/cliJsonInput.js";
+            `import { parseCliJsonInput } from "./dist/cli/cliJsonInput.js";
          import { logCliCommand } from "./dist/cliLogging.js";
          import { silentLogger } from "./dist/logger.js";
          const parsed = await parseCliJsonInput(process.argv[1], "test-input");
@@ -314,7 +516,7 @@ describe("compiled CLI parser with relative brace and bracket paths", () => {
         const value = { selected: filename };
         await writeFile(join(root, filename), JSON.stringify(value));
         const moduleUrl = new URL(
-          "../../../dist/cliJsonInput.js",
+          "../../../dist/cli/cliJsonInput.js",
           import.meta.url,
         ).href;
         const result = await processes.run(
@@ -348,7 +550,7 @@ describe("compiled CLI parser with relative brace and bracket paths", () => {
       async ({ processes }) => {
         const root = await createTestTempDirectory("rea-cli-json-missing-");
         const moduleUrl = new URL(
-          "../../../dist/cliJsonInput.js",
+          "../../../dist/cli/cliJsonInput.js",
           import.meta.url,
         ).href;
         const result = await processes.run(

@@ -1,0 +1,26 @@
+$ rea capture-process --help
+exit: 0
+--- stdout
+rea capture-process — Capture one caller-selected process scenario
+
+Usage: rea capture-process <scenario>
+
+Arguments:
+  scenario  Scenario JSON path
+
+Custom Global Options:
+  --timings  Write measured command timing to stderr.
+
+Global Options:
+  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl>  Output format
+  --full-output                       Show full output envelope
+  --help                              Show help
+  --llms, --llms-full                 Print LLM-readable manifest
+  --schema                            Show JSON Schema for command
+  --token-count                       Print token count of output (instead of output)
+  --token-limit <n>                   Limit output to n tokens
+  --token-offset <n>                  Skip first n tokens of output
+<end>
+--- stderr
+<end>

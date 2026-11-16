@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { open, stat, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,7 +32,9 @@ it("keeps whole-file identity and entropy while selecting unaligned blocks and a
     bytes: 1024,
     sha256: createHash("sha256").update(bytes).digest("hex"),
   });
-  expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+  expect(fileIdentity(result.value.subject).sha256).toBe(
+    report.artifact.sha256,
+  );
   expect(result.value.confidence).toBe("observed");
 });
 
@@ -628,14 +631,15 @@ it("reads an admitted file even when Windows casing lookup is unavailable", asyn
   // The injected descriptor represents a readable share while the optional
   // host spelling lookup has no path on this filesystem.
   const selected = join(root, "share-selection.bin");
-  const platform = vi
-    .spyOn(process, "platform", "get")
-    .mockReturnValue("win32");
-  const service = new ByteEntropyService({
-    stat: ((...args: Parameters<typeof stat>) =>
-      stat(path, args[1])) as typeof stat,
-    open: async () => open(path, "r"),
-  });
+  const service = new ByteEntropyService(
+    {
+      stat: ((...args: Parameters<typeof stat>) =>
+        stat(path, args[1])) as typeof stat,
+      open: async () => open(path, "r"),
+    },
+    undefined,
+    "win32",
+  );
   try {
     const result = await service.inspect({ path: selected });
     if (!result.ok) throw result.error;
@@ -645,6 +649,5 @@ it("reads an admitted file even when Windows casing lookup is unavailable", asyn
     expect(result.value.caller_input_path).toBe(selected);
   } finally {
     await service.close();
-    platform.mockRestore();
   }
 });

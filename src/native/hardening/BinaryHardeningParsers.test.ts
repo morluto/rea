@@ -1,14 +1,14 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   ELF_HARDENING_PROPERTIES,
   MACHO_HARDENING_PROPERTIES,
   PE_HARDENING_PROPERTIES,
   type BinaryHardeningRow,
 } from "../../domain/native/binaryHardening.js";
-import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
-import { readElfImage } from "../metadata/ElfImage.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readElfImage } from "../../domain/native/elfImage.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
 import {
   elfHardeningFixture,
   fatMachoHardeningFixture,
@@ -180,6 +180,21 @@ it("rejects truncated, duplicate and over-budget ELF tables", () => {
   expect(() =>
     readElfHardening(elfHardeningFixture({ duplicateStack: true })),
   ).toThrow(expect.objectContaining({ kind: "malformed" }));
+  // A file-backed PT_DYNAMIC of 65,537 entries exceeds the entry allowance,
+  // which counts entries, not bytes.
+  const fixture = elfHardeningFixture();
+  const wide = Buffer.concat([fixture, Buffer.alloc(65_537 * 16)]);
+  const programs = Number(wide.readBigUInt64LE(32));
+  const dynamic = Array.from(
+    { length: wide.readUInt16LE(56) },
+    (_, index) => programs + index * wide.readUInt16LE(54),
+  ).find((at) => wide.readUInt32LE(at) === 2);
+  if (dynamic === undefined) throw new Error("Fixture has no PT_DYNAMIC");
+  wide.writeBigUInt64LE(BigInt(fixture.length), dynamic + 8);
+  wide.writeBigUInt64LE(65_537n * 16n, dynamic + 32);
+  expect(() => readElfHardening(wide)).toThrow(
+    expect.objectContaining({ maximum_bytes: 65_536, unit: "entries" }),
+  );
   const overBudget = readElfHardening(
     elfHardeningFixture({ symbolBudget: true }),
   );
@@ -1089,18 +1104,74 @@ it("leaves GNU property rows unknown behind a compressed note section", () => {
   });
 });
 
-it(
-  "admits a hostile section table without rescanning every span",
-  { tags: ["long-running"] },
-  () => {
-    const started = performance.now();
-    const image = readElfHardening(
-      elfHardeningFixture({ disjointNoteSections: 65000 }),
-    );
-    expect(performance.now() - started).toBeLessThan(5000);
-    expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
-  },
-);
+/**
+ * Count the array elements an operation walks, through iteration and the
+ * element-visiting array methods. Throws once past `allowed`, so a quadratic
+ * walk stops at the bound instead of running on. The methods are patched
+ * directly: a spy's own bookkeeping iterates arrays and would count itself.
+ */
+const countArrayVisits = <T>(
+  allowed: number,
+  run: () => T,
+): { readonly result: T; readonly visited: number } => {
+  const keys: readonly (string | symbol)[] = [
+    "every",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "map",
+    "reduce",
+    "some",
+    "sort",
+    "toSorted",
+    Symbol.iterator,
+  ];
+  const prototype = Array.prototype as unknown as Record<
+    PropertyKey,
+    (this: readonly unknown[], ...args: unknown[]) => unknown
+  >;
+  const originals = keys.map((key) => [key, prototype[key]!] as const);
+  let visited = 0;
+  let counting = true;
+  for (const [key, original] of originals)
+    prototype[key] = function (...args) {
+      if (counting && (visited += this.length) > allowed) {
+        counting = false;
+        throw new Error("array elements walked past bound");
+      }
+      return original.apply(this, args);
+    };
+  let result: T;
+  let walked: number;
+  try {
+    result = run();
+  } finally {
+    counting = false;
+    walked = visited;
+    for (const [key, original] of originals) prototype[key] = original;
+  }
+  return { result, visited: walked };
+};
+
+it("admits a hostile section table without rescanning every span", () => {
+  // Each section header is walked a fixed number of times while sections are
+  // parsed, sorted and indexed. Rescanning the note spans for every span
+  // walks sections^2 elements.
+  const sections = 65_000;
+  const bytes = elfHardeningFixture({ disjointNoteSections: sections });
+  const allowed = 64 * sections;
+  const { result: image, visited } = countArrayVisits(allowed, () =>
+    readElfHardening(bytes),
+  );
+  expect(visited).toBeLessThanOrEqual(allowed);
+  expect(findRow(image.rows, "cet_ibt_shstk").state).toBe("unknown");
+});
 
 it("cites a non-ASCII import name by its source bytes", () => {
   const name = "__\u00ff_chk";

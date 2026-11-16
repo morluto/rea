@@ -85,7 +85,7 @@ it.skipIf(process.platform === "win32")(
       assert.equal(fixture.process.listenerCount('error'), 0);
       const { createSystemProcessOwnershipHost } = await import(${JSON.stringify(new URL("../../../dist/process/ProcessOwnershipObservation.js", import.meta.url).href)});
       const { liveProcesses } = await import(${JSON.stringify(new URL("../../../dist/process/ProcessOwnershipProcessTree.js", import.meta.url).href)});
-      const live = liveProcesses(await createSystemProcessOwnershipHost().listProcesses());
+      const live = liveProcesses(await createSystemProcessOwnershipHost(process.platform).listProcesses());
       assert.equal(live.some(item => item.pid === fixture.process.pid || item.pid === descendant), false);
       // The process may finish while the separately owned socket still needs retry.
       const { CdpConnection } = await import(${JSON.stringify(new URL("../../../dist/browser/CdpConnection.js", import.meta.url).href)});
@@ -169,7 +169,7 @@ it.skipIf(process.platform === "win32")(
       assert.equal(existsSync(failedProfile), true);
       await lease.release();
       assert.equal(existsSync(failedProfile), false);
-      const afterRetry = liveProcesses(await createSystemProcessOwnershipHost().listProcesses());
+      const afterRetry = liveProcesses(await createSystemProcessOwnershipHost(process.platform).listProcesses());
       assert.equal(afterRetry.some(item => item.pid === lateDescendant), false);
       console.log(JSON.stringify({ retried: true, descendant_removed: true, startup_retry: true, socket_retry: true }));
     `;

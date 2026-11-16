@@ -1,3 +1,5 @@
+import { gdbMiConstText, parseGdbMiStreamRecord } from "./GdbMiRecord.js";
+
 /** Source-owned static provider identity and public operation names. */
 export const GDB_PROVIDER_IDENTITY = {
   id: "gnu.gdb",
@@ -6,11 +8,32 @@ export const GDB_PROVIDER_IDENTITY = {
 } as const;
 
 /**
- * Why a GDB observation carries no artifact subject. The session identifier
- * names a debugger, not the inferior, so every retention path states the same
- * reason and claims the same authority for it.
+ * GDB observations come from a session REA runs and whose target it names, so
+ * every retention path claims the same controlled replay.
  */
-export const GDB_SUBJECT_UNAVAILABLE_REASON =
-  "The active GDB inferior identity is not established by the debugger session identifier.";
-
 export const GDB_OBSERVATION_AUTHORITY = "controlled-replay" as const;
+
+/** Provider identity with the version this GDB reported, or null when unknown. */
+export interface GdbProviderIdentity {
+  readonly id: typeof GDB_PROVIDER_IDENTITY.id;
+  readonly name: typeof GDB_PROVIDER_IDENTITY.name;
+  readonly version: string | null;
+}
+
+/**
+ * Read the GDB version from the `-gdb-version` reply's stream records. The
+ * first console record is `GNU gdb (<package>) <version>`; any other first
+ * console record, or one that is not strict UTF-8, leaves it unknown.
+ */
+export const gdbReportedVersion = (
+  records: readonly string[],
+): string | null => {
+  const banner = records
+    .map(parseGdbMiStreamRecord)
+    .find((record) => record.ok && record.value.kind === "console");
+  const text = banner?.ok ? gdbMiConstText(banner.value.value) : undefined;
+  const line = text?.split("\n", 1)[0]?.trim() ?? "";
+  if (!line.startsWith("GNU gdb ")) return null;
+  const version = line.slice(line.lastIndexOf(" ") + 1);
+  return /^\d/u.test(version) ? version : null;
+};

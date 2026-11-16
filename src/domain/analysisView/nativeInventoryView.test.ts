@@ -1,10 +1,9 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { nativeInventoryRowsSchemas } from "../native/nativeInventory.js";
-import {
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 afterEach(() => vi.restoreAllMocks());
@@ -26,7 +25,7 @@ const parent = (normalizedResult: unknown): AnalysisViewParent => ({
   sealedResult: true,
   provider: { id: "fixture", name: "Fixture", version: "1" },
   artifact: null,
-  subject: null,
+  subject: UNKNOWN_EVIDENCE_SUBJECT,
   parameters: { pattern: "a", mode: "literal", case_sensitive: false },
   limitations: ["Provider discovery is partial."],
 });

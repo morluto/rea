@@ -3,7 +3,7 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { createHash } from "node:crypto";
 import type { Dir } from "node:fs";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ok as javaProbeOk } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import {
@@ -180,7 +180,7 @@ describe.skipIf(process.platform === "win32")(
         language_id: "Allegrex:LE:32:default",
         compiler_spec_id: "default",
         loader: "PspElfLoader",
-        mips_support_lane: "psp-elf32-exec-eabi32-allegrex-v2",
+        mips_support_lane: "psp-elf32-exec-eabi32-allegrex",
         mips_elf: {
           elf_class: 32,
           byte_order: "little",

@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { goBinarySchema } from "../../src/domain/go/goBinary.js";
 import { evidenceResultOf } from "../../src/contracts/toolOutputSchemaPrimitives.js";
 import { readFile, writeFile } from "node:fs/promises";
@@ -21,7 +22,7 @@ import {
 } from "../fixtures/go/image.js";
 import { createGoRodataStringFixture } from "../fixtures/go/rodataStringImage.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
@@ -47,7 +48,7 @@ cliTest(
     ] as const) {
       const path = join(root, `${item.name}.macho`);
       await writeFile(path, item.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       const response = await call("inspect_go_binary", { path });
@@ -130,7 +131,7 @@ cliTest(
         );
       const path = join(root, `${item.name}.elf`);
       await writeFile(path, item.fixture.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       const response = await call("inspect_go_binary", { path });
@@ -199,12 +200,12 @@ cliTest(
     const path = join(root, "application.elf");
     const output = join(root, "source.json");
     await writeFile(path, createGoBinaryFixture().bytes);
-    const complete = await runFileCli(cli, {
+    const complete = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(complete.exitCode, complete.stderr).toBe(0);
     const full = evidenceResultOf(goBinarySchema).parse(complete.json);
-    const summary = await runFileCli(cli, {
+    const summary = await cli.run({
       arguments: [
         "inspect-go-binary",
         path,
@@ -233,7 +234,7 @@ cliTest(
         .map((record) => parseEvidence(record))
         .find((record) => record.evidence_id === full.evidence_id),
     ).toEqual(full);
-    const refused = await runFileCli(cli, {
+    const refused = await cli.run({
       arguments: [
         "inspect-go-binary",
         join(root, "missing"),
@@ -256,7 +257,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-overlap-");
     const path = join(root, "overlapping.elf");
     await writeFile(path, createGoOverlappingElfFixture());
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -289,7 +290,7 @@ cliTest(
       const fixture = createGoSplitElfFixture({ sectionless });
       const path = join(root, sectionless ? "sectionless.elf" : "original.elf");
       await writeFile(path, fixture.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -324,12 +325,12 @@ for (const bits of [32, 64] as const) {
         ] as const) {
           const path = join(root, `${label}.exe`);
           await writeFile(path, bytes);
-          const result = await runFileCli(cli, {
+          const result = await cli.run({
             arguments: ["inspect-go-binary", path, "--json"],
           });
           expect(result.exitCode, result.stderr).toBe(0);
           const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-          expect(evidence.subject?.digest.sha256).toBe(
+          expect(fileIdentity(evidence.subject).sha256).toBe(
             createHash("sha256").update(bytes).digest("hex"),
           );
           expect(evidence.normalized_result.build_info).toMatchObject({
@@ -379,7 +380,7 @@ cliTest(
         path,
         machoImageWithUnknownCommand(fixture.wide, fixture.size),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       const response = await call("inspect_go_binary", { path });
@@ -418,7 +419,7 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
         root,
         expectedErrno,
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -449,7 +450,7 @@ cliTest(
     const path = join(root, "byte-strings.elf");
     const fixture = createGoBinaryByteStringFixture();
     await writeFile(path, fixture.bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -467,7 +468,7 @@ for (const fixture of createGoBinaryDiagnosticFixtures()) {
       const root = await createTestTempDirectory("rea-go-cli-mz-");
       const path = join(root, `${fixture.name}.exe`);
       await writeFile(path, fixture.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -488,7 +489,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-cli-");
     const path = join(root, "text.bin");
     await writeFile(path, "This is not an executable container.");
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(1);
@@ -508,7 +509,7 @@ for (const format of ["elf", "pe", "macho"] as const) {
         const fixture = createGoBinaryFixture({ format, encoding });
         const path = join(root, "application.bin");
         await writeFile(path, fixture.bytes);
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: ["inspect-go-binary", "application.bin", "--json"],
           cwd: root,
         });
@@ -516,7 +517,7 @@ for (const format of ["elf", "pe", "macho"] as const) {
         const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
         expect(evidence.raw_result).toBeNull();
         expect(evidence.subject?.local_path).toBe(path);
-        expect(evidence.subject?.digest.sha256).toBe(
+        expect(fileIdentity(evidence.subject).sha256).toBe(
           createHash("sha256").update(fixture.bytes).digest("hex"),
         );
         const report = evidence.normalized_result;
@@ -582,12 +583,12 @@ cliTest("preserves MIPS identity in Go CLI Evidence", async ({ cli }) => {
   fixture.bytes.writeUInt16LE(8, 18); // ELF EM_MIPS.
   const path = join(root, "application.elf");
   await writeFile(path, fixture.bytes);
-  const result = await runFileCli(cli, {
+  const result = await cli.run({
     arguments: ["inspect-go-binary", path, "--json"],
   });
   expect(result.exitCode, result.stderr).toBe(0);
   const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
-  expect(evidence.subject?.architecture).toBe("mips");
+  expect(fileIdentity(evidence.subject).architecture).toBe("mips");
   expect(evidence.normalized_result).toMatchObject({
     architecture: "mips",
     bits: 64,
@@ -601,7 +602,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-cli-");
     const path = join(root, "metadata-free.elf");
     await writeFile(path, createGoBinaryFixture({ omitBuildInfo: true }).bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode).toBe(0);
@@ -625,7 +626,7 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-gopath-cli-");
     const path = join(root, "application.elf");
     await writeFile(path, createGoBinaryFixture({ moduleText }).bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
@@ -662,7 +663,7 @@ cliTest(
     });
     await writeFile(path, fixture.bytes);
 
-    const standaloneCap = await runFileCli(cli, {
+    const standaloneCap = await cli.run({
       arguments: [
         "inspect-go-binary",
         path,
@@ -676,11 +677,11 @@ cliTest(
       code: "invalid_request",
       details: {
         operation: "inspect_go_binary",
-        issues: [{ path: ["max_string_literals"] }],
+        issues: [{ path: ["maxStringLiterals"] }],
       },
     });
 
-    const cliResult = await runFileCli(cli, {
+    const cliResult = await cli.run({
       arguments: [
         "inspect-go-binary",
         path,

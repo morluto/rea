@@ -1,5 +1,4 @@
 import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
-import { createHash } from "node:crypto";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
@@ -10,9 +9,8 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 const address = (offset: number): string => `0x${offset.toString(16)}`;
 const GHIDRA_DOS_LOAD_VERIFICATION_LIMITATION =
   "Verification covers original/modified FileBytes, every initialized target-backed header/module mapping, relocation records and the external entry point. Ghidra relocation symbol names are retained observations, not independently verified. Mapping ends are inclusive.";
@@ -27,7 +25,11 @@ export type GhidraDosImage = {
   readonly header: DosMzHeader;
   readonly loadSegment: number;
   readonly modified: Buffer;
-  readonly expectedRelocations: NativeLoadImageObservation["relocations"];
+  /** The independent DOS check does not attest Ghidra's symbol name. */
+  readonly expectedRelocations: readonly Omit<
+    NativeLoadImageObservation["relocations"][number],
+    "symbol"
+  >[];
 };
 
 /** Prepare initialized bytes and relocation facts without copying overlays. */
@@ -137,7 +139,11 @@ export const attestGhidraDosLoadImage = (
   );
   check("entry_points", [entryAddress], [...observations.entry_points].sort());
   // A multiset preserves duplicate relocations and aliases; iteration order is not semantic.
-  const rows = (values: NativeLoadImageObservation["relocations"]): string[] =>
+  const rows = (
+    values: readonly (GhidraDosImage["expectedRelocations"][number] & {
+      readonly symbol?: string | null;
+    })[],
+  ): string[] =>
     values
       // The independent DOS check does not attest Ghidra's symbol name.
       .map(
@@ -258,7 +264,7 @@ const checkMappings = (
     check(
       `${at}.memory_sha256`,
       start !== null && end !== null && end <= modified.length
-        ? sha256(modified.subarray(start, end))
+        ? sha256Hex(modified.subarray(start, end))
         : null,
       mapping.sha256,
       start,
@@ -270,17 +276,9 @@ const checkMappings = (
   check(
     "initialized_unbacked_mappings",
     [],
-    observations.mappings
-      .filter(
-        (mapping) => mapping.initialized && mapping.source_file_index === null,
-      )
-      // Unmeasured permissions serialize as null so the observed value stays JSON.
-      .map((mapping) => ({
-        ...mapping,
-        readable: mapping.readable ?? null,
-        writable: mapping.writable ?? null,
-        executable: mapping.executable ?? null,
-      })),
+    observations.mappings.filter(
+      (mapping) => mapping.initialized && mapping.source_file_index === null,
+    ),
   );
 };
 
@@ -290,7 +288,7 @@ export const attestGhidraDosComLoadImage = (
   targetSha256: string,
   observations: NativeLoadImageObservation,
 ): Result<NativeLoadImage, string> => {
-  if (sha256(bytes) !== targetSha256)
+  if (sha256Hex(bytes) !== targetSha256)
     return err("Ghidra COM snapshot digest does not match the admitted target");
   const length = validateDosComLength(bytes.length);
   if (!length.ok) return length;

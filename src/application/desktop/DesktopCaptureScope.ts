@@ -4,7 +4,7 @@ import { basename, isAbsolute } from "node:path";
 import type { DesktopApplicationInventory } from "../../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { SQLITE_SIDECARS } from "../../domain/desktop/stateFormats.js";
-import type { WindowMatching } from "../../desktop/DesktopSessionObservations.js";
+import type { WindowMatching } from "../../ports/DesktopApplicationSession.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import type { CheckpointScope } from "./DesktopCheckpointRecorder.js";
