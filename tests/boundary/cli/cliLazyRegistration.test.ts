@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { Cli } from "incur";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
@@ -9,32 +9,37 @@ import {
   CLI_REGISTRATION_ORDER,
   type CliCommandRegistrationId,
 } from "../../../src/cli/cliCommandRegistrations.js";
-import { selectCliRegistration } from "../../../src/cli/cliLoader.js";
+import { selectCliRegistrations } from "../../../src/cli/cliLoader.js";
+import {
+  cliCompletionShell,
+  parseCliGlobalArguments,
+} from "../../../src/cliBuiltinArguments.js";
+
+/** Select registrars as the executable does: completion has no global arguments. */
+const selectFor = (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  recorded: Readonly<Record<string, string>> | undefined,
+) =>
+  selectCliRegistrations(
+    cliCompletionShell(environment) === undefined
+      ? parseCliGlobalArguments(arguments_)
+      : undefined,
+    recorded,
+  );
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
+
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { processTest } from "../../support/process/processFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 const ENVIRONMENT = { PATH: process.env.PATH };
 
-// Incur types its router key without vars, env, or globals; accept any CLI.
-const registeredCommands: WeakMap<
-  object,
-  Map<string, unknown>
-> = Cli.toCommands;
-
-const topLevelNames = (cli: CliInstance): readonly string[] => [
-  ...(registeredCommands.get(cli)?.keys() ?? []),
-];
-
-const commandPaths = (cli: CliInstance): readonly string[] => {
-  const paths: string[] = [];
-  visitRegisteredCommands(cli, (_command, path) => paths.push(path));
-  return paths;
-};
+const topLevelNames = (cli: CliInstance): readonly string[] =>
+  cliCommands(cli).map(({ name }) => name);
 
 const createRegistrarCli = async (
   id: CliCommandRegistrationId,
@@ -80,11 +85,11 @@ describe("lazy CLI registration", () => {
 
   it("gives each command the same definition alone as in the complete CLI", async () => {
     const complete = createCli(ENVIRONMENT);
-    const completePaths = new Set(commandPaths(complete));
+    const completePaths = new Set(topLevelNames(complete));
     const covered = new Set<string>();
     for (const id of CLI_REGISTRATION_ORDER) {
       const alone = await createRegistrarCli(id);
-      for (const path of commandPaths(alone)) {
+      for (const path of topLevelNames(alone)) {
         expect(completePaths.has(path), path).toBe(true);
         covered.add(path);
         expect(await help(alone, path), path).toEqual(
@@ -101,18 +106,28 @@ describe("lazy CLI registration", () => {
       arguments_: readonly string[],
       environment: NodeJS.ProcessEnv = {},
       record: Readonly<Record<string, string>> | null = recorded,
-    ) => selectCliRegistration(arguments_, environment, record ?? undefined);
+    ) => selectFor(arguments_, environment, record ?? undefined);
 
-    expect(select(["inspect-go-binary", "a.out"])).toBe("go");
-    expect(select(["inspect-go-binary", "a.out", "--json"])).toBe("go");
-    expect(select(["--format", "json", "inspect-go-binary", "a.out"])).toBe(
+    expect(select(["inspect-go-binary", "a.out"])).toEqual(["go"]);
+    expect(select(["inspect-go-binary", "a.out", "--json"])).toEqual(["go"]);
+    expect(select(["--format", "json", "inspect-go-binary", "a.out"])).toEqual([
       "go",
-    );
-    expect(select(["--timings", "setup", "--dry-run"])).toBe("setup");
+    ]);
+    expect(select(["--timings", "setup", "--dry-run"])).toEqual(["setup"]);
+    // A standalone version query needs no registrar, recorded or not.
+    expect(select(["--version"])).toEqual([]);
+    expect(select(["--version"], {}, null)).toEqual([]);
+    // Combined with anything else, or completing, it keeps the complete CLI.
+    expect(select(["--version", "--help"])).toBeUndefined();
+    expect(select(["--version", "--timings"])).toBeUndefined();
+    expect(select(["--version"], { COMPLETE: "bash" })).toBeUndefined();
     // Help, schemas, LLM manifests and builtins describe the whole catalog.
     for (const flag of ["--help", "-h", "--schema", "--llms", "--llms-full"])
       expect(select(["inspect-go-binary", flag]), flag).toBeUndefined();
-    expect(select(["inspect-go-binary", "--mcp"])).toBeUndefined();
+    // A retired mode is refused without constructing command analysis.
+    expect(select(["inspect-go-binary", "--mcp"])).toEqual([]);
+    expect(select(["unknown", "--mcp"], {}, null)).toEqual([]);
+    expect(select(["--mcp"])).toBeUndefined();
     expect(select([])).toBeUndefined();
     expect(select(["skills", "add"])).toBeUndefined();
     // An unknown name needs every command for "did you mean".
@@ -125,7 +140,9 @@ describe("lazy CLI registration", () => {
       select(["inspect-go-binary"], {}, { "inspect-go-binary": "removed" }),
     ).toBeUndefined();
   });
+});
 
+describe("lazy CLI execution", () => {
   processTest(
     "runs a recorded command without loading the complete CLI",
     async ({ processes }) => {
@@ -149,6 +166,18 @@ registerHooks({ resolve(specifier, context, next) {
       expect(lazy.exitCode, lazy.stderr).toBe(0);
       expect(JSON.parse(lazy.stdout)).toMatchObject({ sessions: [] });
       expect(lazy.stderr).not.toContain(marker);
+      const version = await run(["--version"]);
+      expect(version.exitCode, version.stderr).toBe(0);
+      expect(version.stdout).toBe(`${PRODUCT_IDENTITY.packageVersion}\n`);
+      expect(version.stderr).not.toContain(marker);
+      const retired = await run(["doctor", "--mcp", "--json", "--full-output"]);
+      expect(retired.exitCode, retired.stderr).toBe(1);
+      expect(JSON.parse(retired.stdout)).toMatchObject({
+        ok: false,
+        error: { code: "MCP_MODE_REMOVED" },
+        meta: { command: "doctor" },
+      });
+      expect(retired.stderr).not.toContain(marker);
       const complete = await run(["list-cutter-sessions", "--help"]);
       expect(complete.exitCode, complete.stderr).toBe(0);
       expect(complete.stderr).toContain(marker);

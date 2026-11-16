@@ -10,7 +10,7 @@ import {
   zipLeavesOutAt,
   zipView,
 } from "./zipView.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /**
  * The entry a pointer into a zip view goes into, when it has a view and both

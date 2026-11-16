@@ -6,8 +6,8 @@ import {
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import {
   javascriptRuntimeObservationSchema,
   javascriptRuntimeTargetListSchema,
@@ -666,7 +666,6 @@ const ingestEvent = (event: CdpReceivedEvent, state: CaptureState): void => {
       ingestContext(registered, state);
       return;
     default:
-      // This metadata projection does not retain other CDP event families.
       return;
   }
 };

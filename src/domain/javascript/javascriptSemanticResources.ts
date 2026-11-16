@@ -21,11 +21,11 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
-import { semanticOpaqueBindingReadMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import {
-  semanticBindingAtRead,
-  semanticEffectTiming,
-} from "./javascriptSemanticMutationInitializers.js";
+  opaqueCodeMayRebindBinding,
+  prototypeMutationMayPrecede,
+} from "./javascriptSemanticEffectLog.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -457,10 +457,10 @@ const collectReleases = (
     const candidates =
       binding === undefined ? [] : (byBinding.get(binding.bindingId) ?? []);
     if (binding === undefined || candidates.length === 0) return;
-    const opaqueReceiver = semanticOpaqueBindingReadMayHaveChanged(
+    const opaqueReceiver = opaqueCodeMayRebindBinding(
       binding,
-      member.object,
       context.state,
+      member.object,
     );
     const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
       ? semanticBindingAtRead(binding, member.object, context.state).binding
@@ -907,7 +907,70 @@ const rejectsTlsProtocolVersionLiteral = (
     if (read === undefined || read === "unknown") continue;
     if (rejectsValue(read)) return true;
   }
-  return false;
+  return rejectsSecureProtocolLiteral(effective, state);
+};
+
+/**
+ * The `secureProtocol` method names Node accepts. Measured on Node 24.22.1, these
+ * connect while `"SSLv2_method"`, `"SSLv3_method"` and their client/server forms,
+ * `"TLSv1_3_method"`, `"DTLS_method"`, `"tls_method"`, `"TLS_METHOD"`, `"bogus"`
+ * and `""` throw `ERR_TLS_INVALID_PROTOCOL_METHOD`. The set is exact and
+ * case-sensitive.
+ */
+const TLS_SECURE_PROTOCOLS = new Set(
+  ["TLS", "TLSv1", "TLSv1_1", "TLSv1_2", "SSLv23"].flatMap((family) => [
+    `${family}_method`,
+    `${family}_client_method`,
+    `${family}_server_method`,
+  ]),
+);
+
+/**
+ * Whether `secureProtocol` makes `tls.connect` throw before a socket exists.
+ *
+ * Measured on Node 24.22.1, after the same truthy-`secureContext` bypass as the
+ * version members:
+ *
+ *   a string outside TLS_SECURE_PROTOCOLS, including ""  -> THREW ERR_TLS_INVALID_PROTOCOL_METHOD
+ *   a non-string value such as 5, true or {}             -> socket (Node ignores it)
+ *   a truthy value beside a minVersion or maxVersion that
+ *   is not null or undefined, even "TLS_method"          -> THREW ERR_TLS_PROTOCOL_VERSION_CONFLICT
+ *   "TLS_method" beside a null or undefined version      -> socket
+ *   0 beside a minVersion                                -> socket
+ */
+const rejectsSecureProtocolLiteral = (
+  effective: (member: string) => t.Node | "unknown" | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const protocol = effective("secureProtocol");
+  if (protocol === undefined || protocol === "unknown") return false;
+  const read = unwrapJavaScriptExpression(protocol).node;
+  if (isNullishPlaceholder(read, state)) return false;
+  const literal = readExactJavaScriptLiteral(read);
+  if (
+    literal.found &&
+    typeof literal.value === "string" &&
+    !TLS_SECURE_PROTOCOLS.has(literal.value)
+  )
+    return true;
+  // A literal read exactly, including a no-substitution template, decides its own
+  // truthiness; the shared truthiness reader does not price templates.
+  const truthy = literal.found
+    ? Boolean(literal.value)
+    : staticJavaScriptTruthiness(read);
+  if (truthy !== true) return false;
+  return (["minVersion", "maxVersion"] as const).some((member) => {
+    const version = effective(member);
+    if (version === undefined || version === "unknown") return false;
+    const value = unwrapJavaScriptExpression(version).node;
+    return (
+      !isNullishPlaceholder(value, state) &&
+      (readExactJavaScriptLiteral(value).found ||
+        t.isTemplateLiteral(value) ||
+        t.isObjectExpression(value) ||
+        t.isArrayExpression(value))
+    );
+  });
 };
 
 /**
@@ -933,11 +996,7 @@ const rejectsSocketHostMember = (
     staticJavaScriptTruthiness(value) === false;
   // Node reads an absent member through the prototype chain, so a write to
   // Object.prototype that may run first can supply a path or socket.
-  const inheritable = state.prototypeMutationSites.some(
-    (effect) =>
-      effect.owner === "Object" &&
-      semanticEffectTiming(node, effect.node, state) !== "after",
-  );
+  const inheritable = prototypeMutationMayPrecede(state, "Object", node);
   for (const member of specifier === "tls" ? ["path", "socket"] : ["path"]) {
     const value = effective(member);
     if (value === "unknown" || (value !== undefined && !falsy(value)))

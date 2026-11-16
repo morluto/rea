@@ -1,4 +1,3 @@
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type {
   ClientRegistrationConnectionProfile,
   ClientRegistrationProfile,
@@ -25,9 +24,9 @@ import {
   absoluteClientRoot,
   clientPathDependence,
   absoluteXdgConfigHome,
-  mcporterConfigDirectory,
-  mcporterExpandHome,
   type ClientRootFailure,
+  mcporterExpandHome,
+  mcporterXdgConfigHome,
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
@@ -49,6 +48,7 @@ import type {
   McpRegistrationLocation,
   McpRegistrationLocationContext,
 } from "./McpRegistrationLocations.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** One supported client configuration location. */
 export interface SetupClient {
@@ -305,7 +305,7 @@ const lmStudioLocation = ({
     if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
       return err({
         path: pointerPath,
-        message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${cause instanceof Error ? cause.message : String(cause)}. Repair access to that file, then rerun.`,
+        message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${errorMessage(cause)}. Repair access to that file, then rerun.`,
       });
     const cache = join(home, ".cache", "lm-studio");
     directory = existsSync(cache) ? cache : join(home, ".lmstudio");
@@ -670,7 +670,7 @@ const directoryPresent = (path: string): Result<boolean, ClientPathFailure> => {
       return ok(false);
     return err({
       path,
-      message: `Cannot determine whether ${path} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Zed.`,
+      message: `Cannot determine whether ${path} exists: ${errorMessage(cause)}. Repair its access before configuring Zed.`,
     });
   }
 };
@@ -688,7 +688,7 @@ const sameDirectory = (
     } catch (cause: unknown) {
       return err({
         path,
-        message: `Cannot resolve ${path}: ${cause instanceof Error ? cause.message : String(cause)}. Repair it before configuring Zed.`,
+        message: `Cannot resolve ${path}: ${errorMessage(cause)}. Repair it before configuring Zed.`,
       });
     }
   }
@@ -758,7 +758,7 @@ const regularPathPresent = (
       return ok(false);
     return err({
       path,
-      message: `Cannot determine whether ${path} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring MCPorter.`,
+      message: `Cannot determine whether ${path} exists: ${errorMessage(cause)}. Repair its access before configuring MCPorter.`,
     });
   }
 };
@@ -796,7 +796,8 @@ const mcporterLocation = ({
         })
       : absolute;
   }
-  const base = mcporterConfigDirectory({ home, platform, env });
+  const configHome = mcporterXdgConfigHome({ home, platform, env });
+  const base = configHome === undefined ? legacy : join(configHome, "mcporter");
   const candidates = [base, ...(base === legacy ? [] : [legacy])].flatMap(
     (directory) => [
       join(directory, "mcporter.json"),
@@ -869,7 +870,7 @@ const ampLocation = ({
       )
         return err({
           path: candidate,
-          message: `Cannot determine whether ${candidate} exists: ${cause instanceof Error ? cause.message : String(cause)}. Repair its access before configuring Amp.`,
+          message: `Cannot determine whether ${candidate} exists: ${errorMessage(cause)}. Repair its access before configuring Amp.`,
         });
     }
   }
@@ -1995,7 +1996,7 @@ const layerLoadOrder = (
 /** Describe every client location that setup, doctor, or uninstall may inspect. */
 export const supportedClients = (
   home: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
   env: ClientPathContext["env"] = process.env,
   systemPaths: ClientSystemPaths = {},
 ): readonly SetupClient[] => {
@@ -2080,7 +2081,7 @@ export const supportedClients = (
         displayName: definition.displayName,
         format: definition.format,
         configPath: env.PI_CODING_AGENT_DIR ?? "",
-        configPathError: `Invalid PI_CODING_AGENT_DIR: ${cause instanceof Error ? cause.message : String(cause)}. Repair the override before configuring Pi.`,
+        configPathError: `Invalid PI_CODING_AGENT_DIR: ${errorMessage(cause)}. Repair the override before configuring Pi.`,
       };
     }
   });
@@ -2092,7 +2093,7 @@ export const supportedClients = (
  */
 export const resolveSupportedClients = async (
   home: string,
-  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  platform: NodeJS.Platform,
   env: ClientPathContext["env"] = process.env,
   systemPaths: ClientSystemPaths = {},
 ): Promise<readonly SetupClient[]> => {
@@ -2125,8 +2126,8 @@ export const resolveSupportedClients = async (
 export const clientSkillDirectories = (
   home: string,
   clientIds: readonly string[] | undefined,
-  environment: Readonly<NodeJS.ProcessEnv> = {},
-  platform: NodeJS.Platform = process.platform,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
 ): {
   readonly directories: readonly {
     readonly client: string;

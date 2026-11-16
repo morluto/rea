@@ -9,7 +9,7 @@ import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { schemaVerifierEnvironment } from "../../../scripts/lib/mcp-verification-environment.mjs";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 cliTest.skipIf(process.platform === "win32")(
   "migrates an owned shebang registration and starts its generated MCP command without a runtime on PATH",
@@ -106,10 +106,13 @@ cliTest.skipIf(process.platform === "win32")(
       command: registration.command,
       args: registration.args,
       cwd: home,
-      env: schemaVerifierEnvironment({ ...environment, ...registration.env }),
+      env: { ...environment, ...registration.env },
       stderr: "pipe",
     });
-    const client = new Client({ name: "setup-interpreter", version: "1" });
+    const client = new Client(
+      { name: "setup-interpreter", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       expect(

@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
 import { INITIAL_TRASH_ROWS } from "../../fixtures/environmentStateLaterReads.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { advertisedInputDialectViolations } from "../../../src/contracts/advertisedDialect.js";
 
 import {
   Client,
@@ -21,12 +22,9 @@ import {
   processTest,
   type TestProcesses,
 } from "../../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const CARD_PATH = "/.well-known/agent-env.json";
-/** SHA-256 of the 14,519-byte card served for the fixture named "renamed", its descriptions naming each tool's recorded responses; pure replay must serve these bytes. */
-const REPLAY_CARD_SHA256 =
-  "995c280f0798f77e76f206c068eb6c2c1f8c4210a03ac1c01fba8cc07b5d7f09";
-
 /** Serve the fixture pair as pure replay through the built CLI. */
 const serveReplayOnly = async (
   processes: TestProcesses,
@@ -53,7 +51,10 @@ const serveReplayOnly = async (
 
 const connect = async (url: URL) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name: "environment-boundary", version: "1" });
+  const client = new Client(
+    { name: "environment-boundary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   await client.connect(transport);
   return client;
 };
@@ -175,7 +176,9 @@ processTest(
         tools.find(({ name }) => name === tool.name)?.inputSchema.properties
           ?.tag,
       ).toMatchObject({
-        oneOf: [
+        // The recorded `oneOf` is advertised as the portable `anyOf`; the
+        // branches are disjoint, so both accept the same values.
+        anyOf: [
           { type: "string" },
           { type: "number" },
           { type: "boolean" },
@@ -212,6 +215,29 @@ describe("rea environment-serve --replay-only", () => {
         expect(tools.map(({ name }) => name).sort()).toEqual(
           source.manifest.tools.map(({ name }) => name).sort(),
         );
+        // A served catalog reaches models through the same clients as REA's.
+        // The dialect has no portable form for a query parameter's
+        // string, number, boolean or string-list union yet, so only that
+        // union's untyped node remains outside it.
+        for (const violation of tools.flatMap(
+          advertisedInputDialectViolations,
+        )) {
+          expect(violation).toMatchObject({ rule: "type", detail: "untyped" });
+          const property = /^\$\.properties\.([^.]+)$/u.exec(violation.path);
+          const name = property?.[1] ?? "";
+          const tool = tools.find(
+            ({ name: listed }) => listed === violation.tool,
+          );
+          expect(tool?.inputSchema.properties?.[name], violation.path).toEqual({
+            description: expect.stringMatching(/^Query parameter /u),
+            anyOf: [
+              { type: "string" },
+              { type: "number" },
+              { type: "boolean" },
+              { type: "array", items: { type: "string" } },
+            ],
+          });
+        }
         const users = tools.find(({ name }) => name === "get_users_by_id");
         expect(users?.description).toContain(
           '; returns a JSON object with fields "id", "uid", "login", "email"; recorded statuses 200;',
@@ -272,11 +298,17 @@ describe("rea environment-serve --replay-only", () => {
       const card = await fetch(new URL(CARD_PATH, origin));
       expect(card.status).toBe(200);
       const text = await card.text();
-      expect(
-        createHash("sha256").update(text).digest("hex"),
-        `${Buffer.byteLength(text)}-byte card`,
-      ).toBe(REPLAY_CARD_SHA256);
       const body: unknown = JSON.parse(text);
+      // Keep a readable independent golden for every description and input
+      // schema; deriving this expectation with environmentCard would hide drift.
+      const expectedCard: unknown = JSON.parse(
+        await readFile(
+          new URL("../../fixtures/environmentReplayCard.json", import.meta.url),
+          "utf8",
+        ),
+      );
+      expect(body).toEqual(expectedCard);
+      expect(text).toBe(JSON.stringify(expectedCard));
       expect(body).toMatchObject({
         name: "renamed",
         protocolVersion: "1.0",

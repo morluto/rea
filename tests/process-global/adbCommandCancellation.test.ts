@@ -1,14 +1,14 @@
 import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
-import { Cli } from "incur";
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { expect, it, vi } from "vitest";
 import { registerAdbCommands } from "../../src/cli/adbCommands.js";
 import { createLogger } from "../../src/logger.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
 import { err } from "../../src/domain/result.js";
 import { ok } from "../../src/domain/result.js";
-import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../src/ports/AnalysisProvider.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
@@ -20,16 +20,8 @@ it("cancels a real UI input-file read before further reads or device dispatch", 
     "request.json",
     `${" ".repeat(9 * 1024 * 1024)}${JSON.stringify({ serial: "emulator-5554", package: "com.example.app" })}`,
   );
-  const listeners = new Map<string, () => void>();
-  const host = {
-    exitCode: undefined as number | string | null | undefined,
-    on(name: string, listener: () => void) {
-      listeners.set(name, listener);
-    },
-    off(name: string) {
-      listeners.delete(name);
-    },
-  };
+  const originalSigintListeners = process.listeners("SIGINT");
+  const originalSigtermListeners = process.listeners("SIGTERM");
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -62,7 +54,7 @@ it("cancels a real UI input-file read before further reads or device dispatch", 
   const previousExitCode = process.exitCode;
   let serving: Promise<unknown> | undefined;
   try {
-    const cli = Cli.create("rea-adb-json-test", { sync: false });
+    const cli = createCommandCli();
     registerAdbCommands(
       cli,
       createLogger("cli", "silent"),
@@ -84,7 +76,6 @@ it("cancels a real UI input-file read before further reads or device dispatch", 
         },
         async close() {},
       },
-      host,
     );
     let stdout = "";
     serving = cli.serve(["inspect-adb-ui", path, "--json"], {
@@ -100,8 +91,10 @@ it("cancels a real UI input-file read before further reads or device dispatch", 
         throw new Error("The file-read boundary was not reached");
       }),
     ]);
-    expect(listeners.has("SIGINT")).toBe(true);
-    listeners.get("SIGINT")!();
+    expect(process.listenerCount("SIGINT")).toBe(
+      originalSigintListeners.length + 1,
+    );
+    process.emit("SIGINT");
     release();
     await serving;
     expect(JSON.parse(stdout), stdout).toMatchObject({
@@ -109,11 +102,12 @@ it("cancels a real UI input-file read before further reads or device dispatch", 
       category: "cancelled",
       details: { operation: "inspect_adb_ui" },
     });
-    expect(host.exitCode).toBe(130);
+    expect(process.exitCode).toBe(130);
     expect(reads).toBe(1);
     expect(dispatches).toBe(0);
     expect(handle?.fd).toBe(-1);
-    expect(listeners.size).toBe(0);
+    expect(process.listeners("SIGINT")).toEqual(originalSigintListeners);
+    expect(process.listeners("SIGTERM")).toEqual(originalSigtermListeners);
   } finally {
     release();
     await serving?.catch(() => {});
@@ -126,19 +120,11 @@ it("cancels a real UI input-file read before further reads or device dispatch", 
 });
 
 it("retains completed ADB Evidence when interrupted during CLI provider close", async () => {
-  const listeners = new Map<string, () => void>();
-  const host = {
-    exitCode: undefined as number | string | null | undefined,
-    on(name: string, listener: () => void) {
-      listeners.set(name, listener);
-    },
-    off(name: string) {
-      listeners.delete(name);
-    },
-  };
+  const originalSigintListeners = process.listeners("SIGINT");
+  const originalSigtermListeners = process.listeners("SIGTERM");
   const previousExitCode = process.exitCode;
   try {
-    const cli = Cli.create("rea-adb-close-cancel-test", { sync: false });
+    const cli = createCommandCli();
     registerAdbCommands(
       cli,
       createLogger("cli", "silent"),
@@ -169,10 +155,9 @@ it("retains completed ADB Evidence when interrupted during CLI provider close", 
           );
         },
         async close() {
-          listeners.get("SIGINT")!();
+          process.emit("SIGINT");
         },
       },
-      host,
     );
     let stdout = "";
     await cli.serve(["inspect-adb-client", "--json"], {
@@ -191,8 +176,9 @@ it("retains completed ADB Evidence when interrupted during CLI provider close", 
         },
       },
     });
-    expect(host.exitCode).toBe(130);
-    expect(listeners.size).toBe(0);
+    expect(process.exitCode).toBe(130);
+    expect(process.listeners("SIGINT")).toEqual(originalSigintListeners);
+    expect(process.listeners("SIGTERM")).toEqual(originalSigtermListeners);
   } finally {
     process.exitCode = previousExitCode;
   }

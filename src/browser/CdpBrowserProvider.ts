@@ -1,8 +1,13 @@
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  type JavaScriptMemberMutationAllowance,
+} from "../domain/javascript/javascriptSemanticWorkAllowance.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import type {
   ProviderIdentity,
   ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   sanitizeBrowserUrl,
   type InspectWebPageInput,
@@ -85,7 +90,7 @@ import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
-import { comparePngScreenshots } from "./PngVisualDiff.js";
+import { comparePngScreenshots } from "../domain/pngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -93,6 +98,7 @@ import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const CLEANUP_DOMAINS = [
   "Network",
   "Debugger",
@@ -110,8 +116,24 @@ export class CdpBrowserProvider implements BrowserObservationPort {
   #closePromise: Promise<void> | undefined;
   readonly #idleWaiters = new Set<() => void>();
 
-  constructor(admission?: WebBundleAnalysisAdmission) {
+  readonly #memberMutationAllowance: () => Result<
+    JavaScriptMemberMutationAllowance,
+    ConfigurationError
+  >;
+
+  /**
+   * `memberMutationAllowance` resolves the accepted operation's allowance at
+   * each bundle analysis; the default applies when the host selects none.
+   */
+  constructor(
+    admission?: WebBundleAnalysisAdmission,
+    memberMutationAllowance: () => Result<
+      JavaScriptMemberMutationAllowance,
+      ConfigurationError
+    > = () => ok(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE),
+  ) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
+    this.#memberMutationAllowance = memberMutationAllowance;
   }
 
   async close(): Promise<void> {
@@ -278,6 +300,9 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     input: AnalyzeWebBundleInput,
     options: ExecutionOptions,
   ): Promise<Result<WebBundleAnalysis, AnalysisError>> {
+    // An invalid setting is refused before capture, never replaced by the default.
+    const memberMutationAllowance = this.#memberMutationAllowance();
+    if (!memberMutationAllowance.ok) return memberMutationAllowance;
     const admission = await this.#bundleAnalyzer.reserve();
     if (!admission.ok) return admission;
     let captured: CapturedPage | undefined;
@@ -330,6 +355,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         },
         input,
         options.signal,
+        memberMutationAllowance.value,
       );
     } catch (cause: unknown) {
       // Capture and analyzer work can still throw the exact caller reason.
@@ -609,7 +635,7 @@ const withTargetSession = async <
         : new ProviderCleanupError(
             "rea-cdp-browser",
             [input.target_id],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { operation, cause },
           );
   }

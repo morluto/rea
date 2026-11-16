@@ -1,8 +1,9 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { expect, it } from "vitest";
 import { registerAdbCommands } from "../../../src/cli/adbCommands.js";
 import { createLogger } from "../../../src/logger.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err } from "../../../src/domain/result.js";
@@ -13,7 +14,7 @@ it.each(["typed", "unexpected"])(
   async (kind) => {
     const operation = "stop_adb_app";
     const partial = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "adb", name: "ADB fixture", version: "1" },
       {
         operation: "perform_adb_ui_action",
@@ -25,7 +26,6 @@ it.each(["typed", "unexpected"])(
           observation_failure: "device offline after action",
         },
         authority: "controlled-replay",
-        subjectUnavailableReason: "Scripted CLI lifecycle boundary",
       },
     );
     const primary = new AnalysisTimeoutError(operation, 100, {
@@ -41,7 +41,7 @@ it.each(["typed", "unexpected"])(
           )
         : new Error("device still offline");
     let closes = 0;
-    const cli = Cli.create("rea-adb-cleanup-test", { sync: false });
+    const cli = createCommandCli();
     registerAdbCommands(
       cli,
       createLogger("cli", "silent"),

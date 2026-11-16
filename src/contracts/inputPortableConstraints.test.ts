@@ -1,10 +1,12 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { advertiseToolInput } from "./advertisedTool.js";
 import { adbSerialSchema } from "../domain/adb/adbIdentity.js";
 import { z } from "zod";
 import {
   portablePatternViolations,
+  advertisedSchemaPatterns,
   advertisedInputDialectViolations,
 } from "./advertisedDialect.js";
 import { advertisedInputJsonSchema } from "./toolSchemaMetadata.js";
@@ -14,7 +16,11 @@ import { adbUiInputSchemas } from "../domain/adb/adbUiAnalysis.js";
 
 const ajv = new Ajv2020({ strict: false, validateFormats: false });
 const project = (schema: Record<string, unknown>) =>
-  presentInputJsonSchema(schema, () => undefined, { portableDialect: true });
+  advertiseToolInput(
+    undefined,
+    presentInputJsonSchema(schema, () => undefined),
+    "annotated",
+  ).inputSchema;
 
 it("omits redundant 2020-12 metadata and unsupported constraints only from the advertisement", () => {
   const canonical = {
@@ -36,13 +42,13 @@ it("omits redundant 2020-12 metadata and unsupported constraints only from the a
   expect(ajv.validateSchema(advertised)).toBe(true);
 });
 
-it("keeps smaller bounds and a different explicit dialect", () => {
+it("keeps supported smaller bounds while omitting wire dialect metadata", () => {
   const advertised = project({
     $schema: "http://json-schema.org/draft-07/schema#",
     type: "object",
     properties: { value: { type: "string", maxLength: 1998 } },
   });
-  expect(advertised.$schema).toBe("http://json-schema.org/draft-07/schema#");
+  expect(advertised.$schema).toBeUndefined();
   expect(advertised).toMatchObject({
     properties: { value: { maxLength: 1998 } },
   });
@@ -94,9 +100,13 @@ it("drops a changed conditional rather than routing a valid input into the wrong
 });
 
 it("advertises portable ADB serial syntax while retaining canonical Unicode-whitespace rejection", () => {
-  const schema = z.toJSONSchema(adbSerialSchema);
-  expect(typeof schema.pattern).toBe("string");
-  expect(portablePatternViolations(schema.pattern!)).toEqual([]);
+  const schema = project(z.toJSONSchema(adbSerialSchema));
+  const patterns = advertisedSchemaPatterns(schema);
+  expect(patterns.length).toBeGreaterThan(0);
+  for (const { pattern } of patterns)
+    expect(portablePatternViolations(pattern)).toEqual([]);
+  expect(ajv.validate(schema, "emulator-5554")).toBe(true);
+  expect(ajv.validate(schema, "two words")).toBe(false);
   expect(adbSerialSchema.safeParse("emulator-5554").success).toBe(true);
   for (const serial of [
     "two words",
@@ -129,7 +139,11 @@ it.each(["display_id", "window_id", "max_nodes"])(
 
 it("keeps every public UI input advertisement portable without weakening its canonical parser", () => {
   for (const contract of ADB_UI_TOOL_CONTRACTS) {
-    const advertised = advertisedInputJsonSchema(contract);
+    const advertised = advertiseToolInput(
+      contract.description,
+      advertisedInputJsonSchema(contract),
+      "annotated",
+    ).inputSchema;
     expect(
       advertisedInputDialectViolations({
         name: contract.name,
@@ -137,7 +151,10 @@ it("keeps every public UI input advertisement portable without weakening its can
         inputSchema: advertised,
       }),
     ).toEqual([]);
-    expect(advertisedInputExamples(contract)).toEqual([]);
+    expect(advertised.examples).toBeUndefined();
+    expect(advertisedInputExamples(contract)).toEqual(
+      contract.examples.map(({ input }) => input),
+    );
     for (const example of contract.examples)
       expect(contract.inputSchema.safeParse(example.input).success).toBe(true);
   }

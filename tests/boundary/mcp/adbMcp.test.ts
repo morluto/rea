@@ -1,10 +1,11 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
 import { z } from "zod";
 
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { ADB_TOOL_CONTRACTS } from "../../../src/contracts/adb/adbToolContracts.js";
@@ -348,7 +349,10 @@ const connectAdbMcpClient = async (
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name, version: "0.0.0" });
+  const client = new Client(
+    { name, version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
   return { client, session };
@@ -393,11 +397,7 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
       { serial: "exact-serial", source_token: "18446744073709551615" },
     ],
   });
-  const listingSchema = tools.find(
-    ({ name }) => name === "list_adb_devices",
-  )?.outputSchema;
-  if (listingSchema === undefined)
-    throw new Error("Missing listing output schema");
+  const listingSchema = canonicalOutputSchema("list_adb_devices");
   const validation = createMcpSchemaValidation();
   onTestFinished(() => validation.clear());
   expect(validation.assertions.validateSchema(listingSchema)).toBe(true);
@@ -447,7 +447,10 @@ it("rejects invalid tool input before reaching the provider", async () => {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "adb-boundary-invalid", version: "0.0.0" });
+  const client = new Client(
+    { name: "adb-boundary-invalid", version: "0.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
 

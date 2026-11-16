@@ -1,6 +1,11 @@
-import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import { nativeDeadlineRecovery } from "../../domain/native/nativeDeadlines.js";
+import { Budget } from "../../domain/budget.js";
+import {
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -35,6 +40,7 @@ import {
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
+  type AnalysisErrorOptions,
 } from "../../domain/analysisErrorBase.js";
 import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -45,7 +51,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
   DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
-  MAX_REVERSE_COMMAND_OUTPUT_BYTES,
+  reverseCommandOutputLimit,
   objdumpInputSchema,
   rizinInputSchema,
   type RizinInput,
@@ -57,12 +63,15 @@ import type {
   ReverseEngineeringCommandUnavailable,
   ReverseEngineeringProviderCommand,
 } from "./ReverseEngineeringCommandPort.js";
+import { execFileOutputFailure } from "../../process/ExecFileOutput.js";
 import {
-  execFileOutputFailure,
-  HOST_SPAWN_CAPACITY_CODES,
-} from "../../process/ExecFileOutput.js";
+  describeLaunchFailure,
+  launcherFailureOf,
+} from "../../process/launchFailure.js";
+import { classifyLaunchFailure } from "../../process/classifyProviderOutcome.js";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
@@ -74,7 +83,7 @@ import {
 } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
-import { RuntimeControlUnavailableError } from "../../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../../domain/runtimeControlUnavailableError.js";
 import { WindowsNativeAuthorityUnavailableError } from "../../windows/WindowsNativeLoader.js";
 import {
   WindowsNativeSpawnControlError,
@@ -83,6 +92,7 @@ import {
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -112,7 +122,7 @@ const reverseCommandOutputLimitation = (
   bytes: number,
   source: "default" | "request",
 ): string =>
-  `REA stopped collecting output at max_output_bytes=${String(bytes)} bytes (source ${source}, default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)}, range 1..${String(MAX_REVERSE_COMMAND_OUTPUT_BYTES)}) and requested termination of the provider process; captured stdout and stderr are a prefix and command completion is unknown. Narrow or page the provider command, or increase max_output_bytes (--max-output-bytes on the CLI) for the next call; no restart is required. Confirm command effects and cleanup before deciding whether it is safe to repeat. Client receive limits are separate.`;
+  `REA stopped collecting output at max_output_bytes=${String(bytes)} bytes (source ${source}) and requested termination of the provider process; captured stdout and stderr are a prefix and command completion is unknown. Narrow or page the provider command, or raise the output_limit control for the next call; no restart is required. Confirm command effects and cleanup before deciding whether it is safe to repeat. Client receive limits are separate.`;
 // Bound simultaneous provider process families independently of output admission.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
 const MAX_ACTIVE_CAPTURE_BYTES =
@@ -236,7 +246,8 @@ export class ReverseEngineeringService {
     AbortController,
     Promise<Result<Evidence, AnalysisError>>
   >();
-  #reservedOutputBytes = 0;
+  /** Output capture admitted across active operations. */
+  readonly #reservedOutput = new Budget(MAX_ACTIVE_CAPTURE_BYTES);
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #dispatched = 0;
@@ -290,7 +301,7 @@ export class ReverseEngineeringService {
       } catch (cause) {
         stopped = {
           status: "incomplete",
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         };
       }
       if (stopped.status === "incomplete") {
@@ -513,7 +524,7 @@ export class ReverseEngineeringService {
     if (
       this.#activeOperations.size >=
         MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS ||
-      this.#reservedOutputBytes + outputBudgetBytes > MAX_ACTIVE_CAPTURE_BYTES
+      !this.#reservedOutput.tryCharge(outputBudgetBytes)
     )
       return Promise.resolve(
         err(
@@ -526,7 +537,7 @@ export class ReverseEngineeringService {
                 MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS,
               active_operations: this.#activeOperations.size,
               max_active_capture_bytes: MAX_ACTIVE_CAPTURE_BYTES,
-              reserved_output_bytes: this.#reservedOutputBytes,
+              reserved_output_bytes: this.#reservedOutput.used,
               requested_output_bytes: outputBudgetBytes,
             },
             {
@@ -546,7 +557,6 @@ export class ReverseEngineeringService {
       signal === undefined || signal instanceof AbortSignal
         ? controller.signal
         : signal;
-    this.#reservedOutputBytes += outputBudgetBytes;
     const running = this.#observeProvider({
       ...request,
       profile: selection.value,
@@ -566,7 +576,7 @@ export class ReverseEngineeringService {
       .finally(() => {
         signal?.removeEventListener("abort", relayAbort);
         this.#activeOperations.delete(controller);
-        this.#reservedOutputBytes -= outputBudgetBytes;
+        this.#reservedOutput.refund(outputBudgetBytes);
       });
     this.#activeOperations.set(controller, tracked);
     return tracked;
@@ -621,7 +631,7 @@ export class ReverseEngineeringService {
         return err(
           new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           }),
         );
       if (
@@ -718,7 +728,7 @@ export class ReverseEngineeringService {
           ownedCause.reason === "timeout"
             ? new AnalysisTimeoutError(operation, timeoutMs, {
                 cause: ownedCause,
-                ...reverseCommandTimeoutGuidance(timeoutMs),
+                ...reverseCommandTimeoutGuidance(provider, timeoutMs),
               })
             : inspection instanceof ProcessOwnershipInspectionCancelled ||
                 (inspection instanceof ProcessOwnershipIdentityBatchFailure &&
@@ -769,43 +779,31 @@ export class ReverseEngineeringService {
           : undefined);
       if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
         outputLimitReached = true;
-      if (earlyFailure === undefined && code === "E2BIG")
-        earlyFailure = new AnalysisResourceConstraintError(
-          operation,
-          "transport",
-          "The host rejected the provider command because its argument list exceeds the process launch limit.",
-          {
-            argument_bytes: args.reduce(
-              (bytes, argument, index) =>
-                bytes + Buffer.byteLength(argument) + (index === 0 ? 0 : 1),
-              0,
-            ),
-          },
-          { cause, ...ownedCleanupOptions(cause) },
+      // Host capacity and an oversized argument list are classified by the
+      // shared launch owner; a refusal keeps this provider's repair below.
+      const launch =
+        preparationHostCapacityFailure(ownedCause) ??
+        launcherFailureOf(
+          cause instanceof LinuxOwnedProcessPrerequisiteError
+            ? cause.cause
+            : cause,
         );
       if (
         earlyFailure === undefined &&
-        typeof code === "string" &&
-        HOST_SPAWN_CAPACITY_CODES.has(code)
-      ) {
-        earlyFailure = new AnalysisResourceConstraintError(
+        (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+      )
+        earlyFailure = classifyLaunchFailure(launch, {
+          providerId: profile.identity.id,
           operation,
-          "capacity",
-          `The host ran out of process, memory or file-descriptor capacity (${code}) to start ${provider}.`,
-          { spawn_error: code, command },
-          {
-            cause,
-            retryable: true,
-            remediationAction: `The host ran out of process, memory or file-descriptor capacity (${code}). Close unused processes or files, or raise the process or open-file limit of the REA process, then retry; ${setting} does not need to change.`,
-            diagnostics: {
-              boundary: "host-capacity",
-              command,
-              system_code: code,
-            },
-            ...ownedCleanupOptions(cause),
-          },
-        );
-      }
+          command,
+          selection: setting,
+          argumentBytes: args.reduce(
+            (bytes, argument, index) =>
+              bytes + Buffer.byteLength(argument) + (index === 0 ? 0 : 1),
+            0,
+          ),
+          details: { cause, ...ownedCleanupOptions(cause) },
+        });
       if (
         earlyFailure === undefined &&
         cause instanceof LinuxOwnedProcessPrerequisiteError
@@ -831,7 +829,7 @@ export class ReverseEngineeringService {
           typeof rawSystemCode === "string" ? rawSystemCode : undefined;
         const recovery = processOwnershipAdmissionRecovery(
           admissionFailure.code,
-          systemProcessOwnershipHost.platform ?? process.platform,
+          systemProcessOwnershipHost.platform ?? HOST_PLATFORM.platform,
           admissionSystemCode,
         );
         earlyFailure = new AnalysisCapabilityUnavailableError(
@@ -861,7 +859,7 @@ export class ReverseEngineeringService {
         if (code === "ETIMEDOUT") {
           earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           });
         } else if (darwinFailure.cancellation !== undefined) {
           earlyFailure = cancelledBy(
@@ -957,26 +955,49 @@ export class ReverseEngineeringService {
           earlyFailure = new AnalysisTimeoutError(operation, timeoutMs, {
             cause,
             ...ownedCleanupOptions(cause),
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           });
         else {
           const { provider, remediationAction } = profile.repair;
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            profile.identity.id,
-            operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
-            {
-              cause,
-              userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
-              remediationAction,
-              diagnostics: {
-                boundary: "provider-launch",
-                command,
-                system_code: code ?? null,
+          // This provider's repair names the configured executable; the
+          // shared launch owner supplies the errno and syscall facts.
+          const unavailable = (
+            description: string,
+            details: AnalysisErrorOptions,
+          ): AnalysisError =>
+            new AnalysisCapabilityUnavailableError(
+              profile.identity.id,
+              operation,
+              `Unable to run configured command (${description})`,
+              {
+                ...details,
+                userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${description}).`,
+                remediationAction,
               },
-              ...ownedCleanupOptions(cause),
-            },
-          );
+            );
+          const details: AnalysisErrorOptions = {
+            cause,
+            ...ownedCleanupOptions(cause),
+          };
+          earlyFailure =
+            launch === undefined
+              ? unavailable(String(code ?? "unknown error"), {
+                  ...details,
+                  diagnostics: {
+                    boundary: "provider-launch",
+                    command,
+                    system_code: code ?? null,
+                  },
+                })
+              : classifyLaunchFailure(launch, {
+                  providerId: profile.identity.id,
+                  operation,
+                  command,
+                  selection: setting,
+                  details,
+                  unavailable: (failure, launchDetails) =>
+                    unavailable(describeLaunchFailure(failure), launchDetails),
+                });
         }
       }
       if (earlyFailure === undefined && capture !== undefined) {
@@ -1014,7 +1035,7 @@ export class ReverseEngineeringService {
             cause,
             capturedOutput,
             ...ownedCleanupOptions(cause),
-            ...reverseCommandTimeoutGuidance(timeoutMs),
+            ...reverseCommandTimeoutGuidance(provider, timeoutMs),
           });
         if (
           cause instanceof OwnedOutputFailure &&
@@ -1139,39 +1160,25 @@ export class ReverseEngineeringService {
       output_budget_bytes: outputBudgetBytes,
       output_budget_source: outputBudgetSource,
       output_truncated: outputTruncated,
+      ...(outputLimitReached
+        ? { output_limit: reverseCommandOutputLimit(outputBudgetBytes) }
+        : {}),
       completion_status: completionStatus,
       artifact_sha256_after: absolutePath === undefined ? null : digestAfter,
       artifact_changed: absolutePath === undefined ? null : artifactChanged,
+      ...(rejection === undefined ? {} : { refusal: rejection.refusal }),
     };
     const limitations = [
+      // A pathless command reports no artifact; its provider says what the
+      // response does not establish.
       ...(absolutePath === undefined
-        ? [
-            "The objdump implementation and version are unknown. The captured output is the selected command's response and does not establish support for an artifact.",
-          ]
+        ? []
         : [
             "The executable implementation, version and supported formats are unknown because no reliable identity probe was performed.",
           ]),
-      "A non-zero process exit is preserved as an observed command result.",
-      ...(operation === "inspect_with_objdump" &&
-      typeof parameters.symbol === "string"
-        ? [
-            "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
-          ]
-        : []),
-      ...(operation === "inspect_with_objdump" &&
-      parameters.operation === "dwarf" &&
-      parameters.follow_debug_links === true
-        ? [
-            "DWARF output may include local debug-link files whose identities are not bound to Evidence.",
-          ]
-        : []),
-      ...(operation === "execute_rizin_command"
-        ? [
-            "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
-          ]
-        : []),
       ...(profile.limitations ?? []),
-      ...(rejection === undefined ? [] : [rejection]),
+      "A non-zero process exit is preserved as an observed command result.",
+      ...(rejection === undefined ? [] : [rejection.limitation]),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[
@@ -1227,7 +1234,7 @@ export class ReverseEngineeringService {
     ];
     const evidence = createEvidence(
       absolutePath === undefined || digest === undefined
-        ? undefined
+        ? unknownTarget("not-observed")
         : { path: absolutePath, sha256: digest, format: "unknown" },
       profile.identity,
       {
@@ -1417,13 +1424,11 @@ const runOwnedCommandOutput =
             ? "ETIMEDOUT"
             : cause.reason === "output-limit"
               ? "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
-              : launchErrorCode === "E2BIG"
-                ? "E2BIG"
-                : snapshot === null
-                  ? typeof launchErrorCode === "string"
-                    ? launchErrorCode
-                    : "ERR_PROVIDER_LAUNCH"
-                  : (snapshot.exitCode ?? null);
+              : snapshot === null
+                ? typeof launchErrorCode === "string"
+                  ? launchErrorCode
+                  : "ERR_PROVIDER_LAUNCH"
+                : (snapshot.exitCode ?? null);
       throw new OwnedOutputFailure({
         stdout: snapshot?.stdout.text ?? "",
         stderr: snapshot?.stderr.text ?? "",
@@ -1473,16 +1478,20 @@ const runtimeControlPreparationError = (
   return windowsNativeSpawnControlError(cause);
 };
 
-const reverseCommandTimeoutGuidance = (
-  timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
-  userMessage: `This objdump or rizin command reached its ${String(timeoutMs)} ms server/provider deadline (command_timeout_ms) during target preflight or the one-shot command (deadlineExpired). This is not a Ghidra or Hopper startup deadline and not a debugger session deadline.`,
-  remediationAction: `${
-    timeoutMs < MAX_NODE_TIMER_DELAY_MS
-      ? `Increase command_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(DEFAULT_REVERSE_COMMAND_TIMEOUT_MS)}), or use --command-timeout-ms on the CLI.`
-      : `command_timeout_ms is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; no higher deadline is supported.`
-  } The new value applies on the next call; no restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes). Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
-});
+/**
+ * The deadline failure names `command_timeout_ms` and binds it as the
+ * per-call control; each adapter names the option that sets it.
+ */
+const reverseCommandTimeoutGuidance = (provider: string, timeoutMs: number) =>
+  nativeDeadlineRecovery({
+    timeoutMs,
+    parameter: "command_timeout_ms",
+    defaultMs: DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+    phase: `${provider} command deadline`,
+    unchanged: `No restart is required. The combined output allowance is separately selected by max_output_bytes (default ${String(DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES)} bytes).`,
+    detail:
+      " It covers target preflight and the one-shot command (deadlineExpired); it is not a Ghidra or Hopper startup deadline or a debugger session deadline.",
+  });
 
 export const digestFile = async (
   path: string,
@@ -1563,9 +1572,8 @@ const PHYSICAL_FAILURE_CODES = new Set([
 
 /**
  * A late abort does not replace a recognized physical failure. Other rejections
- * observed while the caller signal is aborted remain cancellation. A bare
- * `ABORT_ERR` is not cancellation until the command boundary, which already
- * used that code for an aborted provider process.
+ * observed while the caller signal is aborted remain cancellation; a bare
+ * `ABORT_ERR` without the caller's abort is not.
  */
 const preflightCancelled = (
   signal: AbortSignal | undefined,
@@ -1588,7 +1596,7 @@ const commandCancelled = (
     cause.cause instanceof OwnedCommandFailure
   )
     return cause.cause.reason === "cancelled";
-  return code === "ABORT_ERR" || preflightCancelled(signal, cause, code);
+  return preflightCancelled(signal, cause, code);
 };
 
 const callerCancellationCause = (

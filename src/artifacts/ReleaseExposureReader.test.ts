@@ -25,7 +25,8 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./pyinstaller/CArchive.fixture.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
@@ -36,7 +37,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import {
   assembleReleaseExposureReport,
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
@@ -54,6 +55,7 @@ import {
 } from "../domain/releaseExposure.js";
 import { HTML_INLINE_SCRIPT_LOCATION_LIMIT } from "../domain/javascript/htmlArtifactReferences.js";
 import { ReleaseExposureReader } from "./ReleaseExposureReader.js";
+import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 
@@ -62,17 +64,17 @@ const stableRead = vi.hoisted(() => ({
     | undefined
     | ((
         ...args: Parameters<
-          typeof import("./readStableArtifact.js").readStableArtifact
+          typeof import("../resources/readStableArtifact.js").readStableArtifact
         >
       ) => ReturnType<
-        typeof import("./readStableArtifact.js").readStableArtifact
+        typeof import("../resources/readStableArtifact.js").readStableArtifact
       >),
 }));
 
-vi.mock("./readStableArtifact.js", async () => {
+vi.mock("../resources/readStableArtifact.js", async () => {
   const actual = await vi.importActual<
-    typeof import("./readStableArtifact.js")
-  >("./readStableArtifact.js");
+    typeof import("../resources/readStableArtifact.js")
+  >("../resources/readStableArtifact.js");
   stableRead.impl = actual.readStableArtifact;
   return {
     ...actual,
@@ -659,6 +661,10 @@ describe("ReleaseExposureReader limits", () => {
     try {
       const scanned = await inspect(root);
       expect(scanned.limitations).toHaveLength(8);
+      // The reports past the cap are counted, not dropped silently.
+      expect(scanned.omitted).toContainEqual(
+        expect.objectContaining({ subject: "limitations", count: 4 }),
+      );
     } finally {
       stableRead.impl = real;
     }
@@ -674,6 +680,7 @@ describe("ReleaseExposureReader limits", () => {
       throw new ArtifactReaderFailure(
         "integrity",
         `Artifact changed during inventory: ${target}`,
+        { integrityCheck: "container-identity" },
       );
     };
     const reader = new ReleaseExposureReader();
@@ -788,9 +795,11 @@ describe("ReleaseExposureReader unpacked ASAR members", () => {
       );
       if (result.ok) throw new Error("Expected a failed audit.");
       expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
-      expect(result.error.message).toContain(
-        "ASAR member changed before interpretation: dist/notes.txt",
-      );
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_changed",
+        details: { integrity_check: "member-identity" },
+      });
+      expect(result.error.message).toContain("dist/notes.txt");
     } finally {
       inventoryRead.impl = undefined;
       await reader.close();
@@ -5098,5 +5107,47 @@ it.each([
       pageName === "z.html" ? "unknown" : "exposed",
     );
     expect(scanned.debug_companions.paths).toEqual([]);
+  },
+);
+
+it.each(["member", "selected artifact"] as const)(
+  "names which file changed while being read (%s)",
+  async (changed) => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-read-changed-",
+    );
+    const archive = join(root, "app.asar");
+    await writeFile(archive, sourceMapArchive());
+    const notes = join(root, "notes.txt");
+    await writeFile(notes, "release notes\n");
+    const real = stableRead.impl;
+    if (changed === "member")
+      stableRead.impl = async (...args) => {
+        if (args[0] === notes) throw new RegularFileChangedError(notes);
+        return real === undefined ? Promise.reject() : real(...args);
+      };
+    else
+      inventoryRead.impl = () =>
+        Promise.reject(new RegularFileChangedError(archive));
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: changed === "member" ? root : archive },
+        undefined,
+        ignoreText,
+      );
+      if (result.ok) throw new Error("Expected a failed audit.");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "artifact_changed",
+        details: {
+          integrity_check:
+            changed === "member" ? "member-identity" : "container-identity",
+        },
+      });
+    } finally {
+      stableRead.impl = real;
+      inventoryRead.impl = undefined;
+      await reader.close();
+    }
   },
 );

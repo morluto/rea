@@ -2,11 +2,12 @@ import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+  ArtifactReaderFailure,
+  stableArtifactInputRecovery,
+  readerIntegrityFailure,
+  type ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   ANDROID_MAPPING_LIMITS,
   type AndroidMappingSource,
@@ -16,7 +17,6 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -29,6 +29,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface AndroidMappingReadDeadline {
   readonly timeout: AbortSignal;
@@ -93,12 +94,7 @@ const readFailurePrimary = (
       },
     );
   if (owned?.reason === "integrity")
-    return new AnalysisArtifactChangedError(
-      read.operation,
-      read.path,
-      owned.message,
-      { cause: owned },
-    );
+    return readerIntegrityFailure(read.operation, read.path, owned);
   if (owned?.reason === "path")
     return invalidMapping(read, "invalid_value", owned.message, {
       cause: owned,
@@ -126,7 +122,7 @@ const readFailurePrimary = (
     cause: primary,
     diagnostics: {
       mapping_path: read.path,
-      reason: primary instanceof Error ? primary.message : String(primary),
+      reason: errorMessage(primary),
     },
   });
 };

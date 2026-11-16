@@ -7,15 +7,22 @@ import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import {
   annotationsFromEffects,
   toolContractMetadata,
+  toolEffects,
   type ToolEffects,
 } from "../toolEffects.js";
 
 const scope = { serial: "emulator-5554", package: "com.example.app" };
+const uiObservationEffects = toolEffects({
+  mutatesSession: true,
+  launchesProcess: true,
+  accessesNetwork: true,
+  idempotent: false,
+});
 export const ADB_UI_TOOL_CONTRACTS = [
   {
     name: "inspect_adb_ui",
-    advertisedInputDialect: "portable",
-    ...toolContractMetadata("inspect_adb_ui"),
+    cli: true,
+    ...toolContractMetadata("inspect_adb_ui", uiObservationEffects),
     kind: "adb-provider",
     description:
       "Capture the selected Android package's accessibility hierarchy through a caller-started UI Automator runner. Returns windows, snapshot-scoped element IDs, text, descriptions, resource IDs, bounds, states and derived clickable-ancestor links. Password-marked text is excluded. Reports examined coverage and resource limits; custom-drawn and off-screen content may not be exposed. A new capture replaces the runner's previous snapshot.",
@@ -25,8 +32,8 @@ export const ADB_UI_TOOL_CONTRACTS = [
   },
   {
     name: "find_adb_ui_elements",
-    advertisedInputDialect: "portable",
-    ...toolContractMetadata("find_adb_ui_elements"),
+    cli: true,
+    ...toolContractMetadata("find_adb_ui_elements", uiObservationEffects),
     kind: "adb-provider",
     description:
       "Find matching Android UI elements by text, content description, resource ID, class, ancestor ID or observed states, with explicit examined coverage. Predicates are conjunctive; empty selector inventories the selected scope. Return candidate IDs and clickable parents instead of choosing the first match. Use snapshot_id and next_offset to page the retained observation; retained pages are labelled rather than reported as current live state.",
@@ -51,8 +58,8 @@ export const ADB_UI_TOOL_CONTRACTS = [
   },
   {
     name: "wait_for_adb_ui",
-    advertisedInputDialect: "portable",
-    ...toolContractMetadata("wait_for_adb_ui"),
+    cli: true,
+    ...toolContractMetadata("wait_for_adb_ui", uiObservationEffects),
     kind: "adb-provider",
     description:
       "Wait within an explicit deadline for matching Android UI elements to appear or disappear. Returns the last observed snapshot, matches and timeout outcome. Absence requires complete examined coverage; UI stability or missing accessibility nodes does not establish application idleness. Uses the operator-owned UI Automator runner and replaces its retained snapshot.",
@@ -90,6 +97,7 @@ export const PROPOSED_ADB_UI_ACTION_CONTRACT = {
   name: "perform_adb_ui_action",
   title: "Proposed Android UI action",
   effects: proposedActionEffects,
+  sessionEffects: proposedActionEffects,
   annotations: annotationsFromEffects(proposedActionEffects),
   returnsTargetContent: true,
   kind: "adb-provider",

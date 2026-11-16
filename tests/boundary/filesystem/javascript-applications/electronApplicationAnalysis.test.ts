@@ -61,7 +61,7 @@ describe("static Electron application analysis", () => {
       provider: { id: "rea-javascript-application" },
       authority: "shipped-artifact",
       confidence: "derived",
-      subject: { local_path: root, format: "directory" },
+      subject: { local_path: root, identity: { format: "directory" } },
       normalized_result: {
         input_path: root,
         summary: { browser_windows: 3 },

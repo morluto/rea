@@ -4,7 +4,10 @@ import type {
   NativeMetadataLocation,
   ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
-import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import {
+  issue,
+  type FacetDecodeFacts,
+} from "../domain/apple/appleDispatchDecodeFacts.js";
 import {
   unresolvedSwiftRelativeReason,
   type SwiftRelativeField,

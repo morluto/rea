@@ -71,8 +71,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
-import { SafeOutputTree } from "../../../src/artifacts/SafeOutputTree.js";
-import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutputTreeCreationFailure.js";
+import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { SafeOutputTreeCreationFailure } from "../../../src/resources/SafeOutputTreeCreationFailure.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("safe artifact output close failures", () => {

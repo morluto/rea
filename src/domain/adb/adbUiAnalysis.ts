@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   adbClientIdentitySchema,
   adbPackageNameSchema,
@@ -206,7 +207,7 @@ export const adbUiSnapshotHeaderSchema = z.strictObject({
   ),
   examined_nodes: z.number().int().nonnegative(),
   retained_nodes: z.number().int().nonnegative(),
-  coverage: z.enum(["complete", "partial"]),
+  coverage: knownCoverageStatusSchema,
   limitations: z.array(z.string()),
 });
 export const adbUiSnapshotSchema = adbUiSnapshotHeaderSchema.extend({
@@ -221,11 +222,9 @@ const found = {
   total_matches: z.number().int().nonnegative(),
   offset: z.number().int().nonnegative(),
   next_offset: z.number().int().nonnegative().nullable(),
-  coverage: z
-    .enum(["complete", "partial"])
-    .describe(
-      "Query coverage also becomes partial when predicates depend on redacted text",
-    ),
+  coverage: knownCoverageStatusSchema.describe(
+    "Query coverage also becomes partial when predicates depend on redacted text",
+  ),
   freshness: z.enum(["captured", "retained_snapshot"]),
 };
 

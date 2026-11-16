@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
   lstat as fsLstat,
@@ -21,7 +22,7 @@ import {
   existingMaintenanceScope,
   planIntegrationMaintenance,
 } from "../../../src/application/UpdateMaintenance.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { ok } from "../../../src/domain/result.js";
 import type { DoctorHost } from "../../../src/application/Doctor.js";
 import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
@@ -37,7 +38,7 @@ import {
   runUninstall,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
@@ -835,14 +836,7 @@ describe("setup client configuration cleanup ownership", () => {
     );
     await writeFile(client.configPath, '{"servers": {}}\n');
 
-    let beginRead!: () => void;
-    const readStarted = new Promise<void>((resolve) => {
-      beginRead = resolve;
-    });
-    let unblockRead!: () => void;
-    const readGate = new Promise<void>((resolve) => {
-      unblockRead = resolve;
-    });
+    const configurationRead = phaseGate();
     let heldRead = false;
     openMock.mockImplementation(async (...args) => {
       const handle = await actualFs.open(...args);
@@ -850,8 +844,7 @@ describe("setup client configuration cleanup ownership", () => {
       heldRead = true;
       const nativeRead = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
-        beginRead();
-        await readGate;
+        await configurationRead.hold();
         return nativeRead(...readArgs);
       });
       return handle;
@@ -861,7 +854,7 @@ describe("setup client configuration cleanup ownership", () => {
     const alignment = host.clientNeedsConfigure(client, {}, ["rea", "mcp"]);
     let closeResult: ReturnType<NonNullable<typeof host.close>> | undefined;
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(readStarted, alignment, "configuration read");
+      await configurationRead.reached(alignment, "configuration read");
 
       const close = host.close;
       if (close === undefined) throw new Error("Setup host close is missing");
@@ -882,12 +875,12 @@ describe("setup client configuration cleanup ownership", () => {
       });
       expect(hostCloseFinished).toBe(false);
 
-      unblockRead();
+      configurationRead.release();
       await expect(alignment).resolves.toBe(true);
       expect(await closeResult).toBeUndefined();
       expect(hostCloseFinished).toBe(true);
     }, [
-      unblockRead,
+      configurationRead.release,
       async () => {
         await alignment;
       },
@@ -912,22 +905,32 @@ const unscopedRegistrationReaders: readonly {
   {
     name: "inspections",
     read: (home, environment) =>
-      readClientRegistrationInspections(home, "/current/rea", { environment }),
+      readClientRegistrationInspections(home, "/current/rea", {
+        platform: HOST_PLATFORM.platform,
+        environment,
+      }),
   },
   {
     name: "statuses",
     read: (home, environment) =>
-      readClientRegistrationStatuses(home, "/current/rea", { environment }),
+      readClientRegistrationStatuses(home, "/current/rea", {
+        platform: HOST_PLATFORM.platform,
+        environment,
+      }),
   },
   {
     name: "maintenance scope",
     read: (home, environment) =>
-      existingMaintenanceScope(home, "/current/rea", environment),
+      existingMaintenanceScope(home, "/current/rea", environment, {
+        platform: HOST_PLATFORM.platform,
+      }),
   },
   {
     name: "maintenance plan",
     read: (home, environment, execute) =>
-      planIntegrationMaintenance(home, "/current/rea", environment, execute),
+      planIntegrationMaintenance(home, "/current/rea", environment, execute, {
+        platform: HOST_PLATFORM.platform,
+      }),
   },
 ];
 
@@ -1027,6 +1030,7 @@ it("keeps a supplied registration scope responsible for diagnostics and cleanup 
     expect(
       (
         await readClientRegistrationStatuses(home, "/current/rea", {
+          platform: HOST_PLATFORM.platform,
           environment: { HOME: home },
           resources,
         })
@@ -1086,7 +1090,7 @@ it("keeps a supplied maintenance scope responsible for a refresh-check read whos
       "/current/rea",
       environment,
       execute,
-      { resources },
+      { platform: HOST_PLATFORM.platform, resources },
     );
     expect(maintenance.status).toBe("unavailable");
     expect(closeAttempts.length).toBeGreaterThan(0);

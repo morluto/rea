@@ -1,4 +1,4 @@
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type {
   ObserveWebSessionInput,
   WebObservationSession,
@@ -280,7 +280,6 @@ class TimelineCapture {
         this.targetTerminated();
         return;
       default:
-        // Frame events were handled above; other events do not change this timeline.
         return;
     }
   }

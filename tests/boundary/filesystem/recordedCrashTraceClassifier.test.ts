@@ -1,41 +1,12 @@
 import { expect, it } from "vitest";
 
-import {
-  collectOwnershipTraceFacts,
-  isOwnershipInventoryExecution,
-} from "../../../scripts/verify/recorded-crash/trace-ownership.mjs";
+import { collectOwnershipTraceFacts } from "../../../scripts/verify/recorded-crash/trace-ownership.mjs";
 import { assertHistoricalPidAccess } from "../../../scripts/verify/recorded-crash/trace-policy.mjs";
 
 const node = "/fixture/node";
 const nodeExec = 'execve("/fixture/node", ["node", "rea.mjs"], 0x7fff) = 0';
 const psExec =
-  'execve("/usr/bin/ps", ["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0';
-
-it.each(["ps", "/usr/bin/ps"])(
-  "recognizes inventory argv0 %s without admitting other arguments",
-  (argv0) => {
-    const selected = psExec.replace('["ps",', `[${JSON.stringify(argv0)},`);
-    expect(isOwnershipInventoryExecution("/usr/bin/ps", selected)).toBe(true);
-    expect(
-      isOwnershipInventoryExecution(
-        "/usr/bin/ps",
-        selected.replace('"-axo"', '"-ef"'),
-      ),
-    ).toBe(false);
-    expect(
-      isOwnershipInventoryExecution(
-        "/usr/bin/ps",
-        selected.replace('command="', 'command=", "extra"'),
-      ),
-    ).toBe(false);
-    expect(
-      isOwnershipInventoryExecution(
-        "/usr/bin/ps",
-        selected.replace(JSON.stringify(argv0) + ",", '"foreign",'),
-      ),
-    ).toBe(false);
-  },
-);
+  'execve("/usr/bin/ps", ["/usr/bin/ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0';
 const parent = (...events: readonly string[]) => ({
   pid: 1200,
   text: [nodeExec, ...events].join("\n"),
@@ -46,7 +17,6 @@ const check = (
   const facts = collectOwnershipTraceFacts({
     traces,
     nodeExecutable: node,
-    psExecutables: new Set(["/usr/bin/ps"]),
   });
   return traces.flatMap((trace) =>
     assertHistoricalPidAccess({
@@ -59,35 +29,32 @@ const check = (
   );
 };
 
-it.each([psExec, psExec.replace('["ps",', '["/usr/bin/ps",')])(
-  "correlates the ps child trace with its parent identity read: %s",
-  (execution) => {
-    expect(
-      check([
-        parent(
-          "vfork() = 1201",
-          "clone3({flags=CLONE_VM|CLONE_SIGHAND|CLONE_THREAD}, 88) = 1202",
+it("correlates the ps child trace with its parent identity read", () => {
+  expect(
+    check([
+      parent(
+        "vfork() = 1201",
+        "clone3({flags=CLONE_VM|CLONE_SIGHAND|CLONE_THREAD}, 88) = 1202",
+        'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY|O_CLOEXEC) = 21',
+      ),
+      {
+        pid: 1202,
+        text: [
           'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY|O_CLOEXEC) = 21',
-        ),
-        {
-          pid: 1202,
-          text: [
-            'openat(AT_FDCWD, "/proc/4008/stat", O_RDONLY|O_CLOEXEC) = 21',
-            'openat(AT_FDCWD, "/proc/4008/status", O_RDONLY|O_CLOEXEC) = 22',
-          ].join("\n"),
-        },
-        {
-          pid: 1201,
-          text: [
-            execution,
-            'openat(AT_FDCWD, "/proc/4008/status", O_RDONLY) = 3',
-            'openat(AT_FDCWD, "/proc/4008/cmdline", O_RDONLY) = 4',
-          ].join("\n"),
-        },
-      ]),
-    ).toHaveLength(5);
-  },
-);
+          'openat(AT_FDCWD, "/proc/4008/status", O_RDONLY|O_CLOEXEC) = 22',
+        ].join("\n"),
+      },
+      {
+        pid: 1201,
+        text: [
+          psExec,
+          'openat(AT_FDCWD, "/proc/4008/status", O_RDONLY) = 3',
+          'openat(AT_FDCWD, "/proc/4008/cmdline", O_RDONLY) = 4',
+        ].join("\n"),
+      },
+    ]),
+  ).toHaveLength(5);
+});
 
 it("joins unfinished and resumed CLONE_THREAD records", () => {
   expect(
@@ -115,9 +82,14 @@ it("rejects provider-style reads outside the ps child and identity-only caller",
   ).toThrow("non-inventory lookup");
 });
 
-it("does not trust a ps command with different arguments or failed exec", () => {
+it("does not trust a ps command with different arguments, argv[0], path or failed exec", () => {
   for (const text of [
-    'execve("/usr/bin/ps", ["ps", "-ef"], 0x7fff) = 0',
+    // The selected absolute argv[0] with other arguments.
+    'execve("/usr/bin/ps", ["/usr/bin/ps", "-ef"], 0x7fff) = 0',
+    // A bare argv[0] with otherwise exact inventory arguments.
+    'execve("/usr/bin/ps", ["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="], 0x7fff) = 0',
+    // A ps outside the fixed system locations.
+    psExec.replaceAll("/usr/bin/ps", "/opt/tools/ps"),
     psExec.replace(" = 0", " = -1 EACCES"),
   ])
     expect(() =>

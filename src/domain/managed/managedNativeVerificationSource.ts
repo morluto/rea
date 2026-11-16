@@ -2,7 +2,11 @@ import { isMachOFormat } from "../binaryTargetTypes.js";
 import { getEvidenceInputContract } from "../evidenceInputContract.js";
 import { managedNativeVerificationRequestSchema } from "./managedNativeVerificationSchemas.js";
 
-import type { Evidence } from "../evidence.js";
+import {
+  evidenceFileTarget,
+  type Evidence,
+  evidenceSubjectDisplay,
+} from "../evidence.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
@@ -63,7 +67,7 @@ const readNativeObservation = (
   const read = readEvidence(raw);
   if (!read.ok) return read;
   const evidence = read.value;
-  const format = evidence.subject?.format;
+  const format = evidenceFileTarget(evidence)?.format;
   const platform: ManagedNativePlatform = isMachOFormat(format)
     ? "mach-o"
     : format === "pe" || format === "elf"
@@ -73,6 +77,7 @@ const readNativeObservation = (
     const payload = readEvidencePayload(
       inspectMachoSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!payload.ok) return payload;
     return ok({
@@ -88,8 +93,8 @@ const readNativeObservation = (
         operation: evidence.operation,
         name: symbol.name,
         address: symbol.address,
-        module_name: evidence.subject?.name ?? null,
-        module_path: evidence.subject?.local_path ?? null,
+        module_name: evidenceSubjectDisplay(evidence)?.name ?? null,
+        module_path: evidenceSubjectDisplay(evidence)?.local_path ?? null,
         source: "macho-export" as const,
       })),
     });
@@ -98,6 +103,7 @@ const readNativeObservation = (
     const payload = readEvidencePayload(
       functionDossierSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!payload.ok) return payload;
     return ok({
@@ -110,8 +116,8 @@ const readNativeObservation = (
           operation: evidence.operation,
           name: payload.value.procedure.name,
           address: payload.value.procedure.address,
-          module_name: evidence.subject?.name ?? null,
-          module_path: evidence.subject?.local_path ?? null,
+          module_name: evidenceSubjectDisplay(evidence)?.name ?? null,
+          module_path: evidenceSubjectDisplay(evidence)?.local_path ?? null,
           source: "function-dossier" as const,
         },
       ],

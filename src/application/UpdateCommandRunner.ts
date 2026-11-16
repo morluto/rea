@@ -8,7 +8,7 @@ import {
   isWindowsBatchFile,
   windowsBatchCommand,
 } from "../process/WindowsBatchCommand.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   ProviderProcessSupervisor,
   type ProviderProcessSnapshot,
@@ -18,6 +18,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { UpdateCommandProgress } from "./UpdateCommandProgress.js";
 import type { UpdateOutput } from "./Update.js";
 import { withoutPackageRunnerIdentity } from "./ClientRegistrationIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const UPDATE_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
 const UPDATE_PROBE_TIMEOUT_MS = 10_000;
@@ -65,9 +66,7 @@ export class UpdateCommandRunner {
         ),
       );
     } catch (cause: unknown) {
-      return commandFailure(
-        cause instanceof Error ? cause.message : String(cause),
-      );
+      return commandFailure(errorMessage(cause));
     } finally {
       deadline.dispose();
     }
@@ -94,9 +93,7 @@ export class UpdateCommandRunner {
         ),
       )
       .then((result) => (result.ok ? result : err(result.error.detail)))
-      .catch((cause: unknown) =>
-        err(cause instanceof Error ? cause.message : String(cause)),
-      );
+      .catch((cause: unknown) => err(errorMessage(cause)));
   }
 
   close(): Promise<void> {
@@ -120,14 +117,16 @@ const runUpdateProcess = async (
   const [executable, ...args] = command;
   if (executable === undefined)
     return commandFailure("No executable supplied.", "launch");
+  // Spawning is host-bound: the child runs on this host's platform.
+  const { platform } = HOST_PLATFORM;
   const environment = snapshotEnvironment(
-    withoutPackageRunnerIdentity(selectedEnvironment),
-    HOST_PLATFORM.platform,
+    withoutPackageRunnerIdentity(selectedEnvironment, platform),
+    platform,
   );
   let selectedExecutable = executable;
   let selectedArguments = args;
   let windowsVerbatimArguments = false;
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     if (
       !win32.isAbsolute(executable) &&
       !/[\\/]/u.test(executable) &&
@@ -173,7 +172,7 @@ const runUpdateProcess = async (
     return commandFailure("Update command cancelled before launch.");
   let child;
   try {
-    child = (process.platform === "win32" ? spawnWindows : spawn)(
+    child = (platform === "win32" ? spawnWindows : spawn)(
       selectedExecutable,
       selectedArguments,
       {
@@ -185,10 +184,7 @@ const runUpdateProcess = async (
       },
     );
   } catch (cause: unknown) {
-    return commandFailure(
-      cause instanceof Error ? cause.message : String(cause),
-      "launch",
-    );
+    return commandFailure(errorMessage(cause), "launch");
   }
   let spawned = false;
   child.once("spawn", () => {

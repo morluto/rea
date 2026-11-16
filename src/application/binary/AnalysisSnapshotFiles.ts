@@ -14,15 +14,19 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import { validationIssueOptions } from "../../domain/evidenceValidation.js";
 import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
 } from "../../domain/analysisErrorCore.js";
-import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
+import { readJsonObjectMembersFile } from "../JsonFiles.js";
+import {
+  writeTextFile,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 const READ_OPERATION = "open_binary";
@@ -87,7 +91,10 @@ export const readAnalysisSnapshot = async (
     if (signal?.aborted === true)
       return err(cancelledBy(READ_OPERATION, signal));
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
 };
@@ -156,7 +163,10 @@ export const writeAnalysisSnapshot = async (
     encoded = serializeAnalysisSnapshot(snapshot);
   } catch (cause: unknown) {
     return err(
-      new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
+      new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+        cause,
+        ...validationIssueOptions(cause, []),
+      }),
     );
   }
   return writeTextFile(encoded, path, overwrite, resources);

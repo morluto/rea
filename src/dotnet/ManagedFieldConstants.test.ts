@@ -3,8 +3,8 @@ import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
-import { MANAGED_CODED_INDEXES } from "./ManagedMetadataLayout.js";
-import { decodeMetadataCodedIndex } from "./ManagedMetadataHeaps.js";
+import { MANAGED_CODED_INDEXES } from "../domain/managed/managedMetadataLayout.js";
+import { decodeMetadataCodedIndex } from "../domain/managed/managedMetadataHeaps.js";
 
 const inspectConstant = (typeCode: number, hex: string) => {
   const bytes = buildManagedPeFixture({

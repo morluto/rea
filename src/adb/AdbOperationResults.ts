@@ -1,4 +1,4 @@
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import type { AdbUnparsedLines } from "./AdbUnparsedLines.js";
 import type {
   AdbBinarySelection,

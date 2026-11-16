@@ -10,6 +10,7 @@ import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComp
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const evidence = ARTIFACT_COMPARISON_EXAMPLE.left;
 const retained = {
@@ -24,7 +25,10 @@ const file = {
 it("advertises one spelling per compare_artifacts source and rejects the same sides the parser rejects", async () => {
   const contract = toolContract("compare_artifacts");
   const server = new McpServer({ name: "artifact-sources", version: "0" });
-  const client = new Client({ name: "artifact-sources", version: "0" });
+  const client = new Client(
+    { name: "artifact-sources", version: "0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   server.registerTool(

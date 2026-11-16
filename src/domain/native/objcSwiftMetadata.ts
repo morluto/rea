@@ -1,5 +1,6 @@
 import { objcClassSymbol } from "../objcClassSymbol.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   BINARY_ARCHITECTURES,
   type BinaryTarget,
@@ -338,7 +339,11 @@ type SwiftSymbol = z.infer<typeof swiftSymbolSchema>;
 /** Per-facet coverage; empty arrays are meaningful only with this record. */
 export const nativeMetadataCoverageSchema = z.strictObject({
   facet: z.string().min(1),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
+  status: z.enum([
+    ...knownCoverageStatusSchema.options,
+    "unsupported",
+    "not_requested",
+  ]),
   reason: z.string().nullable(),
   examined: z.int().nonnegative(),
   decoded: z.int().nonnegative(),
@@ -350,6 +355,11 @@ export const objcClassImportIdentitySchema = machoImportBindingSchema.omit({
 export const objcClassImportBindingCoverageSchema =
   nativeMetadataCoverageSchema.extend({
     facet: z.literal("objc_class_import_bindings"),
+    /** `unknown` when the caller did not state whether the candidates are complete. */
+    status: z.enum([
+      ...nativeMetadataCoverageSchema.shape.status.options,
+      "unknown",
+    ]),
     examined: z.number().int().nonnegative(),
     decoded: z.number().int().nonnegative(),
   });
@@ -466,7 +476,7 @@ export const nativeDispatchMetadataInputSchema = z.strictObject({
   objc_class_import_addresses_complete: z
     .boolean()
     .describe(
-      "Whether the candidate addresses include every selected class-label row; false keeps binding coverage partial when the existing record budget truncates the scan.",
+      "Whether the candidate addresses include every selected class-label row. false keeps binding coverage partial when the existing record budget truncates the scan; omitted makes binding coverage unknown.",
     )
     .optional(),
   max_input_bytes: z

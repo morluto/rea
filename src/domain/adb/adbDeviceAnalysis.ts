@@ -3,6 +3,7 @@ import {
   adbTransportIdSchema,
 } from "./adbTransportIdentity.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { localPathStringSchema } from "../localPath.js";
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
 import {
@@ -643,7 +644,7 @@ export const adbResultSchemas = {
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   pull_adb_package: z.strictObject({
     client,
@@ -652,7 +653,7 @@ export const adbResultSchemas = {
     output_directory: z.string().min(1),
     artifacts: z.array(pulledArtifact),
     failures: z.array(pullFailure),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   read_adb_logcat: z.strictObject({
     client,
@@ -662,7 +663,7 @@ export const adbResultSchemas = {
     pid: z.int().positive().nullable(),
     lines: z.array(z.string()),
     total_bytes: z.int().nonnegative(),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_adb_package: z.strictObject({
     client,
@@ -683,7 +684,7 @@ export const adbResultSchemas = {
     pkg_flags: z.string().nullable(),
     requested_permissions_count: z.int().nonnegative().nullable(),
     numeric_issues: adbPackageNumericIssuesSchema,
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   pull_adb_file: z.strictObject({
     client,
@@ -731,7 +732,7 @@ export const adbResultSchemas = {
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   list_adb_directory: z.strictObject({
     client,
@@ -750,7 +751,7 @@ export const adbResultSchemas = {
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   list_adb_features: z.strictObject({
     client,
@@ -762,7 +763,7 @@ export const adbResultSchemas = {
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   list_adb_services: z.strictObject({
     client,
@@ -774,7 +775,7 @@ export const adbResultSchemas = {
       }),
     ),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_adb_display: z.strictObject({
     client,
@@ -792,7 +793,7 @@ export const adbResultSchemas = {
     physical_density: z.int().positive().nullable(),
     override_density: z.int().positive().nullable(),
     numeric_issues: adbDisplayNumericIssuesSchema,
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_adb_window: z.strictObject({
     client,
@@ -832,7 +833,7 @@ export const adbResultSchemas = {
     ),
     exact_match: z.boolean(),
     unparsed_lines: z.array(z.string().min(1)),
-    coverage: z.enum(["complete", "partial"]),
+    coverage: knownCoverageStatusSchema,
   }),
   install_adb_package: z.strictObject({
     client,

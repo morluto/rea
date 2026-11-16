@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
+import { parseCliJsonInput } from "../../../src/cli/cliJsonInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
 

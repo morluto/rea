@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { ADB_PROVIDER_IDENTITY } from "./AdbProviderIdentity.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
@@ -11,7 +12,6 @@ import {
   adbInputFileError,
 } from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
   access,
@@ -34,7 +34,7 @@ import {
   type ProviderAvailability,
   createAnalysisExecution,
   type AnalysisExecution,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import type {
   AdbDisplayNumericIssues,
@@ -44,15 +44,13 @@ import type {
   AdbPackagePullPartialObservation,
   AdbRequest,
 } from "../domain/adb/adbDeviceAnalysis.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   ArtifactResourceRetryFailure,
   ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import {
   adbDisplayPartialObservationSchema,
   adbResultSchemas,
@@ -101,11 +99,10 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../process/RuntimeControlUnavailableError.js";
+} from "../domain/runtimeControlUnavailableError.js";
 import {
   adbCommandOutputFailure,
   adbArguments,
-  adbSpawnCapacityError,
   runAdb,
   runAdbCapture,
   packageChangeRefusal,
@@ -164,6 +161,8 @@ import {
   listAdbDevicesOperation,
   type AdbCommandContext,
 } from "./AdbDeviceOperations.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const SHELL_TIMEOUT_MS = 30_000;
 const PACKAGE_LIST_TIMEOUT_MS = 60_000;
@@ -256,10 +255,7 @@ const adbDigestError = (
       partialObservation,
     });
   const resource = `${digestFailure.path} (ADB digest handle)`;
-  const reason =
-    digestFailure.cleanupCause instanceof Error
-      ? digestFailure.cleanupCause.message
-      : String(digestFailure.cleanupCause);
+  const reason = errorMessage(digestFailure.cleanupCause);
   const cleanup = new ProviderCleanupError(
     ADB_PROVIDER_IDENTITY.id,
     [resource],
@@ -389,10 +385,7 @@ const syncStagedAdbFile = async (
       ADB_PROVIDER_IDENTITY.id,
       [resource],
       {
-        reason:
-          released.cause instanceof Error
-            ? released.cause.message
-            : String(released.cause),
+        reason: errorMessage(released.cause),
       },
       { operation, cause: released.cause },
     );
@@ -469,9 +462,6 @@ const hardLinksUnsupported = (cause: unknown): boolean =>
   ["EPERM", "EOPNOTSUPP", "ENOTSUP", "ENOSYS", "EXDEV"].includes(
     String(cause.code),
   );
-
-const describeAdbFailure = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 interface ScreenPublicationCloseFailure {
   readonly cause: unknown;
@@ -583,7 +573,7 @@ const publishScreenExclusively = async (
     const error = new ProviderCleanupError(
       ADB_PROVIDER_IDENTITY.id,
       [outputPath],
-      { reason: describeAdbFailure(closeCause) },
+      { reason: errorMessage(closeCause) },
       {
         operation,
         cause: new AggregateError(
@@ -605,7 +595,7 @@ const publishScreenExclusively = async (
     const error = new ProviderCleanupError(
       ADB_PROVIDER_IDENTITY.id,
       [outputPath],
-      { reason: describeAdbFailure(removed.cause) },
+      { reason: errorMessage(removed.cause) },
       {
         operation,
         cause: new AggregateError(
@@ -647,7 +637,6 @@ const publishBugreport = async (
 };
 
 export interface AdbProviderOptions {
-  readonly platform?: NodeJS.Platform;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   /** Persist UI Evidence discovered by a cleanup retry after MCP delivery. */
   readonly onLateUiEvidence?: (evidence: Evidence) => void;
@@ -655,6 +644,8 @@ export interface AdbProviderOptions {
   readonly createRuntimeRoot?: (
     options?: PrivateRuntimeRootOptions,
   ) => Promise<AdbRuntimeRoot>;
+  /** The host adb and its pulled files live on; defaults to the running host. */
+  readonly platform?: NodeJS.Platform;
 }
 
 type AdbRuntimeRoot = Pick<PrivateRuntimeRoot, "path" | "close">;
@@ -958,11 +949,7 @@ export class AdbProvider {
           ADB_PROVIDER_IDENTITY.id,
           [...new Set(resources)],
           {
-            reason: failures
-              .map((cause) =>
-                cause instanceof Error ? cause.message : String(cause),
-              )
-              .join("; "),
+            reason: failures.map((cause) => errorMessage(cause)).join("; "),
           },
           {
             operation: "close_binary",
@@ -993,7 +980,7 @@ export class AdbProvider {
           : new ProviderCleanupError(
               ADB_PROVIDER_IDENTITY.id,
               this.#ui.pendingResources,
-              { reason: describeAdbFailure(cause) },
+              { reason: errorMessage(cause) },
               { cause },
             );
       this.#uiCleanup.bindCleanupError(error);
@@ -1030,11 +1017,7 @@ export class AdbProvider {
       ADB_PROVIDER_IDENTITY.id,
       resources,
       {
-        reason: causes
-          .map((cause) =>
-            cause instanceof Error ? cause.message : String(cause),
-          )
-          .join("; "),
+        reason: causes.map((cause) => errorMessage(cause)).join("; "),
       },
       {
         operation,
@@ -1197,7 +1180,7 @@ export class AdbProvider {
           ADB_PROVIDER_IDENTITY.id,
           [owner.path],
           {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
           },
           { operation: owner.operation, cause },
         );
@@ -1322,8 +1305,7 @@ export class AdbProvider {
                     ({ path }) => path,
                   ),
                   {
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
+                    reason: errorMessage(cause),
                   },
                   { operation: request.operation, cause },
                 ),
@@ -1356,18 +1338,6 @@ export class AdbProvider {
             ADB_PROVIDER_IDENTITY.id,
             request.operation,
             { prerequisite_operation: "inspect_adb_client" },
-          ),
-        );
-      if (
-        cause instanceof AdbConfigurationFailure &&
-        cause.code === "host_capacity"
-      )
-        return err(
-          adbSpawnCapacityError(
-            request.operation,
-            String(cause.diagnostics.filesystem_error),
-            cause,
-            cause.diagnostics,
           ),
         );
       if (cause instanceof AdbConfigurationFailure)
@@ -1955,7 +1925,7 @@ export class AdbProvider {
       signal,
     );
     if (!paths.ok) return paths;
-    const parsed = parsePmPathOutput(paths.value.stdout);
+    const parsed = parsePmPathOutput(paths.value.stdout, this.platform);
     const capturedOutput = {
       stdout: paths.value.stdout,
       stderr: paths.value.stderr,
@@ -2048,11 +2018,9 @@ export class AdbProvider {
         mode: created.mode,
       };
     } catch (cause) {
-      const primary = new AnalysisOutputError(
-        operation,
-        cause instanceof Error ? cause.message : String(cause),
-        { cause },
-      );
+      const primary = new AnalysisOutputError(operation, errorMessage(cause), {
+        cause,
+      });
       if (!packageDirectoryCreated) return err(primary);
       const owner = {
         operation,
@@ -2093,7 +2061,7 @@ export class AdbProvider {
         const cleanup = new ProviderCleanupError(
           ADB_PROVIDER_IDENTITY.id,
           [packageDirectory],
-          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { reason: errorMessage(cause) },
           { operation, cause },
         );
         return err(this.#retainOutputDirectoryCleanup(owner, cleanup));
@@ -2266,7 +2234,7 @@ export class AdbProvider {
         failures.push({
           device_path: entry.device_path,
           stage: "digest",
-          message: `The pulled file could not be read back after pulling: ${localPath}: ${physicalCause instanceof Error ? physicalCause.message : String(physicalCause)}`,
+          message: `The pulled file could not be read back after pulling: ${localPath}: ${errorMessage(physicalCause)}`,
           cause,
         });
       }
@@ -2334,7 +2302,7 @@ export class AdbProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const derived = adbHostFileName(input.device_path);
+    const derived = adbHostFileName(input.device_path, this.platform);
     if (!derived.ok)
       return err(
         new AnalysisInputError(operation, undefined, [
@@ -2604,7 +2572,7 @@ export class AdbProvider {
           if (verificationFailed)
             deviceDigest.error.retainPartialObservation(
               createEvidence(
-                completed.subject ?? undefined,
+                completed.subject ?? unknownTarget("not-observed"),
                 completed.provider,
                 {
                   operation,
@@ -2648,7 +2616,7 @@ export class AdbProvider {
               `The device-reported digest does not match the staged local file: ${localPath}`,
               {
                 partialObservation: createEvidence(
-                  completed.subject ?? undefined,
+                  completed.subject ?? unknownTarget("not-observed"),
                   completed.provider,
                   {
                     operation,
@@ -3157,9 +3125,7 @@ export class AdbProvider {
             ),
           );
         }
-        const sha256 = createHash("sha256")
-          .update(captured.value.stdout)
-          .digest("hex");
+        const sha256 = sha256Hex(captured.value.stdout);
         const completed = createAnalysisExecution(
           {
             client,
@@ -3397,7 +3363,7 @@ export class AdbProvider {
           new ProviderCleanupError(
             ADB_PROVIDER_IDENTITY.id,
             [stagingDirectory],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { operation, cause },
           ),
         ),

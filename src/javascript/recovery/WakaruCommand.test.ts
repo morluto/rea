@@ -1,4 +1,5 @@
 import { createTestArtifactResourceScope } from "../../../tests/fixtures/artifactResourceScope.js";
+import { SIMULATED_LINUX_X64 } from "../../../tests/fixtures/simulatedHost.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -32,9 +33,10 @@ import { prlimitArgumentVector } from "../../process/LinuxResourceLimits.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 it("names the Wakaru configuration requirement when it is not configured", async () => {
-  const refusal: unknown = await resolveWakaruCommand({}).catch(
-    (cause: unknown) => cause,
-  );
+  const refusal: unknown = await resolveWakaruCommand(
+    {},
+    SIMULATED_LINUX_X64,
+  ).catch((cause: unknown) => cause);
 
   if (!(refusal instanceof AnalysisCapabilityUnavailableError))
     throw new Error("Expected a capability refusal");

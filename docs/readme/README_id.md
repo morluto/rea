@@ -82,11 +82,11 @@ Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui p
 
 Penyiapan mendukung Claude Code, Codex, Cursor, Gemini CLI, Grok Build, dan [agen lainnya](../getting-started/installation.md#supported-agents). Lihat [instalasi dan penyiapan](../getting-started/installation.md) untuk konfigurasi penyedia dan pendaftaran MCP secara manual.
 
-MCP menggunakan skema input ringkas secara default. Untuk petunjuk bidang lengkap dan validasi bertingkat, atur `REA_MCP_INPUT_SCHEMA_PROFILE=full` pada pendaftaran MCP. Kedua profil mempertahankan semua alat dan validasi server kanonis yang sama; lihat panduan kontrak MCP.
+MCP menggunakan skema input ringkas secara default. Petunjuk yang dihilangkan skema ringkas mengikuti deskripsi alat. Semua alat dan validasi server kanonis tidak berubah; lihat panduan kontrak MCP.
 
 Setup mencatat runtime yang dipilih dan skrip masuk REA secara langsung. Jika memakai package runner, pertahankan entri cache dan runtime tersebut; unduh paket dari direktori tepercaya di luar proyek target. Lihat panduan instalasi.
 
-Skema keluaran tidak disertakan dalam `tools/list` secara default: tidak ada API model yang membacanya, dan REA memvalidasi setiap hasil sendiri. Atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` dalam registrasi MCP untuk mengumumkan setiap skema keluaran dalam batas 4096 byte, atau `full` untuk skema keluaran lengkap (bagi klien MCP yang memvalidasi hasil). Di semua pengaturan, validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
+Skema keluaran tidak disertakan dalam `tools/list` secara default: tidak ada API model yang membacanya, dan REA memvalidasi setiap hasil sendiri. Atur `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` dalam registrasi MCP untuk mengumumkan setiap skema keluaran dalam batas 4096 byte. Di semua pengaturan, validasi server dan hasil terstruktur tetap lengkap. Lihat «Output schemas» di panduan kontrak MCP.
 
 ### Minta agen Anda
 

@@ -3,7 +3,6 @@ import { readdir, readFile, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
 import { runOwnedCommand } from "../../../dist/process/OwnedCommand.js";
-import { LINUX_SYSTEM_PS_LOCATIONS } from "../../../dist/process/systemPs.js";
 import { parseEvidence } from "../../../dist/domain/evidence.js";
 import {
   assertHistoricalPidAccess,
@@ -32,8 +31,6 @@ export async function verifyCoreInspectionTrace({
         .filter(isAbsolute)
         .map((directory) => join(directory, name)),
     ]);
-  const psPaths = helperPaths("ps");
-  for (const path of LINUX_SYSTEM_PS_LOCATIONS) psPaths.add(path);
   const iconvPaths = helperPaths("iconv");
   const gitPaths = helperPaths("git");
   const observations = [];
@@ -113,7 +110,6 @@ export async function verifyCoreInspectionTrace({
     const ownershipFacts = collectOwnershipTraceFacts({
       traces,
       nodeExecutable: process.execPath,
-      psExecutables: psPaths,
     });
     for (const trace of traces) {
       const { file } = trace;

@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,14 +9,13 @@ import { expect } from "vitest";
 import { z } from "zod";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type {
   ProviderAvailability,
   AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import {
@@ -25,6 +25,7 @@ import {
 import { ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const SNAPSHOT_PROFILE = createAnalysisProfile(
   { id: "fixture", name: "Fixture analysis provider", version: "1" },
@@ -109,8 +110,6 @@ export const createSessionMcpHarness = async (
           }),
     },
   );
-  // Preserve SDK validation and catalog invalidation, without repeatedly
-  // expanding shared output-schema references on each lifecycle transition.
   const mcp = new Client(
     { name: "session-test", version: "1.0.0" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
@@ -168,7 +167,7 @@ export const snapshotAndRecordUnknown = async (
     JSON.stringify(
       createEvidenceBundle([
         createEvidence(
-          undefined,
+          unknownTarget("not-observed"),
           { id: "fixture", name: "Fixture", version: "1" },
           { operation: "external_observation", parameters: {}, result: true },
         ),

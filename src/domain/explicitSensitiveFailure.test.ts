@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { EvidenceFileError } from "./evidenceErrors.js";
 import {
   AnalysisAccessDeniedError,
@@ -56,7 +57,7 @@ it.each([
   new ProviderAdapterError("provider", "inspect", context),
 ])("preserves sanitized common context for $._tag", (error) => {
   const observation = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Owner facts", version: "1" },
     {
       operation: "inspect",
@@ -308,6 +309,22 @@ it.each([
     );
     expect(redactExplicitFailure(source, ["secret"])).toMatchObject({
       retryable,
+    });
+  },
+);
+
+it.each([false, true])(
+  "preserves whether a transport refusal sent its request (%s) through redaction",
+  (requestSent) => {
+    const source = new AnalysisResourceConstraintError(
+      "cutter_command",
+      "transport",
+      "Cutter request exceeds its frame limit",
+      { max_request_bytes: 8192 },
+      { requestSent },
+    );
+    expect(redactExplicitFailure(source, ["secret"])).toMatchObject({
+      requestSent,
     });
   },
 );

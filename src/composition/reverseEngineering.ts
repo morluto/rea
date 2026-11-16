@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { ReverseEngineeringServiceRuntimeOptions } from "../application/reverse/ReverseEngineeringService.js";
 import type {
   ReverseEngineeringCommandPort,
@@ -6,7 +7,10 @@ import type {
 } from "../application/reverse/ReverseEngineeringCommandPort.js";
 import { err, ok } from "../domain/result.js";
 import { ReverseEngineeringService } from "../application/reverse/ReverseEngineeringService.js";
-import { objdumpCommand } from "../objdump/ObjdumpCommand.js";
+import {
+  objdumpCommand,
+  objdumpCommandLimitations,
+} from "../objdump/ObjdumpCommand.js";
 import {
   OBJDUMP_COMMAND_REPAIR,
   OBJDUMP_PROVIDER_IDENTITY,
@@ -24,7 +28,7 @@ import { resolveWindowsProviderExecutable } from "../process/WindowsProviderExec
 
 export const createReverseEngineeringCommandPort = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): ReverseEngineeringCommandPort => ({
   objdump: (input) =>
     selectCommand(
@@ -33,6 +37,7 @@ export const createReverseEngineeringCommandPort = (
       platform,
       {
         arguments: objdumpCommand(input),
+        limitations: objdumpCommandLimitations(input),
         identity: OBJDUMP_PROVIDER_IDENTITY,
         repair: OBJDUMP_COMMAND_REPAIR,
         environmentOverrides: { DEBUGINFOD_URLS: "" },

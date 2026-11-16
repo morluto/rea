@@ -14,6 +14,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { retainedEvidenceReference } from "../../fixtures/mcpRetainedEvidence.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("retains completed Android Evidence through the MCP cancellation delivery path", async () => {
   const fixture = await createJadxProtocolFixture();
@@ -54,7 +55,10 @@ it("retains completed Android Evidence through the MCP cancellation delivery pat
       },
     },
   );
-  const client = new Client({ name: "android-late-completion", version: "1" });
+  const client = new Client(
+    { name: "android-late-completion", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {

@@ -1,4 +1,3 @@
-import { schemaVerifierEnvironment } from "./mcp-verification-environment.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,8 +7,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { createVerifierCommands } from "./verify-commands.mjs";
 
-import { ArtifactResourceScope } from "../../dist/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../dist/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../dist/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../dist/resources/AnalysisCleanupLease.js";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 import { parseEvidence } from "../../dist/domain/evidence.js";
@@ -237,7 +236,7 @@ async function verifyNativeValueAdapters(
   const transport = await createOwnedMcpStdioTransport({
     command: process.execPath,
     arguments: [entrypoint, "mcp"],
-    hostEnvironment: schemaVerifierEnvironment(env),
+    hostEnvironment: env,
     cwd: process.cwd(),
     expectedCommand: null,
     sweepTokenOwnedProcesses: true,

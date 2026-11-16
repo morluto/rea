@@ -2,11 +2,14 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
-import type { SqliteDatabasePort } from "../application/sqlite/SqliteDatabasePort.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+} from "../ports/AnalysisProvider.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import type { SqliteDatabasePort } from "../ports/sqlite/SqliteDatabasePort.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
@@ -43,7 +46,7 @@ import type {
 } from "../process/ProviderProcess.js";
 import {
   createSqliteCleanupError,
-  sqliteDatabaseFailure,
+  sqliteDatabaseDialect,
 } from "./SqliteDatabaseFailures.js";
 import { captureSqliteDatabaseSnapshot } from "./SqliteDatabaseSnapshot.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
@@ -53,6 +56,7 @@ import {
   sqliteReplyFinalizationFailure,
   type SqliteWorkerLauncher,
 } from "./SqliteDatabaseWorkerExecution.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const operation = "inspect_sqlite_database";
 type SqliteOutcome = Result<AnalysisExecution, AnalysisError>;
@@ -127,11 +131,9 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
       .run(() => this.#inspect(input, options))
       .catch((cause: unknown) =>
         err(
-          sqliteDatabaseFailure(
+          classifyProviderFailure(
             cause,
-            input.path,
-            "artifact-read",
-            options?.signal,
+            sqliteDatabaseDialect(input.path, "artifact-read", options?.signal),
           ),
         ),
       );
@@ -348,12 +350,14 @@ export class SqliteDatabaseProvider implements SqliteDatabasePort {
         cause.cleanupOwner !== undefined
       )
         processOwner = cause.cleanupOwner;
-      const failure = sqliteDatabaseFailure(
+      const failure = classifyProviderFailure(
         cause,
-        input.path,
-        phase,
-        options?.signal,
-        workerTimeoutMs,
+        sqliteDatabaseDialect(
+          input.path,
+          phase,
+          options?.signal,
+          workerTimeoutMs,
+        ),
       );
       retainedOutput ??= failure.capturedOutput;
       result = err(failure);
@@ -502,7 +506,7 @@ const cleanupSqliteRoot = async (
     return err(
       sqliteCleanupFailure(
         [root.path],
-        cause instanceof Error ? cause.message : String(cause),
+        errorMessage(cause),
         result,
         input,
         output,

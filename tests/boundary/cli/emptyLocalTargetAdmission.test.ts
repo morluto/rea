@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, vi } from "vitest";
 import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
@@ -6,6 +6,7 @@ import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
 import { registerUtilityCommands } from "../../../src/cli/utilityCommands.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import { silentLogger } from "../../../src/logger.js";
 
 const registry = () => {
@@ -17,11 +18,27 @@ const registry = () => {
     vi.fn(async (_path: string, ..._rest: unknown[]) => failure);
   const runDirectAnalysis = run();
   const runProviderAnalysis = run();
-  const cli = Cli.create("empty-target-admission", { sync: false });
+  const runManagedProviderEvidence = vi.fn(
+    async (_path: string, ..._rest: unknown[]) =>
+      ({
+        ok: false,
+        error: new AnalysisInputError("inspect_managed_members", undefined, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: "Admitted target control",
+          },
+        ]),
+      }) as const,
+  );
+  const cli = createCommandCli();
   registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);
-  registerManagedCommands(cli, silentLogger, runProviderAnalysis);
+  registerManagedCommands(cli, silentLogger, {
+    runProviderAnalysis,
+    runManagedProviderEvidence,
+  });
   registerUtilityCommands(
     cli,
     silentLogger,
@@ -42,7 +59,11 @@ const registry = () => {
     });
     return JSON.parse(stdout);
   };
-  return { serve, runs: [runDirectAnalysis, runProviderAnalysis] };
+  return {
+    serve,
+    runs: [runDirectAnalysis, runProviderAnalysis],
+    runManagedProviderEvidence,
+  };
 };
 
 // Each command with its other required arguments; the target comes first.
@@ -123,13 +144,14 @@ it.each([
 ])(
   "rejects an empty compare-managed-members $field before reading either input",
   async ({ argv, field }) => {
-    const { serve } = registry();
+    const { serve, runManagedProviderEvidence } = registry();
     expect(await serve(["compare-managed-members", ...argv])).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [
         expect.objectContaining({ path: field, code: "too_small" }),
       ],
     });
+    expect(runManagedProviderEvidence).not.toHaveBeenCalled();
   },
 );
 

@@ -32,6 +32,7 @@ import { err, ok, type Result } from "../result.js";
 import type { JsonValue } from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import { evidenceFileTarget } from "../evidence.js";
 export const gpuCodeObjectsViewRequestSchema = z.discriminatedUnion(
   "collection",
   [
@@ -197,11 +198,8 @@ const readGpuFacts = (
     };
     if (reusable) checkedGpu.set(report, checked);
   }
-  const subject = parent.subject;
-  if (
-    subject != null &&
-    subject.digest.sha256 !== checked.report.artifact.sha256
-  )
+  const subject = evidenceFileTarget(parent);
+  if (subject != null && subject.sha256 !== checked.report.artifact.sha256)
     return err(
       analysisViewInputError([
         {
@@ -258,10 +256,7 @@ export const projectGpuCodeObjectsView = (
       view,
       ...shared,
       summary: { ...summary, limitations: shared.limitations },
-      coverage: completeWithinViewCoverage(
-        report.objects.length,
-        report.objects.length,
-      ),
+      coverage: completeWithinViewCoverage(report.objects.length),
     });
   }
   if (view.collection === "ptx") {

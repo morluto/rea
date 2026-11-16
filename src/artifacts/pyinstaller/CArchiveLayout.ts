@@ -4,6 +4,7 @@ import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   pyInstallerFailure,
+  pyInstallerLayoutFailure,
   type PyInstallerFailure,
 } from "./PyInstallerFailure.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
@@ -347,8 +348,7 @@ const validateCArchiveMembers = (
         entry.compressionFlag !== 0
       )
         return err(
-          pyInstallerFailure(
-            "integrity",
+          pyInstallerLayoutFailure(
             `CArchive declaration at table index ${String(entry.index)} has local payload or compression`,
           ),
         );
@@ -358,8 +358,7 @@ const validateCArchiveMembers = (
       entry.compressedSize !== entry.uncompressedSize
     )
       return err(
-        pyInstallerFailure(
-          "integrity",
+        pyInstallerLayoutFailure(
           `Stored CArchive member size disagrees with its table entry at table index ${String(entry.index)}`,
         ),
       );
@@ -387,8 +386,7 @@ const validateCArchiveMembers = (
       range.start < occupied
     )
       return err(
-        pyInstallerFailure(
-          "integrity",
+        pyInstallerLayoutFailure(
           `CArchive member extends outside the archive or overlaps another member at table index ${String(range.index)}`,
         ),
       );

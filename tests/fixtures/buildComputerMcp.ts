@@ -22,6 +22,7 @@ import {
   type FakeComputerOptions,
 } from "./fakeAgentEnvComputer.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 
 /** The host's environment without the settings the opt-in real test exports, which would reach past the fakes. */
 const hostEnvironment = Object.fromEntries(
@@ -57,7 +58,6 @@ export const connectBuildServer = async (
     {
       environment: {
         ...hostEnvironment,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         ...environment,
       },
       desktopBuildSettle: settle,
@@ -67,7 +67,10 @@ export const connectBuildServer = async (
         : { desktopBuildStartTiming: startTiming }),
     },
   );
-  const client = new Client({ name: "build-computer-mcp", version: "1" });
+  const client = new Client(
+    { name: "build-computer-mcp", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await closeVerifierResources([
       () => client.close(),

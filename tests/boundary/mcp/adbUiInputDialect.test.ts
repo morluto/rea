@@ -5,14 +5,14 @@ import { mcpTest } from "../../support/mcp/mcpFixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ADB_UI_TOOL_CONTRACTS } from "../../../src/contracts/adb/adbUiToolContracts.js";
 import { advertisedInputDialectViolations } from "../../../src/contracts/advertisedDialect.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 // Actual SDK registration/admission with sentinel handlers; no Android provider
 // is started, and advertisement widening must never authorize invalid dispatch.
-mcpTest.for(["full", "compact"] as const)(
+mcpTest.for(["compact"] as const)(
   "keeps UI schemas portable and canonical admission strict in %s",
   async (profile, { mcp }) => {
     const server = new EvidenceMcpServer(

@@ -21,3 +21,24 @@ export const objdumpCommand = (input: ObjdumpSelection): readonly string[] => {
     absoluteCallerPath(input.path),
   ];
 };
+
+/** What REA cannot attest about the objdump command it built for `input`. */
+export const objdumpCommandLimitations = (
+  input: ObjdumpSelection,
+): readonly string[] => [
+  ...(input.operation === "architectures"
+    ? [
+        "The objdump implementation and version are unknown. The captured output is the selected command's response and does not establish support for an artifact.",
+      ]
+    : []),
+  ...(input.operation === "disassemble" && input.symbol !== undefined
+    ? [
+        "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
+      ]
+    : []),
+  ...(input.operation === "dwarf" && input.follow_debug_links === true
+    ? [
+        "DWARF output may include local debug-link files whose identities are not bound to Evidence.",
+      ]
+    : []),
+];

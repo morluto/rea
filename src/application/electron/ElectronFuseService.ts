@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ElectronFusePort } from "./ElectronFusePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ElectronFusePort } from "../../ports/electron/ElectronFusePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {

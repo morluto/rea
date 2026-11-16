@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
@@ -60,7 +61,7 @@ export const analysisExecutionEnvelopeForAdmission = (
   confidence: "observed" | "derived",
 ) =>
   evidenceEnvelopeForAdmission(
-    execution.subject ?? undefined,
+    execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
     analysisExecutionEvidenceInput(operation, input, execution, confidence),
   );
@@ -76,7 +77,7 @@ export const createAnalysisExecutionEvidence = (
   },
 ): Evidence =>
   createEvidence(
-    execution.subject ?? undefined,
+    execution.subject ?? unknownTarget("not-observed"),
     execution.provider,
     {
       ...analysisExecutionEvidenceInput(

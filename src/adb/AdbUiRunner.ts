@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isAbortOf } from "../process/SignalAbort.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
@@ -17,7 +20,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisProtocolError,
-  AnalysisResourceConstraintError,
+  fixedCeilingConstraint,
+  capacityConstraint,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -42,8 +46,10 @@ import {
 } from "../process/OwnedCommand.js";
 import { providerOutcomeOf } from "../process/ProviderOutcome.js";
 import { classifyProviderOutcome } from "../process/classifyProviderOutcome.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
@@ -345,7 +351,7 @@ export class AdbUiRunner {
       } catch (cause) {
         failures.push({
           resource,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         });
       }
     }
@@ -354,7 +360,7 @@ export class AdbUiRunner {
     } catch (cause) {
       failures.push({
         resource: this.#preparationResources.cleanupResources.join(", "),
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
     if (failures.length) {
@@ -385,12 +391,11 @@ export class AdbUiRunner {
   ): Promise<Reply> {
     const json = JSON.stringify(payload);
     if (Buffer.byteLength(json) > REQUEST_BYTES)
-      throw new AnalysisResourceConstraintError(
+      throw fixedCeilingConstraint(
         operation,
         "transport",
         "UI request exceeds the 16 KiB retained-request protocol budget",
-        { max_request_bytes: REQUEST_BYTES },
-        REQUEST_ALLOWANCE,
+        REQUEST_ALLOWANCE.fixedAllowance,
       );
     if (socketPath === undefined && "input" in payload)
       throw new AnalysisProtocolError(
@@ -509,16 +514,9 @@ export class AdbUiRunner {
                     cause,
                   })
                 : classifyProviderOutcome(outcome, {
+                    providerId: "adb",
                     operation,
-                    capturedOutput: (snapshot) => ({
-                      stdout: snapshot.stdout.text,
-                      stderr: snapshot.stderr.text,
-                      truncated:
-                        snapshot.diagnosticTruncated === true ||
-                        snapshot.outputIncomplete === true ||
-                        snapshot.stdout.bytes < snapshot.stdout.observedBytes ||
-                        snapshot.stderr.bytes < snapshot.stderr.observedBytes,
-                    }),
+                    capturedOutput: capturedProviderOutput,
                     timeout: { ms: timeoutMs },
                     outputLimit: {
                       limits: { max_output_bytes: CAPTURE_BYTES },
@@ -569,11 +567,7 @@ export class AdbUiRunner {
     );
     if (!parsed.ok) {
       const options = {
-        capturedOutput: {
-          stdout: result.stdout.text,
-          stderr: result.stderr.text,
-          truncated: false,
-        },
+        capturedOutput: capturedProviderOutput(result),
       };
       if (parsed.error.kind === "unavailable")
         return err(
@@ -586,12 +580,12 @@ export class AdbUiRunner {
         );
       if (parsed.error.kind === "capacity")
         return err(
-          new AnalysisResourceConstraintError(
+          fixedCeilingConstraint(
             operation,
             "transport",
             parsed.error.reason,
-            { max_response_bytes: RESPONSE_BYTES },
-            { ...options, ...RESPONSE_ALLOWANCE },
+            RESPONSE_ALLOWANCE.fixedAllowance,
+            options,
           ),
         );
       return err(new AnalysisProtocolError(parsed.error.reason, options));
@@ -785,7 +779,7 @@ export class AdbUiRunner {
           runner_instance: request.runner.instance_id,
           runner_user: 0,
           socket_path: request.socketPath,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         });
       }
     }
@@ -988,12 +982,11 @@ export class AdbUiRunner {
       };
       // No remote authority is retained for requests refused before transport.
       if (Buffer.byteLength(JSON.stringify(payload)) > REQUEST_BYTES)
-        throw new AnalysisResourceConstraintError(
+        throw fixedCeilingConstraint(
           request.operation,
           "transport",
           "UI request exceeds the 16 KiB protocol budget",
-          { max_request_bytes: REQUEST_BYTES },
-          REQUEST_ALLOWANCE,
+          REQUEST_ALLOWANCE.fixedAllowance,
         );
       const preparing = owned;
       let reply = await this.#send(
@@ -1113,12 +1106,11 @@ export class AdbUiRunner {
               status.instance_id === owned.runner.instance_id &&
               status.error?.kind === "capacity"
             )
-              throw new AnalysisResourceConstraintError(
+              throw fixedCeilingConstraint(
                 request.operation,
                 "transport",
                 status.error.reason,
-                { max_response_bytes: RESPONSE_BYTES },
-                RESPONSE_ALLOWANCE,
+                RESPONSE_ALLOWANCE.fixedAllowance,
               );
             if (status.instance_id !== owned.runner.instance_id || !status.ok)
               throw new AnalysisProtocolError(
@@ -1191,18 +1183,15 @@ export class AdbUiRunner {
       }
       return ok(execution);
     } catch (cause) {
-      primary =
-        signal?.aborted &&
-        (cause === signal.reason ||
-          (cause instanceof Error && cause.name === "AbortError"))
-          ? cancelledBy(request.operation, signal)
-          : cause instanceof AnalysisError
-            ? cause
-            : new AnalysisOutputError(
-                request.operation,
-                "Invalid UI runner response",
-                { cause },
-              );
+      primary = isAbortOf(cause, signal)
+        ? cancelledBy(request.operation, signal)
+        : cause instanceof AnalysisError
+          ? cause
+          : new AnalysisOutputError(
+              request.operation,
+              "Invalid UI runner response",
+              { cause },
+            );
     }
     if (admissionFailure !== undefined && admissionFailure !== primary) {
       admissionFailure.retainSecondaryFailure(primary, {
@@ -1491,20 +1480,14 @@ export class AdbUiRunner {
     signal?: AbortSignal,
   ): AnalysisError {
     if (failure.kind === "sensitive_capacity")
-      return new AnalysisResourceConstraintError(
-        request.operation,
-        "capacity",
-        failure.reason,
-        null,
-        {
-          remediationAction:
-            "After outstanding work settles, restart the operator-owned UI runner before adding more sensitive values. Actions that do not add sensitive values remain available.",
-          diagnostics: {
-            runner_failure: failure.kind,
-            runner_instance: owned.runner.instance_id,
-          },
+      return capacityConstraint(request.operation, failure.reason, {
+        remediationAction:
+          "After outstanding work settles, restart the operator-owned UI runner before adding more sensitive values. Actions that do not add sensitive values remain available.",
+        diagnostics: {
+          runner_failure: failure.kind,
+          runner_instance: owned.runner.instance_id,
         },
-      );
+      });
     if (failure.kind === "timeout")
       return new AnalysisTimeoutError(
         request.operation,
@@ -1516,16 +1499,10 @@ export class AdbUiRunner {
         signal?.aborted ? signal : carriedReason(failure.reason),
       );
     if (failure.kind === "busy" || failure.kind === "capacity")
-      return new AnalysisResourceConstraintError(
-        request.operation,
-        "capacity",
-        failure.reason,
-        null,
-        {
-          remediationAction:
-            "Review the runner's capacity reason. Let occupied admission settle, or narrow output that exceeds its fixed transport budget. Inspect current UI state before deciding whether to replay an action.",
-        },
-      );
+      return capacityConstraint(request.operation, failure.reason, {
+        remediationAction:
+          "Review the runner's capacity reason. Let occupied admission settle, or narrow output that exceeds its fixed transport budget. Inspect current UI state before deciding whether to replay an action.",
+      });
     if (
       failure.kind === "unsupported" ||
       failure.kind === "unsupported_key_code"

@@ -1,8 +1,11 @@
 import { mkdir } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { dirname } from "node:path";
 
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   AnalysisCancelledError,
   cancelledBy,
@@ -39,7 +42,8 @@ import type { McpRegistrationClient } from "./McpRegistrationCatalog.js";
 import {
   readRegularFileText,
   readRegularFileTextSnapshot,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface McpClientRegistrationReceipt {
   readonly status: "configured" | "unchanged";
@@ -83,6 +87,8 @@ export const registerMcpClients = async (
   launcher: ClientRegistrationCommand,
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
+  /** The host the clients were resolved for; it decides document semantics. */
+  platform: NodeJS.Platform,
 ): Promise<readonly McpClientRegistrationOutcome[]> => {
   const outcomes: McpClientRegistrationOutcome[] = [];
   let cancelled = false;
@@ -96,7 +102,13 @@ export const registerMcpClients = async (
       outcomes.push({ ...labels, status: "not_started" });
       continue;
     }
-    const result = await registerMcpClient(client, launcher, signal, resources);
+    const result = await registerMcpClient(
+      client,
+      launcher,
+      signal,
+      resources,
+      platform,
+    );
     outcomes.push({ ...labels, status: "completed", result });
     cancelled =
       signal?.aborted === true ||
@@ -114,6 +126,7 @@ export const registerMcpClient = async (
   launcher: ClientRegistrationCommand,
   signal: AbortSignal | undefined,
   resources: ArtifactResourceScope,
+  platform: NodeJS.Platform,
 ): Promise<
   Result<McpClientRegistrationReceipt, McpClientRegistrationFailure>
 > => {
@@ -145,7 +158,12 @@ export const registerMcpClient = async (
       );
     return await withClientConfigurationTransaction(path, async () => {
       checkCancellation();
-      const prepared = await prepareRegistration(path, client, launcher);
+      const prepared = await prepareRegistration(
+        path,
+        client,
+        launcher,
+        platform,
+      );
       const { snapshot, original, contents } = prepared;
       checkCancellation();
       const unchanged = await unchangedRegistration(
@@ -174,7 +192,10 @@ export const registerMcpClient = async (
           : {}),
       });
       checkCancellation();
-      if (client.privateProfile !== undefined && process.platform !== "win32")
+      if (
+        client.privateProfile !== undefined &&
+        HOST_PLATFORM.platform !== "win32"
+      )
         await securePrivateDirectory(
           dirname(path),
           client.privateProfile.home,
@@ -202,7 +223,7 @@ export const registerMcpClient = async (
         status: "configured",
         ...(backupPath === undefined ? {} : { backupPath }),
         ...(client.privateProfile !== undefined
-          ? { permissions: privateProfilePermissions() }
+          ? { permissions: privateProfilePermissions(HOST_PLATFORM.platform) }
           : {}),
       });
     });
@@ -239,7 +260,7 @@ const registrationFailure = async (
     ? await retryClientConfigurationCleanup(cause, resources)
     : undefined;
   const primary = cleanup?.primary ?? cause;
-  const detail = primary instanceof Error ? primary.message : String(primary);
+  const detail = errorMessage(primary);
   const error = new ConfigurationError(
     `Could not register MCP settings at ${path}: ${detail}`,
     {
@@ -268,7 +289,7 @@ const unchangedRegistration = async (
     parsed.requiresRewrite === true ||
     !clientConfigurationValuesEqual(parsed.document, updated) ||
     (client.privateProfile !== undefined &&
-      process.platform !== "win32" &&
+      HOST_PLATFORM.platform !== "win32" &&
       ((snapshot?.state.mode ?? 0) & 0o777) !== PRIVATE_PROFILE_MODES.file)
   )
     return undefined;
@@ -284,7 +305,7 @@ const unchangedRegistration = async (
   checkCancellation();
   await verifyEffectiveRegistration(prepared, current.text);
   const permissionsChanged =
-    client.privateProfile !== undefined && process.platform !== "win32"
+    client.privateProfile !== undefined && HOST_PLATFORM.platform !== "win32"
       ? await securePrivateDirectory(
           dirname(path),
           client.privateProfile.home,
@@ -295,7 +316,7 @@ const unchangedRegistration = async (
   return {
     status: permissionsChanged ? "configured" : "unchanged",
     ...(client.privateProfile !== undefined
-      ? { permissions: privateProfilePermissions() }
+      ? { permissions: privateProfilePermissions(HOST_PLATFORM.platform) }
       : {}),
   };
 };

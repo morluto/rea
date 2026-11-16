@@ -91,8 +91,7 @@ export class NativeUiInterruptionControl {
           partialObservation,
           ...nativeDeadlineRecovery({
             timeoutMs: this.#deadlineMs,
-            setting: "native_ui_deadline_ms",
-            cliFlag: "--native-ui-deadline-ms",
+            parameter: "native_ui_deadline_ms",
             defaultMs: DEFAULT_NATIVE_UI_DEADLINE_MS,
             phase: "native UI observation deadline",
             detail: " A partial observation may already be retained.",
