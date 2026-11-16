@@ -442,6 +442,11 @@ const discoveryAnswer = (
         ),
         1,
       );
+    if (!help && command.length > completions + 2)
+      return answer(
+        "Error (PARSE_ERROR): completions expects exactly one shell. Use 'rea completions --help' for usage.",
+        1,
+      );
     return help || shell === undefined
       ? answer(
           formatCommandHelp(`${cli.name} completions`, {
