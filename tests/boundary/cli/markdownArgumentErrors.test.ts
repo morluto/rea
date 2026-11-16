@@ -14,6 +14,7 @@ import {
   explicitSensitiveValueOptions,
 } from "../../../src/cli/explicitSensitiveArguments.js";
 
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 afterAll(() => disposeMdItInstance());
@@ -175,13 +176,14 @@ it("redacts Markdown punctuation in validation fields before presentation", asyn
     const run = async (format: string, sensitive: boolean) => {
       let stdout = "";
       let exitCode = 0;
+      const global = parseCliGlobalArguments([
+        "inspect",
+        ...(sensitive ? ["--sensitive-value", secret] : []),
+        "--format",
+        format,
+      ]);
       await declared(
-        [
-          "inspect",
-          ...(sensitive ? ["--sensitive-value", secret] : []),
-          "--format",
-          format,
-        ],
+        global,
         {
           env: {},
           stdout: (text) => {
@@ -191,7 +193,7 @@ it("redacts Markdown punctuation in validation fields before presentation", asyn
             exitCode = code;
           },
         },
-        original,
+        (options) => original([...global.arguments], options),
       );
       expect(exitCode).toBe(1);
       return stdout;
@@ -241,13 +243,14 @@ it("retains upstream Markdown literal-cell protections after redaction", async (
   const run = async (format: string, sensitive: boolean) => {
     let stdout = "";
     let exitCode = 0;
+    const global = parseCliGlobalArguments([
+      "inspect",
+      ...(sensitive ? ["--sensitive-value", secret] : []),
+      "--format",
+      format,
+    ]);
     await declared(
-      [
-        "inspect",
-        ...(sensitive ? ["--sensitive-value", secret] : []),
-        "--format",
-        format,
-      ],
+      global,
       {
         env: {},
         stdout: (text) => {
@@ -257,7 +260,7 @@ it("retains upstream Markdown literal-cell protections after redaction", async (
           exitCode = code;
         },
       },
-      original,
+      (options) => original([...global.arguments], options),
     );
     expect(exitCode).toBe(1);
     return stdout;
