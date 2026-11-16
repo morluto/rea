@@ -394,6 +394,60 @@ describe("FridaInstrumentationManager", () => {
     await manager.closeAll();
   });
 
+  it.each(["attach", "spawn"] as const)(
+    "names the refused ptrace seize request when %s injection cannot start",
+    async (mode) => {
+      const bindings = new FakeDeviceManager();
+      const reason = "Unable to perform ptrace seize: Operation not supported";
+      bindings.device.attach = async () => {
+        throw new Error(reason);
+      };
+      const manager = new FridaInstrumentationManager({
+        deviceManager: bindings,
+      });
+      const started = await manager.startSession(
+        mode === "attach"
+          ? { mode, deviceId: "local", pid: 512 }
+          : { mode, deviceId: "local", program: "/bin/echo" },
+      );
+      expect(started.ok).toBe(false);
+      if (started.ok) return;
+      const projected = projectAnalysisError(started.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        details: { reason, provider_id: "frida" },
+      });
+      expect(projected.remediation.action).toContain("PTRACE_SEIZE");
+      expect(projected.remediation.action).toContain("PRoot");
+      expect(projected.remediation.action).not.toContain(
+        "Choose another analysis or target",
+      );
+      expect(projected.message).toContain("ptrace seize");
+      await manager.closeAll();
+    },
+  );
+
+  it("keeps the generic remediation for other Frida startup refusals", async () => {
+    const bindings = new FakeDeviceManager();
+    bindings.device.attach = async () => {
+      throw new Error("Unable to access process with pid 512");
+    };
+    const manager = new FridaInstrumentationManager({
+      deviceManager: bindings,
+    });
+    const started = await manager.startSession({
+      mode: "attach",
+      deviceId: "local",
+      pid: 512,
+    });
+    expect(started.ok).toBe(false);
+    if (started.ok) return;
+    expect(
+      projectAnalysisError(started.error).remediation.action,
+    ).not.toContain("PTRACE_SEIZE");
+    await manager.closeAll();
+  });
+
   it("retains a failed startup's spawn and remote lease until cleanup succeeds", async () => {
     const bindings = new FakeDeviceManager();
     bindings.device.attach = async () => {
