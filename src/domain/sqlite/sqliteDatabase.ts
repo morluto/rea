@@ -153,6 +153,7 @@ export const sqliteDatabaseSchema = z
           without_rowid: z.boolean(),
           strict: z.boolean(),
           column_count: nonnegative.nullable(),
+          // domain-vocabulary: whether column details were read, unsupported or not requested.
           columns_completeness: z.enum([
             "complete",
             "unsupported",

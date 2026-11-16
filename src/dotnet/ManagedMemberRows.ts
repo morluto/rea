@@ -1,6 +1,6 @@
 import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
 import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
-import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
+import { readMemberReferenceRowFacts } from "../domain/managed/managedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
@@ -8,13 +8,13 @@ import {
   admitManagedProjection,
   managedDecodeBudget,
   type ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
-import type { ManagedPeLayout } from "./ManagedPeReader.js";
+} from "../domain/managed/managedDecodeBudget.js";
+import type { ManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   MANAGED_CODED_INDEXES,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   metadataSignature,
   memberTargetIdentity,
@@ -31,7 +31,7 @@ import {
   type SignatureDisplayTypeName,
   type DeclarationTypeName,
   type TypeRange,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   metadataToken,
   type MetadataTokenFact,
@@ -39,14 +39,14 @@ import {
   decodeMetadataCodedIndex,
   readMetadataBlob,
   readMetadataString,
-} from "./ManagedMetadataHeaps.js";
+} from "../domain/managed/managedMetadataHeaps.js";
 import {
   appendManagedParseIssues,
   readManagedValue,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import { methodBody } from "./ManagedMethodBodyReader.js";
-import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
-import type { TypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
+import type { TypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 
 /**
  * Declaring-type tokens whose members are decoded in full; null selects every

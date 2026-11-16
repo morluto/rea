@@ -22,7 +22,7 @@ import { NativeExportsProvider } from "../../../src/native/exports/NativeExports
 import { AppleIpsProvider } from "../../../src/native/apple/AppleIpsProvider.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
 import { ApkSignatureProvider } from "../../../src/apkSignature/ApkSignatureProvider.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const cases = [

@@ -1,3 +1,4 @@
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 import { createHash } from "node:crypto";
 import { access, chmod, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -10,7 +11,7 @@ import {
   WASM_RESOURCE_DEFAULTS,
 } from "../domain/wasm/wasmArtifact.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
+import { PrivateRuntimeRootUnavailableError } from "../domain/privateRuntimeRootUnavailableError.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -367,6 +368,8 @@ it("preserves physical validation rejection when its diagnostics contain malform
     expect(result.error.capturedOutput).toEqual({
       stdout: "",
       stderr: "invalid \ufffd",
+      stdout_bytes: 0,
+      stderr_bytes: 9,
       exit_code: 7,
       signal: null,
       truncated: false,
@@ -1029,6 +1032,16 @@ it("rejects configured WABT tools whose admitted releases disagree", async () =>
     expect(projected.message).toContain(
       "Configured WABT tools report different releases",
     );
+    // The rejected banner keeps what the process wrote, not only its text.
+    expect(result.error.capturedOutput).toEqual({
+      stdout: "1.0.44\n",
+      stderr: "",
+      stdout_bytes: 7,
+      stderr_bytes: 0,
+      exit_code: 0,
+      signal: null,
+      truncated: false,
+    });
   } finally {
     await provider.close();
   }
@@ -1839,7 +1852,7 @@ it("does not attribute wasm-objdump output to a wasm2wat launch failure", async 
     (input) => {
       const version = input.arguments[0] === "--version";
       if (!version && input.command.includes("wasm2wat"))
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+        throw spawnFailure("E2BIG", input.command);
       const script = version
         ? 'process.stdout.write("1.0.42\\n")'
         : input.command.includes("objdump")
@@ -1859,7 +1872,11 @@ it("does not attribute wasm-objdump output to a wasm2wat launch failure", async 
     candidate_paths: [],
   });
   if (result.ok) throw new Error("Expected the wasm2wat launch to fail");
-  expect(result.error.message).toContain("spawn E2BIG");
+  expect(result.error).toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    resource: "transport",
+    reportedLimits: { spawn_error: "E2BIG" },
+  });
   expect(result.error.capturedOutput).toBeUndefined();
 });
 
@@ -1905,13 +1922,21 @@ it("bounds the excerpt when cleanup also fails after the output budget", () => {
   ).toMatchObject({
     code: "cleanup_incomplete",
     details: {
+      // The typed output refusal stays the primary: its control is the
+      // composite's limit, and its bounded excerpt is retained once.
+      limit: {
+        control_kind: "parameter",
+        parameter: "max_output_bytes",
+        effective_value: WASM_RESOURCE_DEFAULTS.outputBytes,
+      },
+      captured_output: { stdout: "(module", stderr: "w".repeat(4096) },
       diagnostics: {
-        previous_error: {
-          failure_kind: "output-limit",
-          message: `WABT output exceeded the ${String(WASM_RESOURCE_DEFAULTS.outputBytes)}-byte output budget`,
-          max_output_bytes: WASM_RESOURCE_DEFAULTS.outputBytes,
+        primary_error: {
+          code: "resource_constraint",
+          message: expect.stringContaining(
+            `WABT output exceeded the ${String(WASM_RESOURCE_DEFAULTS.outputBytes)}-byte output budget`,
+          ),
         },
-        captured_output: { stdout: "(module", stderr: "w".repeat(4096) },
       },
     },
   });

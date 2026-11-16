@@ -151,7 +151,7 @@ cliTest(
     });
     expect(output.json).toMatchObject({
       code: "invalid_request",
-      details: { issues: [{ path: ["input_path"], reason: "invalid_value" }] },
+      details: { issues: [{ path: ["path"], reason: "invalid_value" }] },
     });
   },
 );

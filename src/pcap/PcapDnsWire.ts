@@ -1,5 +1,6 @@
 import { isIPv4, isIPv6 } from "node:net";
 import { err, ok, type Result } from "../domain/result.js";
+import { byteToHex } from "../kernel/byteToHex.js";
 
 interface DnsWireFailure {
   readonly kind: "invalid_dns_wire";
@@ -125,11 +126,7 @@ const decodeName = (
       labels.push(label.toString("hex"));
       folded.push(
         [...label]
-          .map((byte) =>
-            (byte >= 65 && byte <= 90 ? byte + 32 : byte)
-              .toString(16)
-              .padStart(2, "0"),
-          )
+          .map((byte) => byteToHex(byte >= 65 && byte <= 90 ? byte + 32 : byte))
           .join(""),
       );
       at += length;

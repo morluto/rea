@@ -23,8 +23,64 @@ const LAUNCH_REFUSALS: Readonly<Record<string, LaunchRefusal["kind"]>> = {
   EISDIR: "not_executable",
 };
 
+/** The host resource a launch could not obtain. */
+export type LaunchExhaustedResource =
+  | "processes"
+  | "memory"
+  | "file-descriptors";
+
+const HOST_EXHAUSTION: Readonly<Record<string, LaunchExhaustedResource>> = {
+  EAGAIN: "processes",
+  ENOMEM: "memory",
+  EMFILE: "file-descriptors",
+  ENFILE: "file-descriptors",
+};
+
+/**
+ * The host resource a spawn errno reports as exhausted; undefined for any
+ * other errno. The selected command may be usable once capacity is freed.
+ */
+export const launchExhaustedResource = (
+  code: unknown,
+): LaunchExhaustedResource | undefined =>
+  typeof code === "string" && Object.hasOwn(HOST_EXHAUSTION, code)
+    ? HOST_EXHAUSTION[code]
+    : undefined;
+
+/**
+ * Why a process did not start, classified once by errno:
+ *
+ * - a launch refusal (`missing`, `not_executable`): the selected executable
+ *   cannot be run;
+ * - `host-exhausted`: the host lacked process, memory or file-descriptor
+ *   capacity (EAGAIN, ENOMEM, EMFILE, ENFILE);
+ * - `argument-list`: the request's argument list and environment exceed the
+ *   launch limit (E2BIG);
+ * - `failed`: any other errno, or none; the provider cannot be started.
+ */
+export type LaunchFailure =
+  | LaunchRefusal
+  | {
+      readonly kind: "host-exhausted";
+      readonly code: string;
+      readonly resource: LaunchExhaustedResource;
+    }
+  | { readonly kind: "argument-list"; readonly code: "E2BIG" }
+  | { readonly kind: "failed"; readonly code: string | undefined };
+
+/** Classify any spawn errno; see `LaunchFailure`. */
+export const classifyLaunchErrno = (code: unknown): LaunchFailure => {
+  const refusal = classifyLaunchFailureCode(code);
+  if (refusal !== undefined) return refusal;
+  const resource = launchExhaustedResource(code);
+  if (resource !== undefined && typeof code === "string")
+    return { kind: "host-exhausted", code, resource };
+  if (code === "E2BIG") return { kind: "argument-list", code };
+  return { kind: "failed", code: typeof code === "string" ? code : undefined };
+};
+
 /** Classify a spawn errno; undefined when it is not a launch refusal. */
-export const classifyLaunchFailureCode = (
+const classifyLaunchFailureCode = (
   code: unknown,
 ): LaunchRefusal | undefined => {
   if (typeof code !== "string" || !Object.hasOwn(LAUNCH_REFUSALS, code))
@@ -32,14 +88,6 @@ export const classifyLaunchFailureCode = (
   const kind = LAUNCH_REFUSALS[code];
   return kind === undefined ? undefined : { kind, code };
 };
-
-/** Classify a spawn failure; undefined when it was not a launch refusal. */
-export const classifyLaunchFailure = (
-  cause: unknown,
-): LaunchRefusal | undefined =>
-  cause instanceof Error && "code" in cause
-    ? classifyLaunchFailureCode(cause.code)
-    : undefined;
 
 /**
  * Name the executable on an errno Node threw synchronously from `spawn`.
@@ -63,12 +111,14 @@ export const nameSpawnedExecutable = (
 };
 
 /**
- * A launch refusal a launcher raised; `executable` when the launcher named the
- * executable it refused, undefined when it did not (Node's bare `spawn`).
+ * A launch failure a launcher raised. `executable` names the executable when
+ * the launcher named it, undefined when it did not (Node's bare `spawn`);
+ * `syscall` is the launcher's own label, such as `spawn /usr/bin/tool`.
  */
-export interface LauncherRefusal extends LaunchRefusal {
+export type LauncherFailure = LaunchFailure & {
   readonly executable: string | undefined;
-}
+  readonly syscall: string | undefined;
+};
 
 /**
  * Whether a launcher raised this error while starting a process, and the
@@ -96,15 +146,31 @@ const launcherIdentityOf = (
 };
 
 /**
- * Classify a launcher's refusal to start an executable. Undefined when the
- * errno is not a launch refusal or no launcher raised the error.
+ * Classify a launcher's failure to start an executable, by errno. Undefined
+ * when no launcher raised the error, such as an errno from reading a file or
+ * preparing process ownership.
  */
-export const launcherRefusalOf = (
+export const launcherFailureOf = (
   cause: unknown,
-): LauncherRefusal | undefined => {
+): LauncherFailure | undefined => {
   if (!(cause instanceof Error)) return undefined;
   const identity = launcherIdentityOf(cause);
   if (identity === undefined) return undefined;
-  const refusal = classifyLaunchFailure(cause);
-  return refusal === undefined ? undefined : { ...refusal, ...identity };
+  const syscall = Reflect.get(cause, "syscall");
+  return {
+    ...classifyLaunchErrno(Reflect.get(cause, "code")),
+    ...identity,
+    syscall: typeof syscall === "string" ? syscall : undefined,
+  };
+};
+
+/**
+ * How a launch failure reads in a report: the errno, and the launcher's
+ * syscall for a failure that is neither a refusal nor a host constraint.
+ */
+export const describeLaunchFailure = (failure: LauncherFailure): string => {
+  const code = failure.code ?? "no system code";
+  return failure.kind === "failed" && failure.syscall !== undefined
+    ? `${code} from ${failure.syscall}`
+    : code;
 };

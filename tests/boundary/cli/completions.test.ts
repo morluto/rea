@@ -1,12 +1,19 @@
 import { resolve } from "node:path";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
 
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCliCompletions } from "../../../src/cli/completions.js";
+import type { CliInstance } from "../../../src/cli/types.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
+
+type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-const registry = () =>
-  Cli.create("rea", { sync: false }).command("instructions", {
+const registry = () => {
+  const cli = Cli.create("rea", { sync: false }) as unknown as CliInstance;
+  registerCliCommand(cli, "instructions", {
     options: z.object({
       procedure: z.string().optional(),
       targetFormat: z.enum(["dos-com", "raw-binary"]).optional(),
@@ -15,6 +22,8 @@ const registry = () =>
       throw new Error("Completion must not execute a command");
     },
   });
+  return cli;
+};
 const complete = (words: string[], index = words.length - 1) => {
   let text = "";
   const callback = createCliCompletions(registry(), {
@@ -22,7 +31,7 @@ const complete = (words: string[], index = words.length - 1) => {
     _COMPLETE_INDEX: String(index),
   });
   expect(
-    callback(["--", ...words], {
+    callback.complete(["--", ...words], {
       stdout: (value) => {
         text += value;
       },
@@ -103,7 +112,9 @@ it("uses canonical global flag metadata and retains command options and enum hin
 it("shares Bash registration across ordinary and protocol routes while retaining builtin precedence", () => {
   const cli = registry();
   let direct = "";
-  const ordinary = createCliCompletions(cli, {});
+  const completions = createCliCompletions(cli, {});
+  const ordinary = (arguments_: readonly string[], options: ServeOptions) =>
+    completions.writeScript(parseCliGlobalArguments(arguments_), options);
   expect(
     ordinary(["--format", "json", "completions", "bash"], {
       stdout: (text) => {
@@ -113,7 +124,7 @@ it("shares Bash registration across ordinary and protocol routes while retaining
   ).toBe(true);
   let protocol = "";
   expect(
-    createCliCompletions(cli, { COMPLETE: "bash" })([], {
+    createCliCompletions(cli, { COMPLETE: "bash" }).complete([], {
       stdout: (text) => {
         protocol += text;
       },

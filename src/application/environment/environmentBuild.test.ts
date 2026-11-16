@@ -23,7 +23,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { environmentManifestHar } from "../../../tests/fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
 import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";

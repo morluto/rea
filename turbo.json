@@ -46,8 +46,10 @@
         "tests/**/package.json",
         "tsconfig.json",
         "tsconfig.build.json",
+        "tsconfig.scripts.json",
         "vitest.config.ts",
         "scripts/**/*.d.{cts,mts,ts}",
+        "scripts/**/*.mjs",
         "scripts/**/package.json",
         ".github/actions/**/*.{cts,mts,ts,tsx}",
         ".github/**/package.json",
@@ -242,7 +244,10 @@
         "scripts/lib/format-generated-file.mjs",
         ".oxfmtrc.json"
       ],
-      "outputs": ["docs/error-contract.schema.json"]
+      "outputs": [
+        "docs/error-contract.schema.json",
+        "docs/user-visible-errors.csv"
+      ]
     },
     "mcp-catalog:check:built": {
       "dependsOn": ["artifacts:mcp-catalog"],

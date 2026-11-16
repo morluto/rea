@@ -18,7 +18,7 @@ import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import type { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 import type {
@@ -27,7 +27,7 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 
@@ -158,8 +158,6 @@ export interface BinarySessionPort
     operation?: AnalysisOperation,
   ): AnalysisProfileCommitment | undefined;
   allowsSnapshotReplay(operation: AnalysisOperation): boolean;
-  /** Invalidate cached Evidence before an external command may mutate the target. */
-  invalidateSnapshotForExternalMutation(): void;
   recordWorkflowSnapshot(
     input: WorkflowSnapshotRecordInput,
   ): Result<null, EvidenceIntegrityError>;

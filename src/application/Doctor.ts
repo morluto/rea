@@ -9,14 +9,20 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { RetainedResourceScope } from "./AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
+import type {
+  DoctorCheck,
+  DoctorProviderInspection,
+} from "../ports/DoctorProviderInspection.js";
 import {
   inspectNativeAnalysisConfiguration,
   type NativeAnalysisConfigurationInspection,
@@ -34,13 +40,13 @@ import {
   execFileOutputFailure,
   execFileFailureCapturedOutput,
 } from "../process/ExecFileOutput.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   javaScriptRuntime,
   type JavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { installedCaskAppdir, probeHomebrew } from "./homebrew.js";
-import { readMacHopperRenamedLauncherCandidates } from "./MacHopperPaths.js";
+import { readMacHopperRenamedLauncherCandidates } from "../hopperPaths/MacHopperPaths.js";
 import {
   inspectLinuxHopperLauncher,
   linuxSharedLibrariesAvailable,
@@ -55,17 +61,14 @@ import {
   type InstalledSkillIdentity,
   type SkillPathIssue,
 } from "./SetupSkill.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
   type ClientRegistrationStatus,
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
-import type {
-  OwnedProviderSetting,
-  ProviderRequestBudgetResolver,
-} from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import { registrationSpelledSettings } from "./SetupRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
@@ -76,54 +79,14 @@ import {
   scopeDoctorChecks,
   type DoctorScopeReport,
 } from "./DoctorScope.js";
-import {
-  selectedDesktopBuildChecks,
-  type DesktopBuildFacts,
-  type DesktopBuildFactsInput,
-} from "./DesktopBuildDoctor.js";
+import { selectedDesktopBuildChecks } from "./DesktopBuildDoctor.js";
+import type {
+  DesktopBuildFacts,
+  DesktopBuildFactsInput,
+  OwnedProviderSetting,
+} from "../ports/DesktopBuildHost.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
-/** One actionable environment diagnostic. */
-export interface DoctorCheck {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly classification:
-    | "healthy"
-    | "missing_dependency"
-    | "runtime_failure"
-    | "unsupported_host"
-    | "unsupported_target"
-    | "missing_analysis_engine"
-    | "unknown"
-    | "config_drift";
-  readonly detail?: string;
-  readonly details?: Readonly<Record<string, JsonValue>>;
-  readonly remediation?: string;
-}
-
-/** One provider-owned check projected without importing its adapter types. */
-export interface DoctorProviderCheck {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly code: string | null;
-  readonly detail: string;
-  readonly remediation: string | null;
-  readonly classification: Exclude<DoctorCheck["classification"], "healthy">;
-  readonly details?: Readonly<Record<string, JsonValue>>;
-}
-
-/** Read-only provider inspection supplied by an outer composition adapter. */
-export interface DoctorProviderInspection {
-  readonly id: string;
-  /** Null means the selected client's setting could not be determined. */
-  readonly configured: boolean | null;
-  /** Null means readiness cannot be established for the selected client. */
-  readonly available: boolean | null;
-  readonly providerVersion: string | null;
-  /** Validated discoveries used as registration defaults. Setup preserves
-   * caller-selected configuration separately from these readiness facts. */
-  readonly registrationEnvironment: Readonly<Record<string, string>>;
-  readonly checks: readonly DoctorProviderCheck[];
-}
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
   readonly signal?: AbortSignal;
@@ -449,7 +412,7 @@ const closeDoctorHost = async (
     return await host.close?.();
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    return `Doctor host cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+    return `Doctor host cleanup failed: ${errorMessage(cause)}`;
   }
 };
 

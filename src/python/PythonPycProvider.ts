@@ -5,19 +5,15 @@ import {
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { PythonPycPort } from "../application/python/PythonPycPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import type { PythonPycPort } from "../ports/python/PythonPycPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
@@ -29,6 +25,7 @@ import { err, ok } from "../domain/result.js";
 import { PythonPycResourceFailure } from "./PythonPyc.errors.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { parsePythonPyc } from "./PythonPycParser.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_python_pyc";
 
@@ -108,7 +105,7 @@ const failureForPrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

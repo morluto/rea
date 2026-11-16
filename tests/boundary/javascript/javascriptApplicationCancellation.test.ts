@@ -1,12 +1,13 @@
 import { setImmediate } from "node:timers";
 import { mkdir, open, realpath, symlink, writeFile } from "node:fs/promises";
+import { javascriptSourceAnalysis } from "../../../src/composition/javascriptSourceAnalysis.js";
 import { basename, join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../src/resources/ArtifactResourceScope.js";
 import { analyzeJavaScriptApplication as analyzeOwnedApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -57,6 +58,7 @@ it.each(["worker-phase", "final-cleanup", "no-cancellation"] as const)(
       { input_path: root, format: "directory" },
       scope,
       {
+        sourceAnalysis: javascriptSourceAnalysis,
         signal: controller.signal,
         progress: {
           async report(event) {
@@ -130,6 +132,7 @@ it("retains worker cleanup when progress reporting fails during analysis", async
     { input_path: root, format: "directory" },
     scope,
     {
+      sourceAnalysis: javascriptSourceAnalysis,
       progress: {
         async report(event) {
           if (
@@ -185,7 +188,10 @@ it.each(["during cleanup", "on the next control turn"] as const)(
     const result = await analyzeOwnedApplication(
       { input_path: selected, format: "directory" },
       scope,
-      { signal: controller.signal },
+      {
+        sourceAnalysis: javascriptSourceAnalysis,
+        signal: controller.signal,
+      },
     );
     if (result.ok) throw new Error("Cancelled handoff must not succeed");
     expect(result.error.cause).toBe(reason);
@@ -598,6 +604,7 @@ it("keeps the exact retained descriptor owner through application failure transl
   const result = await analyzeOwnedApplication(
     { input_path: root, format: "directory" },
     scope,
+    { sourceAnalysis: javascriptSourceAnalysis },
   );
   if (result.ok) throw new Error("Expected retained cleanup to block analysis");
   expect(result.error.cleanupIncomplete).toBe(true);

@@ -1,4 +1,9 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { fileSubjectTarget } from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
@@ -17,13 +22,7 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const fixture = FUNCTION_COMPARISON_EXAMPLE.left;
-if (fixture.subject === null)
-  throw new Error("Expected artifact-bound fixture");
-const subject = {
-  path: fixture.subject.local_path,
-  sha256: fixture.subject.digest.sha256,
-  format: fixture.subject.format,
-};
+const subject = fileSubjectTarget(fixture.subject);
 const selected = (
   operation: string,
   result: Evidence["normalized_result"],
@@ -39,7 +38,7 @@ const selected = (
   });
 
 const wrongMatchingPredicate = (matching: Evidence) =>
-  createEvidence(undefined, matching.provider, {
+  createEvidence(unknownTarget("not-observed"), matching.provider, {
     operation: matching.operation,
     parameters: matching.parameters,
     result: matching.normalized_result,
@@ -61,7 +60,10 @@ it.each(["compact"] as const)(
         environment: { ...process.env, REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
       },
     );
-    const client = new Client({ name: "native-view-identity", version: "1" });
+    const client = new Client(
+      { name: "native-view-identity", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const validation = createMcpSchemaValidation();
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const root = await createTestTempDirectory("rea-native-view-identity-");
@@ -82,7 +84,10 @@ it.each(["compact"] as const)(
       const call = (name: string, args: Record<string, unknown>) => {
         const toolDefinition = definitions.get(name);
         if (toolDefinition === undefined) throw new Error(`Missing ${name}`);
-        return client.callTool({ name, arguments: args }, { toolDefinition });
+        return client.callTool(
+          { name, arguments: args },
+          { toolDefinition: withCanonicalOutputSchema(toolDefinition) },
+        );
       };
       const inventory = selected(
         "list_procedures",

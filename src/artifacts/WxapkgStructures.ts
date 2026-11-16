@@ -3,9 +3,9 @@ import type { FileHandle } from "node:fs/promises";
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
-} from "./ArtifactReader.js";
+  assertArtifactReadActive,
+} from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { setImmediate } from "node:timers/promises";
 import {
   hasWxapkgEncryptedMagic,
@@ -35,9 +35,13 @@ export const wxapkgFormatFailure = (detail: string): ArtifactReaderFailure =>
 /** Buffers, JS rows and escaped name projections, reserved before allocating. */
 const directoryLimit = (): Error =>
   artifactFixedLimitFailure(
-    "wxapkg directory representation",
-    DIRECTORY_BUDGET_BYTES,
-    "bytes",
+    {
+      name: "The wxapkg directory representation allowance",
+      kind: "parser",
+      limit: DIRECTORY_BUDGET_BYTES,
+      unit: "bytes",
+    },
+    `The wxapkg directory needs more than ${String(DIRECTORY_BUDGET_BYTES)} bytes to represent.`,
   );
 
 export interface WxapkgHeader {
@@ -129,9 +133,13 @@ export const readWxapkgFileTable = async (
     throw wxapkgFormatFailure("declared member table exceeds the file");
   if (readBytes > MAX_TABLE_BYTES)
     throw artifactFixedLimitFailure(
-      "wxapkg member table",
-      MAX_TABLE_BYTES,
-      "bytes",
+      {
+        name: "The wxapkg member table allowance",
+        kind: "parser",
+        limit: MAX_TABLE_BYTES,
+        unit: "bytes",
+      },
+      `The wxapkg member table declares ${String(readBytes)} bytes, above ${String(MAX_TABLE_BYTES)} bytes.`,
     );
   const budget = new Budget(DIRECTORY_BUDGET_BYTES);
   budget.charge(readBytes, directoryLimit);

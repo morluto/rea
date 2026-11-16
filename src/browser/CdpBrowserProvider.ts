@@ -3,11 +3,11 @@ import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   type JavaScriptMemberMutationAllowance,
 } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import type {
   ProviderIdentity,
   ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   sanitizeBrowserUrl,
   type InspectWebPageInput,
@@ -90,7 +90,7 @@ import { authorizeCdpTarget } from "./CdpAuthorizedTarget.js";
 import { observeCdpSession } from "./CdpObservationSession.js";
 import { discoverWebMcp } from "./CdpWebMcpDiscovery.js";
 import { captureCdpScreenshot } from "./CdpScreenshot.js";
-import { comparePngScreenshots } from "./PngVisualDiff.js";
+import { comparePngScreenshots } from "../domain/pngVisualDiff.js";
 
 import { CDP_BROWSER_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -98,6 +98,7 @@ import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 const CLEANUP_DOMAINS = [
   "Network",
   "Debugger",
@@ -634,7 +635,7 @@ const withTargetSession = async <
         : new ProviderCleanupError(
             "rea-cdp-browser",
             [input.target_id],
-            { reason: cause instanceof Error ? cause.message : String(cause) },
+            { reason: errorMessage(cause) },
             { operation, cause },
           );
   }
