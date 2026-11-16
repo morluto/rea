@@ -1,7 +1,7 @@
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../Doctor.js";
+} from "../../ports/DoctorProviderInspection.js";
 import { parseJebMcpTimeoutMs } from "../../config/environment.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { parseJebMcpEndpoint } from "../../config/jebMcpEndpoint.js";

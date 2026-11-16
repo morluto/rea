@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   cancel,
   confirm,
@@ -17,7 +18,7 @@ import type {
 } from "../application/SetupTypes.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 import { invokingPackageRunner } from "../application/ClientRegistrationIdentity.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import { BINARY_ANALYSIS_PROVIDER_IDS } from "../application/binary/BinaryProviderIds.js";
 
 const clientDisplayNames: ReadonlyMap<string, string> = new Map(
@@ -263,7 +264,7 @@ const renderKeyboardHelp = (accessible: boolean): void => {
 };
 
 const cliInvocation = (environment: Readonly<NodeJS.ProcessEnv>): string => {
-  const runner = invokingPackageRunner(environment);
+  const runner = invokingPackageRunner(environment, HOST_PLATFORM.platform);
   return runner === undefined ? "rea" : `${runner} rea-agents`;
 };
 
@@ -306,7 +307,7 @@ export const describeReadyCapabilities = (
       : []),
     `│  CLI: ${cli} ${binaryReady ? "analyze /path/to/app" : "capabilities"}`,
     ...(jebConfigured
-      ? [`│  JEB diagnostics: ${cli} ${CLI_COMMANDS.inspectJebClient}`]
+      ? [`│  JEB diagnostics: ${cli} ${cliCommandFor("inspect_jeb_client")}`]
       : []),
     ...(readyClients[0] === undefined
       ? []

@@ -24,6 +24,10 @@ export class EvidenceIntegrityError extends AnalysisError {
   readonly side: "left" | "right" | undefined;
   /** The first failing location inside that Evidence or its result, when schema-located. */
   readonly issuePath: readonly (string | number)[] | undefined;
+  /** The constraint a schema refinement named on that first issue. */
+  readonly constraint: string | undefined;
+  /** Schema issues after the first, which the message only summarizes. */
+  readonly remainingIssueCount: number | undefined;
 
   constructor(
     message: string,
@@ -31,12 +35,16 @@ export class EvidenceIntegrityError extends AnalysisError {
       readonly userMessage?: string;
       readonly side?: "left" | "right";
       readonly issuePath?: readonly (string | number)[];
+      readonly constraint?: string;
+      readonly remainingIssueCount?: number;
     },
   ) {
     super(message, options);
     this.userMessage = options?.userMessage;
     this.side = options?.side;
     this.issuePath = options?.issuePath;
+    this.constraint = options?.constraint;
+    this.remainingIssueCount = options?.remainingIssueCount;
   }
 }
 

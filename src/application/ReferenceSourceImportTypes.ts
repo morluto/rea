@@ -1,3 +1,4 @@
+import type { JavaScriptMemberMutationAllowance } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -134,6 +135,8 @@ export interface ReferenceSourceImportOptions {
   readonly importer?: string;
   readonly importerVersion?: string | null;
   readonly excludePaths?: readonly string[];
+  /** Accepted member-mutation work allowance; absent means the default. */
+  readonly memberMutationAllowance?: JavaScriptMemberMutationAllowance;
 }
 
 export const DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS = [

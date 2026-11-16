@@ -2,7 +2,6 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
@@ -11,6 +10,7 @@ import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 describe("Evidence input SDK boundaries", () => {
   it("borrows SDK Evidence inputs while leaving ordinary request constraints active", async () => {
@@ -63,18 +63,16 @@ describe("Evidence input SDK boundaries", () => {
     expect(properties.left_observations).toMatchObject({ type: "array" });
   });
 
-  mcpTest.for(["full", "compact"] as const)(
-    "advertises valid reference inputs after actual SDK conversion (%s)",
-    async (profile, { mcp }) => {
+  mcpTest(
+    "advertises valid reference inputs after actual SDK conversion",
+    async ({ mcp }) => {
       const contract = toolContract("build_call_path");
       const server = new EvidenceMcpServer(
         { name: "evidence-contract", version: "1" },
         { capabilities: {} },
         undefined,
         createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-        profile === "compact"
-          ? { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES }
-          : undefined,
+        { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
       );
       server.registerTool(
         contract.name,
@@ -90,8 +88,7 @@ describe("Evidence input SDK boundaries", () => {
       const tool = tools.find(({ name }) => name === contract.name);
       if (tool === undefined) throw new Error("named contract not advertised");
       // Compact input guidance is part of the tool description.
-      const guidance =
-        profile === "compact" ? tool.description : tool.inputSchema.description;
+      const guidance = tool.description;
       expect(guidance).toContain(
         '{"kind":"retained-evidence","evidence_id":"ev_..."}',
       );

@@ -21,7 +21,7 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
-} from "../mcpStartupPolicy.js";
+} from "../config/mcpStartupPolicy.js";
 import {
   inspectClientRegistrationCommand,
   type ClientRegistrationCommandFacts,
@@ -40,12 +40,12 @@ import {
   clientRegistrationEnvironmentDetailsWithBudget,
   recordedProviderSettings,
 } from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type {
   OwnedProviderSetting,
-  ProviderRequestBudgetResolver,
   RecordedProviderSettings,
-} from "./ClientRegistrationEnvironment.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../ports/DesktopBuildHost.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 import {
   parseClientRegistrationPolicy,
@@ -55,6 +55,7 @@ import {
   type ClientRegistration,
 } from "./ClientRegistration.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -107,7 +108,7 @@ export type UnhealthyClientRegistrationStatus = Exclude<
 >;
 
 interface ClientRegistrationReadOptions {
-  readonly platform?: NodeJS.Platform;
+  readonly platform: NodeJS.Platform;
   readonly environment?: NodeJS.ProcessEnv;
   readonly systemPaths?: ClientSystemPaths;
   readonly resources?: ArtifactResourceScope;
@@ -148,7 +149,7 @@ export interface ClientRegistrationInspection {
 export const readClientRegistrationStatuses = async (
   home: string,
   currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
-  options: ClientRegistrationReadOptions = {},
+  options: ClientRegistrationReadOptions,
 ): Promise<readonly ClientRegistrationStatus[]> =>
   (
     await readClientRegistrationInspections(home, currentCommandPath, options)
@@ -160,7 +161,7 @@ export const readClientRegistrationStatuses = async (
 export const readClientRegistrationInspections = async (
   home: string,
   currentCommandPath: string | undefined = CURRENT_ENTRYPOINT_PATH,
-  options: ClientRegistrationReadOptions = {},
+  options: ClientRegistrationReadOptions,
 ): Promise<readonly ClientRegistrationInspection[]> => {
   const inspections: ClientRegistrationInspection[] = [];
   for (const client of await resolveSupportedClients(
@@ -720,7 +721,7 @@ const clientEvidencePresent = async (
       if (!isMissing(cause))
         unavailable ??= {
           path,
-          detail: `Client configuration evidence at ${path} could not be inspected: ${cause instanceof Error ? cause.message : String(cause)}. Check file permissions and rerun rea doctor.`,
+          detail: `Client configuration evidence at ${path} could not be inspected: ${errorMessage(cause)}. Check file permissions and rerun rea doctor.`,
         };
     }
   }

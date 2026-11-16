@@ -1,6 +1,7 @@
 import type { JsonValue } from "./jsonValue.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
 import type { AmbiguousSelector } from "./analysisRefusal.js";
+import type { ArtifactIntegrityCheck } from "./artifactOperationError.js";
 import {
   AnalysisError,
   type AnalysisErrorOptions,
@@ -46,16 +47,24 @@ export class AnalysisResourceConstraintError extends AnalysisError {
    * object.
    */
   readonly recovery: ResourceConstraintRecovery;
+  /**
+   * Whether the refused request reached its peer: false when it was refused
+   * before anything was sent, true when the peer received it and may have
+   * acted on it. Undefined when the producer does not know.
+   */
+  readonly requestSent: boolean | undefined;
 
   constructor(
     readonly operation: string,
     readonly resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
     readonly reason: string,
     readonly reportedLimits: Readonly<Record<string, JsonValue>> | null,
-    options?: AnalysisErrorOptions & ResourceConstraintRecovery,
+    options?: AnalysisErrorOptions &
+      ResourceConstraintRecovery & { readonly requestSent?: boolean },
   ) {
     super(`Resource constraint during ${operation}: ${reason}`, options);
     this.recovery = resourceConstraintRecoveryFrom(options);
+    this.requestSent = options?.requestSent;
   }
 
   /** Projection of `recovery`. Absent when recovery names a fixed allowance. */
@@ -125,8 +134,31 @@ export const reattributedResourceConstraint = (
       ...options,
       ...resourceConstraintRecovery(error),
       ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+      ...(error.related === undefined ? {} : { related: error.related }),
+      ...(error.requestSent === undefined
+        ? {}
+        : { requestSent: error.requestSent }),
     },
   );
+
+/**
+ * Refuse at a fixed ceiling that its producer named. The ceiling carries its
+ * own value and recovery, so no other limit is reported beside it, and the
+ * unchanged request is not retryable.
+ */
+export const fixedCeilingConstraint = (
+  operation: string,
+  resource: (typeof ANALYSIS_RESOURCE_KINDS)[number],
+  reason: string,
+  ceiling: FixedAllowance,
+  options?: AnalysisErrorOptions,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(operation, resource, reason, null, {
+    ...options,
+    retryable: false,
+    fixedAllowance: ceiling,
+  });
 
 /** Carry one refusal's recovery to an error re-attributed or redacted elsewhere. */
 export const resourceConstraintRecovery = (
@@ -486,6 +518,20 @@ export const cancelledBy = (
     cause: cancellationCause(reason),
   });
 
+/**
+ * A provider's recovery for its elapsed deadline: which deadline elapsed, the
+ * setting or action that changes it, the accepted setting, and the facts that
+ * explain it.
+ */
+export interface AnalysisTimeoutRecovery {
+  /** Provider-specific explanation of which deadline elapsed. */
+  readonly userMessage?: string;
+  /** Provider-specific setting or action that changes that deadline. */
+  readonly remediationAction?: string;
+  readonly limit?: AnalysisErrorOptions["limit"];
+  readonly diagnostics?: AnalysisErrorOptions["diagnostics"];
+}
+
 /** Provider-neutral operation exceeded its declared execution deadline. */
 export class AnalysisTimeoutError extends AnalysisError {
   readonly _tag = "AnalysisTimeoutError";
@@ -495,12 +541,7 @@ export class AnalysisTimeoutError extends AnalysisError {
   constructor(
     readonly operation: string,
     readonly timeoutMs: number,
-    options?: AnalysisErrorOptions & {
-      /** Provider-specific explanation of which deadline elapsed. */
-      readonly userMessage?: string;
-      /** Provider-specific setting or action that changes that deadline. */
-      readonly remediationAction?: string;
-    },
+    options?: AnalysisErrorOptions & AnalysisTimeoutRecovery,
   ) {
     super(
       `Analysis operation timed out after ${String(timeoutMs)}ms: ${operation}`,
@@ -530,12 +571,17 @@ export class AnalysisAccessDeniedError extends AnalysisError {
 /** Selected artifact acquisition observed a change, so no stable identity can be reported. */
 export class AnalysisArtifactChangedError extends AnalysisError {
   readonly _tag = "AnalysisArtifactChangedError";
+  /** The consistency check the producing reader named, when it named one. */
+  readonly integrityCheck: ArtifactIntegrityCheck | undefined;
   constructor(
     readonly operation: string,
     readonly path: string,
     readonly reason: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & {
+      readonly integrityCheck?: ArtifactIntegrityCheck | undefined;
+    },
   ) {
     super(`Selected artifact changed during acquisition: ${reason}`, options);
+    this.integrityCheck = options?.integrityCheck;
   }
 }

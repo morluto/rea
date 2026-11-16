@@ -17,6 +17,7 @@ import {
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { issuesByContractField } from "../../support/cli/cliIssueFields.js";
 
 const execute = promisify(execFile);
 const it = runtimeTest.skipIf(!hasMemoryBound || !runtimeSupported);
@@ -510,7 +511,12 @@ it("fails whole-capture validation before selection and survives malformed, unsu
       typeof failed.stdout !== "string"
     )
       throw new Error("CLI failure omitted JSON output");
-    expect(JSON.parse(failed.stdout)).toMatchObject(expected);
+    // The CLI names the capture by its argument, otherwise as MCP does.
+    expect(
+      issuesByContractField(JSON.parse(failed.stdout), {
+        capturePath: "capture_path",
+      }),
+    ).toMatchObject(expected);
   }
   await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
   expect(

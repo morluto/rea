@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 
 import {
   absoluteXdgConfigHome,
-  mcporterConfigDirectory,
+  mcporterXdgConfigHome,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
 
@@ -26,15 +26,16 @@ it.each([
 );
 
 it.each([
-  [undefined, "/home/user/.mcporter"],
-  ["relative", "/home/user/.mcporter"],
-  ["  /custom  ", "/custom/mcporter"],
-  ["~/config", "/home/user/config/mcporter"],
-  ["~someone/config", "/home/user/.mcporter"],
-])("reads MCPorter's XDG_CONFIG_HOME=%j as %s", (value, directory) => {
+  [undefined, undefined],
+  ["", undefined],
+  ["relative", undefined],
+  [" ~/xdg ", "/home/user/xdg"],
+  ["~", "/home/user"],
+  [" /custom ", "/custom"],
+])("reads XDG_CONFIG_HOME=%j as MCPorter's folder %j", (value, expected) => {
   const env = value === undefined ? {} : { XDG_CONFIG_HOME: value };
-  expect(mcporterConfigDirectory({ home, platform: "linux", env })).toBe(
-    directory,
+  expect(mcporterXdgConfigHome({ home, platform: "linux", env })).toBe(
+    expected,
   );
 });
 

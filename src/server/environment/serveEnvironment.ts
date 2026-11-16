@@ -21,8 +21,10 @@ import {
   type EnvironmentToolAnswer,
 } from "../../application/environment/environmentToolAnswer.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
+import { transformAdvertisedInputJsonSchema } from "../../contracts/toolSchemaMetadata.js";
 import {
+  advertisedEnvironmentTool,
   environmentCard,
   REPLAY_CATALOG_INSTRUCTIONS,
   type EnvironmentCard,
@@ -63,7 +65,7 @@ import {
   bufferedJsonParts,
   jsonParts,
 } from "../../domain/jsonSerialization.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Where the environment card is served. */
 export const ENVIRONMENT_CARD_PATH = "/.well-known/agent-env.json";
@@ -114,12 +116,17 @@ export const createEnvironmentMcpServer = (
       instructions: `${UNTRUSTED_CONTENT_INSTRUCTIONS} ${REPLAY_CATALOG_INSTRUCTIONS}`,
     },
   );
-  for (const definition of tools)
+  for (const definition of tools) {
+    const advertised = advertisedEnvironmentTool(definition);
     server.registerTool(
       definition.name,
       {
-        description: definition.description,
-        inputSchema: fromJsonSchema<ReplayArguments>(definition.inputSchema),
+        description: advertised.description,
+        // Calls are validated against the recorded schema; clients list the advertised one.
+        inputSchema: transformAdvertisedInputJsonSchema(
+          fromJsonSchema<ReplayArguments>(definition.inputSchema),
+          () => advertised.inputSchema,
+        ),
         annotations: definition.annotations,
       },
       (args): CallToolResult => {
@@ -141,6 +148,7 @@ export const createEnvironmentMcpServer = (
         };
       },
     );
+  }
   return server;
 };
 

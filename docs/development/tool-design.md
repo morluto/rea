@@ -312,7 +312,7 @@ omissions alone explain it; independently proven differences still survive.
 A byte-format parser reports failure with `ParseFailureError` from
 `src/domain/parseFailure.ts`: `malformed`, `truncated`, `unsupported`, or
 `limit`, with the format and, when known, the offset and field. Read bounded
-fields through `BinaryReader` (`src/native/metadata/BinaryContainer.ts`), which
+fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
 raises that failure instead of a bare `RangeError`. Providers project the
 failure with `parseFailureAnalysisError` rather than their own `instanceof`
 ladder; a `limit` stays with its producer, which knows the budget to name.
@@ -324,8 +324,8 @@ as evidence about the input. Readers report bounds failures at the read site;
 host error codes alone cannot distinguish a read from a write or allocation.
 `scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
 `DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
-of parser input, and direct `instanceof RangeError` checks against
-`scripts/verify/architecture-guard-baselines.json`. A
+of parser input, and direct `instanceof RangeError` checks against their
+per-guard baselines in `scripts/verify/baselines/`. A
 file may not exceed its count; after removing copies, run
 `node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 
@@ -616,6 +616,10 @@ A CLI command for a tool contract is described by `describeContractCommand` in
 [`contractCliDescription.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCliDescription.ts)
 and rendered for the CLI framework by `registerContractCommand` in
 [`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
+A contract with `cli: true` names its own command, the kebab-case spelling of
+its name; the CLI command inventory in `catalogIdentity.ts` is derived from
+those declarations, and the projection omits `command` for it. `CLI_COMMANDS`
+holds only the commands no contract names.
 The projection names only what the CLI spells differently: positionals,
 caller-relative path fields, option renames and short flags, CLI help wording,
 omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field

@@ -21,6 +21,7 @@ import type {
   ProcessDiagnosticBudget,
   ProviderProcessStopResult,
   ProviderProcessInspectionCleanup,
+  ProcessTerminationPolicy,
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
@@ -38,6 +39,8 @@ import {
   ProviderStartupDeadline,
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { launcherFailureOf, type LauncherFailure } from "./launchFailure.js";
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
@@ -119,6 +122,11 @@ interface OwnedCommandLimits {
    * stays authoritative; a failing stream is a collection failure.
    */
   readonly stdout?: Writable;
+  /**
+   * Ask the command to stop before owned cleanup kills its process group,
+   * for a command that rolls back work it started when signaled.
+   */
+  readonly termination?: ProcessTerminationPolicy;
 }
 
 /** Keep independently bounded macOS helper compilation outside a short command deadline.
@@ -190,6 +198,29 @@ function throwCommandPreparationFailure(
     );
   throw cause;
 }
+
+/**
+ * Ownership preparation could not start a process it needed, such as the
+ * macOS ownership helper's compiler, because the host lacked capacity. The
+ * command cannot start for the same reason, so callers report it as their own
+ * host-capacity launch failure. Other preparation failures, including a
+ * missing helper compiler, say nothing about the command's executable.
+ */
+export const preparationHostCapacityFailure = (
+  cause: unknown,
+): LauncherFailure | undefined => {
+  if (cause instanceof OwnedCommandFailure && cause.cancellation !== undefined)
+    return undefined;
+  const preparation =
+    cause instanceof OwnedCommandFailure ? cause.preparationFailure : cause;
+  if (
+    !(preparation instanceof DarwinProcessOwnershipInspectionError) ||
+    preparation.cancellation !== undefined
+  )
+    return undefined;
+  const launch = launcherFailureOf(preparation.cause);
+  return launch?.kind === "host-exhausted" ? launch : undefined;
+};
 
 /** Execute a single owned process with independent cleanup and bounded diagnostic retention. */
 export const runOwnedCommand = async (
@@ -357,7 +388,7 @@ const collectOwnedCommand = async (
       ? finishCommandInput(launched.process.stdin, (cause) => {
           inputFailure ??= {
             cause,
-            message: `stdin stream failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            message: `stdin stream failed: ${errorMessage(cause)}`,
             processError: cause instanceof Error ? cause : undefined,
           };
           if (processFailure === undefined) {
@@ -484,7 +515,9 @@ const collectOwnedCommand = async (
   }
   // A finished sink ignores this; an unfinished one is destroyed.
   abandoned.abort(OwnerCancellation.noLongerNeeded);
-  const stopped = await supervisor.stop();
+  const stopped = await supervisor.stop(
+    limits.termination === undefined ? {} : { termination: limits.termination },
+  );
   const snapshot = supervisor.snapshot();
   // An input error can arrive after finish while process cleanup is still pending.
   if (failure === undefined && inputFailure !== undefined)
@@ -500,10 +533,26 @@ const collectOwnedCommand = async (
     (callerSignal?.aborted ? { reason: callerSignal.reason } : undefined);
   if (stopped.status === "incomplete" && retainCleanup !== undefined)
     retainCleanup(supervisor, stopped);
-  else if (stopped.status === "incomplete")
+  else if (stopped.status === "incomplete") {
+    // A completed run interrupted during final cleanup is reported as that
+    // interruption, as when the cleanup succeeds (below); only the retry
+    // owner differs.
+    const interruption =
+      failure !== undefined
+        ? undefined
+        : callerSignal?.aborted
+          ? ("cancelled" as const)
+          : deadline.interruption === "timeout"
+            ? ("timeout" as const)
+            : undefined;
     throw new OwnedCommandFailure(
-      failure?.reason ?? "process",
-      failure?.message ?? "Command cleanup failed.",
+      failure?.reason ?? interruption ?? "process",
+      failure?.message ??
+        (interruption === "cancelled"
+          ? "Command cancelled during final cleanup."
+          : interruption === "timeout"
+            ? "Command deadline elapsed during final cleanup."
+            : "Command cleanup failed."),
       snapshot,
       stopped.reason,
       {
@@ -524,6 +573,7 @@ const collectOwnedCommand = async (
       ownedCommandResources(launched.ownership, spawn.cwd),
       supervisor,
     );
+  }
   if (failure !== undefined)
     throw new OwnedCommandFailure(
       failure.reason,
@@ -610,7 +660,6 @@ const consumeStdout = (
   }
   return pipeline(stdout, sink, { signal }).then(
     () => undefined,
-    (cause: unknown) =>
-      `stdout stream failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    (cause: unknown) => `stdout stream failed: ${errorMessage(cause)}`,
   );
 };

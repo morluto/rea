@@ -12,10 +12,14 @@ import {
 } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const openSession = async (url: URL, name: string) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(() => client.close());
   await client.connect(transport);
   expect(transport.sessionId).toEqual(expect.any(String));
@@ -54,7 +58,6 @@ describe("rea mcp --http", () => {
         // Sessions validate advertised output schemas, which default to off.
         {
           REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
-          REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
         },
       );
       const first = await openSession(started.url, "hot-cold-first");
@@ -105,7 +108,7 @@ describe("rea mcp --http", () => {
       const started = await startListeningProcess(
         processes,
         ["mcp", "--http", "--port", "0"],
-        { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
+        {},
       );
       expect(started.url.hostname).toBe("127.0.0.1");
       expect(started.url.pathname).toBe("/mcp");

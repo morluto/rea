@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -14,7 +15,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { startMcpTransport } from "../../../src/main/transport.js";
 import type { RuntimeDependencies } from "../../../src/main/types.js";
-import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../../../src/ports/android/AndroidAnalysisPort.js";
 import { silentLogger } from "../../../src/logger.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -133,12 +134,12 @@ it("publishes and executes all APK contracts with inline Evidence and no active 
   const wireTools = new Map(advertised.tools.map((tool) => [tool.name, tool]));
   for (const contract of ANDROID_TOOL_CONTRACTS) {
     const wire = wireTools.get(contract.name);
-    if (wire === undefined || wire.outputSchema === undefined)
+    if (wire === undefined || canonicalOutputSchema(wire.name) === undefined)
       throw new Error(`Missing advertised output schema for ${contract.name}`);
     const validateOutput = new Ajv2020({
       strict: false,
       validateFormats: false,
-    }).compile(z.record(z.string(), z.unknown()).parse(wire.outputSchema));
+    }).compile(canonicalOutputSchema(wire.name));
     expect(wire?.annotations).toMatchObject(contract.annotations);
     expect(contract.effects).toMatchObject({
       mutatesTarget: false,

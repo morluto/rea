@@ -1,3 +1,5 @@
+import { registerMcpClientsOnHost } from "../../fixtures/mcpRegistration.js";
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
   chmod,
   copyFile,
@@ -26,7 +28,6 @@ import {
   readClientRegistrationInspections,
   readClientRegistrationStatuses,
 } from "../../../src/application/ClientRegistrationStatus.js";
-import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
 import {
   clientConfigurationAligned,
@@ -42,7 +43,7 @@ import {
 } from "../../../src/application/Uninstall.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -98,7 +99,7 @@ it.each([
     // An older, still REA-owned launcher: the package runner form that
     // current setup migrates to the selected installation.
     const legacy = { command: "npx", args: ["-y", "rea-agents@1.0.0", "mcp"] };
-    const [outcome] = await registerMcpClients(
+    const [outcome] = await registerMcpClientsOnHost(
       selected.value,
       legacy,
       undefined,
@@ -127,6 +128,7 @@ it.each([
     // Update selects it, and setup refreshes it to the current launcher.
     await expect(
       existingMaintenanceScope(home, command[1] ?? "", environment, {
+        platform: HOST_PLATFORM.platform,
         systemPaths,
       }),
     ).resolves.toMatchObject({ clients: [client] });
@@ -179,7 +181,7 @@ it("registers Amp in settings.jsonc when that is Amp's only settings file", asyn
   );
   if (!selected.ok) throw selected.error;
   expect(selected.value[0]?.configPath).toBe(jsonc);
-  await registerMcpClients(
+  await registerMcpClientsOnHost(
     selected.value,
     { command: command[0] ?? "", args: command.slice(1) },
     undefined,
@@ -517,6 +519,7 @@ it("reports a Junie registration Junie would not load in doctor and setup", asyn
     home,
     command[1] ?? "",
     environment,
+    { platform: HOST_PLATFORM.platform },
   );
   expect(scope.clients).not.toContain("junie");
   expect(scope.unresolved).toEqual([
@@ -563,7 +566,7 @@ it.skipIf(platform === "win32")(
     expect(selected.value[0]).toMatchObject({
       configPaths: row?.configPaths,
     });
-    const [outcome] = await registerMcpClients(
+    const [outcome] = await registerMcpClientsOnHost(
       selected.value,
       { command: command[0] ?? "", args: command.slice(1) },
       undefined,
@@ -740,7 +743,7 @@ it.skipIf(platform === "win32")(
       resources,
     );
     if (!selected.ok) throw selected.error;
-    const [outcome] = await registerMcpClients(
+    const [outcome] = await registerMcpClientsOnHost(
       selected.value,
       { command: command[0] ?? "", args: command.slice(1) },
       undefined,
@@ -976,3 +979,29 @@ const gooseFixture = async (prefix: string) => {
   if (row === undefined) throw new Error("Goose has no table row");
   return { home, team, row, environment, systemPaths };
 };
+
+it.skipIf(HOST_PLATFORM.platform === "win32")(
+  "secures a private profile on this host when setup targets another platform",
+  async () => {
+    const home = await createTestTempDirectory("rea-private-profile-host-");
+    const row = supportedClients(home, HOST_PLATFORM.platform, {
+      HOME: home,
+    }).find(({ name }) => name === "fx");
+    if (row?.privateProfile === undefined)
+      throw new Error("fx has no private profile row");
+    await expect(
+      configureClientConfiguration(row, {}, command),
+    ).resolves.toMatchObject({ status: "configured" });
+    const directory = dirname(row.configPath);
+    await chmod(row.configPath, 0o644);
+    await chmod(directory, 0o755);
+
+    // The selected platform shapes the registration; the file's modes stay
+    // this host's, so a readable private profile is still repaired.
+    await expect(
+      configureClientConfiguration(row, {}, command, undefined, "win32"),
+    ).resolves.toMatchObject({ status: "configured" });
+    expect((await stat(row.configPath)).mode & 0o777).toBe(0o600);
+    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+  },
+);

@@ -96,17 +96,15 @@ Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 manual MCP registration, Claude Code/Codex plugins, and the Cursor Marketplace
 plugin.
 
-MCP uses compact input schemas by default to reduce context overhead. Set
-`REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
-complete advertised field guidance and nested validation details. Both profiles
-keep the full tool set and canonical server validation. See
-"Compact input schema profile" in the MCP contracts guide.
+MCP advertises compact input schemas to reduce context overhead; guidance a
+compact schema omits follows the tool description. The full tool set and
+canonical server validation are unchanged. See "Compact input schema profile"
+in the MCP contracts guide.
 
 Output schemas are omitted from `tools/list` by default: no model API reads
 them, and REA validates every result itself. Set
 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to advertise each output schema within
-a 4,096-byte budget, or `full` for complete output schemas (for MCP clients
-that validate results). All settings keep canonical server-side validation and
+a 4,096-byte budget. Both settings keep canonical server-side validation and
 complete structured results. See "Output schemas" in the MCP contracts guide.
 
 ### Ask your agent

@@ -1,9 +1,9 @@
 import { captureBudgets } from "./CaptureBudgets.js";
-import { ZipArtifactReader } from "../../artifacts/ZipArtifactReader.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../../artifacts/ArtifactReader.js";
+  ZipArtifactReader,
+} from "../../resources/index.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
 import { SAZ_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
@@ -191,11 +191,22 @@ export const decodeSazCapture = async (
     };
   } catch (cause: unknown) {
     if (cause instanceof CaptureFormatError) throw cause;
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit") {
+      // A ceiling the ZIP reader names stays its own; only the metadata read
+      // budget this decoder gave the reader is the expanded-input budget.
+      if (cause.fixedAllowance !== undefined)
+        throw new CaptureFormatError(
+          {
+            fixedAllowance: cause.fixedAllowance,
+            boundary: cause.boundary ?? "memory",
+          },
+          cause.message,
+        );
       throw new CaptureFormatError(
         { name: "expanded-input", maximum: captureBudgets().inputBytes },
         "SAZ archive exceeds the ZIP reader's resource budget.",
       );
+    }
     throw new CaptureFormatError(
       "malformed",
       "SAZ archive or session data is malformed or fails ZIP integrity validation.",

@@ -1,19 +1,19 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputFailure } from "../artifacts/StableArtifactFailure.js";
 import {
+  ArtifactReaderFailure,
+  stableArtifactInputFailure,
+  readerIntegrityFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+  completedStableArtifactObservation,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -28,6 +28,7 @@ import {
   APK_SIGNATURE_LIMITS,
   APK_SIGNATURE_PROVIDER_IDENTITY,
 } from "./ApkSignatureRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -144,8 +145,12 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
     `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
     { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
     fixedAllowanceOptions(
-      `The decoded APK signing report allowance of ${String(APK_SIGNATURE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+      "The decoded APK signing report allowance",
       "report",
+      {
+        limit: APK_SIGNATURE_LIMITS.outputBytes,
+        unit: "bytes",
+      },
     ),
   );
 
@@ -219,9 +224,7 @@ const artifactReaderFailure = (
 ): AnalysisError => {
   switch (cause.reason) {
     case "integrity":
-      return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(OPERATION, path, cause);
     case "cancelled":
       return cancelledBy(
         OPERATION,
@@ -251,6 +254,6 @@ const adapterFailure = (cause: unknown, path: string): AnalysisError =>
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
 
 /** Numeric admission contracts shared by environment parsing and runtime tools.
  * Timer maxima follow signed 32-bit scheduling. ASAR's 256 MiB maximum and
@@ -28,6 +29,20 @@ export const DEFAULT_GHIDRA_VALUE_FLOW_MAX_EDGES = 12_000;
 export const MAXIMUM_GHIDRA_VALUE_FLOW_RECORDS = 2_147_483_647;
 /** Ghidra 12.1.4 shifts MiB by 20 into a signed Java int response capacity. */
 export const MAXIMUM_GHIDRA_DECOMPILE_PAYLOAD_MIB = 2_047;
+
+/**
+ * Alias states one JavaScript source's member-mutation phase may schedule by
+ * default. Each state is retained until its query finishes, at roughly
+ * 1–2 KiB, so the default stays well below the default 1 GiB worker heap.
+ * Published bundles up to 395 KB schedule at most about 123,000 states.
+ */
+export const DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 524_288;
+
+/**
+ * At about 2 KiB per retained state this is 16 GiB, the largest JavaScript
+ * worker heap `max_heap_mb` admits; a larger allowance could only exhaust it.
+ */
+export const MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES = 8_388_608;
 
 /** Native function-matching representation admitted when the setting is unset. */
 export const DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES = 96 * 1024 * 1024;
@@ -63,6 +78,25 @@ export const MINIMUM_HOPPER_CALLER_SCAN_BUDGET_MS = 1;
  * this is the only declaration of that bound.
  */
 export const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * The per-call control of a caller-selectable millisecond deadline, named by
+ * its contract field; each adapter names the option that sets it.
+ */
+export const deadlineParameterLimit = (
+  parameter: string,
+  timeoutMs: number,
+  defaultMs: number,
+): AnalysisControlLimit => ({
+  control_kind: "parameter",
+  parameter,
+  effective_value: timeoutMs,
+  unit: "ms",
+  minimum: 1,
+  maximum: MAX_NODE_TIMER_DELAY_MS,
+  default_value: defaultMs,
+  applies_at: "next_call",
+});
 
 /**
  * A positive whole-millisecond duration Node can schedule exactly. Zero and
@@ -195,6 +229,18 @@ export const DEBUGGER_CONTROL_REPLY_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024;
 export const MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464;
 export const MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536_870_888 - 1;
+
+/**
+ * Hopper and Ghidra reply line ceiling, in UTF-8 bytes before the framing LF.
+ * The client refuses a longer line, or an unterminated tail past it, instead
+ * of retaining it. The default is far above the largest reply the packaged
+ * bridge fixtures produce (see `bridgeMaxReplyBytes.ts`). The floor admits the
+ * bridge handshake and a full inventory page. A line decodes to at most as many
+ * UTF-16 code units as it has bytes, so the maximum is Node's string ceiling.
+ */
+export const DEFAULT_BRIDGE_MAX_REPLY_BYTES = 256 * 1024 * 1024;
+export const MINIMUM_BRIDGE_MAX_REPLY_BYTES = 1024 * 1024;
+export const MAXIMUM_BRIDGE_MAX_REPLY_BYTES = NODE_MAX_STRING_LENGTH;
 
 /** MCP client SDK default request timeout. JEB uses it when the setting is unset. */
 export const DEFAULT_JEB_MCP_TIMEOUT_MS = 60_000;

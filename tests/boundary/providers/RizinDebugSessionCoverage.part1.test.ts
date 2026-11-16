@@ -13,6 +13,7 @@ import {
   createInjectedProcess,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 
 const {
   cleanup,
@@ -177,7 +178,7 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "closeAll drains concurrent startups and blocks later admission",
+  "closeAll aborts concurrent startups as owner-closed, waits for them, and blocks later admission",
   async () => {
     let spawnCount = 0;
     let stopCount = 0;
@@ -216,15 +217,20 @@ it.skipIf(process.platform === "win32")(
       closeAllResolved = true;
     });
     await Promise.resolve();
+    // The injected spawns ignore the abort, so closeAll waits for them.
     expect(closeAllResolved).toBe(false);
     releaseSpawns();
     const started = await Promise.all(starts);
     for (const result of started)
       expect(result).toMatchObject({
         ok: false,
-        error: { _tag: "AnalysisCancelledError" },
+        error: {
+          _tag: "AnalysisCancelledError",
+          cause: OwnerCancellation.ownerClosed,
+        },
       });
     await closing;
+    // Each process spawned before the abort was observed is stopped.
     expect(stopCount).toBe(2);
     expect(
       (await manager.start({ path: "/tmp/after-close-all", inferior_tty: tty }))
@@ -318,6 +324,7 @@ it
         stopMode === "is uncertain"
           ? async () => ({
               status: "incomplete",
+              code: "stop-failed",
               reason: "injected stop uncertainty",
             })
           : async () => ({ status: "stopped" });
@@ -380,7 +387,11 @@ it.skipIf(process.platform === "win32")(
     const fixture = createRizinCoverageHarness({
       stopOwnedProcess: async (supervisor) =>
         failCleanup
-          ? { status: "incomplete", reason: "injected fixture stop failure" }
+          ? {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "injected fixture stop failure",
+            }
           : supervisor.stop(),
     });
     const provider = await fixture.makeProvider(
@@ -471,6 +482,7 @@ it.skipIf(process.platform === "win32")(
           session.launched.process.kill("SIGTERM");
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "first stop result is uncertain",
           };
         }

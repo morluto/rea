@@ -58,7 +58,6 @@ export const findDuplicateJsonMember = (
         expectName = open.at(-1) instanceof Set;
         break;
       default:
-        // Validated JSON's whitespace and scalar tokens do not change member ownership.
         break;
     }
   }

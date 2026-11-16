@@ -12,6 +12,8 @@ import {
   INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
 } from "../../../src/domain/stringPatterns.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // Pattern portability across every profile is owned by
 // advertisedDialect.test.ts. This file keeps the composed canonical base64
@@ -56,7 +58,10 @@ const listAdvertisedTools = async () => {
     throw new Error("No deep provider may start for a schema projection");
   });
   const server = createServer({ kind: "session", session }, {});
-  const client = new Client({ name: "advertised-patterns", version: "1" });
+  const client = new Client(
+    { name: "advertised-patterns", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -73,9 +78,10 @@ it("advertises base64 without rejecting valid inputs or overflowing V8", async (
   const tools = await listAdvertisedTools();
   const patterns: string[] = [];
   const canonicalBase64Leaves: Record<string, unknown>[] = [];
+  // tools/list omits output schemas by default; a validating client checks
+  // replies against the canonical output contract, which carries the pattern.
   for (const tool of tools)
-    for (const schema of [tool.inputSchema, tool.outputSchema]) {
-      if (schema === undefined) continue;
+    for (const schema of [tool.inputSchema, canonicalOutputSchema(tool.name)]) {
       patterns.push(
         ...advertisedSchemaPatterns(schema).map(({ pattern }) => pattern),
       );

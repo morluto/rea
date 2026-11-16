@@ -4,10 +4,8 @@ import { Client } from "@modelcontextprotocol/client";
 import { createVerifierCommands } from "./verify-commands.mjs";
 import { createOwnedMcpStdioTransport } from "./owned-mcp-stdio.mjs";
 import { withVerifierCleanup } from "./verifier-cleanup.mjs";
-import {
-  INLINE_EVIDENCE_MCP_ENVIRONMENT,
-  schemaVerifierEnvironment,
-} from "./mcp-verification-environment.mjs";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "./mcp-verification-environment.mjs";
+import { withCanonicalOutputSchema } from "./canonical-output-schema.mjs";
 
 // Bind parsed definitions to this connection. Hot/cold catalogs may add tools;
 // refresh a missing name once without throwing away already validated bindings.
@@ -59,7 +57,7 @@ const advertisedTool = async (client, name) => {
   return tool;
 };
 
-/** Call an advertised tool with SDK output validation of its actual schema. */
+/** Call an advertised tool with SDK output validation against its canonical contract. */
 export async function artifactMcpCall(client, parameters, options = {}) {
   options.signal?.throwIfAborted();
   assert.equal(
@@ -67,11 +65,9 @@ export async function artifactMcpCall(client, parameters, options = {}) {
     undefined,
     "Artifact verification owns the advertised schema; pass request options only",
   );
-  const toolDefinition = await advertisedTool(client, parameters.name);
-  assert.notEqual(
-    toolDefinition.outputSchema,
-    undefined,
-    `MCP tool omitted its output schema: ${parameters.name}`,
+  // tools/list omits output schemas by default; bind the canonical contract.
+  const toolDefinition = withCanonicalOutputSchema(
+    await advertisedTool(client, parameters.name),
   );
   options.signal?.throwIfAborted();
   return client.callTool(parameters, { ...options, toolDefinition });
@@ -98,7 +94,7 @@ const environment = () => {
   const compileCache =
     process.env.NODE_COMPILE_CACHE ??
     process.env.REA_ARTIFACT_NODE_COMPILE_CACHE;
-  return schemaVerifierEnvironment({
+  return {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     ...(compileCache &&
     process.env.NODE_V8_COVERAGE === undefined &&
@@ -109,7 +105,7 @@ const environment = () => {
     REA_ANALYSIS_PROVIDER: "auto",
     // Artifact workflows have no deep-provider prerequisite or GUI authority.
     HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
-  });
+  };
 };
 
 /** Execute the compiled CLI with production providers and no test adapters. */
@@ -123,6 +119,30 @@ export async function artifactCli(
     .normalized_result;
 }
 
+const executeArtifactCli = (
+  owner,
+  command,
+  target,
+  arguments_,
+  { timeoutMs, signal },
+) =>
+  owner.exec(
+    process.execPath,
+    [
+      fileURLToPath(new URL("../rea.mjs", import.meta.url)),
+      command,
+      target,
+      ...arguments_,
+      "--json",
+    ],
+    {
+      env: environment(),
+      timeout: timeoutMs,
+      maxBuffer: 16 * 1024 * 1024,
+      signal,
+    },
+  );
+
 /** Execute the compiled CLI and return its complete Evidence record. */
 export async function artifactCliEvidence(
   command,
@@ -133,22 +153,10 @@ export async function artifactCliEvidence(
   signal?.throwIfAborted();
   const owner = commands ?? (await createVerifierCommands());
   const execute = () =>
-    owner.exec(
-      process.execPath,
-      [
-        fileURLToPath(new URL("../rea.mjs", import.meta.url)),
-        command,
-        target,
-        ...arguments_,
-        "--json",
-      ],
-      {
-        env: environment(),
-        timeout: timeoutMs,
-        maxBuffer: 16 * 1024 * 1024,
-        signal,
-      },
-    );
+    executeArtifactCli(owner, command, target, arguments_, {
+      timeoutMs,
+      signal,
+    });
   const { stdout } =
     commands === undefined
       ? await withVerifierCleanup(execute, [() => closeOwnedCommands(owner)])
@@ -158,6 +166,44 @@ export async function artifactCliEvidence(
   assert.equal(evidence.error, undefined, stdout);
   assert.ok(evidence.normalized_result, "CLI omitted normalized result");
   return evidence;
+}
+
+/**
+ * Execute the compiled CLI in the same environment as `artifactCliEvidence`
+ * for a run that must fail, and return its JSON error record. A run that
+ * succeeds, or exits without a complete error record, is a failure.
+ */
+export async function artifactCliFailure(
+  command,
+  target,
+  arguments_ = [],
+  { timeoutMs = 60000, signal } = {},
+) {
+  signal?.throwIfAborted();
+  const owner = await createVerifierCommands();
+  const exited = await withVerifierCleanup(async () => {
+    try {
+      const { stdout } = await executeArtifactCli(
+        owner,
+        command,
+        target,
+        arguments_,
+        { timeoutMs, signal },
+      );
+      throw new Error(`${command} unexpectedly succeeded: ${stdout}`);
+    } catch (cause) {
+      if (cause?.name !== "VerifierCommandExitError") throw cause;
+      return cause;
+    }
+  }, [() => closeOwnedCommands(owner)]);
+  const { stdout } = exited.snapshot;
+  assert.ok(
+    stdout.bytes === stdout.observedBytes && stdout.invalidUtf8 !== true,
+    `${command} stdout was not retained completely`,
+  );
+  const record = JSON.parse(stdout.text);
+  assert.equal(typeof record.code, "string", stdout.text);
+  return record;
 }
 
 const withOpenedArtifactMcp = async (

@@ -1,6 +1,8 @@
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  bindArtifactFileCleanup,
+  ArtifactResourceRetryFailure,
+} from "../resources/index.js";
 import {
   hashStableFile,
   stableFileHashCause,
@@ -19,7 +21,7 @@ import type {
   AnalysisProfileResolution,
   RetainedResourceScope,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createFunctionCoordinateContext } from "../domain/native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
@@ -52,6 +54,8 @@ import {
   type HopperMachOImageResolutionFileSystem,
   type HopperMachOImage,
 } from "./HopperMachOImage.js";
+import { hopperProducerIdentity } from "./HopperBridgeSources.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface HopperProfileOptions {
   readonly launcherPath: string;
@@ -178,7 +182,7 @@ const resolveHopperAnalysisProfileInScope = async (
         : {}),
       target_kind: target.kind,
       target_format: target.format,
-      function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+      producer: hopperProducerIdentity(),
       architecture: target.architecture ?? null,
       available_architectures: [
         ...(target.availableArchitectures ?? []),
@@ -207,6 +211,7 @@ const resolveHopperAnalysisProfileInScope = async (
 export type HopperDeclinedArchitecture =
   | ElfMetadataArchitecture
   | "hexagon"
+  | "xtensa"
   | "arm64_32";
 
 export const isHopperDeclinedArchitecture = (
@@ -214,6 +219,7 @@ export const isHopperDeclinedArchitecture = (
 ): architecture is HopperDeclinedArchitecture =>
   isElfMetadataArchitecture(architecture) ||
   architecture === "hexagon" ||
+  architecture === "xtensa" ||
   architecture === "arm64_32";
 
 /**
@@ -375,10 +381,7 @@ const readHopperProfileFile = async <Value>(
     const cleanup =
       cause instanceof RegularFileCleanupFailure
         ? {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           }
         : undefined;
@@ -401,13 +404,13 @@ const readHopperProfileFile = async <Value>(
           : kind === "header"
             ? new BinaryTargetError(
                 path,
-                `Cannot read the Mach-O container header: ${physical instanceof Error ? physical.message : String(physical)}`,
+                `Cannot read the Mach-O container header: ${errorMessage(physical)}`,
                 { cause: physical, cleanup },
               )
             : new ProviderAdapterError("hopper", "resolve_analysis_profile", {
                 cause: physical,
                 cleanup,
-                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${physical instanceof Error ? physical.message : String(physical)}`,
+                userMessage: `Cannot fingerprint the selected Hopper launcher ${path}: ${errorMessage(physical)}`,
                 remediationAction:
                   "Select a readable regular Hopper launcher, then retry provider selection.",
                 diagnostics: {

@@ -1,14 +1,13 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { describe, expect, it } from "vitest";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const renderWindow = async (
   value: unknown,
@@ -43,7 +42,6 @@ const renderWindow = async (
   const handled = await output.write(value, {
     command: "fixture",
     duration: "0ms",
-    format: "toon",
   });
   return { handled, text: Buffer.concat(chunks).toString("utf8") };
 };
@@ -55,7 +53,7 @@ describe("successful CLI token windows", () => {
       const page = await renderWindow(value, 0, 1000, true);
       expect(page.handled).toBe(true);
       expect(page.text).toBe(
-        `${Formatter.format(
+        `${formatCliOutput(
           {
             ok: true,
             data: value,
@@ -80,7 +78,7 @@ describe("successful CLI token windows", () => {
       const page = await renderWindow(value, 0, 1000, fullOutput);
       expect(page.handled).toBe(true);
       expect(page.text).toBe(
-        `${Formatter.format(
+        `${formatCliOutput(
           fullOutput
             ? {
                 ok: true,
@@ -126,7 +124,7 @@ describe("successful CLI token windows", () => {
           "6764c190e641f1c59c638f9bf32fee05f66992811c5605ebd25056156f21e221",
         text: "😀é".repeat(300),
       };
-      const full = Formatter.format(value, "toon");
+      const full = formatCliOutput(value, "toon");
       const total = estimateTokenCount(full);
       const pages: string[] = [];
       for (let offset = 0; offset < total; offset += 10) {
@@ -216,7 +214,6 @@ describe("token windows through Incur output policies", () => {
         {
           command: "fixture",
           duration: "0ms",
-          format: "toon",
           renderOutput: false,
         },
       );
@@ -243,14 +240,8 @@ describe("token windows through Incur output policies", () => {
         configurable: true,
       });
       try {
-        for (const grouped of [false, true]) {
-          const argv = [
-            ...(grouped ? ["group"] : []),
-            "fixture",
-            "--token-limit",
-            "2",
-            ...flags,
-          ];
+        {
+          const argv = ["fixture", "--token-limit", "2", ...flags];
           let text = "";
           const destination = new Writable({
             write(chunk, _encoding, callback) {
@@ -262,23 +253,11 @@ describe("token windows through Incur output policies", () => {
             parseCliOutputArguments(argv),
             destination,
           )!;
-          const cli = Cli.create("policy-test", { sync: false });
-          if (grouped) {
-            const group = Cli.create("group", {
-              sync: false,
-              outputPolicy: "agent-only",
-            });
-            group.command("fixture", {
-              run: () => ({ value: "😀é".repeat(100) }),
-            });
-            cli.command(group);
-          } else {
-            cli.command("fixture", {
-              outputPolicy: "agent-only",
-              run: () => ({ value: "😀é".repeat(100) }),
-            });
-          }
-          streamCliCommandResults(cli, output);
+          const cli = createCommandCli(output);
+          registerCliCommand(cli, "fixture", {
+            outputPolicy: "agent-only",
+            run: () => ({ value: "😀é".repeat(100) }),
+          });
           await cli.serve(argv, {
             stdout: (chunk) => {
               if (!output.handled) text += chunk;

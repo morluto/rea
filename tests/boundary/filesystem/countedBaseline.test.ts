@@ -2,7 +2,9 @@ import { expect, it } from "vitest";
 
 import {
   compareCountedBaseline,
+  reconcileBaselineFile,
   recordLoweredBaseline,
+  serializeCountedBaseline,
 } from "../../../scripts/verify/counted-baseline.mjs";
 
 it("rejects a file that gains copies or is missing from the baseline", () => {
@@ -89,4 +91,57 @@ it("removes a key when shrinking removes its last recorded count", () => {
   const compared = compareCountedBaseline(new Map(), gone, true);
   expect(recordLoweredBaseline(baselines, "gone", compared)).toBe(true);
   expect(baselines).toEqual({ kept: { "src/b.ts": 2 } });
+});
+
+it("writes one guard's paths in code-unit order", () => {
+  expect(
+    serializeCountedBaseline({
+      "src/b.ts": 1,
+      "src/Upper.ts": 2,
+      "src/a.ts": 3,
+    }),
+  ).toBe(
+    `${JSON.stringify(
+      { "src/Upper.ts": 2, "src/a.ts": 3, "src/b.ts": 1 },
+      null,
+      2,
+    )}\n`,
+  );
+});
+
+it("rejects an unsorted baseline file unless shrinking, which rewrites it", () => {
+  const counts = { "src/a.ts": 1, "src/b.ts": 2 };
+  const written = serializeCountedBaseline(counts);
+  const unsorted = `${JSON.stringify({ "src/b.ts": 2, "src/a.ts": 1 }, null, 2)}\n`;
+  expect(reconcileBaselineFile(written, counts, false)).toEqual({
+    action: "none",
+  });
+  expect(reconcileBaselineFile(written, counts, true)).toEqual({
+    action: "none",
+  });
+  expect(reconcileBaselineFile(unsorted, counts, false)).toEqual({
+    action: "reject",
+  });
+  // No count was lowered; shrinking still writes the sorted form.
+  expect(reconcileBaselineFile(unsorted, counts, true)).toEqual({
+    action: "write",
+    text: written,
+  });
+});
+
+it("deletes a guard's file only when shrinking leaves it no counts", () => {
+  const text = serializeCountedBaseline({ "src/a.ts": 1 });
+  for (const counts of [undefined, {}]) {
+    expect(reconcileBaselineFile(text, counts, true)).toEqual({
+      action: "delete",
+    });
+    expect(reconcileBaselineFile(text, counts, false)).toEqual({
+      action: "reject",
+    });
+    // A guard with no copies left needs no file.
+    for (const shrink of [false, true])
+      expect(reconcileBaselineFile(undefined, counts, shrink)).toEqual({
+        action: "none",
+      });
+  }
 });

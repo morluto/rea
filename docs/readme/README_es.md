@@ -82,11 +82,11 @@ Elige tus agentes, revisa los cambios propuestos y apruébalos. La configuració
 
 La configuración admite Claude Code, Codex, Cursor, Gemini CLI, Grok Build y [otros agentes](../getting-started/installation.md#supported-agents). Consulta [instalación y configuración](../getting-started/installation.md) para configurar proveedores y registrar MCP manualmente.
 
-MCP usa esquemas de entrada compactos por defecto. Para ver todas las instrucciones de campos y la validación anidada, establece `REA_MCP_INPUT_SCHEMA_PROFILE=full` en el registro MCP. Ambos perfiles conservan todas las herramientas y la misma validación canónica del servidor; consulta la guía de contratos MCP.
+MCP usa esquemas de entrada compactos por defecto. Las indicaciones que omite un esquema compacto siguen a la descripción de la herramienta. Todas las herramientas y la validación canónica del servidor no cambian; consulta la guía de contratos MCP.
 
 La configuración registra directamente el entorno de ejecución elegido y el script de entrada de REA. Si usas un ejecutor de paquetes, conserva su entrada de caché y el entorno de ejecución; descarga el paquete desde un directorio de confianza fuera del proyecto objetivo. Consulta la guía de instalación.
 
-Los esquemas de salida se omiten de `tools/list` por defecto: ninguna API de modelos los lee y REA valida cada resultado por sí mismo. Establece `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` en el registro MCP para anunciar cada esquema de salida dentro de 4096 bytes, o `full` para los esquemas de salida completos (para clientes MCP que validan resultados). En todos los casos, la validación del servidor y los resultados estructurados siguen siendo completos. Consulta «Output schemas» en la guía de contratos MCP.
+Los esquemas de salida se omiten de `tools/list` por defecto: ninguna API de modelos los lee y REA valida cada resultado por sí mismo. Establece `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` en el registro MCP para anunciar cada esquema de salida dentro de 4096 bytes. En todos los casos, la validación del servidor y los resultados estructurados siguen siendo completos. Consulta «Output schemas» en la guía de contratos MCP.
 
 ### Pregunta a tu agente
 

@@ -1,15 +1,16 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   withArtifactRegularFile,
   ArtifactFileCleanupFailure,
   artifactFileCompletion,
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { isUtf8 } from "node:buffer";
 import {
@@ -33,6 +34,10 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisLimit,
+  AnalysisSettingsReader,
+} from "../domain/analysisSettings.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
@@ -61,7 +66,6 @@ import {
 import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { currentAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
-import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 
 const descriptorSchema = z.object({
   ...cutterSessionSchema.omit({ bridge_source: true }).shape,
@@ -86,6 +90,7 @@ const responseSchema = z.object({
   identity_status: z.literal("partial").optional(),
   error: z.string().optional(),
   message: z.string().optional(),
+  // lifecycle-state: the bridge's report of how far the command ran.
   execution_state: z
     .enum(["not_started", "running", "complete", "failed", "unknown"])
     .optional(),
@@ -94,6 +99,7 @@ const responseSchema = z.object({
     .array(
       z.object({
         request_id: z.string().uuid(),
+        // lifecycle-state: how far each completed command ran.
         execution_state: z.enum(["not_started", "complete", "failed"]),
       }),
     )
@@ -258,6 +264,8 @@ export interface CutterBridgeExecution {
   readonly message: string | null;
   /** Whether output was omitted; null when the bridge did not declare it. */
   readonly outputTruncated: boolean | null;
+  /** The transport limit whose ceiling omitted the response, when one did. */
+  readonly outputLimit?: AnalysisLimit;
   readonly completionToken?: string;
 }
 
@@ -310,7 +318,7 @@ export class CutterBridgeClient {
     this.#read = options.read;
     const configured = environment.REA_CUTTER_BRIDGE_DIR;
     const localAppData = environment.LOCALAPPDATA;
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     this.#windowsPrivateReader =
       options.windowsPrivateReader ??
       (this.#platform === "win32"
@@ -564,6 +572,9 @@ export class CutterBridgeClient {
           // sent and its discarded response is omitted output. Any other
           // missing reply leaves truncation unknown.
           outputTruncated: cause.limit === undefined ? null : true,
+          ...(cause.limit?.limit === undefined
+            ? {}
+            : { outputLimit: cause.limit.limit }),
           ...(completionToken === undefined ? {} : { completionToken }),
         };
       }
@@ -818,6 +829,7 @@ export class CutterBridgeClient {
           bridge_directory: this.#directory,
         },
         {
+          requestSent: false,
           remediationAction: `Reduce the number of Cutter bridge descriptors in the bridge directory. This budget of ${String(MAX_DESCRIPTOR_CANDIDATES)} descriptors has no runtime override. Descriptor files above ${String(MAX_DESCRIPTOR_BYTES)} bytes are skipped, and at most ${String(DISCOVERY_CONCURRENCY)} descriptors are probed at once; those caps also have no runtime override.`,
         },
       );
@@ -1296,11 +1308,7 @@ const discoveryFailure = (
       primary instanceof AnalysisError
         ? primary
         : new ProviderAdapterError("cutter", operation, { cause: primary });
-    return analysisErrorWithCleanupFailure(
-      original,
-      cleanup,
-      operation,
-    ).bindCleanupDependencies([cleanup]);
+    return analysisErrorWithCleanupDependencies(original, cleanup, operation);
   }
   if (cause.reason === "cancelled")
     return cancelledBy(

@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   artifactNameForClassification,
   namedArtifactFormat,
@@ -15,9 +16,11 @@ import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../process/RegularFileRead.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { childFailureDiagnostics } from "../domain/analysisErrorProjection.js";
 import { constants, type Stats } from "node:fs";
@@ -25,6 +28,10 @@ import { access, realpath, stat, type FileHandle } from "node:fs/promises";
 import { extname } from "node:path";
 
 import { BinaryTargetError } from "../domain/configurationErrors.js";
+import {
+  classifyTargetFilesystemFailure,
+  type TargetFilesystemStage,
+} from "../domain/binaryTargetFilesystemFailure.js";
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
@@ -36,11 +43,12 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import type {
-  BinaryTarget,
-  BinaryArchitecture,
-  PeCodeViewRecord,
-  UniversalMachOSlice,
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  type BinaryTarget,
+  type BinaryArchitecture,
+  type PeCodeViewRecord,
+  type UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readMipsElfMetadata } from "./MipsElfMetadata.js";
@@ -90,7 +98,6 @@ import {
 import { espFlashSelectionError } from "../domain/firmware/espFlashSelection.js";
 import {
   locateTrailingZipArchive,
-  isZipPackageFormat,
   zipRootPackageFormat,
 } from "../domain/zipPackageFormat.js";
 
@@ -125,6 +132,7 @@ import {
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const XML_PLIST_PROBE_CHUNK_BYTES = 64 * 1024;
 
@@ -180,7 +188,8 @@ export const parseBinaryTarget = async (
     const canonical = await realpath(candidate);
     stage = "read";
     // Windows native admission must inspect the caller-selected reparse components.
-    const sourcePath = process.platform === "win32" ? candidate : canonical;
+    const sourcePath =
+      HOST_PLATFORM.platform === "win32" ? candidate : canonical;
     throwIfTargetResolutionCancelled(signal);
     const resolved = await resolveAppBundle(canonical);
     throwIfTargetResolutionCancelled(signal);
@@ -302,7 +311,8 @@ const readOpenedBinaryTarget = async (
     ...bundle,
     sha256: await sha256Handle(source, path, signal),
   });
-  const hostArchitecture = options.hostArchitecture ?? process.arch;
+  const hostArchitecture =
+    options.hostArchitecture ?? HOST_PLATFORM.architecture;
   const { targetKind, formatHint, signal, architecture, entryPoint } = options;
   throwIfTargetResolutionCancelled(signal);
   // Flash inputs pair with one format; check before any hint branch.
@@ -598,10 +608,7 @@ const targetFileCleanupError = (
       cause: failure,
       cleanupPrimary: primary,
       cleanup: {
-        reason:
-          failure.cleanupCause instanceof Error
-            ? failure.cleanupCause.message
-            : String(failure.cleanupCause),
+        reason: errorMessage(failure.cleanupCause),
         resources: [failure.path],
       },
       ...childFailureDiagnostics(
@@ -647,68 +654,6 @@ const targetResolutionFailure = (
   const failure = classifyTargetFilesystemFailure(candidate, physical, stage);
   if (failure === undefined) throw physical;
   return err(failure);
-};
-
-/**
- * `resolve` covers the caller-selected path before canonicalization; `read`
- * covers a canonical path opened with symbolic links rejected.
- */
-type TargetFilesystemStage = "resolve" | "read";
-
-/** Classify a filesystem failure while reading a previously selected target. */
-export const classifyBinaryTargetFilesystemFailure = (
-  path: string,
-  cause: unknown,
-): BinaryTargetError | undefined =>
-  classifyTargetFilesystemFailure(path, cause, "read");
-
-const classifyTargetFilesystemFailure = (
-  path: string,
-  cause: unknown,
-  stage: TargetFilesystemStage,
-): BinaryTargetError | undefined => {
-  if (!(cause instanceof Error)) return undefined;
-  const code = filesystemErrorCode(cause);
-  return code === undefined
-    ? undefined
-    : new BinaryTargetError(
-        path,
-        targetFailureReason(code, cause.message, stage),
-        { cause },
-      );
-};
-
-const filesystemErrorCode = (cause: Error): string | undefined => {
-  const code: unknown = Reflect.get(cause, "code");
-  return typeof code === "string" ? code : undefined;
-};
-
-const targetFailureReason = (
-  code: string,
-  detail: string,
-  stage: TargetFilesystemStage,
-): string => {
-  switch (code) {
-    case "ENOENT":
-    case "ENOTDIR":
-      return `target does not exist or a path component is not a directory: ${detail}`;
-    case "EACCES":
-    case "EPERM":
-      return `permission denied while reading target: ${detail}`;
-    case "EISDIR":
-      return `target is a directory, not a readable file: ${detail}`;
-    case "ENOTFILE":
-      return "target is not a regular file";
-    case "ELOOP":
-      // A canonical path has no symbolic links left, so a link rejected while
-      // reading it appeared after resolution. Before that, ELOOP is a loop or
-      // an over-deep link chain in the selected path itself.
-      return stage === "resolve"
-        ? `target path could not be resolved: too many symbolic links or a symbolic link loop: ${detail}`
-        : `target changed while being opened: ${detail}`;
-    default:
-      return `target could not be read (${code}): ${detail}`;
-  }
 };
 
 const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
@@ -871,25 +816,7 @@ const isArchiveFormat = (
     | "gamecube-dol"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
-  isZipPackageFormat(format) ||
-  [
-    "asar",
-    "ines",
-    "godot-pck",
-    "unityfs",
-    "wxapkg",
-    "uimage",
-    "dmg",
-    "pkg",
-    "intel-hex",
-    "srec",
-    "esp-image",
-    "uf2",
-    "dfuse",
-    "esp-flash-image",
-    "fit",
-    "ntfs-mft",
-  ].includes(format);
+  BINARY_TARGET_FORMAT_KINDS[format] === "archive";
 
 /** Whether the leading bytes begin any executable header family, valid or not. */
 const claimsLeadingExecutableHeader = async (

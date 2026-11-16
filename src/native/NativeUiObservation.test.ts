@@ -10,7 +10,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ExecFileOutputCancelledError } from "../process/ExecFileOutput.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 
 const target: BinaryTarget = {
@@ -533,8 +533,12 @@ it("classifies a helper subprocess timeout as the selected UI deadline", async (
   const projected = projectAnalysisError(result.error);
   expect(projected.code).toBe("provider_timeout");
   expect(projected.message).toContain("of 2500 ms");
-  expect(projected.message).toContain("native_ui_deadline_ms");
-  expect(projected.remediation.action).toContain("above 2500");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "native_ui_deadline_ms",
+    effective_value: 2_500,
+    default_value: 180_000,
+  });
   expect(projected.message).not.toContain("of 30000 ms");
   expect(projected.message).not.toContain("of 60000 ms");
 });

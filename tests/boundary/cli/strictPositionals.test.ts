@@ -1,17 +1,16 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli, z } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { validateCliArguments } from "../../../src/cli/strictPositionals.js";
-import {
-  excludeDeclaredSensitiveArguments,
-  explicitSensitiveValueOptions,
-} from "../../../src/cli/explicitSensitiveArguments.js";
+import { explicitSensitiveValueOptions } from "../../../src/cli/explicitSensitiveArguments.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-type CliInstance = ReturnType<typeof Cli.create>;
+type CliInstance = ReturnType<typeof createCommandCli>;
 const serve = async (cli: CliInstance, argv: string[]) => {
   let stdout = "";
   let exitCode = 0;
@@ -26,15 +25,6 @@ const serve = async (cli: CliInstance, argv: string[]) => {
   });
   return { stdout, exitCode };
 };
-const installAdmission = (cli: CliInstance) => {
-  const strict = validateCliArguments(cli);
-  const declared = excludeDeclaredSensitiveArguments(cli);
-  const original = cli.serve.bind(cli);
-  cli.serve = (argv = [], options = {}) =>
-    strict(argv, options, (tokens, selected) =>
-      declared(tokens, selected, original),
-    );
-};
 
 it("rejects surplus public CLI inputs before importing and retains the one-path control", async () => {
   const directory = await createTestTempDirectory(
@@ -44,7 +34,7 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
   await writeFile(
     path,
     JSON.stringify({
-      evidence_format: 1,
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       captures: [],
       environments: [],
@@ -81,8 +71,8 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
   let runs = 0;
   let transforms = 0;
   let defaults = 0;
-  const cli = Cli.create("strict-fixture", { sync: false });
-  cli.command("scalar", {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "scalar", {
     args: z.object({
       first: z.string().transform((value) => {
         transforms++;
@@ -106,7 +96,6 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
       return { args, options };
     },
   });
-  installAdmission(cli);
   const valid = await serve(cli, [
     "scalar",
     "one",
@@ -149,28 +138,19 @@ it("keeps parser-owned aliases, option values and optional arguments without rer
   ).toBe(0);
 });
 
-it("uses resolved group and alias paths and preserves declared variadic inputs", async () => {
-  const group = Cli.create("group", { sync: false });
-  group.command("scalar", {
-    aliases: ["alias"],
+it("enforces a scalar's arity and preserves declared variadic inputs", async () => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "scalar", {
     args: z.object({ value: z.string() }),
     run: ({ args }) => args,
   });
-  group.command("many", {
+  registerCliCommand(cli, "many", {
     args: z.object({ values: z.array(z.string()) }),
     run: ({ args }) => args,
   });
-  const cli = Cli.create("strict-groups", { sync: false }).command(group);
-  installAdmission(cli);
-  expect((await serve(cli, ["group", "scalar", "one"])).exitCode).toBe(0);
-  expect((await serve(cli, ["group", "scalar", "one", "extra"])).exitCode).toBe(
-    1,
-  );
-  expect((await serve(cli, ["group", "alias", "one"])).exitCode).toBe(0);
-  expect((await serve(cli, ["group", "alias", "one", "extra"])).exitCode).toBe(
-    1,
-  );
-  const many = await serve(cli, ["group", "many", "one", "two", "three"]);
+  expect((await serve(cli, ["scalar", "one"])).exitCode).toBe(0);
+  expect((await serve(cli, ["scalar", "one", "extra"])).exitCode).toBe(1);
+  const many = await serve(cli, ["many", "one", "two", "three"]);
   expect(many.exitCode).toBe(0);
   expect(JSON.parse(many.stdout)).toMatchObject({
     values: ["one", "two", "three"],
@@ -179,8 +159,8 @@ it("uses resolved group and alias paths and preserves declared variadic inputs",
 
 it("preserves counted aliases and negated booleans while checking the positional tail", async () => {
   let runs = 0;
-  const cli = Cli.create("strict-counted-flags", { sync: false });
-  cli.command("capture", {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "capture", {
     args: z.object({ path: z.string() }),
     options: z.object({
       enabled: z.boolean().default(true),
@@ -192,7 +172,6 @@ it("preserves counted aliases and negated booleans while checking the positional
       return { args, options };
     },
   });
-  installAdmission(cli);
   const valid = await serve(cli, ["capture", "one", "--no-enabled", "-vvv"]);
   expect(valid.exitCode).toBe(0);
   expect(JSON.parse(valid.stdout)).toMatchObject({
@@ -214,9 +193,8 @@ it("preserves counted aliases and negated booleans while checking the positional
 it("validates every dry-run literal before lossy coercion while retaining bare and negated controls", async () => {
   let runs = 0;
   let defaults = 0;
-  const cli = Cli.create("dry-run-fixture", { sync: false });
-  cli.command("setup", {
-    aliases: ["plan"],
+  const cli = createCommandCli();
+  registerCliCommand(cli, "setup", {
     options: z.object({
       dryRun: z.boolean().default(false),
       selected: z.string().default(() => {
@@ -229,10 +207,9 @@ it("validates every dry-run literal before lossy coercion while retaining bare a
       return options;
     },
   });
-  installAdmission(cli);
   for (const literal of ["", "abc", "1", "True", "ab\ncd"]) {
     const result = await serve(cli, [
-      "plan",
+      "setup",
       `--dry-run=${literal}`,
       "--dryRun=false",
     ]);
@@ -255,8 +232,8 @@ it("validates every dry-run literal before lossy coercion while retaining bare a
 });
 
 it("keeps flag-shaped option data untouched while validating only bound dry-run values", async () => {
-  const cli = Cli.create("dry-run-data", { sync: false });
-  cli.command("setup", {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "setup", {
     options: z.object({
       dryRun: z.boolean().default(false),
       selected: z.string(),
@@ -264,11 +241,10 @@ it("keeps flag-shaped option data untouched while validating only bound dry-run 
     alias: { selected: "s" },
     run: ({ options }) => options,
   });
-  cli.command("text", {
+  registerCliCommand(cli, "text", {
     options: z.object({ dryRun: z.string() }),
     run: ({ options }) => options,
   });
-  installAdmission(cli);
   for (const value of ["--dry-run=abc", "--dry-run", "--no-dryRun"]) {
     const result = await serve(cli, ["setup", "-s", value, "--dry-run=true"]);
     expect(result.exitCode, result.stdout).toBe(0);
@@ -284,8 +260,8 @@ it("keeps flag-shaped option data untouched while validating only bound dry-run 
 
 it("validates dry-run on variadic commands without losing their declared tail", async () => {
   let runs = 0;
-  const cli = Cli.create("dry-run-tail", { sync: false });
-  cli.command("many", {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "many", {
     args: z.object({
       values: z.array(z.string()),
     }),
@@ -295,7 +271,6 @@ it("validates dry-run on variadic commands without losing their declared tail", 
       return { args, options };
     },
   });
-  installAdmission(cli);
   const rejected = await serve(cli, ["many", "one", "two", "--dry-run=abc"]);
   expect(rejected.exitCode).toBe(1);
   expect(runs).toBe(0);

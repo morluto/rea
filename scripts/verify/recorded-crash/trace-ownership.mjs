@@ -1,25 +1,9 @@
 import assert from "node:assert/strict";
 
-/** Exact inventory argv, whether ps was selected from a system path or PATH. */
-export const isOwnershipInventoryExecution = (executable, line) =>
-  [executable, "ps"].some((argv0) =>
-    line.startsWith(
-      `execve(${JSON.stringify(executable)}, [${[
-        argv0,
-        "-axo",
-        "pid=,ppid=,pgid=,uid=,stat=,command=",
-      ]
-        .map((argument) => JSON.stringify(argument))
-        .join(", ")}], `,
-    ),
-  );
+import { isOwnershipPsExecution } from "../../lib/ownership-ps-trace.mjs";
 
 /** Parse execution/thread facts once; only an observed Node ps caller owns inventory reads. */
-export const collectOwnershipTraceFacts = ({
-  traces,
-  nodeExecutable,
-  psExecutables,
-}) => {
+export const collectOwnershipTraceFacts = ({ traces, nodeExecutable }) => {
   const processGroups = new Map();
   const findGroup = (pid) => {
     const parent = processGroups.get(pid);
@@ -97,9 +81,7 @@ export const collectOwnershipTraceFacts = ({
         path: match[1],
         line,
         succeeded: line.endsWith(" = 0"),
-        ownershipInventory:
-          psExecutables.has(match[1]) &&
-          isOwnershipInventoryExecution(match[1], line),
+        ownershipInventory: isOwnershipPsExecution(line),
       });
     }
   }
