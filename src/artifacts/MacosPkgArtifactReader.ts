@@ -163,6 +163,7 @@ const stoppedBySharedBudget = (
   remainingBudget: number,
 ): boolean =>
   error.kind === "limit" &&
+  error.failure.limit.name === "macos_pkg_cpio_archive_bytes" &&
   remainingBudget < MACOS_PKG_MAX_CPIO_ARCHIVE_BYTES &&
   error.failure.limit.maximum === remainingBudget;
 

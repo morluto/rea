@@ -340,6 +340,39 @@ it("keeps PackageInfo when Payload cpio headers are garbage", async () => {
   }
 });
 
+it("records a cpio name refusal even when it matches the remaining budget", async () => {
+  const payload = buildCpioOdc([]);
+  payload.write("000000", 59, "ascii");
+  const { reader, coverage } = await entriesOf(
+    buildXar({
+      files: [
+        { path: "PackageInfo", bytes: Buffer.from("<pkg-info/>") },
+        { path: "Payload", bytes: payload },
+      ],
+    }),
+    "zero-namesize.pkg",
+    4096,
+  );
+  try {
+    expect(reader.formatMetadata()?.refusals).toEqual([
+      expect.objectContaining({
+        code: "oversize",
+        message: expect.stringContaining("namesize 0"),
+      }),
+    ]);
+    expect(coverage).toEqual([
+      expect.objectContaining({
+        status: "unknown",
+        limitations: expect.not.arrayContaining([
+          expect.stringContaining("Did not expand Scripts/Payload"),
+        ]),
+      }),
+    ]);
+  } finally {
+    await reader.close();
+  }
+});
+
 it("refuses an oversize TOC file count as a capacity limit", async () => {
   const path = await writePkg("oversize.pkg", buildOversizeTocPackage());
   const reader = new MacosPkgArtifactReader(path);
