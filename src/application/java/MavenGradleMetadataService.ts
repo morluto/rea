@@ -58,7 +58,7 @@ export class MavenGradleMetadataService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.value,
+          parameters: callerParameters(rawInput, input.value),
           result: value,
           confidence: "observed",
           limitations: value.limitations,
@@ -76,6 +76,20 @@ export class MavenGradleMetadataService {
     );
   }
 }
+
+/**
+ * The request as the caller sent it: the schema's default read budget is
+ * applied for the provider call but stays out of Evidence when omitted.
+ */
+const callerParameters = (
+  rawInput: unknown,
+  input: { path: string; max_file_bytes: number },
+): { path: string; max_file_bytes?: number } =>
+  typeof rawInput === "object" &&
+  rawInput !== null &&
+  (rawInput as { max_file_bytes?: unknown }).max_file_bytes !== undefined
+    ? { path: input.path, max_file_bytes: input.max_file_bytes }
+    : { path: input.path };
 
 const validReport = (
   report: MavenGradleMetadata,
