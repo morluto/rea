@@ -524,6 +524,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
               ...fixedAllowanceOptions(
                 "The sigrok decoder-discovery line allowance",
                 "capture",
+                { limit: cause.failure.limit.maximum, unit: "lines" },
               ),
             })
           : undefined,

@@ -477,10 +477,10 @@ const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
       { maximum_output_bytes: MAX_CATALOG_BYTES },
       {
         ...options,
-        ...fixedAllowanceOptions(
-          "the fixed 64 MiB assetutil capture allowance",
-          "capture",
-        ),
+        ...fixedAllowanceOptions("The assetutil capture allowance", "capture", {
+          limit: MAX_CATALOG_BYTES,
+          unit: "bytes",
+        }),
       },
     );
   if (output !== undefined) {
