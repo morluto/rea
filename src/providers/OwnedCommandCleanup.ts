@@ -189,14 +189,17 @@ export const processInspectionCancellationError = (
   return undefined;
 };
 
-/** Bind explicit inspection owners to an artifact scope while preserving the caller's primary. */
-export const retainProcessInspectionCleanup = (
+/**
+ * Retain explicit inspection owners in an artifact scope, for a reader that
+ * reports the inspection as unavailable instead of failing. Returns the
+ * cleanup failures that stay open until the scope releases them.
+ */
+export const retainProcessInspectionOwners = (
   cause: unknown,
-  primary: AnalysisError,
   resources: ArtifactResourceScope,
   operation: string,
-): AnalysisError => {
-  const failures = retainOwnedCommandCleanup(
+): readonly AnalysisError[] =>
+  retainOwnedCommandCleanup(
     cause,
     {
       retain: (owner, resource) =>
@@ -210,6 +213,15 @@ export const retainProcessInspectionCleanup = (
     "process-ownership",
     operation,
   );
+
+/** Bind explicit inspection owners to an artifact scope while preserving the caller's primary. */
+export const retainProcessInspectionCleanup = (
+  cause: unknown,
+  primary: AnalysisError,
+  resources: ArtifactResourceScope,
+  operation: string,
+): AnalysisError => {
+  const failures = retainProcessInspectionOwners(cause, resources, operation);
   for (const failure of failures)
     primary = analysisErrorWithCleanupDependencies(primary, failure, operation);
   return bindProcessInspectionCancellations(cause, primary, operation);
