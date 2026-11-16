@@ -10,8 +10,8 @@ import {
 } from "../../domain/native/peResources.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PeResourcesProvider } from "./PeResourcesProvider.js";
-import { peResourceFixture } from "./PeResources.fixture.js";
-import { imageFileSizeRemediation } from "../../artifacts/StableArtifactFailure.js";
+import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
+import { imageFileSizeRemediation } from "../../resources/StableArtifactFailure.js";
 
 const inspect = async (
   path: string,
@@ -180,8 +180,12 @@ it("names the fixed PE metadata allowance instead of host memory", async () => {
   });
   const projected = projectAnalysisError(error);
   expect(projected.retryable).toBe(false);
-  expect(projected.remediation.action).toContain(
-    "PE resource metadata allowance",
-  );
-  expect(projected.remediation.action).not.toMatch(/available host memory/u);
+  expect(projected.details).toMatchObject({
+    refusal: {
+      kind: "fixed_ceiling",
+      allowance_kind: "parser",
+      limit: 8 * 1024 * 1024,
+      unit: "bytes",
+    },
+  });
 });

@@ -1,19 +1,23 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { packetFieldsCatalogSchema } from "../../../src/domain/captures/packetFields.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import { it, expect, onTestFinished } from "vitest";
 import { writeFile, readdir, chmod, symlink } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { TsharkCaptureProvider } from "../../../src/captures/TsharkCaptureProvider.js";
 import { PacketCaptureService } from "../../../src/application/captures/PacketCaptureService.js";
 import { packetCaptureSchema } from "../../../src/domain/captures/packetCapture.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
-import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import {
+  cleanupOwnedProcessGroup,
+  type ProcessCleanupResult,
+} from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
-import { Cli } from "incur";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
@@ -43,6 +47,26 @@ const withProbeCleanupGate = (
     },
   };
 };
+
+/** The decoder exits by itself; only the cleanup proof is withheld. */
+const withheldDecoderCleanup = (
+  spawned: Awaited<ReturnType<typeof spawnOwnedProviderProcess>>,
+  mayStop: () => boolean,
+): Awaited<ReturnType<typeof spawnOwnedProviderProcess>> => ({
+  ...spawned,
+  cleanup: async (): Promise<ProcessCleanupResult> =>
+    mayStop()
+      ? { cleaned: true, signaled: false }
+      : { cleaned: false, reason: "decoder owner remains unverified" },
+});
+
+const fileLimitFailure = () =>
+  new OwnedCommandFailure("process", "Synthetic SIGXFSZ snapshot", {
+    stdout: { text: "", bytes: 0, observedBytes: 0 },
+    stderr: { text: "before file limit\n", bytes: 18, observedBytes: 18 },
+    exitCode: null,
+    signal: "SIGXFSZ",
+  });
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (
@@ -89,6 +113,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   const controller = new AbortController();
   let calls = 0;
   let mayClean = !failCleanup;
+  let mayStopDecoder = mode !== "process-cleanup";
   const acquired = createDeferred<void>();
   const release = createDeferred<void>();
   const provider = new TsharkCaptureProvider(
@@ -110,21 +135,8 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
       const probe = !input.arguments.includes("--");
       const producer = !probe && !input.arguments.includes("--version");
       if (mode === "launch-failure" && producer)
-        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
-      if (mode === "file-limit" && producer) {
-        const stdout = { text: "", bytes: 0, observedBytes: 0 };
-        const stderr = {
-          text: "before file limit\n",
-          bytes: 18,
-          observedBytes: 18,
-        };
-        throw new OwnedCommandFailure("process", "Synthetic SIGXFSZ snapshot", {
-          stdout,
-          stderr,
-          exitCode: null,
-          signal: "SIGXFSZ",
-        });
-      }
+        throw spawnFailure("E2BIG", input.command);
+      if (mode === "file-limit" && producer) throw fileLimitFailure();
       const spawned = await spawnOwnedProviderProcess({
         ...input,
         command: process.execPath,
@@ -134,6 +146,8 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
       });
       if ((mode === "wait" && producer) || (mode === "probe-wait" && probe))
         spawned.process.stdout?.once("data", () => controller.abort());
+      if (mode === "process-cleanup" && producer)
+        return withheldDecoderCleanup(spawned, () => mayStopDecoder);
       return mode === "probe-cleanup" && probe
         ? withProbeCleanupGate(spawned, () => mayClean)
         : spawned;
@@ -177,6 +191,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
   onTestFinished(async () => {
     release.resolve();
     mayClean = true;
+    mayStopDecoder = true;
     await provider.close();
   });
   const service = new PacketCaptureService(provider);
@@ -190,6 +205,7 @@ else { if(readFileSync('capture', 'utf8') !== 'recording bytes') throw Error('wr
     release: () => release.resolve(),
     allowCleanup: () => {
       mayClean = true;
+      mayStopDecoder = true;
     },
   };
 };
@@ -260,7 +276,7 @@ it("recovers the same capture with CLI producer budgets and retains a tighter in
   expect(analysisErrorRemediationAction(refused.error)).toContain(
     "producer_limits.input_bytes",
   );
-  const cli = Cli.create("capture-producer-budget", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -372,7 +388,7 @@ it("refuses producer frames outside the selected input read scope before paging"
 
 it("returns canonical alias output through the public packet-capture CLI", async () => {
   const f = await fixture("alias-canonical");
-  const cli = Cli.create("capture-alias-test", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   await cli.serve(
@@ -561,7 +577,13 @@ it.each(["capture", "fields"] as const)(
         : await f.service.inspectFields({ kind: "fields" });
     if (result.ok) throw new Error("Expected launch failure");
     expect(f.calls()).toBe(4);
-    expect(result.error.message).toContain("spawn E2BIG");
+    // A launch failure is not tool output: the shared owner reports the
+    // oversized argument list as a resource constraint.
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "transport",
+      reportedLimits: { spawn_error: "E2BIG" },
+    });
     expect(result.error.capturedOutput).toBeUndefined();
   },
 );
@@ -582,6 +604,27 @@ it("retains a completed observation and cleanup ownership for retry", async () =
   expect(
     (await readdir(f.directory)).filter((name) => name.startsWith("decoder-")),
   ).toEqual([]);
+});
+
+it("releases a retained decoder process cleanup before the next inspection completes", async () => {
+  const f = await fixture("process-cleanup");
+  const input = { path: f.path, fields: ["ip.addr"] };
+  const first = await f.service.inspect(input);
+  if (first.ok) throw new Error("Expected retained process cleanup");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toContainEqual(
+    expect.stringMatching(/^process-group:\d+$/),
+  );
+  const launches = f.calls();
+  const blocked = await f.service.inspect(input);
+  if (blocked.ok) throw new Error("Expected the retained owner to block");
+  expect(blocked.error.cleanupIncomplete).toBe(true);
+  expect(f.calls()).toBe(launches);
+  f.allowCleanup();
+  const retried = await f.service.inspect(input);
+  expect(retried.ok).toBe(true);
+  expect(first.error.cleanupIncomplete).toBe(false);
+  expect(f.calls()).toBeGreaterThan(launches);
 });
 
 it("rejects cancelled and invalid requests before any provider work", async () => {
@@ -1145,7 +1188,7 @@ it("retains completed discovery on late cancellation and cleanup failure", async
 
 it("preserves discovery resource ownership through CLI shutdown retries", async () => {
   const f = await fixture("cleanup", true);
-  const cli = Cli.create("discovery-cleanup", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(cli, silentLogger, {}, f.service);
   let stdout = "";
   try {

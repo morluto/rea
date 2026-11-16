@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { Cli } from "incur";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -175,10 +175,7 @@ const cliAdmittedValue = (
 
 const collectParity = () => {
   const cli = createCli();
-  const commands = Cli.toCommands.get(
-    cli as unknown as Parameters<typeof Cli.toCommands.get>[0],
-  );
-  if (commands === undefined) throw new Error("No CLI commands registered");
+  const commands = cliCommands(cli);
   const contracts = new Map<string, z.ZodType>(
     TOOL_CONTRACTS.map((contract) => [contract.name, contract.inputSchema]),
   );
@@ -187,8 +184,7 @@ const collectParity = () => {
   let compared = 0;
   let commandsCompared = 0;
   let unmatchedFields = 0;
-  for (const [name, entry] of commands) {
-    if ("_alias" in entry) continue;
+  for (const { name, definition: entry } of commands) {
     const contractNames: readonly string[] = CLI_COMMAND_TOOL_ALIASES[
       name as keyof typeof CLI_COMMAND_TOOL_ALIASES
     ] ?? [snake(name)];

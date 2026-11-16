@@ -21,7 +21,7 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
-} from "../mcpStartupPolicy.js";
+} from "../config/mcpStartupPolicy.js";
 import {
   inspectClientRegistrationCommand,
   type ClientRegistrationCommandFacts,
@@ -40,12 +40,12 @@ import {
   clientRegistrationEnvironmentDetailsWithBudget,
   recordedProviderSettings,
 } from "./ClientRegistrationEnvironment.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import type {
   OwnedProviderSetting,
-  ProviderRequestBudgetResolver,
   RecordedProviderSettings,
-} from "./ClientRegistrationEnvironment.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+} from "../ports/DesktopBuildHost.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 import {
   parseClientRegistrationPolicy,
@@ -55,6 +55,7 @@ import {
   type ClientRegistration,
 } from "./ClientRegistration.js";
 import { admitClientStdioConnection } from "./ClientRegistrationConnection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -720,7 +721,7 @@ const clientEvidencePresent = async (
       if (!isMissing(cause))
         unavailable ??= {
           path,
-          detail: `Client configuration evidence at ${path} could not be inspected: ${cause instanceof Error ? cause.message : String(cause)}. Check file permissions and rerun rea doctor.`,
+          detail: `Client configuration evidence at ${path} could not be inspected: ${errorMessage(cause)}. Check file permissions and rerun rea doctor.`,
         };
     }
   }

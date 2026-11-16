@@ -4,7 +4,7 @@ import { countTaskRows } from "./appTaskChecks.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { sqliteRowIdentity } from "./stateChanges.js";
 import { appendAll } from "../appendAll.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;

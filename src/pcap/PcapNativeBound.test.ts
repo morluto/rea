@@ -13,11 +13,9 @@ import {
   prlimitCeilingArguments,
   type LinuxResourceLimits,
 } from "../process/LinuxResourceLimits.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  prepareLinuxLimiter,
-  preparePcapNativeBound,
-} from "./PcapNativeBound.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
+import { prepareLinuxLimiter } from "../process/LinuxLimiterAdmission.js";
+import { preparePcapNativeBound } from "./PcapNativeBound.js";
 
 const probeResult = (stdout: string, stderr = "") => ({
   stdout,
@@ -47,34 +45,13 @@ const admit = (
     provider: "tshark-capture",
   });
 
-const withPlatform = async (
-  platform: NodeJS.Platform,
-  run: () => Promise<void>,
-) => {
-  const previousPlatform = process.platform;
-  Object.defineProperty(process, "platform", {
-    configurable: true,
-    value: platform,
-  });
-  try {
-    await run();
-  } finally {
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: previousPlatform,
-    });
-  }
-};
-
 it("uses the shared 1 GiB ceiling for the Windows job memory limit", async () => {
-  await withPlatform("win32", async () => {
-    await expect(
-      preparePcapNativeBound({}, resources, async () => probeResult("")),
-    ).resolves.toMatchObject({
-      nativeBound: {
-        memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
-      },
-    });
+  await expect(
+    preparePcapNativeBound("win32", {}, resources, async () => probeResult("")),
+  ).resolves.toMatchObject({
+    nativeBound: {
+      memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
+    },
   });
 });
 
@@ -136,20 +113,19 @@ it("pins capture ceilings through the shared prlimit prefix and keeps 300 CPU se
     file_bytes: BOUNDED_PRODUCER_LIMITS.file_bytes,
     cpu_seconds: 300,
   };
-  await withPlatform("linux", async () => {
-    const prepared = await preparePcapNativeBound(
-      { REA_TSHARK_PRLIMIT_COMMAND: limiter },
-      resources,
-      async (_selection, args) =>
-        probeResult(
-          args[0] === "--help" ? help : "prlimit from util-linux 2.38.1\n",
-        ),
-    );
-    expect(prepared.nativeBound.limiter?.arguments).toEqual(
-      prlimitCeilingArguments(limits),
-    );
-    expect(prepared.limitations[0]).toContain(String(limits.cpu_seconds));
-  });
+  const prepared = await preparePcapNativeBound(
+    "linux",
+    { REA_TSHARK_PRLIMIT_COMMAND: limiter },
+    resources,
+    async (_selection, args) =>
+      probeResult(
+        args[0] === "--help" ? help : "prlimit from util-linux 2.38.1\n",
+      ),
+  );
+  expect(prepared.nativeBound.limiter?.arguments).toEqual(
+    prlimitCeilingArguments(limits),
+  );
+  expect(prepared.limitations[0]).toContain(String(limits.cpu_seconds));
 });
 
 it("pins packet-inspection ceilings with the shared 30 CPU seconds", async () => {

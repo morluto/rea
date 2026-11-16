@@ -6,7 +6,6 @@ import { z } from "zod";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { DevicetreeProvider } from "../../../src/firmware/devicetree/DevicetreeProvider.js";
 import { DevicetreeService } from "../../../src/application/binaryDiagnostics/DevicetreeService.js";
@@ -18,7 +17,7 @@ import {
   cells,
   devicetreeFixture,
   dtString,
-} from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+} from "../../../src/domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
@@ -40,7 +39,11 @@ const createDtbServer = (
     { devicetree: service },
     { logger: silentLogger, recordEvidence: record, evidenceById: lookup },
   );
-  registerAnalysisViewTool(server, silentLogger, lookup, record);
+  registerServiceTools(
+    server,
+    { analysisView: {} },
+    { logger: silentLogger, evidenceById: lookup, recordEvidence: record },
+  );
   return server;
 };
 

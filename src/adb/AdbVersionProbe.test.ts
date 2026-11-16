@@ -4,13 +4,13 @@ import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
 import {
-  AdbConfigurationFailure,
-  adbConfigurationAvailability,
-  inspectAdbClient,
-} from "./AdbConfiguration.js";
+  AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
+import { execFileOutput } from "../process/ExecFileOutput.js";
+import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
+import { inspectAdbClient } from "./AdbConfiguration.js";
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
   const actual =
@@ -23,6 +23,16 @@ const selection = {
   pathSource: "environment",
   environment: {},
 } as const;
+
+/** The error execFile rejects with when its launcher could not start adb. */
+const adbSpawnFailure = (code: string): Error =>
+  Object.assign(spawnFailure(code, selection.binary), {
+    spawnFailed: true,
+    stdout: "",
+    stderr: "",
+    signal: null,
+    killed: false,
+  });
 
 it("reports the fixed adb version-probe deadline", async () => {
   vi.mocked(execFileOutput).mockRejectedValueOnce(
@@ -85,21 +95,18 @@ it("reports the fixed adb version-output cap", async () => {
     },
   });
   expect(projected.details?.limit).toBeUndefined();
+  expect(failure).toHaveProperty("fixedAllowance", {
+    name: expect.any(String),
+    kind: "capture",
+    limit: 65536,
+    unit: "bytes",
+  });
 });
 
 it.skipIf(process.platform !== "win32")(
   "classifies an EACCES execute refusal on Windows",
   async () => {
-    vi.mocked(execFileOutput).mockRejectedValueOnce(
-      Object.assign(new Error("denied"), {
-        code: "EACCES",
-        spawnFailed: true,
-        stdout: "",
-        stderr: "",
-        signal: null,
-        killed: false,
-      }),
-    );
+    vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure("EACCES"));
     await expect(inspectAdbClient(selection)).rejects.toMatchObject({
       code: "binary_not_executable",
       diagnostics: {
@@ -111,16 +118,7 @@ it.skipIf(process.platform !== "win32")(
 );
 
 it("names an EPERM execute refusal separately from missing permission", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(
-    Object.assign(new Error("not permitted"), {
-      code: "EPERM",
-      spawnFailed: true,
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-    }),
-  );
+  vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure("EPERM"));
   await expect(inspectAdbClient(selection)).rejects.toMatchObject({
     code: "binary_not_executable",
     remediation: expect.stringContaining("REA_ADB_PATH") as unknown,
@@ -133,16 +131,7 @@ it("names an EPERM execute refusal separately from missing permission", async ()
 });
 
 it("names any other not-started spawn errno without an exit code", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(
-    Object.assign(new Error("spawn EINVAL"), {
-      code: "EINVAL",
-      spawnFailed: true,
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-    }),
-  );
+  vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure("EINVAL"));
   const failure = await inspectAdbClient(selection).catch(
     (cause: unknown) => cause,
   );
@@ -158,38 +147,41 @@ it("names any other not-started spawn errno without an exit code", async () => {
   expect(failure).not.toHaveProperty("diagnostics.exit_code");
 });
 
-it("does not blame the selected path for exhausted host spawn capacity", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(
-    Object.assign(new Error("spawn EMFILE"), {
-      code: "EMFILE",
-      spawnFailed: true,
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: false,
-    }),
-  );
-  const failure = await inspectAdbClient(selection).catch(
-    (cause: unknown) => cause,
-  );
-  expect(failure).toMatchObject({
-    code: "host_capacity",
-    remediation: expect.any(String) as unknown,
-    diagnostics: {
-      selected_binary: "/host/adb",
-      path_source: "environment",
-      filesystem_error: "EMFILE",
-    },
-  });
-  expect(failure).not.toHaveProperty("diagnostics.exit_code");
-  if (!(failure instanceof AdbConfigurationFailure)) throw failure;
-  expect(adbConfigurationAvailability(failure)).toMatchObject({
-    status: "unavailable",
-    code: "runtime_unavailable",
-    remediation: failure.remediation,
-  });
-});
-
+it.each([
+  ["EMFILE", true, { boundary: "host-capacity" }],
+  // `adb version` has fixed arguments, so only the environment can shrink.
+  [
+    "E2BIG",
+    false,
+    { boundary: "provider-launch", oversized_launch_input: "environment" },
+  ],
+] as const)(
+  "reports a host launch constraint %s through the shared launch owner, not as a fault of the selected path",
+  async (code, retryable, facts) => {
+    vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure(code));
+    const failure = await inspectAdbClient(selection).catch(
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(AnalysisResourceConstraintError);
+    const projected = projectAnalysisError(
+      failure as AnalysisResourceConstraintError,
+    );
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable,
+      details: {
+        diagnostics: {
+          selected_binary: "/host/adb",
+          path_source: "environment",
+          system_code: code,
+          command: "/host/adb",
+          ...facts,
+        },
+      },
+    });
+    expect(projected).not.toHaveProperty("details.diagnostics.exit_code");
+  },
+);
 it.skipIf(process.platform === "win32").each([
   {
     name: "an actual executable path with trailing space",

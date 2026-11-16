@@ -51,18 +51,24 @@ bundle) does not declare its format today.
      universal-binary slice. It is `null` when nothing is selected.
    - `url`: the URL with userinfo removed and its `origin`. Userinfo is a
      transport credential and is never part of an identity.
-   - `process`: `pid`, `start_time` (nullable when the platform does not report
-     it), and `executable_sha256` (nullable when the executable could not be
-     read stably). A PID alone does not identify a process after exit or reuse
-     (see the `src/process/` identity primitives). A record whose start time is
-     unknown says so, rather than claiming an identity it does not have.
-   - `session`: the session `kind` (for example `gdb`, `rizin`,
-     `browser-scenario`), the session `id` REA minted, and the `target` the
-     session was opened on (a `TargetIdentity`, possibly `unknown`).
+   - `process`: `pid`, `start_time` (the platform start identity the
+     `src/process/` identity primitives read for that PID), and
+     `executable_sha256` (nullable when the executable could not be read
+     stably). A PID alone does not identify a process after exit or reuse, so
+     the start time is required: a producer that did not read it names an
+     `unknown` (`not-observed`) target rather than claiming an identity it
+     does not have.
+   - `session`: the `session_kind` (`rizin`, `gdb`; later kinds such as
+     `browser-scenario` are added when a producer needs them), the session
+     `id` REA minted, and the `target` the session was opened on: the launch
+     file hashed when the session started, or `unknown`. Later debugger
+     commands do not rebind the session.
    - `unknown`: a `reason` from a closed set:
      `derived-from-linked-evidence` (comparisons and workflows; their sources
-     are already committed through `evidence_links`), `not-observed`, and
-     `unsupported-subject`.
+     are already committed through `evidence_links`), `not-observed`,
+     `unsupported-subject`, and `withheld-by-caller` (REA observed the
+     identity and the caller chose not to record it, for example process
+     capture PID normalization).
 
    Display facts (`name`, `local_path`) stay beside the identity and are not
    committed, as today.
