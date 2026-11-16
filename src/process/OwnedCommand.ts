@@ -209,9 +209,14 @@ function throwCommandPreparationFailure(
 export const preparationHostCapacityFailure = (
   cause: unknown,
 ): LauncherFailure | undefined => {
+  if (cause instanceof OwnedCommandFailure && cause.cancellation !== undefined)
+    return undefined;
   const preparation =
     cause instanceof OwnedCommandFailure ? cause.preparationFailure : cause;
-  if (!(preparation instanceof DarwinProcessOwnershipInspectionError))
+  if (
+    !(preparation instanceof DarwinProcessOwnershipInspectionError) ||
+    preparation.cancellation !== undefined
+  )
     return undefined;
   const launch = launcherFailureOf(preparation.cause);
   return launch?.kind === "host-exhausted" ? launch : undefined;

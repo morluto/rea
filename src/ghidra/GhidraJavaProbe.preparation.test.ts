@@ -181,3 +181,41 @@ it("reports EMFILE during macOS ownership helper preparation as a resource const
     await resources.close();
   }
 });
+
+it("keeps caller cancellation primary when macOS helper preparation is cancelled with a spawn EMFILE reason", async () => {
+  const resources = createInspectionResources();
+  const reason = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const prepare = vi
+    .spyOn(systemProcessOwnershipHost, "prepare")
+    .mockRejectedValue(
+      new DarwinProcessOwnershipInspectionError(
+        "helper compilation cancelled",
+        {
+          cause: reason,
+          cancellation: { reason },
+        },
+      ),
+    );
+  try {
+    const result = await probeGhidraJava(
+      "/selected/java",
+      {},
+      {
+        resourceOwner: resources.owner,
+        launcher: async (input) => {
+          await prepareProcessOwnershipInspection(input.signal);
+          throw new Error("Java must not start");
+        },
+      },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected cancelled probe failure");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+  } finally {
+    prepare.mockRestore();
+    await resources.close();
+  }
+});
