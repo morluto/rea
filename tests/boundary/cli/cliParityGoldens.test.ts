@@ -249,6 +249,14 @@ const CASES: readonly ParityCase[] = [
   // Command resolution and argument errors
   { name: "error-unknown-command", arguments: fixed("no-such-command") },
   { name: "error-empty-command", arguments: fixed("") },
+  {
+    name: "error-unknown-command-full-output",
+    arguments: fixed("no-such-command", "--full-output", "--json"),
+  },
+  {
+    name: "error-unknown-command-token-limit",
+    arguments: fixed("no-such-command", "--token-limit", "6"),
+  },
   { name: "error-unknown-mcp-subcommand", arguments: fixed("mcp", "bogus") },
   {
     name: "error-missing-positional",
