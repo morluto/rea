@@ -20,7 +20,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import type {
   AnalysisExecution,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 
 /** Validated caller-selected request carrying its operation input. */

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -113,7 +114,7 @@ const peImportIssueSchema = z.strictObject({
 });
 
 const coverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   reason: z.string().min(1).nullable(),
   examined_dlls: uint,
   imports: uint,

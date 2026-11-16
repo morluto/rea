@@ -1,9 +1,10 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { WebArtifactCleanup } from "../../../src/browser/WebArtifactCleanup.js";
 import { LocalWebScriptArtifacts } from "../../../src/browser/assets/LocalWebScriptArtifacts.js";
-import type { ExecutionOptions } from "../../../src/application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../../src/ports/AnalysisProvider.js";
 import { NativeModuleResolver } from "../../../src/browser/modules/NativeModuleResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -22,6 +23,7 @@ import {
   webModuleResolverFixture,
 } from "../../fixtures/webModuleTrace.js";
 import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("publishes valid SDK schemas and records the named module trace without a binary target", async () => {
   const artifacts = webModuleArtifactsFixture();
@@ -36,7 +38,10 @@ it("publishes valid SDK schemas and records the named module trace without a bin
     { kind: "session", session },
     { webModuleTrace: service },
   );
-  const client = new Client({ name: "module-contract", version: "1" });
+  const client = new Client(
+    { name: "module-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -49,7 +54,7 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "trace_web_module_imports",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("module trace must advertise both schemas");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
@@ -57,7 +62,7 @@ it("publishes valid SDK schemas and records the named module trace without a bin
   expect(ajv.validate(inputSchema, args)).toBe(true);
   const response = await client.callTool(
     { name: "trace_web_module_imports", arguments: args },
-    { toolDefinition: advertised },
+    { toolDefinition: withCanonicalOutputSchema(advertised) },
   );
   expect(response.isError).not.toBe(true);
   const parsed = toolContract("trace_web_module_imports").outputSchema.parse(
@@ -404,7 +409,10 @@ const createModuleFinalizationHarness = async (
     { kind: "session", session },
     { webModuleTrace: service },
   );
-  const client = new Client({ name: "module-finalization", version: "1" });
+  const client = new Client(
+    { name: "module-finalization", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     allowClose = true;
     allowArtifactClose = true;

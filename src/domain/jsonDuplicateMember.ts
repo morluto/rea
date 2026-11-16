@@ -57,6 +57,8 @@ export const findDuplicateJsonMember = (
       case ",":
         expectName = open.at(-1) instanceof Set;
         break;
+      default:
+        break;
     }
   }
   return undefined;

@@ -118,8 +118,49 @@ it("reports missing required workflow arguments through the public CLI", async (
   expect(JSON.parse(stdout)).toMatchObject({
     details: {
       issues: expect.arrayContaining([
-        expect.objectContaining({ path: ["arguments", "feature"] }),
+        expect.objectContaining({ path: ["argumentsJson", "feature"] }),
       ]),
+    },
+  });
+});
+
+it("refuses a render-only option when --action selects the list branch", async () => {
+  for (const action of [[], ["--action", "list"]]) {
+    const { exitCode, stdout } = await run([
+      "guided-workflows",
+      ...action,
+      "--workflow-id",
+      "investigate_feature",
+    ]);
+    expect(exitCode).not.toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({ code: "invalid_request" });
+  }
+});
+
+it("refuses an --action that selects no input branch", async () => {
+  const { exitCode, stdout } = await run([
+    "guided-workflows",
+    "--action",
+    "delete",
+  ]);
+  expect(exitCode).not.toBe(0);
+  expect(stdout).toContain("action");
+});
+
+it("names a refused argument by its CLI option before rendering", async () => {
+  const { exitCode, stdout } = await run([
+    "guided-workflows",
+    "--action",
+    "render",
+    "--workflow-id",
+    "investigate_feature",
+    "--arguments-json",
+    '{"feature":1}',
+  ]);
+  expect(exitCode).not.toBe(0);
+  expect(JSON.parse(stdout)).toMatchObject({
+    details: {
+      issues: [expect.objectContaining({ path: ["argumentsJson", "feature"] })],
     },
   });
 });

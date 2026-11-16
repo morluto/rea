@@ -1,3 +1,8 @@
+import {
+  unknownTarget,
+  type ProcessTargetIdentity,
+  type UnknownTargetIdentity,
+} from "../../domain/targetIdentity.js";
 import type { z } from "zod";
 import { posix, win32 } from "node:path";
 
@@ -14,7 +19,10 @@ import {
   safeParseProcessCapture,
   type ProcessCapture,
 } from "../../domain/process/processCaptureParsing.js";
-import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import {
+  safeParseEvidence,
+  type EvidenceReadFailure,
+} from "../../domain/evidenceValidation.js";
 import {
   processScenarioPlanProjection,
   processScenarioPlanSchema,
@@ -35,7 +43,7 @@ const PROCESS_SCENARIO_PLAN_EVIDENCE = {
 
 /** Semantic rejection facts; CLI and MCP retain their own error projections. */
 export type ProcessCaptureEvidenceFailure =
-  | { readonly kind: "invalid-evidence"; readonly cause: z.ZodError }
+  | { readonly kind: "invalid-evidence"; readonly cause: EvidenceReadFailure }
   | {
       readonly kind: "wrong-workflow";
       readonly expected: typeof PROCESS_CAPTURE_EVIDENCE;
@@ -104,39 +112,70 @@ const processEvidenceParameters = (
   normalization: scenario.normalization,
 });
 
+/**
+ * The captured root process as the Evidence subject: its PID, start identity
+ * and stable executable digest; withheld when the caller normalized PIDs;
+ * otherwise not observed.
+ */
+const processCaptureSubject = (
+  manifest: ProcessCapture["manifest"],
+): ProcessTargetIdentity | UnknownTargetIdentity => {
+  const root = manifest.root_process;
+  switch (root.state) {
+    case "observed":
+      return {
+        kind: "process",
+        pid: root.pid,
+        start_time: root.start_time,
+        executable_sha256: manifest.executable_sha256,
+      };
+    case "withheld-by-caller":
+      return unknownTarget("withheld-by-caller");
+    case "unknown":
+      return unknownTarget("not-observed");
+  }
+};
+
 /** Create one canonical observed process capture Evidence record. */
 export const createProcessCaptureEvidence = (
   scenario: ProcessScenario,
   capture: ProcessCapture,
 ) => {
-  return createEvidence(undefined, PROCESS_PROVIDER, {
-    predicateType: PROCESS_CAPTURE_EVIDENCE.predicate,
-    operation: PROCESS_CAPTURE_EVIDENCE.operation,
-    parameters: processEvidenceParameters(scenario, capture.manifest.platform),
-    result: capture,
-    confidence: "observed",
-    authority: "controlled-replay",
-    environment: {
-      id: `${capture.manifest.platform}-${capture.manifest.architecture}`,
-      platform: capture.manifest.platform,
-      architecture: capture.manifest.architecture,
-      isolation: "process",
+  return createEvidence(
+    processCaptureSubject(capture.manifest),
+    PROCESS_PROVIDER,
+    {
+      predicateType: PROCESS_CAPTURE_EVIDENCE.predicate,
+      operation: PROCESS_CAPTURE_EVIDENCE.operation,
+      parameters: processEvidenceParameters(
+        scenario,
+        capture.manifest.platform,
+      ),
+      result: capture,
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: {
+        id: `${capture.manifest.platform}-${capture.manifest.architecture}`,
+        platform: capture.manifest.platform,
+        architecture: capture.manifest.architecture,
+        isolation: "process",
+      },
+      limitations: capture.limitations,
     },
-    limitations: capture.limitations,
-  });
+  );
 };
 
 /** Create one canonical planned-scenario Evidence record without observing a process. */
 export const createProcessScenarioPlanEvidence = (
   scenario: Omit<ProcessScenario, "dry_run">,
-  platform: ProcessCapture["manifest"]["platform"] = process.platform,
+  platform: ProcessCapture["manifest"]["platform"],
 ) => {
   const plan = processScenarioPlanSchema.parse({
     status: "planned",
     scenario: processScenarioPlanProjection(scenario),
     ambient_environment: "inherited-at-run",
   });
-  return createEvidence(undefined, PROCESS_PROVIDER, {
+  return createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: PROCESS_SCENARIO_PLAN_EVIDENCE.predicate,
     operation: PROCESS_SCENARIO_PLAN_EVIDENCE.operation,
     parameters: processEvidenceParameters(scenario, platform),

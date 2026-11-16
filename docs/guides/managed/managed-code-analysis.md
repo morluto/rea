@@ -204,14 +204,16 @@ available after the command exits:
 
 ```bash
 rea inspect-managed-members /absolute/path/Assembly.dll --type Namespace.Type \
-  --detail summary --evidence-bundle /absolute/path/evidence/members.json --json
+  --detail summary --evidence_output /absolute/path/evidence/members.json --json
 ```
 
-`--evidence-bundle` writes the complete original Evidence in REA's canonical
-bundle format. Its parent directory must exist, and it never replaces an
-existing path. Relative paths resolve against the command's working directory.
-The option also works with complete delivery when a saved bundle is useful.
-Summary without a destination is rejected before analysis. For partial Evidence
+`--evidence_output` writes the complete original Evidence in REA's canonical
+bundle format and prints `{"summary": …, "evidence_bundle": {"path", "bytes"}}`.
+Its parent directory must exist, and it never replaces an existing path.
+Relative paths resolve against the command's working directory. The option
+also works with complete delivery when a saved bundle is useful. Summary
+without a destination is rejected before analysis. Earlier releases spelled
+this option `--evidence-bundle` and printed the summary Evidence alone. For partial Evidence
 and committed-file receipts after failure or cancellation, see
 [Evidence publication and source recovery](../../reference/mcp-contracts.md#evidence-publication-and-source-recovery).
 
@@ -304,9 +306,12 @@ a smaller selection, pass the same repeatable `--type` full names that
 applies them to both sides and records them as `type_names`; over MCP, compare
 two `inspect_managed_members` Evidence records selected with the same
 `type_names`. A single selected type can still exceed the budget.
-The two-record MCP workflow keeps full source Evidence available for
-`inspect_analysis_view` field selection and paging; path-based CLI comparison
-records the selected paths, type names and per-side diagnostics.
+The CLI command composes that same workflow: it inspects each path as
+`inspect-managed-members` does, then compares the two records. The two-record
+MCP workflow keeps full source Evidence available for `inspect_analysis_view`
+field selection and paging; path-based CLI comparison records the selected
+paths, inspection options and per-side diagnostics, and keeps the baseline's
+member Evidence when the candidate fails.
 
 Input overflow returns a resource constraint. Decode or projection overflow
 reports `resource-limit` with unavailable or partial coverage; omitted facts do
@@ -388,7 +393,11 @@ name can select different nested owners. Such disjoint selected owners cannot
 establish a member pair or added/removed status even when both inventories are
 complete. Missing nominal identities cannot establish selected membership.
 Incomplete selected inventories or missing identities leave aggregate agreement
-unknown and coverage partial; known observed member pairs remain available.
+unknown, and the comparison's `coverage.status` is then `unknown`; known
+observed member pairs remain available. A side whose member inspection is
+`unavailable` also makes the comparison `unknown`, even beside a known gap on
+the other side. `partial` is reserved for known gaps such as a different
+selected scope or an unequal method-row page.
 Complete empty selected inventories agree even if their unmatched request names
 differ. Whole-assembly and selected
 inventories remain distinct scopes, and each source retains its exact request.
@@ -487,9 +496,9 @@ TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
 equivalence. The exception is a target the left and right sides reach under the
 same caller and target tokens of the same authenticated artifact, with both
 producers reporting `target_row_resolved: true`: those parsed facts establish
-the same metadata row without a nominal identity. Missing historical row
-resolution, malformed or wrong-kind references, undecoded signatures and
-unresolved TypeSpec operands stay unknown. This fact describes metadata
+the same metadata row without a nominal identity. Malformed or wrong-kind
+references, undecoded signatures and unresolved TypeSpec operands stay
+unknown. This fact describes metadata
 resolution, not runtime binding. Valid
 MethodSpecs combine the base member identity with the resolved instantiation
 signature, preserving generic argument distinctions.
@@ -668,6 +677,11 @@ signature has the other member kind is malformed and cannot establish an
 unchanged signature. Comparison retains exact byte-based pairs for malformed
 signatures, including empty, truncated, or invalid headers, but reports them as
 unknown with a `signature-malformed` limitation when no change is observed.
+Each method and field comparison item states its limitations as
+`{code, side?, message}` objects: `code` names the reason, `side` names the
+other inventory when the reason concerns it (for example
+`unknown-within-incomplete-metadata` with `side: "right"`), and `message`
+explains it. Read the code rather than the message text.
 Runtime-provided methods have the Runtime code type or the InternalCall
 implementation flag, as core library FCalls do. They are counted separately in
 `native_implementations.runtime_provided`; they have no file-backed native body
@@ -686,7 +700,9 @@ Windows name decorations are static inferred candidates;
 exact spelling still suppresses decoration and no runtime binding is proven.
 The mapping follows [Microsoft's charset guidance](https://learn.microsoft.com/en-us/dotnet/standard/native-interop/charset).
 Partial input coverage records a residual question even when no unresolved
-individual boundary was produced. Selected literal inventories likewise remain
+individual boundary was produced. An unavailable boundary inspection read no
+P/Invoke declarations, so the verification's `coverage.status` is `unknown`,
+even beside non-exhaustive native exports. Selected literal inventories likewise remain
 partial when unknown MethodDef ownership can hide a selected body.
 
 Metadata tokens are not native addresses. Native body mapping for C++/CLI,
@@ -723,6 +739,11 @@ type selection. Limitations name each counted class, and graph coverage is
 `partial` with `omitted_count` equal to the omitted sites when nothing else is
 incomplete. A missing `calls` edge is therefore not evidence that a method is
 never called.
+
+A supplied inspection whose parser coverage is `unavailable` examined nothing,
+so the graph cannot tell what it omits: the result's `coverage.status` and the
+graph coverage are then `unknown`, even beside a known gap in another source.
+`partial` is reserved for known gaps.
 
 ## Evidence record shape
 

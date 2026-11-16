@@ -4,15 +4,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import { createCatalogIdentity } from "../dist/catalogIdentity.js";
-import {
-  compactPresentationForMcpInputSchemaProfile,
-  parseMcpInputSchemaProfile,
-} from "../dist/config/mcpInputSchemaProfile.js";
-import {
-  parseMcpOutputSchemaProfile,
-  resolveMcpOutputSchemaProfile,
-} from "../dist/config/mcpOutputSchemaProfile.js";
+import { createCatalogIdentity } from "../dist/contracts/catalog/catalogIdentity.js";
+import { parseMcpOutputSchemaProfile } from "../dist/config/mcpOutputSchemaProfile.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
@@ -36,6 +29,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createAnthropicModelFixture } from "./verify/clients/anthropic-model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { resolveMcpOutputSchemaProfile } from "../dist/contracts/mcpSchemaPresentation.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
@@ -191,26 +185,18 @@ await withVerifierCleanup(async () => {
               ...parsedStatus,
               result: expandMcpSessionStatus(parsedStatus.result),
             };
-            const inputProfile = parseMcpInputSchemaProfile(
-              environment.REA_MCP_INPUT_SCHEMA_PROFILE,
-            );
             const outputProfile = parseMcpOutputSchemaProfile(
               environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
             );
-            assert.ok(inputProfile.ok);
             assert.ok(outputProfile.ok);
             assert.deepEqual(
               status.result.server_identity.catalog,
               createCatalogIdentity({
-                compactPresentation:
-                  compactPresentationForMcpInputSchemaProfile(
-                    inputProfile.value,
-                  ),
                 outputSchemaProfile: resolveMcpOutputSchemaProfile(
                   outputProfile.value,
                 ),
               }),
-              "binary_session must return the selected input/output profile's catalog identity",
+              "binary_session must return the selected output profile's catalog identity",
             );
             assert.equal(
               Object.hasOwn(status.result.server_identity.catalog, "tools"),

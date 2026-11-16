@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpEvidenceBundle,
@@ -80,7 +80,7 @@ const assertRejectedSelector = (
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(environment),
+  env: environment,
   stderr: "pipe",
 });
 // The MCP server child reads files under the root until it has exited.
@@ -119,10 +119,10 @@ await withVerifierFixture(root, async () => {
   const advertised = (await client.listTools()).tools.find(
     ({ name }) => name === "decode_signal_recording",
   );
-  assert.ok(advertised?.outputSchema);
+  assert.ok(advertised);
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   assert.ok(ajv.validateSchema(advertised.inputSchema));
-  assert.ok(ajv.validateSchema(advertised.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(advertised.name)));
   for (const extra of [
     { input_format: "vcd", annotations: "uart=rx-data" },
     {},
@@ -133,7 +133,10 @@ await withVerifierFixture(root, async () => {
       arguments: input,
     });
     assert.ok(
-      ajv.validate(advertised.outputSchema, response.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(advertised.name),
+        response.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const evidence = parseEvidence(
@@ -249,7 +252,10 @@ await withVerifierFixture(root, async () => {
       arguments: input,
     });
     assert.ok(
-      ajv.validate(advertised.outputSchema, response.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(advertised.name),
+        response.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const evidence = parseEvidence(
@@ -325,9 +331,9 @@ await withVerifierFixture(root, async () => {
   const discoveryTool = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_signal_decoders",
   );
-  assert.ok(discoveryTool?.outputSchema);
+  assert.ok(discoveryTool);
   assert.ok(ajv.validateSchema(discoveryTool.inputSchema));
-  assert.ok(ajv.validateSchema(discoveryTool.outputSchema));
+  assert.ok(ajv.validateSchema(canonicalOutputSchema(discoveryTool.name)));
   const nativeHelp = (
     await execute(
       process.env.REA_SIGROK_COMMAND,
@@ -379,7 +385,10 @@ await withVerifierFixture(root, async () => {
       arguments: input,
     });
     assert.ok(
-      ajv.validate(discoveryTool.outputSchema, response.structuredContent),
+      ajv.validate(
+        canonicalOutputSchema(discoveryTool.name),
+        response.structuredContent,
+      ),
       JSON.stringify(ajv.errors),
     );
     const evidence = parseEvidence(

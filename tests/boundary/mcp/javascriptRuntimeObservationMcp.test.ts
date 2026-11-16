@@ -1,3 +1,4 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -24,6 +25,7 @@ import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 describe("JavaScript runtime observation MCP tools", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];
@@ -45,7 +47,10 @@ function registerRuntimeParameterContract(
       throw new Error("No provider expected");
     });
     const server = createServer({ kind: "session", session });
-    const client = new Client({ name: "runtime-parameter-test", version: "1" });
+    const client = new Client(
+      { name: "runtime-parameter-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [ct, st] = InMemoryTransport.createLinkedPair();
     resources.push(client, server, session);
     await server.connect(st);
@@ -297,10 +302,12 @@ const assertSdkObservationSchema = async (
   const observeTool = (await client.listTools()).tools.find(
     ({ name }) => name === "observe_javascript_runtime",
   );
-  if (observeTool?.outputSchema === undefined)
+  if (observeTool === undefined)
     throw new Error("Missing Inspector observation output schema");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const schema: Record<string, unknown> = observeTool.outputSchema;
+  const schema: Record<string, unknown> = canonicalOutputSchema(
+    observeTool.name,
+  );
   expect(ajv.validateSchema(schema)).toBe(true);
   expect(ajv.validate(schema, content), JSON.stringify(ajv.errors)).toBe(true);
 };
@@ -329,7 +336,10 @@ const createObservationClient = async (
       }),
     },
   );
-  const client = new Client({ name: "v8-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "v8-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);

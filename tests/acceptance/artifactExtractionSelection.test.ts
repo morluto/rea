@@ -20,7 +20,7 @@ import { artifactInspectionResultSchema } from "../../src/domain/artifactInspect
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { advertisedMcpToolSchemas } from "../fixtures/advertisedMcpTool.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { schemaVerifierEnvironment } from "../../scripts/lib/mcp-verification-environment.mjs";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../scripts/rea.mjs", import.meta.url));
@@ -123,17 +123,19 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [cli, "mcp"],
-    env: schemaVerifierEnvironment({
+    env: {
       ...data.environment,
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "artifact,session",
-    }),
+    },
     stderr: "pipe",
   });
-  const client = new Client({
-    name: "extraction-selection-test",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "extraction-selection-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const output = join(data.root, "mcp-output");
   await withVerifierCleanup(async () => {
     await client.connect(transport);
@@ -145,14 +147,14 @@ it("keeps CLI/MCP selection identity, invalid-input refusals and committed outpu
     const schemas = await advertisedMcpToolSchemas(client, "extract_artifact");
     for (const occurrence_ids of [[id], [id, data.occurrence("lib/other.so")]])
       expect(
-        schemas.ajv.validate(schemas.inputSchema, {
+        schemas.ajv.validate(schemas.canonicalInputSchema, {
           output_root: output,
           occurrence_ids,
         }),
         JSON.stringify(schemas.ajv.errors),
       ).toBe(true);
     expect(
-      schemas.ajv.validate(schemas.inputSchema, {
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
         output_root: output,
         occurrence_ids: [id, id],
       }),

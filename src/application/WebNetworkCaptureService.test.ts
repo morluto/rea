@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { expect, it } from "vitest";
 import { WebNetworkCaptureService } from "./WebNetworkCaptureService.js";
 import { historicalHar } from "../../tests/fixtures/historicalHar.js";
@@ -15,7 +16,7 @@ import {
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 
@@ -40,7 +41,9 @@ it.each(["REDACTED", "[", "]", "/capture.har"])(
           location.kind !== "artifact-path" || !location.path.includes(literal),
       ),
     ).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(fileIdentity(result.value.subject).sha256).toBe(
+      report.artifact.sha256,
+    );
   },
 );
 
@@ -79,7 +82,7 @@ it("keeps observed artifact identity when the entire sensitive path is excluded"
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
     local_path: "",
-    digest: { sha256: "a".repeat(64) },
+    identity: { sha256: "a".repeat(64) },
   });
   expect(result.value.locations).toEqual([]);
 });
@@ -121,7 +124,7 @@ it.each(["a".repeat(64), "aaaa"])(
       sensitive_values: [literal],
     });
     if (!result.ok) throw result.error;
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(result.value.normalized_result).toMatchObject({
       artifact: { path: "/capture.har", sha256: null, bytes: 10 },
     });
@@ -142,7 +145,7 @@ it("projects the unknown-subject explanation before generating its Evidence ID",
     sensitive_values: ["a"],
   });
   if (!result.ok) throw result.error;
-  expect(result.value.subject).toBeNull();
+  expect(result.value.subject.identity.kind).toBe("unknown");
   expect(result.value.limitations).toContainEqual(
     expect.stringMatching(/digest.*unknown.*Evidence/u),
   );
@@ -199,7 +202,7 @@ it("retains valid completed capture Evidence on late cancellation and preserves 
   if (!invalid.ok) expect(invalid.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("projects completed raw capture facts on failure through the caller's selection and sensitivity rules", async () => {
+it("projects completed raw capture facts on failure through the sensitivity rules", async () => {
   const report = fixture();
   report.artifact.path = "/private-marker/capture.har";
   report.limitations = ["private-marker producer limitation"];
@@ -218,7 +221,6 @@ it("projects completed raw capture facts on failure through the caller's selecti
       sensitive_values: ["private-marker"],
     },
     undefined,
-    { capture: "./capture.har" },
   );
   if (result.ok) throw new Error("Cancellation must remain the primary result");
   expect(result.error._tag).toBe("AnalysisCancelledError");
@@ -226,7 +228,6 @@ it("projects completed raw capture facts on failure through the caller's selecti
   const partial = parseEvidence(result.error.partialObservation);
   expect(partial).toMatchObject({
     operation: "inspect_web_network_capture",
-    caller_input_path: "./capture.har",
     parameters: { record_ordinals: [0] },
     subject: { local_path: "" },
     normalized_result: {
@@ -234,6 +235,8 @@ it("projects completed raw capture facts on failure through the caller's selecti
       records: [{ ordinal: 0 }],
     },
   });
+  // Caller spellings belong to the CLI delivery, not the service.
+  expect(partial.caller_input_path).toBeUndefined();
   expect(JSON.stringify(partial)).not.toContain("private-marker");
 });
 
@@ -351,7 +354,9 @@ it.each([
     ].flat();
     for (const literal of literals)
       expect(texts.every((text) => !text.includes(literal))).toBe(true);
-    expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+    expect(fileIdentity(result.value.subject).sha256).toBe(
+      report.artifact.sha256,
+    );
     expect(projected.decoder).toEqual(report.decoder);
     expect(projected.records[0]?.reported).toEqual(first.reported);
   },

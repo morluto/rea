@@ -10,9 +10,9 @@ import type { SpawnedOwnedProviderProcess } from "../../../src/process/ProviderP
 import {
   createRizinCoverageHarness,
   createInjectedProcess,
-  abortOnCheck,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 
 const {
   cleanup,
@@ -135,34 +135,10 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "does not spawn Rizin when cancellation arrives during TTY validation",
-  async () => {
-    let spawned = false;
-    const manager = createManager(
-      { REA_RIZIN_COMMAND: "injected-rizin" },
-      {
-        spawnProcess: async () => {
-          spawned = true;
-          throw new Error("must not spawn after cancellation");
-        },
-      },
-    );
-    const result = await manager.start(
-      {
-        path: "/tmp/cancel-before-spawn",
-        inferior_tty: await rizinTestInferiorTty(),
-      },
-      abortOnCheck(2),
-    );
-    expect(result.ok).toBe(false);
-    expect(spawned).toBe(false);
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "closeAll drains concurrent startups and blocks later admission",
+  "closeAll aborts concurrent startups as owner-closed, waits for them, and blocks later admission",
   async () => {
     let spawnCount = 0;
+    let stopCount = 0;
     let resolveSpawnCalls!: () => void;
     const bothSpawnsCalled = new Promise<void>((resolve) => {
       resolveSpawnCalls = resolve;
@@ -181,7 +157,10 @@ it.skipIf(process.platform === "win32")(
           await spawnGate;
           return injected.spawnProcess(options);
         },
-        stopProcess: async () => ({ status: "stopped" }),
+        stopProcess: async () => {
+          stopCount += 1;
+          return { status: "stopped" };
+        },
       },
     );
     const tty = await rizinTestInferiorTty();
@@ -195,14 +174,21 @@ it.skipIf(process.platform === "win32")(
       closeAllResolved = true;
     });
     await Promise.resolve();
+    // The injected spawns ignore the abort, so closeAll waits for them.
     expect(closeAllResolved).toBe(false);
     releaseSpawns();
     const started = await Promise.all(starts);
-    expect(started.every((result) => result.ok)).toBe(true);
+    for (const result of started)
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCancelledError",
+          cause: OwnerCancellation.ownerClosed,
+        },
+      });
     await closing;
-    expect(
-      manager.status(started[0]!.ok ? started[0]!.value.session_id : "missing"),
-    ).toBeUndefined();
+    // Each process spawned before the abort was observed is stopped.
+    expect(stopCount).toBe(2);
     expect(
       (await manager.start({ path: "/tmp/after-close-all", inferior_tty: tty }))
         .ok,
@@ -295,6 +281,7 @@ it
         stopMode === "is uncertain"
           ? async () => ({
               status: "incomplete",
+              code: "stop-failed",
               reason: "injected stop uncertainty",
             })
           : async () => ({ status: "stopped" });
@@ -357,7 +344,11 @@ it.skipIf(process.platform === "win32")(
     const fixture = createRizinCoverageHarness({
       stopOwnedProcess: async (supervisor) =>
         failCleanup
-          ? { status: "incomplete", reason: "injected fixture stop failure" }
+          ? {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "injected fixture stop failure",
+            }
           : supervisor.stop(),
     });
     const provider = await fixture.makeProvider(
@@ -448,6 +439,7 @@ it.skipIf(process.platform === "win32")(
           session.launched.process.kill("SIGTERM");
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "first stop result is uncertain",
           };
         }

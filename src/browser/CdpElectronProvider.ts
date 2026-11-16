@@ -6,8 +6,8 @@ import {
 import type {
   ExecutionOptions,
   ProviderIdentity,
-} from "../application/AnalysisProvider.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
 import {
   electronPageInspectionSchema,
   electronTargetListSchema,
@@ -48,6 +48,7 @@ import {
   CdpTargetSessionOwner,
   bindCdpTransportCleanup,
 } from "./CdpTargetSessionOwner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 /** Passive Electron provider for local file pages exposed by loopback CDP. */
 export class CdpElectronProvider implements ElectronObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
@@ -324,8 +325,7 @@ export class CdpElectronProvider implements ElectronObservationPort {
                   CDP_ELECTRON_PROVIDER_IDENTITY.id,
                   [input.target_id],
                   {
-                    reason:
-                      cause instanceof Error ? cause.message : String(cause),
+                    reason: errorMessage(cause),
                   },
                   { operation: "inspect_electron_page", cause },
                 );

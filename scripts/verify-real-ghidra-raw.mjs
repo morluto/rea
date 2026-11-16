@@ -1,4 +1,4 @@
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { withCanonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -97,7 +97,7 @@ const env = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(env),
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-raw-proof", version: "1" });
@@ -135,10 +135,11 @@ await withVerifierFixture(workspaceFixture, async () => {
   try {
     await client.connect(transport);
     connected = true;
-    searchDefinition = (await client.listTools()).tools.find(
+    const listedSearch = (await client.listTools()).tools.find(
       (tool) => tool.name === "search_bytes",
     );
-    assert.ok(searchDefinition?.outputSchema);
+    assert.ok(listedSearch);
+    searchDefinition = withCanonicalOutputSchema(listedSearch);
     const profiles = [];
     const sessions = [];
     for (const entryPoint of ["0x08000000", "0x8000000", "0x09000000"]) {
@@ -273,7 +274,7 @@ await withVerifierFixture(workspaceFixture, async () => {
       { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
     );
     const cli = parseEvidence(JSON.parse(stdout));
-    assert.equal(cli.subject.digest.sha256, sha256);
+    assert.equal(cli.subject.identity.sha256, sha256);
     assert.equal(cli.normalized_result.status, "verified");
     assert.equal(cli.normalized_result.base_address, "0x8000000");
     assert.equal(cli.analysis_profile.digest, profiles[0]);
@@ -645,8 +646,8 @@ async function call(
     return requireMcpLifecycleResult(result, name);
   const output = requireMcpOutput(result, name);
   const evidence = parseEvidence(output);
-  assert.equal(evidence.subject.digest.sha256, targetSha256);
-  assert.equal(evidence.subject.format, targetFormat);
+  assert.equal(evidence.subject.identity.sha256, targetSha256);
+  assert.equal(evidence.subject.identity.format, targetFormat);
   return evidence;
 }
 
@@ -734,7 +735,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     command: process.execPath,
     args: [entrypoint, "mcp"],
     env: {
-      ...schemaVerifierEnvironment(env),
+      ...env,
       REA_GHIDRA_PROJECT_PATH: join(projectDirectory, "Boundary.gpr"),
     },
     stderr: "pipe",
@@ -748,7 +749,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
     const definition = (await projectClient.listTools()).tools.find(
       (tool) => tool.name === "search_bytes",
     );
-    assert.ok(definition?.outputSchema);
+    assert.ok(definition);
     const projectCall = async (name, args) => {
       const reply = await projectClient.callTool(
         { name, arguments: args },
@@ -761,7 +762,7 @@ async function verifyCrossBlockProject(target, targetSha256) {
         return requireMcpLifecycleResult(reply, name);
       const output = requireMcpOutput(reply, name);
       const evidence = parseEvidence(output);
-      assert.equal(evidence.subject.digest.sha256, targetSha256);
+      assert.equal(evidence.subject.identity.sha256, targetSha256);
       return evidence.normalized_result;
     };
     await projectCall("open_binary", { path: target, provider_id: "ghidra" });

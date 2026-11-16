@@ -1,3 +1,7 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
@@ -54,7 +58,6 @@ const runJson = async (
     cwd: root,
     environment: {
       REA_LOG_LEVEL: "silent",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     },
   });
 };
@@ -76,7 +79,6 @@ const connectMcp = async (root: string) => {
       XDG_CONFIG_HOME: join(root, "config"),
       XDG_CACHE_HOME: join(root, "cache"),
       REA_LOG_LEVEL: "silent",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
       ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
     },
   });
@@ -97,7 +99,7 @@ const connectMcp = async (root: string) => {
       throw new Error(`Missing advertised tool ${name}`);
     return client.callTool(
       { name, arguments: arguments_ },
-      { toolDefinition: definition },
+      { toolDefinition: withCanonicalOutputSchema(definition) },
     );
   };
   return { client, tools, call };
@@ -376,10 +378,11 @@ cliTest(
       "trace_application_feature",
     ]) {
       const definition = tools.get(name);
-      if (definition?.outputSchema === undefined)
-        throw new Error("Missing workflow schema");
+      if (definition === undefined) throw new Error("Missing workflow schema");
       expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
-      const { $schema, ...outputKeywords } = definition.outputSchema;
+      const { $schema, ...outputKeywords } = canonicalOutputSchema(
+        definition.name,
+      );
       expect(
         ajv.validateSchema(
           $schema === undefined

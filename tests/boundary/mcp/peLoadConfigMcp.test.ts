@@ -1,3 +1,4 @@
+import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -39,7 +40,7 @@ mcpTest(
           name: "inspect_pe_load_config",
           arguments: { path },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = toolContract(
@@ -69,7 +70,7 @@ mcpTest(
         await writeFile(path, padded);
         const reply = await client.callTool(
           { name: "inspect_pe_load_config", arguments: { path } },
-          { toolDefinition: definition },
+          { toolDefinition: withCanonicalOutputSchema(definition) },
         );
         expect(reply.isError, JSON.stringify(reply.content)).not.toBe(true);
         const retained = toolContract(
@@ -90,7 +91,7 @@ mcpTest(
           name: "inspect_pe_load_config",
           arguments: { path: "relative.exe" },
         },
-        { toolDefinition: definition },
+        { toolDefinition: withCanonicalOutputSchema(definition) },
       );
       expect(bad.isError).toBe(true);
     } finally {

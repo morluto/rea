@@ -12,7 +12,7 @@ import {
   machoImage,
 } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { ok } from "../../../../src/domain/result.js";
-import type { NativeCommandRunner } from "../../../../src/native/CommandRunner.js";
+import type { NativeCommandRunner } from "../../../../src/providers/NativeCommandRunner.js";
 
 describe("artifact Mach-O slices", () => {
   it("rejects lipo slice sizes that exceed the observed artifact bytes", async () => {

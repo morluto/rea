@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { readMachoCommandNames } from "./MachoCommandNames.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
 import { machoImage, readerOf } from "../artifacts/apple/MachoImage.fixture.js";
 

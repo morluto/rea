@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -90,7 +90,7 @@ for (const key of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(env),
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-riscv-proof", version: "1" });
@@ -132,14 +132,17 @@ try {
   const validators = new Map();
   for (const tool of catalog.tools) {
     assert.ok(
-      ajv.validateSchema(tool.outputSchema),
+      ajv.validateSchema(canonicalOutputSchema(tool.name)),
       `${tool.name}: invalid output schema`,
     );
     const existing =
-      typeof tool.outputSchema.$id === "string"
-        ? ajv.getSchema(tool.outputSchema.$id)
+      typeof canonicalOutputSchema(tool.name).$id === "string"
+        ? ajv.getSchema(canonicalOutputSchema(tool.name).$id)
         : undefined;
-    validators.set(tool.name, existing ?? ajv.compile(tool.outputSchema));
+    validators.set(
+      tool.name,
+      existing ?? ajv.compile(canonicalOutputSchema(tool.name)),
+    );
   }
 
   const typedSoft = await buildRiscvFixture(workspace, 32, "soft");
@@ -168,14 +171,14 @@ try {
       const parameters = profile.parameters;
       assert.equal(parameters.language_id, expectedLanguage);
       assert.equal(parameters.compiler_spec_id, "gcc");
-      assert.equal(parameters.language_selection, "provider-pinned-v1");
+      assert.equal(parameters.language_selection, "provider-pinned");
       assert.equal(parameters.riscv_support_lane, want.lane);
       assert.equal(parameters.riscv_calling_convention, want.callingConvention);
       assert.deepEqual(parameters.riscv_elf, want.riscvElf);
     };
     const assertEvidence = (evidence) => {
-      assert.equal(evidence.subject.architecture, "riscv");
-      assert.equal(evidence.subject.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject.identity.architecture, "riscv");
+      assert.equal(evidence.subject.identity.sha256, fixture.sha256);
       // Composed workflows such as inspect_native_api commit the Ghidra
       // profile as their upstream profile. The residual-unknown registry
       // records what they could not establish, such as the types of a
@@ -365,8 +368,8 @@ try {
     const snapshot = parseAnalysisSnapshot(
       JSON.parse(await readFile(snapshotPath, "utf8")),
     );
-    assert.equal(snapshot.target.architecture, "riscv");
-    assert.equal(snapshot.target.sha256, fixture.sha256);
+    assert.equal(snapshot.target.identity.architecture, "riscv");
+    assert.equal(snapshot.target.identity.sha256, fixture.sha256);
     assertProfile(snapshot.binding.analysis_profile);
     for (const record of snapshot.evidence_bundle.records)
       assertEvidence(parseEvidence(record));

@@ -1,4 +1,4 @@
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -19,6 +19,7 @@ import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
 import { parseConfig } from "../dist/config/parseConfig.js";
+import { selectedHopperLauncherPath } from "../dist/hopperPaths/HopperLauncherDiscovery.js";
 import {
   verifyHopperSourceBinding,
   relocateSingleFatSlice,
@@ -37,9 +38,14 @@ if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch))
   );
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-await access(config.value.hopperLauncherPath, constants.X_OK).catch((cause) => {
+const hopperLauncherPath = selectedHopperLauncherPath(
+  config.value.hopperLauncherPath,
+  process.platform,
+  process.env,
+);
+await access(hopperLauncherPath, constants.X_OK).catch((cause) => {
   throw new Error(
-    `Hopper FAT verification requires the configured executable: ${config.value.hopperLauncherPath}`,
+    `Hopper FAT verification requires the configured executable: ${hopperLauncherPath}`,
     { cause },
   );
 });
@@ -82,11 +88,11 @@ const client = new Client({ name: "hopper-fat-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
-  env: schemaVerifierEnvironment({
+  env: {
     ...process.env,
     REA_ANALYSIS_PROVIDER: "hopper",
     HOPPER_LOADER_ARGS_JSON: "[]",
-  }),
+  },
   stderr: "pipe",
 });
 transport.stderr?.on("data", (chunk) => process.stderr.write(chunk));
@@ -259,10 +265,11 @@ await withVerifierFixture(workspace, async () => {
       { timeout: 180_000 },
     );
     const result = requireMcpOperationResult(reply, name);
-    const schema = catalog.tools.find(
-      (tool) => tool.name === name,
-    )?.outputSchema;
-    assert.ok(schema, `${name} omitted its output schema`);
+    assert.ok(
+      catalog.tools.some((tool) => tool.name === name),
+      `${name} is not advertised`,
+    );
+    const schema = canonicalOutputSchema(name);
     assert.equal(
       ajv.validate(schema, reply.structuredContent),
       true,

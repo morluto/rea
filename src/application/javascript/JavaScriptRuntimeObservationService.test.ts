@@ -6,7 +6,7 @@ import { err, ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import type { JavaScriptRuntimeTargetList } from "../../domain/javascript/javascriptRuntimeObservation.js";
 import { javascriptRuntimeObservationSchema } from "../../domain/javascript/javascriptRuntimeObservation.js";
-import type { JavaScriptRuntimeObservationPort } from "./JavaScriptRuntimeObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,

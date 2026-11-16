@@ -1,4 +1,3 @@
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
 // Run from the repository root after `npm run build:cached` on macOS arm64,
 // with Hopper and the Xcode command-line tools installed. No target is executed.
 import assert from "node:assert/strict";
@@ -36,9 +35,19 @@ const { StdioClientTransport } = await import(
 const { parseConfig } = await import(
   pathToFileURL(join(root, "dist/config/parseConfig.js"))
 );
+const { selectedHopperLauncherPath } = await import(
+  pathToFileURL(join(root, "dist/hopperPaths/HopperLauncherDiscovery.js")).href
+);
 const config = parseConfig(process.env);
 if (!config.ok) throw config.error;
-await access(config.value.hopperLauncherPath, constants.X_OK);
+await access(
+  selectedHopperLauncherPath(
+    config.value.hopperLauncherPath,
+    process.platform,
+    process.env,
+  ),
+  constants.X_OK,
+);
 const run = promisify(execFile);
 const clang = (await run("xcrun", ["--find", "clang"])).stdout.trim();
 const sdk = (
@@ -68,12 +77,12 @@ const transport = new StdioClientTransport({
   command: process.execPath,
   args: ["dist/main.js"],
   cwd: root,
-  env: schemaVerifierEnvironment({
+  env: {
     ...process.env,
     REA_ANALYSIS_PROVIDER: "hopper",
     REA_LOG_LEVEL: "silent",
     REA_HOPPER_CALLER_SCAN_BUDGET_MS: "5000",
-  }),
+  },
   stderr: "pipe",
 });
 let stderr = "";

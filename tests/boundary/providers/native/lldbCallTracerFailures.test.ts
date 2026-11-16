@@ -23,7 +23,7 @@ import {
 } from "../../../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { EvidenceIntegrityError } from "../../../../src/domain/evidenceErrors.js";
-import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../../../src/resources/ArtifactFileOperation.js";
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { nativeCallObservationInputSchema } from "../../../../src/domain/native/nativeCallObservation.js";
@@ -32,7 +32,7 @@ import type { NativeCallTracer } from "../../../../src/native/LldbCallTracer.js"
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { LldbReadbackFiles } from "../../../../src/native/LldbReadbackFiles.js";
 import { err, ok, type Result } from "../../../../src/domain/result.js";
-import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeCommandFailure } from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { createDeferred } from "../../../fixtures/binarySession.js";
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
@@ -107,6 +107,7 @@ const successfulTracerOutput = {
   breakpoints: [{ index: 0, location_count: 1, locations: [] }],
   events: [EVENT],
   other_stops: [],
+  unattributed_breakpoint_stops: 0,
 };
 const configSchema = z.object({
   result_path: z.string(),

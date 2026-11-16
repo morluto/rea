@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,16 +8,17 @@ import {
 } from "./lib/advertised-catalog.mjs";
 import {
   describeSummaryChanges,
+  serializeToolSummary,
   summarizeAdvertisedCatalogs,
+  toolSummaryFile,
 } from "./lib/advertised-catalog-summary.mjs";
 import { formatGeneratedFile } from "./lib/format-generated-file.mjs";
-import { ensureGeneratedFile } from "./lib/generated-file.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
 } from "./lib/verifier-fixture.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
-import { classifyLaunchFailure } from "../dist/process/launchFailure.js";
+import { launcherFailureOf } from "../dist/process/launchFailure.js";
 
 // Compile every regular expression and schema the packaged server advertises,
 // in every schema profile, with the engines and validators clients and
@@ -79,11 +80,13 @@ const runHelper = async (
       }));
     }
   } catch (error) {
-    const refusal = classifyLaunchFailure(error);
-    if (refusal !== undefined)
+    // Only a launch refusal means the engine is not installed; a host
+    // capacity failure is a broken check.
+    const launch = launcherFailureOf(error);
+    if (launch?.kind === "missing" || launch?.kind === "not_executable")
       return engines.map((engine) => ({
         ...engine,
-        unavailable: `${command} could not start (${refusal.code})`,
+        unavailable: `${command} could not start (${launch.code})`,
       }));
     // A helper that started but failed is a broken check, not a missing
     // engine, so it fails even when engines are optional.
@@ -222,40 +225,74 @@ const results = await withVerifierFixture(fixture, async () => {
 const problems = [];
 
 // Absolute local paths advertise the host's pattern, so the recorded summary
-// is the POSIX advertisement; Windows hosts cannot reproduce it.
-const summaryPath = join(directory, "summary.json");
+// is the POSIX advertisement; Windows hosts cannot reproduce it. Each tool's
+// summary is its own file, so PRs that add different tools do not conflict.
+const summaryDirectory = join(directory, "tools");
 if (process.platform === "win32")
   console.log("Advertised catalog summary: not compared on Windows hosts.");
 else {
-  const summary = summarizeAdvertisedCatalogs(
+  const current = summarizeAdvertisedCatalogs(
     catalogs,
     advertisedSchemaPatterns,
   );
-  let recorded;
-  try {
-    recorded = JSON.parse(await readFile(summaryPath, "utf8"));
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+  const recordedFiles = await readdir(summaryDirectory).catch((error) => {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  });
+  const recorded = {};
+  const recordedText = new Map();
+  for (const file of recordedFiles.filter((name) => name.endsWith(".json"))) {
+    const text = await readFile(join(summaryDirectory, file), "utf8");
+    recordedText.set(file, text);
+    recorded[file.slice(0, -".json".length)] = JSON.parse(text);
   }
-  const changes = describeSummaryChanges(recorded, summary);
   const update = options.has("--update-summary");
+  const changes = describeSummaryChanges(recorded, current);
+  const expected = new Map(
+    await Promise.all(
+      Object.entries(current).map(async ([name, summary]) => {
+        const file = toolSummaryFile(name);
+        return [
+          file,
+          await formatGeneratedFile(
+            join(summaryDirectory, file),
+            serializeToolSummary(summary),
+          ),
+        ];
+      }),
+    ),
+  );
+  const stale = [...expected].filter(
+    ([file, text]) => recordedText.get(file)?.replaceAll("\r\n", "\n") !== text,
+  );
+  const removed = [...recordedText.keys()].filter(
+    (file) => !expected.has(file),
+  );
   if (changes.length > 0)
     console.log(
       `Advertised catalog summary ${update ? "updated" : "differs"}:\n${changes.map((line) => `  ${line}`).join("\n")}`,
     );
-  try {
-    await ensureGeneratedFile({
-      path: summaryPath,
-      source: await formatGeneratedFile(
-        summaryPath,
-        `${JSON.stringify(summary, null, 2)}\n`,
-      ),
-      check: !update,
-      generateCommand: "npm run verify:advertised-schemas -- --update-summary",
-    });
-  } catch (error) {
+  if (update) {
+    await mkdir(summaryDirectory, { recursive: true });
+    for (const [file, text] of stale)
+      await writeFile(join(summaryDirectory, file), text, "utf8");
+    for (const file of removed) await rm(join(summaryDirectory, file));
+  } else if (stale.length > 0 || removed.length > 0) {
+    // Print what each file should hold, so a PR that adds or changes a tool
+    // can commit the summary from this output without a local build.
+    const relative = (file) =>
+      `scripts/verify/advertised-schemas/tools/${file}`;
+    const expectedText = stale
+      .map(([file, text]) => `--- ${relative(file)}\n${text}`)
+      .join("");
+    const removedText = removed
+      .map((file) => `  delete ${relative(file)}\n`)
+      .join("");
+    console.log(
+      `Expected advertised catalog summary files:\n${expectedText}${removedText}`,
+    );
     problems.push(
-      `${error.message} Review the changes above; a PR that changes advertised schemas commits the summary with them.`,
+      `${String(stale.length + removed.length)} advertised catalog summary file(s) are missing or stale. Commit the contents printed above, or run \`npm run verify:advertised-schemas -- --update-summary\`; a PR that changes advertised schemas commits the summary with them.`,
     );
   }
 }

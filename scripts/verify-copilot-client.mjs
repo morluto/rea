@@ -9,8 +9,7 @@ import {
   toolContract,
 } from "../dist/contracts/toolContracts.js";
 import { advertisedInputJsonSchema } from "../dist/contracts/toolSchemaMetadata.js";
-import { presentAdvertisedInputSchema } from "../dist/contracts/compactInputSchema.js";
-import { compactPresentationForMcpInputSchemaProfile } from "../dist/config/mcpInputSchemaProfile.js";
+import { advertiseTool } from "../dist/contracts/advertisedTool.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -26,6 +25,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { advertisedToolPresentation } from "../dist/contracts/mcpSchemaPresentation.js";
 
 assert(
   process.platform !== "win32",
@@ -37,12 +37,6 @@ const command = process.env.REA_VERIFY_COPILOT_COMMAND ?? "copilot";
 const mode = process.argv[2] ?? "call";
 const model = process.env.REA_VERIFY_COPILOT_MODEL ?? "gpt-5.4";
 const wireModel = process.env.REA_VERIFY_COPILOT_WIRE_MODEL ?? model;
-const inputSchemaProfile =
-  process.env.REA_VERIFY_COPILOT_SCHEMA_PROFILE ?? "full";
-assert(
-  ["full", "compact"].includes(inputSchemaProfile),
-  "REA_VERIFY_COPILOT_SCHEMA_PROFILE must be full or compact",
-);
 assert(
   ["chat", "call"].includes(mode),
   "Usage: verify-copilot-client.mjs [chat|call]",
@@ -172,13 +166,15 @@ await withVerifierCleanup(async () => {
             );
             assert.deepEqual(
               tool.parameters,
-              presentAdvertisedInputSchema(
-                advertisedInputJsonSchema(
-                  toolContract(tool.name.slice(prefix.length)),
-                ),
-                compactPresentationForMcpInputSchemaProfile(inputSchemaProfile),
-              ),
-              `${tool.name}: Copilot must forward the selected ${inputSchemaProfile} input schema`,
+              advertiseTool(
+                {
+                  inputSchema: advertisedInputJsonSchema(
+                    toolContract(tool.name.slice(prefix.length)),
+                  ),
+                },
+                advertisedToolPresentation("off"),
+              ).inputSchema,
+              `${tool.name}: Copilot must forward the compact input schema`,
             );
             schemasChecked++;
           }
@@ -329,15 +325,6 @@ await withVerifierCleanup(async () => {
     assert.deepEqual(JSON.parse(repeated.stdout).appliedActions, []);
     assert.equal(await readFile(configPath, "utf8"), configured);
     assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
-    // Bind both choices explicitly: the server's default can change independently
-    // of the profile this verifier promises to exercise and records in its receipt.
-    const customized = JSON.parse(configured);
-    assert(customized.mcpServers.rea);
-    customized.mcpServers.rea.env = {
-      ...customized.mcpServers.rea.env,
-      REA_MCP_INPUT_SCHEMA_PROFILE: inputSchemaProfile,
-    };
-    await writeFile(configPath, JSON.stringify(customized, null, 2));
     const installedSkill = await readFile(
       join(skillDirectory, "SKILL.md"),
       "utf8",
@@ -442,7 +429,6 @@ await withVerifierCleanup(async () => {
       mode,
       model,
       wireModel,
-      inputSchemaProfile,
       passed,
       artifacts: lab,
       runtimeRoot,
@@ -456,9 +442,7 @@ await withVerifierCleanup(async () => {
       skillDiscovery:
         "native COPILOT_HOME MCP configuration and caller-added isolated skill directory; default OS-home discovery unverified",
       capacityBoundary:
-        inputSchemaProfile === "compact"
-          ? "Explicit compact profile: complete inventory and canonical server validation; advertised schemas may be reduced. This does not fix the full-profile gpt-4.1 context boundary."
-          : "Full advertised input schemas, checked at the client request boundary. Client model ID and wire model are recorded separately; effective token capacity and live provider compatibility remain unknown.",
+        "Compact input schemas, checked at the client request boundary: complete inventory and canonical server validation; advertised schemas may be reduced. Client model ID and wire model are recorded separately; effective token capacity and live provider compatibility remain unknown.",
       catalogSize,
       schemasChecked,
       spillReadRequested,

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { schemaVerifierEnvironment } from "./lib/mcp-verification-environment.mjs";
+import { canonicalOutputSchema } from "./lib/canonical-output-schema.mjs";
 import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
@@ -92,7 +92,7 @@ const env = {
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
-  env: schemaVerifierEnvironment(env),
+  env: env,
   stderr: "pipe",
 });
 const client = new Client({ name: "rea-real-com-proof", version: "1" });
@@ -215,11 +215,17 @@ await withVerifierFixture(workspaceFixture, async () => {
     const advertised = tools.find(
       (tool) => tool.name === "inspect_native_instruction",
     );
-    assert.ok(advertised?.outputSchema);
+    assert.ok(advertised);
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    assert.equal(ajv.validateSchema(advertised.outputSchema), true);
     assert.equal(
-      ajv.validate(advertised.outputSchema, unlistedResponse.structuredContent),
+      ajv.validateSchema(canonicalOutputSchema(advertised.name)),
+      true,
+    );
+    assert.equal(
+      ajv.validate(
+        canonicalOutputSchema(advertised.name),
+        unlistedResponse.structuredContent,
+      ),
       true,
       JSON.stringify(ajv.errors),
     );
@@ -234,7 +240,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     const contextDefinition = tools.find(
       (tool) => tool.name === "inspect_address_context",
     );
-    assert.ok(contextDefinition?.outputSchema);
+    assert.ok(contextDefinition);
     const documents = await call("list_documents");
     assert.equal(documents.length, 1);
     const document = documents[0];
@@ -314,7 +320,7 @@ await withVerifierFixture(workspaceFixture, async () => {
     // Ghidra, rather than assuming the provider exposes direct comment methods.
     const contextCall = async (name, args) => {
       const definition = tools.find((tool) => tool.name === name);
-      assert.ok(definition?.outputSchema, `${name} must be advertised`);
+      assert.ok(definition, `${name} must be advertised`);
       const response = await client.callTool(
         { name, arguments: args },
         { timeout: 240000, toolDefinition: definition },
@@ -516,7 +522,7 @@ async function call(name, args = {}) {
   if (["open_binary", "close_binary"].includes(name))
     return requireMcpLifecycleResult(value, name);
   const evidence = parseEvidence(requireMcpOutput(value, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   return evidence.normalized_result;
 }
 async function cli(command, address, options = []) {
@@ -537,8 +543,8 @@ async function cli(command, address, options = []) {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(stdout));
-  assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.equal(evidence.subject.format, "dos-com");
+  assert.equal(evidence.subject.identity.sha256, sha256);
+  assert.equal(evidence.subject.identity.format, "dos-com");
   assert.equal(evidence.analysis_profile.parameters.loader, "BinaryLoader");
   assert.equal(
     evidence.analysis_profile.parameters.language_id,

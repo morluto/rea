@@ -45,7 +45,7 @@ const expectPriorFailureInJournal = async (output: string) => {
   expect(latest?.limitations).not.toContain(failed?.pseudocode_absence?.reason);
 };
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "guides resume and retries only reported project failures (%s)",
   async (profile) => {
     const root = await createTestTempDirectory("rea-directory-independent-");

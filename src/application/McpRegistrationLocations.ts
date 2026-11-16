@@ -5,7 +5,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import type { ClientRootContext } from "./ClientConfigRoots.js";
 // Type-only: the client table imports project-location owners from here.
 import type { SetupClient } from "./SupportedClients.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ClientInlineConfiguration } from "./ClientConfigurationDocument.js";
 
 export interface McpRegistrationLocationContext {

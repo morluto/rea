@@ -31,6 +31,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
+import { evidenceSubjectTarget } from "../evidence.js";
 
 const packageSchema = androidResultSchemas.inspect_android_package;
 const readReport = createAnalysisViewResultReader(packageSchema);
@@ -130,7 +131,8 @@ export const projectAndroidPackageView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   // The engine digest identifies the JAR, never the authenticated APK subject.
-  if (parent.subject == null)
+  const subject = evidenceSubjectTarget(parent.subject);
+  if (subject === undefined)
     return err(
       analysisViewInputError([
         {
@@ -146,10 +148,7 @@ export const projectAndroidPackageView = (
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_android_package" as const,
     parent_digest: parent.evidenceId.slice(3),
-    artifact: {
-      path: parent.subject.local_path,
-      sha256: parent.subject.digest.sha256,
-    },
+    artifact: { path: subject.path, sha256: subject.sha256 },
     limitations: [...parent.limitations],
     unknowns: [
       "APK signatures were not verified; package declarations do not establish authenticity or runtime behavior.",

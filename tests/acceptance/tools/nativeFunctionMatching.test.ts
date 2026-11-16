@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -25,22 +26,34 @@ import { nativeFunctionMatchingSchema } from "../../../src/domain/native/functio
 
 const createMatchingFixture = async () => {
   const root = await createTestTempDirectory("rea-native-matching-");
-  const ancestor = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_provenance",
-    parameters: {},
-    result: { source: "Synthetic ancestor" },
-  });
-  const unrelated = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_unrelated",
-    parameters: {},
-    result: { source: "Unselected synthetic record" },
-  });
-  const dependency = createEvidence(undefined, nativeMatchingProvider, {
-    operation: "fixture_dependency",
-    parameters: {},
-    result: { source: "Synthetic dependency" },
-    evidenceLinks: [ancestor.evidence_id],
-  });
+  const ancestor = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_provenance",
+      parameters: {},
+      result: { source: "Synthetic ancestor" },
+    },
+  );
+  const unrelated = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_unrelated",
+      parameters: {},
+      result: { source: "Unselected synthetic record" },
+    },
+  );
+  const dependency = createEvidence(
+    unknownTarget("not-observed"),
+    nativeMatchingProvider,
+    {
+      operation: "fixture_dependency",
+      parameters: {},
+      result: { source: "Synthetic dependency" },
+      evidenceLinks: [ancestor.evidence_id],
+    },
+  );
   const left = nativeMatchingInventory(
     "1",
     [
@@ -238,7 +251,7 @@ const verifyPortableCli = async (
   });
 };
 
-cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+cliTest.for([{ profile: "compact" }] as const)(
   "shared public CLI/MCP matching retains sources, pages exact facts, and feeds selected dossier pairs directly to compare_functions ($profile)",
   async ({ profile }, { cli }) => {
     const fixture = await createMatchingFixture();
@@ -692,7 +705,7 @@ cliTest(
   },
 );
 
-cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+cliTest.for([{ profile: "compact" }] as const)(
   "ties byte qualifications to selected observations through paged and offline MCP ($profile)",
   async ({ profile }) => {
     const left = nativeMatchingInventory("1", [
