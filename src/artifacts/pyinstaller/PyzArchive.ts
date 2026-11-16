@@ -1,6 +1,6 @@
 import type { FileHandle } from "node:fs/promises";
 import { hashReadable } from "../ArtifactHash.js";
-import { readArtifactFileChunks } from "../readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../../resources/index.js";
 import { readPyInstallerBytes } from "./PyInstallerBytes.js";
 
 import { err, ok, type Result } from "../../domain/result.js";

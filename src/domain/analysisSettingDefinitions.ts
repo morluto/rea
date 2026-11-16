@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   AnalysisControlLimit,
+  AnalysisParameterLimit,
   AnalysisInvocationSettingLimit,
   AnalysisLimit,
   AnalysisSettingId,
@@ -33,6 +34,8 @@ import {
   DEFAULT_JADX_OPERATION_TIMEOUT_MS,
   DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
   MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+  MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
   DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
   MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
   MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
@@ -402,6 +405,18 @@ export const ANALYSIS_SETTINGS = {
     operations: ["analyze_javascript_application"],
     parameter: "max_heap_mb",
   },
+  "javascript.member_mutation_alias_states": {
+    updateMode: "runtime",
+    environment: "REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES",
+    defaultValue: DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    minimum: 1,
+    maximum: MAXIMUM_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES,
+    unit: "count",
+    appliesAt: "next_operation",
+    provider: "rea-javascript-application",
+    relatedProviders: ["web-bundle-static-analysis"],
+    operations: ["analyze_javascript_application", "analyze_web_bundle"],
+  },
   "wasm.command_timeout_ms": {
     updateMode: "runtime",
     ...timer,
@@ -594,6 +609,62 @@ export const analysisSettingIds = Object.keys(
   ANALYSIS_SETTINGS,
 ) as AnalysisSettingId[];
 export const analysisSettingIdSchema = z.enum(analysisSettingIds);
+
+/** Limit facts a result carries when it records a refusal as a value. */
+export const analysisSettingLimitSchema = z.strictObject({
+  setting: analysisSettingIdSchema,
+  effective_value: z.number().nullable(),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
+  minimum: z.number(),
+  maximum: z.number(),
+  source: z.enum(["default", "setting", "runtime", "request"]).exactOptional(),
+  applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
+  agent_editable: z.literal(true),
+  scope: z.literal("rea-runtime"),
+  update_mode: z.enum(["runtime", "restart", "parameter"]),
+  pending_restart: z.literal(false),
+  required_value: z.number().exactOptional(),
+  parameter: z.string().exactOptional(),
+}) satisfies z.ZodType<AnalysisSettingLimit>;
+
+/**
+ * A per-call request parameter that bounded a result, named by its contract
+ * field. Adapters render their own spelling of it (a CLI flag) outside the
+ * record.
+ */
+export const analysisParameterLimitSchema = z.strictObject({
+  control_kind: z.literal("parameter"),
+  parameter: z.string(),
+  effective_value: z.number(),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
+  minimum: z.number(),
+  maximum: z.number(),
+  default_value: z.number(),
+  applies_at: z.literal("next_call"),
+}) satisfies z.ZodType<AnalysisParameterLimit>;
+
+/** The control a result records for a refusal: a setting or a request parameter. */
+export const analysisResultLimitSchema = z.union([
+  analysisSettingLimitSchema,
+  analysisParameterLimitSchema,
+]);
+
+/**
+ * The schemas whose values are controls a result records itself. A result
+ * schema that places one of these instances (directly, optional, in an array
+ * or in a union) declares that position as REA's own control reference, so
+ * an adapter can name its option. Values elsewhere, such as captured file
+ * content that happens to look like a limit, are never read as controls.
+ */
+export const recordedControlSchemas = z.registry<{
+  readonly recordedControl: true;
+}>();
+recordedControlSchemas.add(analysisSettingLimitSchema, {
+  recordedControl: true,
+});
+recordedControlSchemas.add(analysisParameterLimitSchema, {
+  recordedControl: true,
+});
 export const analysisSettingDefinition = (
   id: AnalysisSettingId,
 ): SettingDefinition => ANALYSIS_SETTINGS[id];

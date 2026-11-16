@@ -1,10 +1,11 @@
+import { registerMcpClientOnHost } from "../../tests/fixtures/mcpRegistration.js";
 import { chmod, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { registerMcpClient } from "./McpClientRegistration.js";
 import { parseGooseConfigurationYaml } from "./GooseConfigurationYaml.js";
 import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
@@ -95,7 +96,7 @@ it.each([
   "publishes native $format launcher facts without retaining obsolete remote selection",
   async ({ format, id, text, expected }) => {
     const { path } = await settingsFixture(text);
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, format, id),
       launcher,
       undefined,
@@ -133,7 +134,7 @@ it.skipIf(process.platform === "win32")(
       ...clientFor(path, "fx", "fx"),
       privateProfile: { home: tmpdir() },
     } as const;
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       client,
       launcher,
       undefined,
@@ -154,7 +155,7 @@ it.skipIf(process.platform === "win32")(
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     const before = await stat(path);
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({
       ok: true,
       value: { status: "unchanged" },
@@ -189,7 +190,7 @@ it.each([
   "retains OpenCode activation policy from $name",
   async ({ text, native, ...control }) => {
     const { path } = await settingsFixture(text);
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, "opencode", "opencode"),
       launcher,
       undefined,
@@ -233,7 +234,7 @@ it.each([
       `extensions:\n  rea: ${entry}\nfeature: on\n`,
     );
     expect(
-      await registerMcpClient(
+      await registerMcpClientOnHost(
         clientFor(path, "goose", "goose"),
         launcher,
         undefined,
@@ -266,7 +267,7 @@ it.runIf(process.platform === "win32")(
       ...clientFor(path, "fx", "fx"),
       privateProfile: { home: tmpdir() },
     } as const;
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       client,
       launcher,
       undefined,
@@ -291,7 +292,7 @@ it.runIf(process.platform === "win32")(
     ]);
     const before = await stat(path);
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "unchanged" } });
     expect(await readFile(path, "utf8")).toBe(published);
     expect((await stat(path)).ino).toBe(before.ino);
@@ -317,7 +318,7 @@ it.each([
       ...clientFor(path, format, "github-copilot-cli"),
       scope,
     } as const;
-    const first = await registerMcpClient(
+    const first = await registerMcpClientOnHost(
       client,
       launcher,
       undefined,
@@ -330,7 +331,7 @@ it.each([
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
     const beforeRepeat = await stat(path);
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "unchanged" } });
     expect((await stat(path)).ino).toBe(beforeRepeat.ino);
   },
@@ -344,7 +345,7 @@ it.skipIf(process.platform === "win32")(
     const links = await createTestTempDirectory("rea-private-profile-link-");
     await symlink(dirname(directory), join(links, "parent"));
     const linked = join(links, "parent", basename(directory), basename(path));
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       { ...clientFor(linked, "fx", "fx"), privateProfile: { home: directory } },
       launcher,
       undefined,
@@ -369,7 +370,7 @@ it.skipIf(process.platform === "win32")(
       privateProfile: { home: tmpdir() },
     } as const;
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true });
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
@@ -380,7 +381,7 @@ it.skipIf(process.platform === "win32")(
         return originalClose.call(this);
       });
     try {
-      const result = await registerMcpClient(
+      const result = await registerMcpClientOnHost(
         client,
         launcher,
         undefined,
@@ -418,7 +419,7 @@ it.each(["mcp", "mcpServers"])(
       theme: "dark",
     };
     const { path } = await settingsFixture(JSON.stringify(original));
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, "fx", "fx"),
       launcher,
       undefined,
@@ -444,7 +445,7 @@ it.each(["mcp", "mcpServers"])(
     ]);
     const before = await stat(path);
     expect(
-      await registerMcpClient(
+      await registerMcpClientOnHost(
         clientFor(path, "fx", "fx"),
         launcher,
         undefined,
@@ -458,7 +459,7 @@ it.each(["mcp", "mcpServers"])(
 it("creates Fx registrations in the native writer's mcpServers profile table", async () => {
   const { path } = await settingsFixture("{}");
   expect(
-    await registerMcpClient(
+    await registerMcpClientOnHost(
       clientFor(path, "fx", "fx"),
       launcher,
       undefined,
@@ -487,7 +488,7 @@ it.each([
   async (document) => {
     const original = JSON.stringify(document);
     const { path } = await settingsFixture(original);
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, "fx", "fx"),
       launcher,
       undefined,
@@ -518,7 +519,7 @@ it.each(["mcp", "mcpServers"])(
     const { path } = await settingsFixture(original);
     const client = clientFor(path, "fx", "fx");
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "configured" } });
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
       [key]: { rea: entry, peer: { command: "peer" } },
@@ -527,7 +528,7 @@ it.each(["mcp", "mcpServers"])(
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
     const beforeRepeat = await stat(path);
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "unchanged" } });
     expect((await stat(path)).ino).toBe(beforeRepeat.ino);
   },

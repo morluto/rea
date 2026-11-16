@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { MAX_ENHANCED_RECORDS } from "../contracts/enhancedInputs.js";

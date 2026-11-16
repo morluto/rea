@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
 
@@ -21,7 +22,7 @@ import {
 } from "./EvidenceInputResolver.js";
 
 const evidence = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   {
     id: "test-evidence-input",
     name: "Evidence input regression",

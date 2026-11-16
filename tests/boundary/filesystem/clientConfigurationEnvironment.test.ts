@@ -26,7 +26,7 @@ import {
 import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
 
 import { ok } from "../../../src/domain/result.js";
-import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
+import { MCP_STARTUP_POLICY } from "../../../src/config/mcpStartupPolicy.js";
 import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
 
 const staleOwnedCommand = ["npx", "-y", "rea-agents@6.6.0", "mcp"] as const;

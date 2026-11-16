@@ -12,20 +12,18 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
   AnalysisOperationPort,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
-import {
-  describeAdvertisedTool,
-  presentAdvertisedInput,
-} from "../../../src/contracts/compactInputSchema.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -37,10 +35,13 @@ afterEach(async () => {
 
 const connect = async (analysis: AnalysisOperationPort) => {
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -120,10 +121,13 @@ it("advertises the complete currently available inventory with a session", async
       }) satisfies AnalysisClient,
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "integration-test",
-    version: "1.0.0",
-  });
+  const client = new Client(
+    {
+      name: "integration-test",
+      version: "1.0.0",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -177,12 +181,13 @@ it("advertises the complete currently available inventory with a session", async
     // to the end of the contract description.
     if (contract === undefined) continue;
     expect(tool.description, tool.name).toBe(
-      describeAdvertisedTool(
-        contract.description,
-        presentAdvertisedInput(advertisedInputJsonSchema(contract), {
-          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-        }).guidance,
-      ),
+      advertiseTool(
+        {
+          description: contract.description,
+          inputSchema: advertisedInputJsonSchema(contract),
+        },
+        advertisedToolPresentation("off"),
+      ).description,
     );
     expect(tool.annotations, tool.name).toEqual(contract?.annotations);
     expect(tool.inputSchema, tool.name).toBeDefined();

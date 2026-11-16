@@ -8,9 +8,10 @@ import {
 } from "../../domain/parseFailure.js";
 import {
   InterfaceBuilderDecodeBudget,
-  InterfaceBuilderDecodeBudgetExceeded,
+  interfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
 
@@ -147,9 +148,7 @@ export const decodeNibArchive = (
   );
   for (const { value } of values.values()) {
     if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
+      isRecord(value) &&
       typeof value.$nib_object_ref === "number" &&
       value.$nib_object_ref >= objectCount
     )
@@ -276,9 +275,10 @@ const preflightProjectedFieldCount = (
   maxBytes: number,
 ): number => {
   if (objectCount * 96 > maxBytes)
-    throw new InterfaceBuilderDecodeBudgetExceeded(
-      "aggregate_decode_budget_exhausted",
+    throw interfaceBuilderDecodeBudgetExceeded(
+      "nib-archive",
       "NIBArchive object count exceeds the aggregate Interface Builder decode budget",
+      maxBytes,
     );
   const cursor = { offset: start };
   let projectedFields = 0;
@@ -300,9 +300,10 @@ const preflightProjectedFieldCount = (
       !Number.isSafeInteger(projectedFields) ||
       projectedFields * 96 > maxBytes - objectCount * 96
     )
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
+      throw interfaceBuilderDecodeBudgetExceeded(
+        "nib-archive",
         "NIBArchive projected field ranges exceed the aggregate Interface Builder decode budget",
+        maxBytes,
       );
   }
   return projectedFields;

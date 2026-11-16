@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Cli } from "incur";
 import { expect, it } from "vitest";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
@@ -11,7 +12,7 @@ it.each([false, true])(
   "awaits cleanup retry and preserves completed output when retry failure is %s",
   async (failAgain) => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Completed capture fixture", version: "1" },
       {
         operation: "inspect_packet_capture",

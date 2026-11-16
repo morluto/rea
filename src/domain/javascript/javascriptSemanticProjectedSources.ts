@@ -10,23 +10,14 @@ import {
   semanticArrayPropertyReferences,
 } from "./javascriptSemanticObjectReferences.js";
 import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
-import {
-  semanticBindingAtRead,
-  semanticDefiniteEffectPrecedesReference,
-  semanticEffectTiming,
-  semanticTopLevelEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticBindingMemberWritesObservedAt } from "./javascriptSemanticEffectLog.js";
 import {
   semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import { semanticStoredSourceSelection } from "./javascriptSemanticIterationSources.js";
-import {
-  semanticEffectPathCandidates,
-  semanticEffectPathMatches,
-  semanticSomeEffectPathCandidate,
-} from "./javascriptSemanticEffectPathIndex.js";
 import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
@@ -98,7 +89,7 @@ interface ProjectedSource {
 }
 
 /** A fresh parent does not prove a descendant receiver is a fresh allocation. */
-const hasFreshProjectedReceiver = (
+export const hasFreshProjectedReceiver = (
   root: t.Node,
   path: JavaScriptSemanticPropertyPath,
   state: JavaScriptSemanticAnalysisState,
@@ -243,139 +234,20 @@ const projectedSourceFactsAtRead = (
     normalizedCaptures?.find((capture) => capture.depth >= depth)?.at;
   const selectedAt = (depth: number): t.Node =>
     captureForDepth(depth) ?? memberReadAt;
-  const samePrefix = (
-    prefix: JavaScriptSemanticBindingState["memberWrites"][number],
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ): boolean =>
-    prefix.path.length < effect.path.length &&
-    prefix.path.every(
-      (key, index) =>
-        key !== null &&
-        typeof key !== "object" &&
-        effect.path[index] !== null &&
-        typeof effect.path[index] !== "object" &&
-        String(key) === String(effect.path[index]),
-    );
-  // Only a definite assignment can replace an already captured receiver.
-  // Select candidates once per query rather than rescanning every propagated
-  // may-write for each matching effect.
-  type PrefixReplacement =
-    JavaScriptSemanticBindingState["memberWrites"][number] & {
-      readonly receiverIdentity: "definite";
-      readonly node: t.AssignmentExpression;
-    };
-  const prefixReplacements =
-    normalizedCaptures === undefined
-      ? []
-      : binding.memberWrites.filter(
-          (replacement): replacement is PrefixReplacement =>
-            replacement.receiverIdentity === "definite" &&
-            t.isAssignmentExpression(replacement.node, { operator: "=" }) &&
-            replacement.path.length < path.length,
-        );
-  const targetsReplacedPrefix = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ): boolean =>
-    capturedSelections.length > 0 &&
-    prefixReplacements.some((replacement) => {
-      const capture = captureForDepth(replacement.path.length);
-      const receiverAt = effect.receiverAt ?? effect.node;
-      return (
-        capture !== undefined &&
-        receiverAt !== undefined &&
-        samePrefix(replacement, effect) &&
-        semanticTopLevelEffectFollowsCapture(
-          capture,
-          replacement.node,
-          state.parentsByNode,
-        ) &&
-        semanticDefiniteEffectPrecedesReference(
-          replacement.node,
-          receiverAt,
-          state.parentsByNode,
-        ) &&
-        hasFreshProjectedReceiver(
-          replacement.node.right,
-          effect.path.slice(replacement.path.length, -1),
-          state,
-        )
-      );
-    });
-  // Every condition is a pure query. Test the selected path first: it is the
-  // cheapest and rejects most records of a binding with many member paths.
-  const matches = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ) =>
-    semanticEffectPathMatches(effect.path, path) &&
-    (effect.receiverInitializers === undefined ||
-      effect.receiverInitializers.length === 0 ||
-      captured.length === 0 ||
-      effect.receiverInitializers.some((receiver) =>
-        captured.some(
-          (source) =>
-            source.node === receiver.node &&
-            JSON.stringify(source.projection) ===
-              JSON.stringify(receiver.projection),
-        ),
-      )) &&
-    semanticEffectTiming(selectedAt(effect.path.length), effect.node, state) !==
-      "after" &&
-    !targetsReplacedPrefix(effect);
-  const writes = semanticEffectPathCandidates(
-    binding.memberWrites,
-    path,
-  ).filter(matches);
-  let replacement:
-    | JavaScriptSemanticBindingState["memberWrites"][number]
-    | undefined;
-  for (const effect of writes) {
-    if (
-      effect.receiverIdentity === "definite" &&
-      t.isAssignmentExpression(effect.node, { operator: "=" }) &&
-      effect.path.every(
-        (key, index) =>
-          key !== null &&
-          typeof key !== "object" &&
-          path[index] !== null &&
-          typeof path[index] !== "object" &&
-          String(key) === String(path[index]),
-      ) &&
-      semanticDefiniteEffectPrecedesReference(
-        effect.node,
-        selectedAt(effect.path.length),
-        state.parentsByNode,
-      ) &&
-      (replacement === undefined ||
-        semanticDefiniteEffectPrecedesReference(
-          replacement.node!,
-          effect.node,
-          state.parentsByNode,
-        ) ||
-        (replacement.node === effect.node &&
-          (replacement.assignedSources?.[0]?.target?.start ?? -1) <
-            (effect.assignedSources?.[0]?.target?.start ?? -1)))
-    )
-      replacement = effect;
-  }
-  const superseded = (
-    effect: JavaScriptSemanticBindingState["memberWrites"][number],
-  ) =>
-    replacement !== undefined &&
-    effect.node !== undefined &&
-    effect !== replacement &&
-    (semanticEffectTiming(replacement.node!, effect.node, state) === "before" ||
-      (effect.node === replacement.node &&
-        (effect.assignedSources?.[0]?.target?.start ?? -1) <
-          (replacement.assignedSources?.[0]?.target?.start ?? -1)));
-  if (
-    includeUnknown &&
-    valueEscapesHideSources &&
-    semanticSomeEffectPathCandidate(
-      binding.escapedPaths,
+  const { writes, replaced, superseded, escapeMayPrecede } =
+    semanticBindingMemberWritesObservedAt(
+      state,
+      binding,
       path,
-      (effect) => matches(effect) && !superseded(effect),
-    )
-  )
+      {
+        at: selectedAt,
+        capturedAt:
+          normalizedCaptures === undefined ? undefined : captureForDepth,
+        captured,
+      },
+      hasFreshProjectedReceiver,
+    );
+  if (includeUnknown && valueEscapesHideSources && escapeMayPrecede())
     return undefined;
   const sources: ProjectedSource[] = [];
   const sourceKeys = new WeakMap<t.Node, Set<string>>();
@@ -446,7 +318,7 @@ const projectedSourceFactsAtRead = (
     }
   }
   const storedSources = [...sources];
-  if (!retainEligibility && replacement !== undefined)
+  if (!retainEligibility && replaced)
     return { sources, storedSources, retainsOrigin: false };
   for (const initializer of read.binding.initializers) {
     if (semanticReferenceIterationUnknown(initializer, state)) return undefined;

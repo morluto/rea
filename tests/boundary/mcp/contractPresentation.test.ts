@@ -1,5 +1,4 @@
-import { presentAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/config/mcpInputSchemaProfile.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { isCallToolResult } from "@modelcontextprotocol/server";
@@ -17,6 +16,7 @@ import {
   runOwnedCommand,
 } from "../../../src/process/OwnedCommand.js";
 import { resolveSwiftcCompileTimeoutMs } from "../../../src/process/DarwinProcessRunTokenReader.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
 
 beforeAll(
   () => prepareOwnedCommand(),
@@ -99,10 +99,10 @@ it("preserves advertised schemas and handler meaning when presentation order cha
     );
     if (canonical === undefined) throw new Error(`Missing ${advertised.name}`);
     expect(advertised.inputSchema).toEqual(
-      presentAdvertisedInputSchema(
-        canonical.inputSchema,
-        COMPACT_INPUT_SCHEMA_PRESENTATION,
-      ),
+      advertiseTool(
+        { inputSchema: canonical.inputSchema },
+        advertisedToolPresentation("off"),
+      ).inputSchema,
     );
     // The default output profile omits output schemas.
     expect(advertised.outputSchema).toBeUndefined();

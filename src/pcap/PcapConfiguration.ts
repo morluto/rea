@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 
 import { posixPathCandidates } from "../process/executableSearch.js";
 
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
@@ -112,7 +112,7 @@ export const selectWiresharkTool = (
  */
 export const resolvePcapTools = (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {
