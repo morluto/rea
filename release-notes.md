@@ -292,6 +292,7 @@
 * **native:** admit the retroactive flag when decoding Swift static witnesses ([bb1bb46](https://github.com/morluto/rea/commit/bb1bb46dcbc24351106ffd842637dc122a789f6e)), closes [#7489](https://github.com/morluto/rea/issues/7489)
 * **native:** correct Mach-O command completeness ([364432d](https://github.com/morluto/rea/commit/364432d6c9d5b52c766950176b1309e81c22b86b))
 * **native:** count an unreaped LLDB target as exited and keep why its identity was unavailable ([#11396](https://github.com/morluto/rea/issues/11396)) ([1495cd1](https://github.com/morluto/rea/commit/1495cd1a7fb19aa23190377ab35619a984512205))
+* **native:** distinguish withheld initializer symbol names ([#11718](https://github.com/morluto/rea/issues/11718)) ([26d8882](https://github.com/morluto/rea/commit/26d88826cc36c5513ce8977346c0e4f15bb25169))
 * **native:** keep a completed LLDB trace when the deadline elapses during cleanup ([#11116](https://github.com/morluto/rea/issues/11116)) ([bf638b4](https://github.com/morluto/rea/commit/bf638b47f20a15fe060254b318e7d80418e7c8df))
 * **native:** keep Objective-C class import coverage partial when candidate completeness is unstated ([#11128](https://github.com/morluto/rea/issues/11128)) ([682a57a](https://github.com/morluto/rea/commit/682a57a9877706bbdbfa4128b58257438d089620))
 * **native:** keep unreported value-flow and archive coverage unknown, and exempt generation caps by reason marker ([#11288](https://github.com/morluto/rea/issues/11288)) ([332dea7](https://github.com/morluto/rea/commit/332dea76a697f09f3e82b856220196c5666578e7))
