@@ -759,14 +759,16 @@ it("reports exhausted host capacity at the version probe as a retryable constrai
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: true,
-      remediation: {
-        action: expect.stringContaining("does not need to change") as unknown,
-      },
       details: {
+        reported_limits: {
+          spawn_error: "EMFILE",
+          exhausted_resource: "file-descriptors",
+        },
         diagnostics: {
           selected_binary: binary,
           path_source: "environment",
-          filesystem_error: "EMFILE",
+          boundary: "host-capacity",
+          system_code: "EMFILE",
         },
       },
     });
