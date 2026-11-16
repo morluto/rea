@@ -11,6 +11,40 @@ import {
 } from "./desktopEntry.js";
 
 describe("parseDesktopEntry", () => {
+  it("uses the last main-group declarations, including repeated groups and empty values", () => {
+    const text = `[Desktop Entry]
+Type=Link
+Name=Earlier
+Exec=old-app
+Path=/old
+Icon=old-icon
+Categories=Old;
+Terminal=false
+[Desktop Action New]
+Name=Action
+Exec=action-app
+[Desktop Entry]
+Type=Application
+Name=Current
+Exec=current-app %F
+Path=
+Icon=current-icon
+Categories=A\\;B;Current;
+Terminal=true
+`;
+    expect(parseDesktopEntry(text)).toMatchObject({
+      ok: true,
+      value: {
+        type: "Application",
+        name: "Current",
+        exec: "current-app %F",
+        path: "",
+        icon: "current-icon",
+        categories: ["A;B", "Current"],
+        terminal: true,
+      },
+    });
+  });
   it("reads the main group and ignores localized keys and other groups", () => {
     const parsed = parseDesktopEntry(
       [

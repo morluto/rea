@@ -47,6 +47,42 @@ const fixture = async () => {
   };
 };
 
+it.skipIf(process.platform === "win32")(
+  "binds inventory and argv to the effective desktop entry command",
+  async () => {
+    const { home, bin, environment } = await fixture();
+    await writeFile(join(bin, "current-app"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+    const path = join(
+      environment.XDG_DATA_DIRS,
+      "applications/org.example.notes.desktop",
+    );
+    await writeFile(
+      path,
+      "[Desktop Entry]\nType=Application\nName=Earlier\nExec=notes-app --old\nExec=current-app --current %F\nName=Current\n",
+    );
+    const result = await inspectLinuxApplication({
+      desktopEntry: "org.example.notes",
+      executable: undefined,
+      arguments: ["/tmp/document.txt"],
+      environment,
+      home,
+      callerDirectory: home,
+    });
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.argv).toEqual([
+      "current-app",
+      "--current",
+      "/tmp/document.txt",
+    ]);
+    expect(result.value.inventory.executable.path).toBe(
+      join(bin, "current-app"),
+    );
+    expect(result.value.inventory.desktop_entry?.name).toBe("Current");
+  },
+);
+
 describe.skipIf(process.platform === "win32")(
   "explicit executable traversal",
   () => {
