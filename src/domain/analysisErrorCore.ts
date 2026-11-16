@@ -134,6 +134,8 @@ export const reattributedResourceConstraint = (
       ...options,
       ...resourceConstraintRecovery(error),
       ...(error.limit === undefined ? {} : { limit: error.limit }),
+
+      ...(error.related === undefined ? {} : { related: error.related }),
       ...(error.requestSent === undefined
         ? {}
         : { requestSent: error.requestSent }),
