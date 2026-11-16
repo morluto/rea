@@ -117,6 +117,7 @@ export function discoverStructuredRasters(
   options: StructuredRasterDiscoveryOptions = {},
   signal?: AbortSignal,
 ): StructuredRasterReport {
+  signal?.throwIfAborted();
   integer(bytes.length, "materialized bytes", 1, 16 * 1024 * 1024);
   const sourceGrammar = options.grammar ?? DEFAULT_STRUCTURED_RASTER_GRAMMAR;
   const grammar: StructuredRasterGrammar = {
@@ -244,7 +245,7 @@ export function discoverStructuredRasters(
   );
   const readField = (at: number, f: StructuredRasterField) =>
     f.byteWidth === 1
-      ? reader.range(at + f.offset, 1, "descriptor field")[0]!
+      ? reader.u8(at + f.offset)
       : f.byteWidth === 2
         ? reader.u16(at + f.offset)
         : reader.u32(at + f.offset);

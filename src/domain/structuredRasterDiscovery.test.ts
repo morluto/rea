@@ -263,3 +263,25 @@ it("accepts every covered range admitted by the logical segment owner", async ()
   expect(result.coverage.complete).toBe(false);
   expect(result.coverage.reason).toBe("work-limit");
 });
+
+it("observes an already-aborted signal before inspecting coverage", () => {
+  const controller = new AbortController();
+  const reason = new Error("cancel before preprocessing");
+  controller.abort(reason);
+  let inspected = false;
+  const range = {
+    get offset() {
+      inspected = true;
+      return 0;
+    },
+    length: 16,
+  };
+  expect(() =>
+    discoverStructuredRasters(
+      new Uint8Array(16),
+      { coverage: [range] },
+      controller.signal,
+    ),
+  ).toThrow(reason);
+  expect(inspected).toBe(false);
+});
