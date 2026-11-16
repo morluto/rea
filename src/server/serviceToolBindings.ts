@@ -1,5 +1,17 @@
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
+import {
+  inspectElectronPage,
+  listElectronTargets,
+} from "../application/javascript/ElectronObservationService.js";
+import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
+import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
+import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
@@ -334,6 +346,25 @@ export interface CutterToolOptions {
 export interface BrowserObservationToolOptions {
   readonly browser: BrowserObservationPort | undefined;
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** Passive Electron observation is independent of active scenario capture. */
+interface ElectronObservationToolOptions {
+  readonly provider: ElectronObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** Existing owned Electron scenario execution and its independent load failure. */
+interface ElectronScenarioToolOptions {
+  readonly provider: ElectronActiveObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** Static JavaScript analysis needs local artifacts, never an Electron runtime. */
+interface JavaScriptApplicationToolOptions {
+  readonly resources: ArtifactResourceScope;
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly settings?: AnalysisSettingsReader;
 }
 
 /** The session native matching reads, and its allowance for each accepted call. */
@@ -1562,6 +1593,85 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<BrowserObservationToolOptions>,
+  electronFuses: ((service) => ({
+    inspect_electron_fuses: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<Pick<ElectronFuseService, "inspect">>,
+  electronObservation: (({ provider, loadFailure }) => ({
+    list_electron_targets: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) => listElectronTargets(provider, input, options),
+    },
+    inspect_electron_page: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) => inspectElectronPage(provider, input, options),
+    },
+  })) satisfies Bind<ElectronObservationToolOptions>,
+  // Keep active capture separate from passive observation and static analysis.
+  // Its existing service owns execution admission, effects and cleanup.
+  electronScenario: (({ provider, loadFailure }) => ({
+    capture_electron_scenario: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) =>
+        captureElectronScenario(provider, input, options),
+    },
+  })) satisfies Bind<ElectronScenarioToolOptions>,
+  javascriptApplication: ((
+    { resources, environment, settings },
+    retention,
+  ) => ({
+    analyze_javascript_application: {
+      admission: "sdk",
+      run: async ({ detail, view, ...request }, options) => {
+        if (detail === "summary") {
+          const ready = requireAnalysisViewRetention(
+            "analyze_javascript_application",
+            retention,
+          );
+          if (!ready.ok) return ready;
+        }
+        const analyzed = await analyzeJavaScriptApplicationValidated(
+          request,
+          resources,
+          {
+            ...options,
+            sourceAnalysis: javascriptSourceAnalysis,
+            environment,
+            ...(settings === undefined ? {} : { settings }),
+          },
+        );
+        return detail === "summary" && analyzed.ok
+          ? projectRetainedAnalysis(
+              analyzed.value,
+              retention,
+              view ?? { kind: "summary" },
+            )
+          : analyzed;
+      },
+    },
+    reconcile_javascript_runtime: {
+      admission: "sdk",
+      run: async (input, options) => {
+        const result = reconcileJavaScriptRuntimeEvidence(
+          input,
+          retention.evidenceById,
+          options,
+        );
+        if (!result.ok) return result;
+        const recorded = recordEvidenceSources(
+          retention.recordEvidence,
+          result.value.sources,
+          { evidence: result.value.evidence },
+        );
+        return recorded.ok ? ok(result.value.evidence) : recorded;
+      },
+    },
+  })) satisfies Bind<JavaScriptApplicationToolOptions>,
   // Frida sessions instrument a live process the caller selects, not the
   // session's target; compose them without analysis admission.
   frida: ((service, retention) => ({
