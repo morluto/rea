@@ -90,6 +90,7 @@
   "src/il2cpp/Il2cppGhidraSeedWriter.ts": 1,
   "src/il2cpp/Il2cppGhidraSeeds.ts": 1,
   "src/il2cpp/Il2cppMetadataProvider.ts": 4,
+  "src/java/MavenGradleMetadataProvider.ts": 2,
   "src/javascript/analysis/JavaScriptAnalysisTransfer.ts": 1,
   "src/javascript/analysis/JavaScriptAnalysisWorker.ts": 10,
   "src/javascript/analysis/JavaScriptAnalysisWorkerServer.ts": 1,

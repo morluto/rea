@@ -1408,6 +1408,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/kernelModule.test.ts"),
   ),
+  "rea-maven-gradle-metadata": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/mavenGradleMetadataMcp.test.ts",
+        "advertises inspect_maven_gradle_metadata and reports a real POM",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/mavenGradleMetadata.test.ts"),
+  ),
   "rea-native-exports": inProcess(
     covered(
       test(

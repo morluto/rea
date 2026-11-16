@@ -1,5 +1,5 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
