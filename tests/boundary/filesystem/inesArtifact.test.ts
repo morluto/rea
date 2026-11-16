@@ -1,6 +1,5 @@
-import * as rootHash from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
+import * as rootHash from "../../../src/resources/StableRootArtifact.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
-import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
 import { createHash } from "node:crypto";
 import {
   lstat,
@@ -8,6 +7,7 @@ import {
   open,
   readFile,
   unlink,
+  utimes,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
@@ -23,11 +23,14 @@ import {
 } from "../../fixtures/artifactInventory.js";
 import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   extractArtifact,
   materializeArtifactInventoryInScope as materializeInScope,
 } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
+import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
+
+const AGED_FIXTURE_TIME = new Date("2000-01-01T00:00:00Z");
 
 const sha256 = (bytes: Buffer) =>
   createHash("sha256").update(bytes).digest("hex");
@@ -99,7 +102,7 @@ it("rejects region bytes that disagree with stable whole-file hashes", async () 
   try {
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
       reason: "integrity",
-      message: "iNES reconstruction differs from the source",
+      integrityCheck: "reconstruction",
     });
     expect(changed).toBe(true);
     expect((await readFile(path)).equals(bytes)).toBe(true);
@@ -381,6 +384,10 @@ it.each(["inventory", "target"])(
     for (const change of ["truncated", "counts", "signature"] as const) {
       const bytes = inesFixture();
       await writeFile(path, bytes);
+      // Same-size rewrites are only observable through timestamps. Linux
+      // stamps from a coarse clock, so a rewrite within one tick of creation
+      // can keep every stat field; age the fixture so the rewrite is visible.
+      await utimes(path, AGED_FIXTURE_TIME, AGED_FIXTURE_TIME);
       const prototype = await fileReadPrototype(path);
       const originalRead = prototype.read;
       const read = vi

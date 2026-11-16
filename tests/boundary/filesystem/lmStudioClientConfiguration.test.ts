@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -30,15 +31,20 @@ const exists = async (path: string): Promise<boolean> => {
   }
 };
 
-const expectedRegistration = (profile = "compact") => ({
+const expectedRegistration = (profile?: "compact") => ({
   command: command[0],
   args: command.slice(1),
-  env: { REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+  ...(profile === undefined
+    ? {}
+    : { env: { REA_MCP_INPUT_SCHEMA_PROFILE: profile } }),
 });
 
 const doctorState = async (home: string) =>
   (
-    await readClientRegistrationStatuses(home, undefined, { environment: {} })
+    await readClientRegistrationStatuses(home, undefined, {
+      platform: HOST_PLATFORM.platform,
+      environment: {},
+    })
   ).find(({ client }) => client === "lm_studio");
 
 /** An installed LM Studio home; the pointer and cache layouts are opt-in. */
@@ -89,7 +95,7 @@ describe("LM Studio home resolution", () => {
 
 describe("LM Studio registration lifecycle", () => {
   it.each(["default", "pointer", "cache"] as const)(
-    "registers rea with the compact profile in the %s home",
+    "registers rea with the default input profile in the %s home",
     async (layout) => {
       const { home, directory, client } = await installedHome(layout);
       const pointer = join(home, ".lmstudio-home-pointer");
@@ -155,7 +161,7 @@ describe("LM Studio registration lifecycle", () => {
     });
   });
 
-  it("keeps an explicit full profile and reports an omitted profile stale", async () => {
+  it("keeps an explicit compact profile and reports an omitted profile aligned", async () => {
     const { home, client } = await installedHome("default");
     await writeFile(
       client.configPath,
@@ -163,20 +169,20 @@ describe("LM Studio registration lifecycle", () => {
         mcpServers: { rea: { command: command[0], args: command.slice(1) } },
       }),
     );
-    expect(await doctorState(home)).toMatchObject({ state: "stale" });
+    expect(await doctorState(home)).toMatchObject({ state: "aligned" });
 
     expect(
       (
         await configureClientConfiguration(
           client,
-          { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+          { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
           command,
         )
       ).status,
     ).toBe("configured");
     expect(
       JSON.parse(await readFile(client.configPath, "utf8")).mcpServers.rea,
-    ).toEqual(expectedRegistration("full"));
+    ).toEqual(expectedRegistration("compact"));
     expect(await configureClientConfiguration(client, {}, command)).toEqual({
       status: "unchanged",
     });

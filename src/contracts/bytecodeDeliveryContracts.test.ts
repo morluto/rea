@@ -80,8 +80,10 @@ it.each(
         : new Ajv({ strict: false, validateFormats: false });
     expect(ajv.validateSchema(projected)).toBe(true);
     expect(projected).toMatchObject({ type: "object" });
-    for (const key of ["anyOf", "oneOf", "allOf", "x-rea-root-discriminator"])
+    for (const key of ["anyOf", "oneOf", "allOf"])
       expect(projected).not.toHaveProperty(key);
+    // The typed root discriminator selects the alternative.
+    expect(projected).toMatchObject({ if: { required: ["detail"] } });
     const validate = ajv.compile(projected);
     for (const [delivery, valid] of [
       [{}, true],

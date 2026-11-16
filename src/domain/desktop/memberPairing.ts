@@ -28,11 +28,7 @@ import {
 import { pairRecordsById } from "./jsonRecordPairing.js";
 import { resolvePointer } from "./viewPointer.js";
 import { selectorOf } from "./viewSelector.js";
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+import { isRecord } from "../../kernel/isRecord.js";
 
 const own = (record: Record<string, JsonValue>, key: string) =>
   Object.hasOwn(record, key) ? record[key] : undefined;
@@ -146,6 +142,7 @@ const candidatesOf = (
       ...identities.filter(({ key }) => !named(key)),
       ...pairable,
     ].map(condition),
+    // generation-cap: member pairs offered as selector conditions
     ...pairsOf(pairable.slice(0, MAX_PAIRED)),
     ...ranked.filter(({ tier }) => tier === 3).map(condition),
   ];

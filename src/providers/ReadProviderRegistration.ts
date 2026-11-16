@@ -1,6 +1,8 @@
+import { errorMessage } from "../kernel/errorMessage.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, type Result } from "../domain/result.js";
@@ -16,6 +18,8 @@ import {
 } from "../filesystem/RegularFile.js";
 
 const MAXIMUM_REGISTRATION_BYTES = 65_536;
+
+class RegistrationContentsError extends ConfigurationError {}
 
 /** Read one bounded registration while owning its descriptor through cancellation and final close. */
 export const readProviderRegistration = <Value>(
@@ -40,10 +44,12 @@ export const readProviderRegistration = <Value>(
         ...(cause === undefined ? {} : { cause }),
         settings: [{ setting: format.setting, constraint }],
       });
+    const contentsError = (constraint: string): ConfigurationError =>
+      new RegistrationContentsError(constraint, {
+        settings: [{ setting: format.setting, constraint }],
+      });
     const registrationTooLarge = () =>
-      configurationError(
-        `${format.setting} exceeds the 64 KiB registration size.`,
-      );
+      contentsError(`${format.setting} exceeds the 64 KiB registration size.`);
     let closeLease: AnalysisCleanupLease | undefined;
     try {
       const input = await withOwnedRegularFile<unknown>(
@@ -78,7 +84,7 @@ export const readProviderRegistration = <Value>(
           if (bytes === undefined) throw registrationTooLarge();
           const parsed = safeParseUtf8Json(bytes);
           if (!parsed.ok)
-            throw configurationError(
+            throw contentsError(
               `${format.setting} must contain valid UTF-8 JSON.`,
             );
           return parsed.value;
@@ -86,7 +92,7 @@ export const readProviderRegistration = <Value>(
       );
       return format.parse(input);
     } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
+      if (cause instanceof RegistrationContentsError) return err(cause);
       if (cause instanceof NonRegularFileReadError)
         return err(
           configurationError(
@@ -98,22 +104,20 @@ export const readProviderRegistration = <Value>(
       const cancellation = regularFileCancellation(cause);
       if (cancellation !== undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
-          const error = new AnalysisCancelledError(format.operation, {
-            cause: cancellation.reason,
-            cleanup: {
-              reason:
-                cause.cleanupCause instanceof Error
-                  ? cause.cleanupCause.message
-                  : String(cause.cleanupCause),
-              resources: [path],
+          const error = cancelledBy(
+            format.operation,
+            carriedReason(cancellation.reason),
+            {
+              cleanup: {
+                reason: errorMessage(cause.cleanupCause),
+                resources: [path],
+              },
             },
-          });
+          );
           closeLease?.bindCleanupError(error);
           throw error;
         }
-        throw new AnalysisCancelledError(format.operation, {
-          cause: cancellation.reason,
-        });
+        throw cancelledBy(format.operation, carriedReason(cancellation.reason));
       }
       if (cause instanceof RegularFileCleanupFailure) {
         const primary =
@@ -126,15 +130,12 @@ export const readProviderRegistration = <Value>(
               ? primary.message
               : primary instanceof NonRegularFileReadError
                 ? `${format.setting} must select a regular JSON file: ${path}`
-                : `Cannot read ${format.label} registration ${path}: ${primary instanceof Error ? primary.message : String(primary)}`
+                : `Cannot read ${format.label} registration ${path}: ${errorMessage(primary)}`
             : `Cannot close ${format.label} registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           },
           settings: [

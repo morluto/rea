@@ -2,7 +2,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { readBinaryNinjaConfiguration } from "./BinaryNinjaConfiguration.js";
 

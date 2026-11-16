@@ -7,6 +7,7 @@ import { createIdaMcpConnection } from "../../../src/ida/IdaMcpConnection.js";
 import { createBinaryNinjaMcpConnection } from "../../../src/binaryNinja/BinaryNinjaMcpConnection.js";
 import { createStreamableHttpJebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { idaConnectionDependencies } from "../../support/idaConnectionDependencies.js";
 
 const requestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -163,6 +164,7 @@ const createConnection = (
         timeoutMs: 1_000,
       },
       {},
+      idaConnectionDependencies(),
     );
     return {
       connect: () => connection.connect(),

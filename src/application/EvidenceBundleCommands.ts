@@ -1,8 +1,5 @@
 import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
-import { analysisEvidenceSources } from "./AnalysisEvidenceSources.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 
 import {
   EvidenceFileError,
@@ -10,17 +7,11 @@ import {
 } from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
-import {
-  withEvidenceCallerInputPath,
-  type Evidence,
-} from "../domain/evidence.js";
-import {
-  createImmutableEvidenceBundle,
-  type EvidenceBundle,
-} from "../domain/evidenceBundle.js";
+import type { Evidence } from "../domain/evidence.js";
+import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -28,7 +19,7 @@ import {
   compareBundles,
   type BundleRecordPair,
 } from "../domain/bundleComparison.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   readEvidenceBundle,
   readImmutableEvidenceBundle,
@@ -38,7 +29,11 @@ import {
 } from "./EvidenceBundleFiles.js";
 import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
 import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
-import { inspectAnalysisViewValidated } from "./analysisView/AnalysisViewService.js";
+import {
+  finalizedResult,
+  runOwned,
+  type RunOwnedOptions,
+} from "../providers/runOwned.js";
 
 /** Validate a standalone bundle and report its complete record/revision counts. */
 export const importEvidenceBundleCommand = async (
@@ -85,78 +80,26 @@ export const exportEvidenceBundleCommand = async (
     signal,
   );
   if (!loaded.ok) return loaded;
-  const written = await persistEvidenceBundleCommand(
-    loaded.value,
-    outputPath,
-    overwrite,
-    signal,
-    "export_evidence_bundle",
+  const written = await finalizeBundleWork(
+    () =>
+      persistEvidenceBundleCommand(
+        loaded.value,
+        outputPath,
+        overwrite,
+        signal,
+        "export_evidence_bundle",
+      ),
+    {
+      providerId: "rea",
+      operation: "export_evidence_bundle",
+      signal,
+      // Deliver interrupts queued during publication cleanup before deciding
+      // whether a written bundle survives cancellation.
+      close: dispatchQueuedInterrupts,
+      diagnostics: (receipt) => ({ evidence_bundle: { ...receipt } }),
+    },
   );
-  await dispatchQueuedInterrupts();
-  if (written.ok && signal?.aborted)
-    return err(
-      new AnalysisCancelledError("export_evidence_bundle", {
-        cause: signal.reason,
-        diagnostics: { evidence_bundle: { ...written.value } },
-      }),
-    );
   return projectWrite(loaded.value, written);
-};
-
-/** Publish complete parent Evidence before delivering it or its linked summary. */
-export const deliverAnalysisEvidence = async (
-  evidence: Evidence,
-  outputPath: string,
-  detail: "complete" | "summary" = "complete",
-  signal?: AbortSignal,
-): Promise<Result<Evidence, AnalysisError>> => {
-  const headroom = requireAuthenticationHeadroom(evidence, {
-    operation: evidence.operation,
-    path: absoluteCallerPath(outputPath),
-    description:
-      "Insufficient heap headroom to authenticate the complete parent Evidence",
-  });
-  if (!headroom.ok)
-    return err(headroom.error.retainPartialObservation(evidence));
-  const sourceEvidence = analysisEvidenceSources(evidence);
-  if (!sourceEvidence.ok) return sourceEvidence;
-  const bundle = createImmutableEvidenceBundle(sourceEvidence.value);
-  const delivered =
-    detail === "summary"
-      ? inspectAnalysisViewValidated(
-          {
-            source: {
-              kind: "retained-evidence",
-              evidence_id: evidence.evidence_id,
-            },
-            view: { kind: "summary" },
-          },
-          (id) => bundle.records.find((record) => record.evidence_id === id),
-        )
-      : ok(evidence);
-  if (!delivered.ok) return delivered;
-  // This summary answers the same CLI invocation as its complete parent.
-  // Later inspect_analysis_view requests are separate questions and do not
-  // inherit the parent's selected input path.
-  const selected =
-    detail === "summary" &&
-    (evidence.caller_input_path !== undefined ||
-      evidence.caller_input_paths !== undefined)
-      ? withEvidenceCallerInputPath(
-          delivered.value,
-          evidence.caller_input_path,
-          evidence.caller_input_paths,
-        )
-      : delivered.value;
-  const published = await publishEvidenceDelivery({
-    bundle,
-    complete: evidence,
-    delivered: selected,
-    outputPath,
-    operation: evidence.operation,
-    signal,
-  });
-  return published.ok ? ok(published.value.delivered) : published;
 };
 
 /** Selected Evidence delivered after its complete bundle was committed. */
@@ -221,8 +164,7 @@ export const publishEvidenceDelivery = async (input: {
   }
   if (signal?.aborted)
     return err(
-      new AnalysisCancelledError(operation, {
-        cause: signal.reason,
+      cancelledBy(operation, signal, {
         partialObservation: input.delivered,
         diagnostics: { evidence_bundle: { ...written.value } },
       }),
@@ -346,21 +288,49 @@ const withBundleReadResources = async <Value extends JsonValue>(
   signal?: AbortSignal,
 ): Promise<Result<Value, AnalysisError>> => {
   const resources = new ArtifactResourceScope();
-  let result: Result<Value, AnalysisError>;
-  try {
-    result = await read(resources);
-  } finally {
-    // Read errors own their retained leases and observe resolution or remaining
-    // failure in place. A retry must not replace the original read failure.
-    await resources.close().catch(() => undefined);
-    await dispatchQueuedInterrupts();
-  }
-  return result.ok && signal?.aborted
-    ? err(
-        new AnalysisCancelledError(operation, {
-          cause: signal.reason,
-          diagnostics: { completed_result: result.value },
-        }),
-      )
-    : result;
+  let readFailed = false;
+  return finalizeBundleWork(() => read(resources), {
+    providerId: "rea",
+    operation,
+    signal,
+    inspectPrimary: (primary) => {
+      readFailed = !primary.ok;
+    },
+    close: async () => {
+      try {
+        await resources.close();
+      } catch (cause: unknown) {
+        // A failed read already owns its retained leases and observes their
+        // resolution in place; a retry must not replace that failure. Only
+        // a completed read leaves a close failure without another owner.
+        if (!readFailed) throw cause;
+      } finally {
+        await dispatchQueuedInterrupts();
+      }
+    },
+    fallbackResource: `${operation} bundle read resources`,
+    diagnostics: (value) => ({ completed_result: value }),
+  });
+};
+
+/**
+ * Finalize bundle work through runOwned. An unexpected throw is a defect the
+ * adapters report as such, so it is rethrown after cleanup instead of being
+ * typed as a provider failure.
+ */
+const finalizeBundleWork = async <Value>(
+  work: () => Promise<Result<Value, AnalysisError>>,
+  options: RunOwnedOptions<Value>,
+): Promise<Result<Value, AnalysisError>> => {
+  let defect: { readonly cause: unknown } | undefined;
+  const finalized = await runOwned(async () => {
+    try {
+      return await work();
+    } catch (cause: unknown) {
+      defect = { cause };
+      throw cause;
+    }
+  }, options);
+  if (defect !== undefined) throw defect.cause;
+  return finalizedResult(finalized);
 };

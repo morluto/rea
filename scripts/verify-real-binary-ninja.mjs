@@ -65,12 +65,8 @@ const [
   importBuilt("binaryNinja/BinaryNinjaMcpConnection.js"),
   importBuilt("binaryNinja/BinaryNinjaProtocolValues.js"),
 ]);
-const { ArtifactResourceScope } = await importBuilt(
-  "artifacts/ArtifactResourceScope.js",
-);
-const { AnalysisCleanupLease } = await importBuilt(
-  "artifacts/AnalysisCleanupLease.js",
-);
+const { ArtifactResourceScope, AnalysisCleanupLease } =
+  await importBuilt("resources/index.js");
 const registrationResources = new ArtifactResourceScope();
 let registration;
 try {

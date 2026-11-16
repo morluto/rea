@@ -1,5 +1,11 @@
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { createHash } from "node:crypto";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { isDeepStrictEqual } from "node:util";
 import canonicalize from "canonicalize";
 import type {
@@ -11,7 +17,7 @@ import type {
   ProviderAvailability,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
@@ -36,10 +42,8 @@ import {
   binaryNinjaCapabilities,
 } from "./BinaryNinjaProviderCapabilities.js";
 import { BinaryNinjaSessionClient } from "./BinaryNinjaSessionClient.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
+import type { ProviderInspectionScope } from "../ports/ProviderInspectionScope.js";
 
 /** Bring-your-own Binary Ninja GUI MCP candidate; discovery performs no connection. */
 export class BinaryNinjaProvider implements AnalysisProviderCandidate {
@@ -85,7 +89,7 @@ export class BinaryNinjaProvider implements AnalysisProviderCandidate {
       const failure = new ProviderCleanupError(
         BINARY_NINJA_PROVIDER_IDENTITY.id,
         this.#ownedResources.cleanupResources,
-        { cause: cause instanceof Error ? cause.message : String(cause) },
+        { cause: errorMessage(cause) },
         { cause, operation: "close_owned_resources" },
       );
       bindArtifactFileCleanup(cause, failure);
@@ -165,9 +169,10 @@ export class BinaryNinjaProvider implements AnalysisProviderCandidate {
   ) {
     if (options?.signal?.aborted === true)
       return err(
-        new AnalysisCancelledError("binary-ninja:profile", {
-          cause: options.signal.reason,
-        }),
+        cancelledBy(
+          "binary-ninja:profile",
+          carriedReason(options.signal.reason),
+        ),
       );
     const config = await this.#configuration(options);
     if (!config.ok) return config;
@@ -180,14 +185,12 @@ export class BinaryNinjaProvider implements AnalysisProviderCandidate {
       compatibility_profile: "binary-ninja-gui-mcp",
       database_revision: null,
       cache_policy: "live",
-      registration_digest: createHash("sha256")
-        .update(
-          canonicalize({
-            ...settings,
-            header_names: Object.keys(headers).sort(),
-          }) ?? "",
-        )
-        .digest("hex"),
+      registration_digest: sha256Hex(
+        canonicalize({
+          ...settings,
+          header_names: Object.keys(headers).sort(),
+        }) ?? "",
+      ),
     });
     if (options?.scope !== undefined)
       this.#registrationByScope.delete(options.scope);

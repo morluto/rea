@@ -8,7 +8,7 @@ import { AdbProvider } from "../../adb/AdbProvider.js";
 
 import { AdbDeviceAnalysisService } from "./AdbDeviceAnalysisService.js";
 import type { AdbDeviceAnalysisPort } from "./AdbDeviceAnalysisPort.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,

@@ -1,3 +1,5 @@
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import type { AppConfig } from "../config/types.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -6,15 +8,14 @@ import {
   type AnalysisClient,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisProtocolError,
-  AnalysisResourceConstraintError,
+  measuredResourceConstraint,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -150,9 +151,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
       );
     if (wasCancelled(options))
       return err(
-        new AnalysisCancelledError(operation, {
-          cause: options?.signal?.reason,
-        }),
+        cancelledBy(operation, carriedReason(options?.signal?.reason)),
       );
     if (operation !== "health" && !isBinaryNinjaOperation(operation))
       return err(
@@ -173,9 +172,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
       const before = await this.#select(options);
       context.before = before;
       if (wasCancelled(options))
-        throw new AnalysisCancelledError(operation, {
-          cause: options?.signal?.reason,
-        });
+        throw cancelledBy(operation, carriedReason(options?.signal?.reason));
       if (operation === "health") return ok(this.#health(before));
       if (!isBinaryNinjaOperation(operation))
         throw new AnalysisProtocolError(
@@ -187,9 +184,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
       const after = await this.#verifyStillSelected(options);
       context.after = after;
       if (wasCancelled(options))
-        throw new AnalysisCancelledError(operation, {
-          cause: options?.signal?.reason,
-        });
+        throw cancelledBy(operation, carriedReason(options?.signal?.reason));
       return ok(
         createAnalysisExecution(result, BINARY_NINJA_PROVIDER_IDENTITY, {
           rawResult: {
@@ -215,7 +210,44 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
         }),
       );
     } catch (cause: unknown) {
-      return err(this.#failure(operation, cause, context));
+      const providerId = BINARY_NINJA_PROVIDER_IDENTITY.id;
+      const failure = classifyProviderFailure(cause, {
+        providerId,
+        operation,
+        attribute: (typed) =>
+          typed instanceof ProviderAdapterError &&
+          typed.operation === "transport"
+            ? new ProviderAdapterError(providerId, operation, {
+                cause: typed,
+                diagnostics: typed.diagnostics,
+              })
+            : typed,
+        recognise: (raw) =>
+          raw instanceof z.ZodError
+            ? new AnalysisOutputError(
+                operation,
+                "Binary Ninja MCP returned malformed or unsupported producer data: " +
+                  raw.issues
+                    .map(
+                      (issue) =>
+                        (issue.path.join(".") || "$") + ": " + issue.message,
+                    )
+                    .join("; "),
+                { cause: raw },
+              )
+            : undefined,
+        unclassified: (raw, details) =>
+          new ProviderAdapterError(providerId, operation, {
+            ...details,
+            cause: raw,
+            diagnostics: {
+              reason:
+                raw instanceof Error ? raw.message : "Unknown upstream failure",
+              recovery: RECOVERY,
+            },
+          }),
+      });
+      return err(this.#retainFailureEvidence(operation, failure, context));
     }
   }
 
@@ -259,43 +291,11 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     return this.#binding;
   }
 
-  #failure(
+  #retainFailureEvidence(
     operation: string,
-    cause: unknown,
+    failure: AnalysisError,
     { parameters, runner, before, after }: FailureContext,
   ): AnalysisError {
-    let failure: AnalysisError;
-    if (
-      cause instanceof ProviderAdapterError &&
-      cause.operation === "transport"
-    )
-      failure = new ProviderAdapterError(
-        BINARY_NINJA_PROVIDER_IDENTITY.id,
-        operation,
-        { cause, diagnostics: cause.diagnostics },
-      );
-    else if (cause instanceof AnalysisError) failure = cause;
-    else if (cause instanceof z.ZodError)
-      failure = new AnalysisOutputError(
-        operation,
-        `Binary Ninja MCP returned malformed or unsupported producer data: ${cause.issues.map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`).join("; ")}`,
-        { cause },
-      );
-    else
-      failure = new ProviderAdapterError(
-        BINARY_NINJA_PROVIDER_IDENTITY.id,
-        operation,
-        {
-          cause,
-          diagnostics: {
-            reason:
-              cause instanceof Error
-                ? cause.message
-                : "Unknown upstream failure",
-            recovery: RECOVERY,
-          },
-        },
-      );
     // Replies completed after the pre-operation view check can become partial
     // Evidence. A rejected caller selector needs correction, not those replies.
     if (
@@ -380,7 +380,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
     signal?: AbortSignal,
   ): Promise<BinaryNinjaToolReply> {
     if (signal?.aborted === true)
-      throw new AnalysisCancelledError(tool, { cause: signal.reason });
+      throw cancelledBy(tool, carriedReason(signal.reason));
     return this.connection.call(tool, args, signal);
   }
 
@@ -550,7 +550,7 @@ export class BinaryNinjaSessionClient implements AnalysisClient {
         "Binary Ninja reported a Raw view that does not start at file offset zero.",
       );
     if (length > BigInt(this.config.maxInputBytes))
-      throw new AnalysisResourceConstraintError(
+      throw measuredResourceConstraint(
         "binary_ninja_identity",
         "file-size",
         `The attached input has ${length.toString()} bytes, above maxInputBytes ${String(this.config.maxInputBytes)}; REA cannot verify its identity within that bound.`,

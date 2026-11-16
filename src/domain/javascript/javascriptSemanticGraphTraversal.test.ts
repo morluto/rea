@@ -194,7 +194,7 @@ it("returns only the referenced evidence contexts with resolvable trace facts", 
     );
 });
 
-it("traverses paths beyond the former fixed depth ceiling", () => {
+it("traverses a path of 70 relations", () => {
   const original = semanticFixtureGraph();
   const input = constructionInput(original);
   const evidenceContexts = registryForGraph(original);

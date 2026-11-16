@@ -9,13 +9,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { isOwnershipPsExecution } from "./lib/ownership-ps-trace.mjs";
 import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const solcModule = process.env.REA_VERIFY_SOLC_MODULE;
 const strace = process.env.REA_VERIFY_STRACE_COMMAND;
@@ -54,7 +55,7 @@ const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
 );
 const run = createVerifierRun();
-const root = await PrivateRuntimeRoot.create({ prefix: "rea-evm-verifier-" });
+const root = await VerifierFixture.open({ prefix: "rea-evm-verifier-" });
 const client = new Client({ name: "evm-interface-verifier", version: "1" });
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -132,7 +133,7 @@ try {
       report.artifact.sha256,
       createHash("sha256").update(carrier).digest("hex"),
     );
-    assert.equal(evidence.subject.digest.sha256, report.artifact.sha256);
+    assert.equal(evidence.subject.identity.sha256, report.artifact.sha256);
     assert.equal(report.artifact.bytes, carrier.length);
     assert.equal(
       report.bytecode.sha256,
@@ -162,23 +163,17 @@ try {
     if (mode === "mcp") assert.deepEqual(value.normalized_result, report);
     return report;
   };
+  // Ownership inventory runs ps from fixed system locations, so a caller PATH
+  // without ps neither hides nor replaces it and inspection still completes.
   const ownershipProbe = join(root.path, "ownership-prerequisite.hex");
   await writeFile(ownershipProbe, "0x00");
-  const missingInspection = await inspect(
-    "cli",
-    ownershipProbe,
-    "hex",
-    "unsupported_provider",
-    {
-      command: process.execPath,
-      prefix: [],
-      client,
-      environment: { ...environment, PATH: root.path },
-    },
-  );
-  assert.equal(missingInspection.code, "capability_unavailable");
-  assert.match(missingInspection.message, /procps-compatible ps/u);
-  assert.equal(missingInspection.details.operation, "prepare_owned_process");
+  const pathWithoutPs = await inspect("cli", ownershipProbe, "hex", undefined, {
+    command: process.execPath,
+    prefix: [],
+    client,
+    environment: { ...environment, PATH: root.path },
+  });
+  assert.equal(pathWithoutPs.bytecode.hex, "00");
   cases++;
   for (const [name, optimizer, viaIR] of [
     ["plain", false, false],
@@ -369,11 +364,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await limitedClient.close();
-      } finally {
-        await limitedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => limitedClient.close(),
+        () => limitedTransport.close(),
+      ]);
     }
   }
   const brokenLimiter = join(root.path, "broken-limiter");
@@ -463,11 +458,11 @@ try {
         cases++;
       }
     } finally {
-      try {
-        await selectedClient.close();
-      } finally {
-        await selectedTransport.close();
-      }
+      // A close that fails keeps the root until release confirms it.
+      await root.closeEarly([
+        () => selectedClient.close(),
+        () => selectedTransport.close(),
+      ]);
     }
   }
   for (const [name, encoding] of [
@@ -512,11 +507,7 @@ try {
           line.endsWith(" = 0") || / = -1 [A-Z]+/.test(line),
           `Incomplete exec observation: ${line}`,
         );
-        const ownershipInspection =
-          ["/usr/bin/ps", "/bin/ps"].includes(match[1]) &&
-          line.includes(
-            '["ps", "-axo", "pid=,ppid=,pgid=,uid=,stat=,command="]',
-          );
+        const ownershipInspection = isOwnershipPsExecution(line);
         assert.ok(
           [
             process.execPath,
@@ -543,16 +534,13 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    () => client.close(),
-    () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // The root is removed only after the client and transport confirm.
+  root.releaseAfter(() => client.close());
+  root.releaseAfter(() => transport.close());
+  try {
+    await root.release();
+  } catch (cause) {
+    failures.push(cause);
   }
 }
 const verifier = await completeVerifierRun(run);
@@ -586,9 +574,13 @@ console.log(
   ),
 );
 if (failures.length !== 0)
-  throw new AggregateError(
-    failures,
-    "Offline EVM interface verification failed; cleanup failures retained.",
+  throw Object.assign(
+    new AggregateError(
+      failures,
+      "Offline EVM interface verification failed; cleanup failures retained.",
+    ),
+    // The caller can retry the retained root from the final failure.
+    root.released ? {} : { cleanupLeases: [root] },
   );
 
 function permitsStdioSocketObservation(line, localDescriptors) {

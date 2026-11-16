@@ -1,3 +1,5 @@
+import { ellipsisExcerpt } from "../domain/excerpt.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import {
   Client,
   SdkError,
@@ -6,7 +8,6 @@ import {
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import {
-  AnalysisCancelledError,
   AnalysisProtocolError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
@@ -86,9 +87,7 @@ export const createBinaryNinjaRedactor = (
     let redacted = text;
     for (const secret of secrets)
       redacted = redacted.replaceAll(secret, "[redacted]");
-    return redacted.length > MAX_DIAGNOSTIC_CHARACTERS
-      ? `${redacted.slice(0, MAX_DIAGNOSTIC_CHARACTERS)}…`
-      : redacted;
+    return ellipsisExcerpt(redacted, MAX_DIAGNOSTIC_CHARACTERS);
   };
 };
 
@@ -162,7 +161,7 @@ export const createBinaryNinjaMcpConnection = (
     signal: AbortSignal | undefined,
   ): void => {
     if (signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, { cause: signal.reason });
+      throw cancelledBy(operation, carriedReason(signal.reason));
   };
   const failure = (
     cause: unknown,

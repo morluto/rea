@@ -1,7 +1,7 @@
 import type {
   AnalysisOperation,
   CapabilityDescriptor,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 
 /** This version identifies REA's adapter, not Binary Ninja or its MCP server. */
 export const BINARY_NINJA_PROVIDER_IDENTITY = Object.freeze({

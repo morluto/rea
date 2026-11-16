@@ -1,32 +1,23 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
+  projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
-  stableArtifactInputRecovery,
+  stableArtifactInputFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  artifactFileCancellationCause,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { BinaryHardeningPort } from "../../application/binaryDiagnostics/BinaryHardeningPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { BinaryHardeningPort } from "../../ports/binaryDiagnostics/BinaryHardeningPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   BINARY_HARDENING_LIMITATIONS,
@@ -38,12 +29,13 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok } from "../../domain/result.js";
 import { BINARY_HARDENING_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
 import { readElfHardening } from "./ElfHardening.js";
 import { readMachoHardening } from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
 
@@ -139,25 +131,12 @@ const binaryHardeningFailurePrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(
-      OPERATION,
-      input.path,
-      cause.message,
-      { cause },
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
     return new AnalysisResourceConstraintError(
       OPERATION,
@@ -169,24 +148,12 @@ const binaryHardeningFailurePrimary = (
         ...fixedAllowanceOptions(
           "The binary hardening structural allowance",
           "parser",
+          binaryResourceCeiling(cause),
         ),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -207,11 +174,7 @@ const binaryHardeningFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,
@@ -224,7 +187,7 @@ const binaryHardeningFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

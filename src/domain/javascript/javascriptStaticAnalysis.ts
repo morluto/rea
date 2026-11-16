@@ -1,3 +1,11 @@
+import type { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
+import {
+  failedJavaScriptStaticAnalysis,
+  detectVendors,
+  registrationKey,
+  stringValue,
+} from "./javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptMemberMutationAllowance } from "./javascriptSemanticWorkAllowance.js";
 import {
   JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS,
   type JavaScriptSemanticPrecisionInput,
@@ -28,15 +36,13 @@ import {
   hasPossibleCommonJsDelegateWrite,
   semanticFactoryLoaderMemberAt,
 } from "./javascriptSemanticRequireOrigin.js";
-import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
+import {
+  semanticPrecisionControls,
+  semanticResourceLimitReason,
+} from "./javascriptSemanticResourceLimits.js";
 import { createStaticPathIntrinsicQuery } from "./javascriptStaticPathIntrinsics.js";
 import { createSemanticExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 import { finishElectronBrowserWindowsSteps } from "./electronStaticAnalysisBrowser.js";
-import {
-  detectVendors,
-  registrationKey,
-  stringValue,
-} from "./javascriptStaticAnalysisHelpers.js";
 import {
   addReference,
   addEndpoint,
@@ -81,11 +87,61 @@ import {
   type JavaScriptStaticCoverage,
 } from "./javascriptStaticCoverage.js";
 
+/**
+ * Syntax-level facts for a parsed source whose member-mutation phase was
+ * refused. Every finding that reads mutation facts is unexamined, so its
+ * absence here is not evidence of absence; parser, comment and text facts
+ * remain, marked with the refused phase.
+ */
+export const memberMutationRefusedJavaScriptStaticAnalysis = (
+  source: string,
+  file: ParsedJavaScriptSource,
+  refusal: AnalysisResourceConstraintError,
+): JavaScriptStaticAnalysis => {
+  const parserErrors = file.errors.length;
+  const accumulator = createJavaScriptAnalysisAccumulator(source.length);
+  addSourceMapDirectives(source, file.comments ?? [], accumulator);
+  const reason = `The member-mutation phase was refused (${refusal.reason}); findings that depend on member-mutation facts were not examined.`;
+  const coverage: JavaScriptStaticCoverage = {
+    syntax:
+      parserErrors === 0
+        ? { status: "complete", error_count: 0 }
+        : { status: "recovered", error_count: parserErrors },
+    semantics: { unknown_findings: null, uncertainty: [] },
+    examination: {
+      status: "not-examined",
+      semantic_resource_limits: [],
+      electron_call_paths_limited: false,
+      refused_phase: "member-mutations",
+    },
+    applicability: { electron: "unknown" },
+    unexamined_reason: reason,
+  };
+  return {
+    ...failedJavaScriptStaticAnalysis(),
+    parse_status: javaScriptStaticParseStatus(coverage),
+    analysis_coverage: coverage,
+    parse_error_count: parserErrors,
+    source_map_urls: accumulator.sourceMaps,
+    vendors: detectVendors(source),
+    limitations: [
+      `${reason} Absence of findings is not evidence of absence.`,
+      ...(parserErrors > 0
+        ? [
+            "The parser recovered from syntax errors; affected bindings are partial.",
+          ]
+        : []),
+      "JavaScript syntax was parsed as data and was never evaluated.",
+    ],
+  };
+};
+
 /** Static analysis that yields during its source traversal; results are unchanged. */
 export function* analyzeParsedJavaScriptStaticSourceSteps(
   source: string,
   file: ParsedJavaScriptSource,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
   // One definitions pass serves receiver classification and binding lookup.
@@ -93,6 +149,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     undefined,
     precision,
+    memberMutationAllowance,
   );
   const { bindings, receivers } = index;
   yield* index.indexAmbientWritesSteps();
@@ -210,6 +267,11 @@ const finalizeStaticAnalysis = (
       value.loader !== "factory-loader",
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
+  const controls = semanticPrecisionControls(
+    resourceLimits,
+    accumulator.electronCallPathLimits ?? [],
+    bindings.precision,
+  );
   const candidateElectron = [
     ...accumulator.browserWindows,
     ...accumulator.contextBridgeApis,
@@ -249,6 +311,7 @@ const finalizeStaticAnalysis = (
         : { semantic_precision: bindings.precision }),
       electron_call_paths_limited:
         (accumulator.electronCallPathLimits?.size ?? 0) > 0,
+      ...(controls.length === 0 ? {} : { controls }),
     },
     applicability: { electron: electronObserved ? "observed" : "unknown" },
   };
@@ -268,7 +331,7 @@ const finalizeStaticAnalysis = (
       .sort()
       .map(
         (control) =>
-          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call (--semantic-precision JSON); no REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
+          `Electron wrapper expansion reached semantic_precision.${control}=${String(bindings.precision[control])}. Increase semantic_precision.${control} on the next analyze_javascript_application call; coverage records the control. No REA restart is required. Worker memory and transfer admission remain independent; cyclic or unsupported paths remain unknown.`,
       ),
     ...(parserErrors === 0
       ? []

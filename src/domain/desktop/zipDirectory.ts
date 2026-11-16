@@ -5,6 +5,7 @@ import {
   ZIP_MAX_COMMENT_BYTES,
   zipEndOfCentralDirectoryCandidates,
 } from "../zipEndOfCentralDirectory.js";
+import { strictUtf8Decoder } from "../strictUtf8.js";
 
 const CENTRAL_HEADER = 0x02014b50;
 const CENTRAL_HEADER_BYTES = 46;
@@ -17,7 +18,7 @@ const UNICODE_PATH = 0x7075;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
 const MSDOS_DIRECTORY = 0x10;
-const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const STRICT_UTF8 = strictUtf8Decoder("preserve");
 
 /** An archive's central directory read a record at a time, bounded to the records it keeps. */
 export interface ZipDirectory {
@@ -84,19 +85,23 @@ const unicodePath = (
   view: DataView,
   { name, extra, comment, flags }: RecordName,
 ): Uint8Array | undefined => {
+  // zip.js indexes extra fields by ID with Map.set: the last occurrence
+  // replaces earlier ones, even when that last claim fails validation.
+  let selected: { at: number; length: number } | undefined;
   for (let at = extra; at + 4 <= comment;) {
     const length = view.getUint16(at + 2, true);
-    if (view.getUint16(at, true) === UNICODE_PATH)
-      return length >= 5 &&
-        at + 4 + length <= comment &&
-        bytes[at + 4] === 1 &&
-        (flags & UTF8_NAME) === 0 &&
-        view.getUint32(at + 5, true) === crc32(bytes.subarray(name, extra))
-        ? bytes.subarray(at + 9, at + 4 + length)
-        : undefined;
+    if (view.getUint16(at, true) === UNICODE_PATH) selected = { at, length };
     at += 4 + length;
   }
-  return undefined;
+  if (selected === undefined) return undefined;
+  const { at, length } = selected;
+  return length >= 5 &&
+    at + 4 + length <= comment &&
+    bytes[at + 4] === 1 &&
+    (flags & UTF8_NAME) === 0 &&
+    view.getUint32(at + 5, true) === crc32(bytes.subarray(name, extra))
+    ? bytes.subarray(at + 9, at + 4 + length)
+    : undefined;
 };
 
 /**

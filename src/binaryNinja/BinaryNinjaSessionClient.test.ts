@@ -1,3 +1,4 @@
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createBinaryNinjaTarget,
@@ -821,7 +822,7 @@ describe("Binary Ninja cancellation and startup retries", () => {
           failed = true;
           if (mode === "cancellation") {
             controller.abort(reason);
-            throw new AnalysisCancelledError(name, { cause: reason });
+            throw cancelledBy(name, carriedReason(reason));
           }
           throw new AnalysisTimeoutError(name, 1000);
         }

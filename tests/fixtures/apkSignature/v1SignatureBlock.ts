@@ -220,6 +220,55 @@ export const withExtension = (
   );
 };
 
+/** The certificate with its `extensions [3]` field declared twice. */
+export const withRepeatedExtensions = (certificate: Uint8Array): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.flatMap((field) =>
+        certificate[field.start] === 0xa3
+          ? [part(field), part(field)]
+          : [part(field)],
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
+/**
+ * The certificate with its one `extensions [3]` field replaced by a
+ * subjectKeyIdentifier extension for each key identifier, in order.
+ */
+export const withSubjectKeyIdentifiers = (
+  certificate: Uint8Array,
+  ...keyIdentifiers: readonly Uint8Array[]
+): Uint8Array => {
+  const { fields, outer } = certificateParts(certificate);
+  const part = ({ start, end }: DerSpan) => certificate.subarray(start, end);
+  const extensions = tlv(
+    0xa3,
+    tlv(
+      0x30,
+      ...keyIdentifiers.map((keyIdentifier) =>
+        tlv(0x30, oid("2.5.29.14"), tlv(0x04, tlv(0x04, keyIdentifier))),
+      ),
+    ),
+  );
+  return tlv(
+    0x30,
+    tlv(
+      0x30,
+      ...fields.map((field) =>
+        certificate[field.start] === 0xa3 ? extensions : part(field),
+      ),
+    ),
+    ...outer.map(part),
+  );
+};
+
 export interface SignerInfoSpec {
   /** Certificate whose issuer and serial the SignerInfo names. */
   readonly names: Uint8Array;

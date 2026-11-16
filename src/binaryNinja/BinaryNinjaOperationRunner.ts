@@ -1,3 +1,6 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { constants as bufferConstants } from "node:buffer";
 import { getHeapStatistics } from "node:v8";
 import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
@@ -8,10 +11,9 @@ import {
   analysisSearchQuerySchema,
 } from "../domain/analysisSearch.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisProtocolError,
-  AnalysisResourceConstraintError,
+  measuredResourceConstraint,
 } from "../domain/analysisErrorCore.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
@@ -131,7 +133,7 @@ export class BinaryNinjaOperationRunner {
   relationshipCoverage: RelationshipCoverage | undefined;
   /** Whether the last `xrefs` read may omit references; never part of Evidence. */
   referencesTruncated: boolean | undefined;
-  private retainedCapacity = 0n;
+  private retainedCapacity = 0n; // not-an-allowance: Tally of estimated retained bytes compared with live memory headroom.
 
   constructor(
     private readonly connection: BinaryNinjaMcpConnection,
@@ -173,9 +175,7 @@ export class BinaryNinjaOperationRunner {
 
   private throwIfCancelled(tool: string): void {
     if (this.options.signal?.aborted === true)
-      throw new AnalysisCancelledError(tool, {
-        cause: this.options.signal.reason,
-      });
+      throw cancelledBy(tool, carriedReason(this.options.signal.reason));
   }
 
   private async document(
@@ -424,7 +424,7 @@ export class BinaryNinjaOperationRunner {
         length > BigInt(bufferConstants.MAX_LENGTH) ||
         codeUnits > BigInt(bufferConstants.MAX_STRING_LENGTH)
       )
-        throw new AnalysisResourceConstraintError(
+        throw measuredResourceConstraint(
           "binary_ninja_strings",
           "memory",
           "Insufficient runtime capacity for the complete string inventory, retained replies, and serialized Evidence.",
@@ -462,7 +462,7 @@ export class BinaryNinjaOperationRunner {
       requiredBytes > BigInt(availableBytes) ||
       requiredBytes > BigInt(bufferConstants.MAX_STRING_LENGTH) * 4n
     )
-      throw new AnalysisResourceConstraintError(
+      throw measuredResourceConstraint(
         operation,
         "memory",
         "Insufficient runtime capacity for retained Binary Ninja replies, normalized results, and serialized Evidence.",
@@ -788,10 +788,7 @@ const decodeString = (
       return bytes.toString("latin1");
     case "Utf8String":
       try {
-        return new TextDecoder("utf-8", {
-          fatal: true,
-          ignoreBOM: true,
-        }).decode(bytes);
+        return decodeStrictUtf8(bytes, "preserve");
       } catch {
         return undefined;
       }
@@ -807,10 +804,11 @@ const decodeString = (
       }
     case "Utf32String": {
       if (!littleEndian || bytes.length % 4 !== 0) return undefined;
+      const reader = new BinaryReader(bytes, littleEndian, "UTF-32");
       const points: number[] = [];
       const parts: string[] = [];
       for (let index = 0; index < bytes.length; index += 4) {
-        const point = bytes.readUInt32LE(index);
+        const point = reader.u32(index);
         if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff))
           return undefined;
         points.push(point);

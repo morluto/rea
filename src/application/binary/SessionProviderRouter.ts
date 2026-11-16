@@ -11,7 +11,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   AnalysisProviderRegistry,
   type AnalysisProviderBinding,

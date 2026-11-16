@@ -1,6 +1,7 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { readProviderRegistration } from "../providers/ReadProviderRegistration.js";
 import { z } from "zod";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -29,7 +30,12 @@ const registrationSchema = z
         "Binary Ninja MCP must use a 127.0.0.1 or [::1] HTTP endpoint without URL credentials, query, or fragment",
       ),
     headers: z.record(z.string(), z.string()).default({}),
-    timeoutMs: z.number().int().positive().max(2_147_483_647).default(300_000),
+    timeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_NODE_TIMER_DELAY_MS)
+      .default(300_000),
     maxInputBytes: z
       .number()
       .int()

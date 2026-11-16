@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
-import { readMachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
   machoImage,
   readerOf,
@@ -321,7 +321,7 @@ it("retains legacy command metadata and derives simulator platform from CPU", ()
         offset: 64,
         size: 16,
         rawSha256: null,
-        legacyBuild: { version: 0x000e0200, sdk: 0x000f0000 },
+        legacyBuild: { platform: 2, version: 0x000e0200, sdk: 0x000f0000 },
       },
     ],
   });

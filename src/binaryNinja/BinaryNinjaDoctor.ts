@@ -1,9 +1,9 @@
-import type { DoctorProviderInspection } from "../application/Doctor.js";
+import type { DoctorProviderInspection } from "../ports/DoctorProviderInspection.js";
 import {
   readBinaryNinjaConfiguration,
   type BinaryNinjaConfiguration,
 } from "./BinaryNinjaConfiguration.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type { Result } from "../domain/result.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 

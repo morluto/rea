@@ -4,7 +4,7 @@ import {
   createAnalysisExecution,
   type AnalysisOperation,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { EnhancedTools } from "./EnhancedTools.js";
 import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";

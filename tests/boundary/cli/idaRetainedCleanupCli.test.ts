@@ -58,7 +58,6 @@ describe("headless IDA timeout through the one-shot CLI", () => {
           REA_IDA_MCP_CONFIG: registration,
           REA_LOG_LEVEL: "silent",
         },
-        timeoutMs: 30_000,
       });
 
       expect(result.exitCode).toBe(1);

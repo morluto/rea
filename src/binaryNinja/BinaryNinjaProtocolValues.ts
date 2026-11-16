@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { normalize } from "node:path";
 import { z } from "zod";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
@@ -362,6 +363,6 @@ export const sameBinaryNinjaHostPath = (
   producer: string,
   host: string,
 ): boolean =>
-  process.platform === "win32"
+  HOST_PLATFORM.platform === "win32"
     ? normalize(producer).toLowerCase() === normalize(host).toLowerCase()
     : normalize(producer) === normalize(host);
