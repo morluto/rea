@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { DEBUGGER_SESSION_STOP_CODES } from "../domain/debuggerSessionErrors.js";
 
-import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   commandEvidenceDetailSchema,
   gdbCommandResultSchema,
@@ -30,7 +30,7 @@ export const GDB_TOOL_CONTRACTS = [
     description:
       "Start a persistent caller-supplied GDB session and return its session ID. Linux only; detaching a live inferior during close requires a verified durable output TTY. Startup suppresses init files and auto-loading, preferring MI3. Optional inferior_tty selects a verified terminal for later inferior runs; keep it available after GDB exits so close can detach a live inferior safely. The session belongs to this REA server process.",
     inputSchema: z.strictObject({
-      inferior_tty: localPathStringSchema
+      inferior_tty: absoluteLocalPathStringSchema
         .optional()
         .describe(
           "Caller-selected terminal path for future inferior runs. GDB must report the exact configured path before the session is ready.",

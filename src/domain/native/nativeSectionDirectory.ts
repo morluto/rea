@@ -121,6 +121,8 @@ const request = (
       "structure",
       STRUCTURE_BYTES,
       "Native directory exceeds the 16777216-byte (16 MiB) structural decoding budget. This release has no runtime override.",
+      "structure",
+      "bytes",
     );
   return { offset: exact(offset), size: exact(size) };
 };
@@ -237,6 +239,8 @@ export function* readElfSectionDirectory(
           "structure",
           STRUCTURE_BYTES,
           `Decoded ELF section names require ${String(decoded.requiredBytes)} bytes, above the ${String(decoded.maximumBytes)}-byte remaining structural budget`,
+          "structure",
+          "bytes",
         );
       if (decoded.state === "unsupported")
         section_names_limitation = `ELF section names are unavailable because compression type ${String(decoded.compressionType)} is unsupported`;
@@ -272,6 +276,8 @@ export function* readElfSectionDirectory(
               "structure",
               STRUCTURE_BYTES,
               "Decoded ELF section names exceed the 16 MiB structural budget",
+              "structure",
+              "bytes",
             );
           decoded = {
             name: elfStringTableText(observed),

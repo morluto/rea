@@ -126,12 +126,9 @@ it("describes compiler coverage from the retained result when report trimming dr
   const provider = new RustBinaryProvider();
   try {
     const inspect = (output_bytes: number) =>
-      provider.inspect({
-        path,
-        max_rustc_hashes: 1,
-        producer_limits: { output_bytes },
-      });
-    // The smallest admitted report keeps dependencies and no compiler path.
+      provider.inspect({ path, producer_limits: { output_bytes } });
+    // The smallest admitted report keeps dependencies and no compiler path:
+    // the reader's 64-path prefix is larger than the trimming guidance.
     let refused = 16;
     let admitted = 1024 * 1024;
     while (admitted - refused > 1) {
@@ -147,7 +144,7 @@ it("describes compiler coverage from the retained result when report trimming dr
     // The reader's partial-prefix guidance referred to a record that no
     // longer exists; the trimming guidance names its control directly.
     expect(text).not.toContain("rustc_commit.coverage.limit");
-    expect(text).not.toContain("max_rustc_hashes=1");
+    expect(text).not.toContain("max_rustc_hashes=64");
     expect(text).toContain(
       "Compiler paths were omitted to preserve dependency facts",
     );
@@ -162,6 +159,47 @@ it("describes compiler coverage from the retained result when report trimming dr
         effective_value: admitted,
       }),
     });
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports byte trimming only when it removes a compiler path", async () => {
+  const root = await createTestTempDirectory("rea-rust-trim-window-");
+  const path = join(root, "many-hashes.elf");
+  await writeFile(path, createRustHashOverflowImage());
+  const provider = new RustBinaryProvider();
+  try {
+    const inspect = (output_bytes: number) =>
+      provider.inspect({ path, producer_limits: { output_bytes } });
+    const complete = await inspect(1024 * 1024);
+    if (!complete.ok) throw complete.error;
+    const hashes = complete.value.rustc_commit?.hashes.length;
+    expect(complete.value.rustc_commit?.coverage?.reason).toBe(
+      "max_rustc_hashes",
+    );
+    const fullBytes = Buffer.byteLength(JSON.stringify(complete.value));
+    // Below the complete report, swapping the reader's guidance for the
+    // shorter trimming guidance can make every path fit again.
+    let keptEveryPath = 0;
+    for (let output = fullBytes - 1; output > fullBytes - 120; output -= 1) {
+      const result = await inspect(output);
+      if (!result.ok) continue;
+      const commit = result.value.rustc_commit;
+      if (commit === null) continue;
+      const text = result.value.limitations.join(" ");
+      if (commit.hashes.length === hashes) {
+        keptEveryPath += 1;
+        expect(commit, `output_bytes ${output}`).toEqual(
+          complete.value.rustc_commit,
+        );
+        expect(text).not.toContain("Compiler paths were omitted");
+      } else
+        expect(commit.coverage?.reason, `output_bytes ${output}`).toBe(
+          "report_bytes",
+        );
+    }
+    expect(keptEveryPath).toBeGreaterThan(0);
   } finally {
     await provider.close();
   }

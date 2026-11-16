@@ -28,6 +28,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 interface ManagedSourceObservation {
   readonly byteLength: number;
@@ -111,7 +112,7 @@ export const readManagedSnapshot = async (
       signal?.throwIfAborted();
       return {
         byteLength: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes,
       };
     },

@@ -90,6 +90,7 @@ import type {
   ProcessCaptureEventJournalEntry,
   RecordProcessCaptureEvent,
   TerminalFrame,
+  ProcessCaptureRootProcess,
 } from "../../domain/process/processCapture.js";
 import { partialProcessCaptureObservationSchema } from "../../domain/process/processCapture.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
@@ -704,6 +705,7 @@ export const createRunManifest = async (
   startedAt: Date,
   completedAt: Date,
   executable: LaunchedExecutableObservation,
+  rootProcess: ProcessCaptureRootProcess,
   host: {
     readonly platform: NodeJS.Platform;
     readonly architecture: NodeJS.Architecture;
@@ -732,6 +734,7 @@ export const createRunManifest = async (
       state: executable.state,
       reason: executable.reason,
     },
+    root_process: rootProcess,
     normalization_sha256: digestProcessCommitment(scenario.normalization),
   };
 };

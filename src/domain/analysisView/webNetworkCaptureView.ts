@@ -41,6 +41,7 @@ import { sha256Hex } from "../../kernel/sha256Hex.js";
 /** Offsets page the parent's retained record order, preserving producer ordinals. */
 export const captureViewRequestSchema = z.strictObject({
   kind: z.literal("capture"),
+  // detail-level: how much of the capture the caller asks to see, not what was examined.
   detail: z.enum(["preview", "complete"]).default("preview"),
   offset: z.int().nonnegative().default(0),
   limit: z.int().positive().default(64),

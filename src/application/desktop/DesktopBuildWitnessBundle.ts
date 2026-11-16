@@ -32,7 +32,7 @@ import {
   guestFileAnswerWorkingBytes,
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 

@@ -431,7 +431,7 @@ describe("draftTaskFiles values' text and references", () => {
     ]);
   });
 
-  it("resolves a key the records of many archive entries share in time that grows with the records, not with their square", () => {
+  it("resolves a key the records of many archive entries share with work that grows with the records, not with their square", () => {
     // Copying the key's list of elements for each record took four seconds for 60,000 here.
     const entry = (name: string, text: string) => {
       const bytes = new TextEncoder().encode(text);
@@ -467,34 +467,57 @@ describe("draftTaskFiles values' text and references", () => {
     const pointer =
       "/entries/[name=book.xml]/view/root/children/[name=ope]/attributes/category";
 
-    const started = performance.now();
-    const { values } = draftValues(
-      {
-        added: [],
-        changed: [pointer],
-        removed: [],
-        added_count: 0,
-        changed_count: 1,
-        removed_count: 0,
+    // Each record is matched against the few elements its key already lists.
+    // Matching it against every earlier record makes records^2 comparisons;
+    // counting the elements `includes` scans stops that at the bound.
+    const allowed = 64 * records.length * 300;
+    let scanned = 0;
+    const array = Array.prototype;
+    const { includes } = array;
+    Object.defineProperty(array, "includes", {
+      configurable: true,
+      writable: true,
+      value(this: unknown[], ...args: [unknown, number?]) {
+        scanned += this.length;
+        if (scanned > allowed) throw new Error("records matched pairwise");
+        return includes.apply(this, args);
       },
-      {
-        ends,
-        listed: () => true,
-        noise: () => undefined,
-        format: () => "xml",
-        referenceRoots: (view) => (view === null ? [] : [view]),
-      },
-    );
-    const elapsed = performance.now() - started;
+    });
+    let drafted: ReturnType<typeof draftValues>;
+    try {
+      drafted = draftValues(
+        {
+          added: [],
+          changed: [pointer],
+          removed: [],
+          added_count: 0,
+          changed_count: 1,
+          removed_count: 0,
+        },
+        {
+          ends,
+          listed: () => true,
+          noise: () => undefined,
+          format: () => "xml",
+          referenceRoots: (view) => (view === null ? [] : [view]),
+        },
+      );
+    } finally {
+      Object.defineProperty(array, "includes", {
+        configurable: true,
+        writable: true,
+        value: includes,
+      });
+    }
 
-    expect(values[0]?.refers_to).toEqual([
+    expect(scanned).toBeLessThanOrEqual(allowed);
+    expect(drafted.values[0]?.refers_to).toEqual([
       {
         attribute: "category",
         value: "1",
         element: '<cat key="1" name="Rent"/>',
       },
     ]);
-    expect(elapsed).toBeLessThan(1000);
   });
 });
 

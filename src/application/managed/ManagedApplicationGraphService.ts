@@ -4,6 +4,7 @@ import {
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   createEvidence,
@@ -24,19 +25,43 @@ import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.j
 
 const OPERATION = "project_managed_application_graph" as const;
 
+/**
+ * Project authenticated managed Evidence into a provider-neutral graph; the
+ * selected artifact, member and boundary records are its sources.
+ */
+export const projectManagedApplicationGraphExecution = (
+  rawInput: unknown,
+  lookup?: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal"> = {},
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const request = resolveManagedGraphEvidenceInput(rawInput, lookup, options);
+  if (!request.ok) return request;
+  const { artifact, members, boundaries } = request.value.sources;
+  return ok({
+    evidence: projectManagedGraphEvidence(request.value),
+    sources: [artifact, members, boundaries].flatMap((source) =>
+      source === undefined || source === null ? [] : [source.evidence],
+    ),
+    unknown: undefined,
+  });
+};
+
 /** Project authenticated managed Evidence into a provider-neutral graph. */
 export const projectManagedApplicationGraphEvidence = (
   rawInput: unknown,
   lookup?: EvidenceLookup,
   options: Pick<ExecutionOptions, "signal"> = {},
 ): Result<Evidence, AnalysisError> => {
-  const request = resolveManagedGraphEvidenceInput(rawInput, lookup, options);
-  if (!request.ok) return request;
-  return ok(projectManagedGraphEvidence(request.value));
+  const projected = projectManagedApplicationGraphExecution(
+    rawInput,
+    lookup,
+    options,
+  );
+  return projected.ok ? ok(projected.value.evidence) : projected;
 };
 
 /** Resolve selected records before the managed owner authenticates and joins them. */
-export const resolveManagedGraphEvidenceInput = (
+const resolveManagedGraphEvidenceInput = (
   rawInput: unknown,
   lookup?: EvidenceLookup,
   options: Pick<ExecutionOptions, "signal"> = {},
@@ -52,7 +77,7 @@ export const resolveManagedGraphEvidenceInput = (
 };
 
 /** Project the workflow owner's authenticated, identity-checked source facts. */
-export const projectManagedGraphEvidence = (
+const projectManagedGraphEvidence = (
   request: ManagedGraphProjection,
 ): Evidence =>
   createManagedApplicationGraphEvidence(

@@ -28,7 +28,10 @@ import {
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
 import { ElectronFusePathFailure } from "./ElectronFusePath.js";
-import { ElectronFuseResourceFailure } from "./ElectronFuseReader.js";
+import {
+  ELECTRON_FUSE_LIMITS,
+  ElectronFuseResourceFailure,
+} from "./ElectronFuseReader.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_electron_fuses";
@@ -84,16 +87,30 @@ export const electronFuseFailure = (
       cause.boundary === "file-size" ? "file-size" : "capacity",
       cause.message,
       cause.boundary === "file-size"
-        ? { maximum_input_bytes: 1024 * 1024 * 1024 }
-        : { maximum_sentinels_per_slice: 32 },
+        ? { maximum_input_bytes: ELECTRON_FUSE_LIMITS.maximumFileBytes }
+        : {
+            maximum_sentinels_per_slice:
+              ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
+          },
       {
         cause,
-        ...fixedAllowanceOptions(
-          cause.boundary === "file-size"
-            ? "the 1 GiB Electron fuse input allowance"
-            : "The Electron fuse sentinel inventory",
-          cause.boundary === "file-size" ? "input" : "count",
-        ),
+        ...(cause.boundary === "file-size"
+          ? fixedAllowanceOptions(
+              "the Electron fuse input allowance",
+              "input",
+              {
+                limit: ELECTRON_FUSE_LIMITS.maximumFileBytes,
+                unit: "bytes",
+              },
+            )
+          : fixedAllowanceOptions(
+              "The Electron fuse sentinel inventory",
+              "count",
+              {
+                limit: ELECTRON_FUSE_LIMITS.maximumSentinelsPerSlice,
+                unit: "sentinels per slice",
+              },
+            )),
       },
     );
   const formatFailure = parseFailureAnalysisError(operation, path, cause);

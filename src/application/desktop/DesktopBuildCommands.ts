@@ -16,11 +16,9 @@ import {
   guestFileAnswerCeiling,
   guestFileAnswerRefusal,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import {
-  runRea as runControllerRea,
-  type ControlledComputer,
-} from "../../desktop/BuildComputerController.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import { runRea as runControllerRea } from "../../desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 
 /** The work folder REA keeps under the computer user's home; every capture leaves it out. */
 export const WORK = ".rea-build";

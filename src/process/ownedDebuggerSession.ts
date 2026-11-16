@@ -19,14 +19,42 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type {
+  DebuggerCleanupIncomplete,
+  DebuggerCleanupIncompleteCode,
+} from "../domain/debuggerSessionErrors.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
-import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
+import {
+  OwnedDebuggerCleanupError,
+  OwnedDebuggerStopFailure,
+} from "./ownedDebuggerCleanupError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
   | { readonly status: "stopped" | "already_exited" }
-  | { readonly status: "incomplete"; readonly reason: string };
+  | ({ readonly status: "incomplete" } & DebuggerCleanupIncomplete);
+
+/**
+ * A provider's refusal or failure to detach its inferior, naming why. Other
+ * detach errors are reported as `detach-failed`.
+ */
+export class OwnedDebuggerDetachFailure extends Error {
+  constructor(
+    readonly code: Extract<
+      DebuggerCleanupIncompleteCode,
+      | "inferior-state-unknown"
+      | "multiple-inferiors"
+      | "no-durable-output-sink"
+      | "inferior-tty-changed"
+      | "detach-failed"
+    >,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OwnedDebuggerDetachFailure";
+  }
+}
 
 const RUNTIME_DEBUGGER_SETTINGS = {
   [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
@@ -142,14 +170,38 @@ export const debuggerResourceConstraintError = (
  * cancellation stays a cancellation with the caller's reason instead of
  * becoming a capability refusal for the target.
  */
+/**
+ * The cleanup observation and diagnostic an incomplete stop adds to any error
+ * that reports it. The code projects as `details.diagnostics.debugger_cleanup`.
+ */
+export const incompleteStopFacts = (
+  { code, reason }: DebuggerCleanupIncomplete,
+  resources: readonly string[],
+): {
+  readonly cleanup: { readonly reason: string; readonly resources: string[] };
+  readonly diagnostics: {
+    readonly debugger_cleanup: DebuggerCleanupIncompleteCode;
+  };
+} => ({
+  cleanup: { reason, resources: [...resources] },
+  diagnostics: { debugger_cleanup: code },
+});
+
 export const retainedDebuggerCleanupFailure = (
   debugger_: { readonly provider: string; readonly displayName: string },
   operation: string,
-  reason: string,
+  { code, reason }: DebuggerCleanupIncomplete,
   resources: readonly string[],
-  options: AnalysisErrorOptions = {},
+  callerOptions: AnalysisErrorOptions = {},
 ): AnalysisError => {
-  const cleanup = { reason, resources: [...resources] };
+  const { cleanup, diagnostics } = incompleteStopFacts(
+    { code, reason },
+    resources,
+  );
+  const options: AnalysisErrorOptions = {
+    ...callerOptions,
+    diagnostics: { ...callerOptions.diagnostics, ...diagnostics },
+  };
   const primary = options.cause;
   if (primary instanceof AnalysisCancelledError)
     return new AnalysisCancelledError(operation, {
@@ -315,6 +367,7 @@ const finishExitedDebuggerSession = async (
     if (!(await session.supervisor.waitForOutputClose(1_000))) {
       return {
         status: "incomplete",
+        code: "output-unsettled",
         reason:
           platform === "win32"
             ? `Owned ${debuggerName} process leader exited, but its Windows Job Object still has active descendants or has not reported settlement.`
@@ -324,6 +377,7 @@ const finishExitedDebuggerSession = async (
   } catch (cause: unknown) {
     return {
       status: "incomplete",
+      code: "output-unsettled",
       reason:
         platform === "win32"
           ? `Owned ${debuggerName} Windows Job Object settlement could not be verified: ${errorMessage(cause)}`
@@ -350,6 +404,7 @@ export const stopOwnedDebuggerProcess = async (
     if (detachAttempts.has(session))
       return {
         status: "incomplete",
+        code: "detach-pending",
         reason: `Owned ${debuggerName} inferior detach is still pending after the process exited.`,
       };
     const detachOutcome = detachOutcomes.get(session);
@@ -361,12 +416,14 @@ export const stopOwnedDebuggerProcess = async (
         if ((await session.verifyInferiorsEndedAfterExit?.()) !== true)
           return {
             status: "incomplete",
+            code: "inferior-disposition-unverified",
             reason: `Owned ${debuggerName} inferior disposition was not verified before the debugger exited, and no owner proof confirms the identified inferior processes have ended.`,
           };
         detachOutcomes.set(session, "inferior-ended");
       } catch (cause: unknown) {
         return {
           status: "incomplete",
+          code: "inferior-identity-unverified",
           reason: `Owned ${debuggerName} inferior process identity could not be verified after debugger exit: ${errorMessage(cause)}`,
         };
       }
@@ -381,6 +438,7 @@ export const stopOwnedDebuggerProcess = async (
   if (platform === "win32")
     return {
       status: "incomplete",
+      code: "windows-stop-unsafe",
       reason: `Owned ${debuggerName} process cannot be stopped safely on Windows because job termination can also terminate its inferior processes.`,
     };
   // Admission remains closed once cleanup starts. A verified detach is an
@@ -393,6 +451,7 @@ export const stopOwnedDebuggerProcess = async (
         detachOutcomes.set(session, "unconfirmed");
         return {
           status: "incomplete",
+          code: "detach-unsupported",
           reason: `Owned ${debuggerName} inferior detach cannot be verified because the provider has no detach capability.`,
         };
       }
@@ -403,12 +462,14 @@ export const stopOwnedDebuggerProcess = async (
       if (detached === undefined)
         return {
           status: "incomplete",
+          code: "detach-timeout",
           reason: `Owned ${debuggerName} inferior detach was not verified within ${String(DETACH_TIMEOUT_MS)} ms. This release has no runtime override.`,
         };
       if (!isVerifiedDetachResult(detached)) {
         detachOutcomes.set(session, "unconfirmed");
         return {
           status: "incomplete",
+          code: "detach-unconfirmed",
           reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
         };
       }
@@ -416,6 +477,10 @@ export const stopOwnedDebuggerProcess = async (
     } catch (cause: unknown) {
       return {
         status: "incomplete",
+        code:
+          cause instanceof OwnedDebuggerDetachFailure
+            ? cause.code
+            : "detach-failed",
         reason: `Owned ${debuggerName} inferior detach could not be verified: ${errorMessage(cause)}`,
       };
     }
@@ -433,6 +498,7 @@ export const stopOwnedDebuggerProcess = async (
       );
     return {
       status: "incomplete",
+      code: "process-did-not-exit",
       reason: `Owned ${debuggerName} process did not exit after direct termination.`,
     };
   }
@@ -487,7 +553,7 @@ export const closeOwnedDebuggerSessions = async <
       );
       retained.push(session);
     } else if (settled.value.status === "incomplete") {
-      failures.push(new Error(settled.value.reason));
+      failures.push(new OwnedDebuggerStopFailure(settled.value));
       retained.push(session);
     } else if (sessions.get(key) === session) sessions.delete(key);
   }

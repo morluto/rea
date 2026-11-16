@@ -1,5 +1,4 @@
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
-import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import {
@@ -15,6 +14,7 @@ import {
 } from "../domain/evm/evmInterface.js";
 import { readStableArtifact } from "../resources/index.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
@@ -69,7 +69,7 @@ const main = async (): Promise<void> => {
       ok: true,
       version: metadata.version,
       bytecode: {
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        sha256: sha256Hex(bytes),
         bytes: bytes.length,
         hex: Buffer.from(bytes).toString("hex"),
         metadata: inspectSolidityMetadata(bytes),

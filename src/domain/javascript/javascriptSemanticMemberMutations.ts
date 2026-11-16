@@ -83,6 +83,10 @@ import {
 } from "./javascriptSemanticReferenceSources.js";
 import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import {
+  semanticArgumentStaysInSource,
+  semanticDirectInvocationArgument,
+} from "./javascriptSemanticDirectInvocations.js";
+import {
   semanticArrayIndex,
   joinSemanticPropertyPaths,
   SemanticPropertyPathCoverage,
@@ -1426,6 +1430,23 @@ export function* collectSemanticMemberMutationsSteps(
                 ]),
               });
           }
+          // A directly invoked function's parameter starts as its argument,
+          // which therefore did not escape at the call.
+          const argument = semanticDirectInvocationArgument(
+            expression,
+            binding,
+            state,
+          );
+          if (argument !== undefined)
+            enqueue({
+              node: argument,
+              path,
+              bindings: nested,
+              definiteReceiver: false,
+              originAt: argument,
+              memberReadAt: current.memberReadAt,
+              capturedSelections: current.capturedSelections,
+            });
           for (const initializer of retainsInitializers
             ? origins.initializers
             : [])
@@ -1808,8 +1829,11 @@ export function* collectSemanticMemberMutationsSteps(
   ): void => {
     for (const source of returnedReferences(node.callee).references)
       markEscaped(source.node, node, source.projection);
-    for (const argument of node.arguments)
-      if (t.isSpreadElement(argument))
+    for (const [index, argument] of node.arguments.entries())
+      // A directly invoked source function receives it through a parameter,
+      // which `markValue` follows back to the argument.
+      if (semanticArgumentStaysInSource(node, index, state)) continue;
+      else if (t.isSpreadElement(argument))
         deferIterable({
           node: argument.argument,
           projection: [],
@@ -1954,6 +1978,9 @@ export function* collectSemanticMemberMutationsSteps(
         }
     },
   });
+  // A value thrown out of its function or the program reaches handlers the
+  // throw-to-catch index does not link to it.
+  for (const node of state.escapingThrows) markEscaped(node.argument, node);
   // A later effect can make a previously defined destructuring source uncertain.
   // Reconsider defaults and iterable origins until their effects are stable.
   while (

@@ -8,7 +8,7 @@ import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { access, readFile, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -90,6 +90,7 @@ import {
   type EvmWorkerLimits,
 } from "./EvmWorkerLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "inspect_evm_interface";
 
@@ -785,9 +786,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         input.encoding,
       );
       const selectedHex = Buffer.from(selectedBytes).toString("hex");
-      const decodedHash = createHash("sha256")
-        .update(selectedBytes)
-        .digest("hex");
+      const decodedHash = sha256Hex(selectedBytes);
       if (
         decodedHash !== reply.bytecode.sha256 ||
         selectedHex !== reply.bytecode.hex ||

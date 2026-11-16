@@ -48,6 +48,7 @@ import {
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
@@ -80,10 +81,7 @@ const cleanupOnlyCompleteEvidence = (
   const parsed = recognizeEvidence(error.partialObservation);
   if (!parsed.ok || parsed.value === undefined) return undefined;
   const normalized = parsed.value.normalized_result;
-  return typeof normalized === "object" &&
-    normalized !== null &&
-    !Array.isArray(normalized) &&
-    normalized.completion_status !== "unknown"
+  return isRecord(normalized) && normalized.completion_status !== "unknown"
     ? parsed.value
     : undefined;
 };

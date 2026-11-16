@@ -1,5 +1,4 @@
 import { GhidraAdmissionError } from "../GhidraAdmissionError.js";
-import { createHash } from "node:crypto";
 import { realpath, mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
@@ -24,6 +23,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { nativeAotAdapter } from "./nativeaot/NativeAotAdapter.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
 /** Exact executable extension artifact committed before the session starts. */
@@ -119,7 +119,7 @@ export const resolveGhidraExtensions = async (
             id: adapter.id,
             path,
             configured_path: configured,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: sha256Hex(bytes),
             entry_class: adapter.entryClass,
             integration_api: 1,
           });
@@ -223,9 +223,7 @@ export const snapshotGhidraExtensions = async (
       const result: GhidraExtension[] = [];
       for (const extension of extensions) {
         const bytes = await readJar(extension.path, resources, signal);
-        if (
-          createHash("sha256").update(bytes).digest("hex") !== extension.sha256
-        )
+        if (sha256Hex(bytes) !== extension.sha256)
           throw new GhidraAdmissionError("digest_differs", {
             id: extension.id,
             path: extension.path,

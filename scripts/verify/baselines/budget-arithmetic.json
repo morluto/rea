@@ -1,6 +1,0 @@
-{
-  "src/kuna/KunaJsonStream.ts": 1,
-  "src/process/BoundedOutputExcerpt.ts": 1,
-  "src/process/ProviderProcess.ts": 1,
-  "src/resources/AsarHeader.ts": 1
-}

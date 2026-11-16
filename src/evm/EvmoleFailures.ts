@@ -11,6 +11,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { ProviderOutcomeContext } from "../process/classifyProviderOutcome.js";
+import { describeLaunchFailure } from "../process/launchFailure.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
@@ -139,7 +140,7 @@ export const evmFailureDialect = (
 /** The EVMole worker's dialect: its prlimit launcher and its reserved EFBIG exit. */
 const evmCommandContext = (
   context: ResolvedEvmFailureContext,
-): ProviderOutcomeContext => {
+): Omit<ProviderOutcomeContext, "providerId"> => {
   const { workerLimits, limiter, fileFailure, timeoutMs, producerLimits } =
     context;
   return {
@@ -185,16 +186,16 @@ const evmCommandContext = (
         remediationAction: `The EVMole worker's ${String(EVM_WORKER_HEAP_MIB)} MiB heap is fixed in this release; producer_limits and timeout_ms do not raise it. Select a smaller bytecode carrier; repeating the unchanged request is expected to fail the same way.`,
       },
     }),
+    launchUnavailable: (failure, details) => {
+      const reason = `Configured util-linux prlimit could not launch (${describeLaunchFailure(failure)}): ${limiter}. Check its executable/interpreter and host execute access.`;
+      return new AnalysisCapabilityUnavailableError(
+        EVMOLE_PROVIDER_IDENTITY.id,
+        OPERATION,
+        reason,
+        { ...details, userMessage: reason },
+      );
+    },
     dialect: (outcome, details) => {
-      if (outcome.kind === "launch-refused") {
-        const reason = `Configured util-linux prlimit could not launch (${outcome.refusal.code}): ${limiter}. Check its executable/interpreter and host execute access.`;
-        return new AnalysisCapabilityUnavailableError(
-          EVMOLE_PROVIDER_IDENTITY.id,
-          OPERATION,
-          reason,
-          { ...details, userMessage: reason },
-        );
-      }
       // The reserved exit means EFBIG only when the worker's marker says so.
       if (
         outcome.kind === "exited" &&
