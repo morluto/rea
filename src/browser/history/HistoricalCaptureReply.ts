@@ -19,26 +19,44 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { withCaptureReaderCleanup } from "./CaptureFailures.js";
 import { webNetworkCapturePayloadSchema } from "../../domain/webNetworkCapture.js";
+import { FIXED_ALLOWANCE_KINDS } from "../../domain/fixedAllowanceRemediation.js";
+
+const failureFields = { message: z.string(), pointer: z.string() };
 
 const replySchema = z.discriminatedUnion("ok", [
   z.strictObject({
     ok: z.literal(true),
     value: webNetworkCapturePayloadSchema,
   }),
-  z.strictObject({
-    ok: z.literal(false),
-    reason: z.enum([
-      "format",
-      "unsupported",
-      "input-limit",
-      "expanded-limit",
-      "resource-limit",
-      "decoder",
-      "limit",
-    ]),
-    message: z.string(),
-    pointer: z.string(),
-  }),
+  z.discriminatedUnion("reason", [
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.enum([
+        "format",
+        "unsupported",
+        "input-limit",
+        "expanded-limit",
+        "resource-limit",
+        "decoder",
+        "limit",
+      ]),
+      ...failureFields,
+    }),
+    // A fixed ceiling the decoder's reader named, carried with its value.
+    z.strictObject({
+      ok: z.literal(false),
+      reason: z.literal("fixed-limit"),
+      ...failureFields,
+      ceiling: z.strictObject({
+        name: z.string().min(1),
+        kind: z.enum(FIXED_ALLOWANCE_KINDS),
+        limit: z.number().nonnegative(),
+        unit: z.string().min(1),
+        narrowing: z.string().min(1).exactOptional(),
+      }),
+      boundary: z.enum(["file-size", "capacity", "memory"]),
+    }),
+  ]),
 ]);
 
 /** Decode a bounded reply while keeping its completed read and descriptor finalization distinct. */
