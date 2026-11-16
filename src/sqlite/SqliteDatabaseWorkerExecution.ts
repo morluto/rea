@@ -1,8 +1,13 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
-} from "../artifacts/ArtifactFileOperation.js";
+  completedStableArtifact,
+  readStableArtifact,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,26 +32,20 @@ import {
   type InspectSqliteDatabaseInput,
 } from "../domain/sqlite/sqliteDatabase.js";
 import {
-  completedStableArtifact,
-  readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
   classifyProviderFailure,
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import type {
   ProviderProcessSupervisor,
   ProviderProcessStopResult,
 } from "../process/ProviderProcess.js";
-import { capturedSqliteOutput } from "./SqliteDatabaseFailures.js";
 import {
   SQLITE_DATABASE_LIMITS,
   SQLITE_INSPECTION_REASONS,
   SQLITE_STRUCTURED_INSPECTION_REASONS,
 } from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const operation = "inspect_sqlite_database";
 const {
@@ -120,10 +119,11 @@ const rejectedReply = (
       {
         capturedOutput,
         userMessage: reply.message,
+        related: { parameters: ["columns", "table", "schema_scope"] },
         remediationAction: `The database is readable; only the listed column values failed. REA's SQLite connection loads no extensions or application functions and disables schema trust. ${
           readable.length === 0
             ? "No other readable column was found"
-            : `Select columns whose values were read: columns: ${JSON.stringify(readable)} (CLI: one --column per name)`
+            : `Select columns whose values were read: columns: ${JSON.stringify(readable)}`
         }; omit table and use schema_scope: database to read the stored declarations without evaluating rows. Obtaining the failed values needs a SQLite connection able to evaluate them. Do not repeat the unchanged request.`,
       },
     );
@@ -254,7 +254,7 @@ export const executeSqliteDatabaseWorker = async (request: {
         : { retainCleanup: request.retainCleanup }),
     },
   );
-  const capturedOutput = capturedSqliteOutput(execution);
+  const capturedOutput = capturedProviderOutput(execution);
   request.captured(capturedOutput);
   let reply: z.output<typeof replySchema>;
   let finalization: AnalysisError | undefined;
@@ -306,7 +306,7 @@ const sqliteReplyReadDialect = (
   unclassified: (cause, details) =>
     new AnalysisOutputError(
       operation,
-      `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `Owned SQLite worker reply is missing or malformed: ${errorMessage(cause)}`,
       { ...details, cause, capturedOutput },
     ),
 });

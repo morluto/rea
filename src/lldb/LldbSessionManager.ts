@@ -12,6 +12,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { coverageStatusSchema } from "../domain/coverage.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
@@ -27,6 +28,10 @@ import {
   stopOwnedDebuggerProcess,
   type OwnedDebuggerDetachResult,
 } from "../process/ownedDebuggerSession.js";
+import {
+  unknownTarget,
+  type SessionTargetIdentity,
+} from "../domain/targetIdentity.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -165,6 +170,15 @@ const waitForLldbCommandTurn = (
     if (outcome instanceof AbortedWait) throw cancelledBy(operation, outcome);
   });
 };
+
+const lldbSessionSubject = (
+  session: Pick<ActiveSession, "id">,
+): SessionTargetIdentity => ({
+  kind: "session",
+  session_kind: "lldb",
+  id: session.id,
+  target: unknownTarget("not-observed"),
+});
 
 /**
  * Persistent Apple Silicon LLDB session manager for REA on macOS.
@@ -545,7 +559,7 @@ export class LldbSessionManager {
         new AnalysisCapabilityUnavailableError(
           "lldb",
           "start_lldb_session",
-          cause instanceof Error ? cause.message : String(cause),
+          errorMessage(cause),
         ),
       );
     }
@@ -620,7 +634,7 @@ export class LldbSessionManager {
         new AnalysisCapabilityUnavailableError(
           "lldb",
           "lldb_command",
-          cause instanceof Error ? cause.message : String(cause),
+          errorMessage(cause),
         ),
       );
     } finally {
@@ -690,7 +704,10 @@ export class LldbSessionManager {
       completion_status: res.completion_status ?? "complete",
     };
 
-    const evidence = createEvidence(undefined, LLDB_PROVIDER_IDENTITY, {
+    const evidence = createEvidence(
+      lldbSessionSubject(session),
+      LLDB_PROVIDER_IDENTITY,
+      {
       predicateType: "rea.debugger.console-observation",
       operation: "lldb_command",
       parameters: { session_id: sessionId, command },
@@ -712,8 +729,6 @@ export class LldbSessionManager {
         output_truncated: cmdResult.output_truncated,
         completion_status: cmdResult.completion_status,
       },
-      subjectUnavailableReason:
-        "The active LLDB inferior identity is not established by the debugger session identifier.",
       limitations: [
         "LLDB commands run unrestricted against the local target inferior and host runtime.",
       ],
@@ -831,7 +846,7 @@ export class LldbSessionManager {
           this.#sessions.retainCleanupFailure(
             session,
             "close_lldb_session",
-            stopResult.reason,
+            stopResult,
           ),
         );
       }

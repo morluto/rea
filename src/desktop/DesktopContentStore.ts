@@ -1,9 +1,11 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { createHash } from "node:crypto";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { Budget } from "../domain/budget.js";
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -22,6 +24,7 @@ import {
   RegularFileCapacityError,
   readStableFileBytes,
 } from "../filesystem/readStableFileBytes.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type Omission = DesktopApplicationCapture["state"]["omitted_content"][number];
 
@@ -50,7 +53,7 @@ export class DesktopContentStore {
   readonly #unclosed = new ArtifactResourceScope();
   /** Every partial file this store created but has not published or removed. */
   readonly #unpublished = new Set<string>();
-  #remainingBytes: number;
+  readonly #bytes: Budget;
 
   constructor(
     captureDirectory: string,
@@ -59,7 +62,7 @@ export class DesktopContentStore {
   ) {
     this.#directory = join(captureDirectory, "content");
     this.#maxFileBytes = maxFileBytes;
-    this.#remainingBytes = maxBytes;
+    this.#bytes = new Budget(maxBytes);
   }
 
   /** Create the private content directory; it must not exist yet. */
@@ -140,13 +143,26 @@ export class DesktopContentStore {
 
   /** Store bytes already read, such as a verified apt key; over the per-file limit or the remaining budget they are omitted. */
   async retainBytes(bytes: Buffer): Promise<RetainOutcome> {
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const size = bytes.byteLength;
     if (size > this.#maxFileBytes)
       return { kind: "omitted", reason: "too_large" };
     if (this.#stored.has(sha256)) return { kind: "retained", sha256, size };
-    if (size > this.#remainingBytes)
+    // Reserve before writing; a write that fails retains nothing.
+    if (!this.#bytes.tryCharge(size))
       return { kind: "omitted", reason: "budget_exhausted" };
+    try {
+      await this.#publish(sha256, bytes);
+    } catch (error) {
+      this.#bytes.refund(size);
+      throw error;
+    }
+    this.#stored.set(sha256, size);
+    this.#storedSizes.add(size);
+    return { kind: "retained", sha256, size };
+  }
+
+  async #publish(sha256: string, bytes: Buffer): Promise<void> {
     const target = join(this.#directory, sha256);
     const partial = `${target}.partial`;
     const owner = new OwnedFileHandle(await open(partial, "wx", 0o600));
@@ -167,10 +183,6 @@ export class DesktopContentStore {
     );
     await rename(partial, target);
     this.#unpublished.delete(partial);
-    this.#stored.set(sha256, size);
-    this.#storedSizes.add(size);
-    this.#remainingBytes -= size;
-    return { kind: "retained", sha256, size };
   }
 
   async #read(
@@ -187,7 +199,7 @@ export class DesktopContentStore {
       return { kind: "omitted", reason: "too_large" };
     // Over budget, only a size some stored content has can still be a duplicate.
     if (
-      expected.size > this.#remainingBytes &&
+      expected.size > this.#bytes.remaining &&
       !this.#storedSizes.has(expected.size)
     )
       return { kind: "omitted", reason: "budget_exhausted" };

@@ -3,12 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "./toolContracts.js";
-import {
-  TOOL_EFFECTS,
-  annotationsFromEffects,
-  toolSessionEffects,
-  type ToolEffects,
-} from "./toolEffects.js";
+import { annotationsFromEffects, type ToolEffects } from "./toolEffects.js";
 
 /**
  * Reviewed tools whose audited effects make them destructive. The derived set
@@ -23,6 +18,9 @@ const REVIEWED_DESTRUCTIVE_TOOLS = JSON.parse(
   ),
 ) as readonly string[];
 
+const contractNamed = (name: string) =>
+  TOOL_CONTRACTS.find((contract) => contract.name === name);
+
 describe("tool effects", () => {
   it("keeps every reviewed destructive tool destructive", () => {
     expect(REVIEWED_DESTRUCTIVE_TOOLS).toEqual(
@@ -34,7 +32,7 @@ describe("tool effects", () => {
     for (const name of REVIEWED_DESTRUCTIVE_TOOLS) {
       const contract = contracts.get(name);
       expect(contract, `${name} has no contract`).toBeDefined();
-      expect(annotationsFromEffects(TOOL_EFFECTS[name]!), name).toMatchObject({
+      expect(annotationsFromEffects(contract!.effects), name).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,
       });
@@ -93,7 +91,7 @@ describe("tool effects", () => {
   });
 
   it("marks automatic GDB detach as destructive target execution", () => {
-    const effects = TOOL_EFFECTS["close_gdb_session"];
+    const effects = contractNamed("close_gdb_session")?.effects;
     if (effects === undefined)
       throw new Error("close_gdb_session is unaudited");
     expect(effects).toMatchObject({
@@ -104,7 +102,7 @@ describe("tool effects", () => {
   });
 
   it("marks automatic LLDB detach as destructive target execution", () => {
-    const effects = TOOL_EFFECTS["close_lldb_session"];
+    const effects = contractNamed("close_lldb_session")?.effects;
     if (effects === undefined)
       throw new Error("close_lldb_session is unaudited");
     expect(effects).toMatchObject({
@@ -129,12 +127,12 @@ it("advertises IDA provider effects while retaining session bases", () => {
     "read_function_instructions",
     "analyze_function",
   ]) {
-    expect(TOOL_EFFECTS[name], name).toMatchObject({
+    expect(contractNamed(name)?.effects, name).toMatchObject({
       mutatesSession: true,
       changesUiState: true,
       accessesNetwork: true,
     });
-    expect(toolSessionEffects(name), name).toMatchObject({
+    expect(contractNamed(name)?.sessionEffects, name).toMatchObject({
       mutatesSession: true,
       changesUiState: false,
       accessesNetwork: false,
@@ -154,11 +152,11 @@ it("advertises IDA provider effects while retaining session bases", () => {
     "trace_native_values",
     "inspect_native_api",
   ]) {
-    expect(TOOL_EFFECTS[name], name).toMatchObject({
+    expect(contractNamed(name)?.effects, name).toMatchObject({
       changesUiState: true,
       accessesNetwork: true,
     });
-    expect(toolSessionEffects(name), name).toMatchObject({
+    expect(contractNamed(name)?.sessionEffects, name).toMatchObject({
       changesUiState: false,
       accessesNetwork: false,
     });
@@ -175,8 +173,10 @@ it("audits network access during lifecycle cleanup across provider changes", () 
     "close_rizin_debug_session",
     "close_gdb_session",
   ]) {
-    expect(toolSessionEffects(name).accessesNetwork, name).toBe(true);
-    expect(TOOL_EFFECTS[name]?.accessesNetwork, name).toBe(true);
+    expect(contractNamed(name)?.sessionEffects.accessesNetwork, name).toBe(
+      true,
+    );
+    expect(contractNamed(name)?.effects.accessesNetwork, name).toBe(true);
     expect(
       TOOL_CONTRACTS.find((contract) => contract.name === name)?.annotations
         .openWorldHint,
@@ -186,7 +186,7 @@ it("audits network access during lifecycle cleanup across provider changes", () 
 });
 
 it("advertises signature inspection's temporary snapshot filesystem writes", () => {
-  expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
+  expect(contractNamed("inspect_signature")?.effects).toMatchObject({
     writesFilesystem: true,
     mutatesTarget: false,
     launchesProcess: true,
@@ -194,7 +194,7 @@ it("advertises signature inspection's temporary snapshot filesystem writes", () 
 });
 
 it("advertises inspect_macho's temporary private operand filesystem writes", () => {
-  expect(TOOL_EFFECTS.inspect_macho).toMatchObject({
+  expect(contractNamed("inspect_macho")?.effects).toMatchObject({
     writesFilesystem: true,
     mutatesTarget: false,
     launchesProcess: true,

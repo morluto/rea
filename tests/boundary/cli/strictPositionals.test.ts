@@ -1,6 +1,8 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli, z } from "incur";
+import { Cli } from "incur";
+import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
@@ -44,7 +46,7 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
   await writeFile(
     path,
     JSON.stringify({
-      evidence_format: 1,
+      evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
       captures: [],
       environments: [],

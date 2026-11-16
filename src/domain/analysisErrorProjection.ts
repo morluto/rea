@@ -57,11 +57,28 @@ import {
   type AnalysisCallerLifetime,
   type AnalysisError,
   type AnalysisErrorOptions,
+  type AnalysisRelatedInputs,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
 import { invocationLimit } from "./analysisSettingDefinitions.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
 import { analysisRefusalDetails } from "./analysisRefusal.js";
+import { isRecord } from "../kernel/isRecord.js";
+
+/**
+ * Inputs the recovery names, by contract field and operation name. Each
+ * adapter renders them in its own spelling.
+ */
+const relatedInputDetails = (
+  related: AnalysisRelatedInputs | undefined,
+): Record<string, JsonValue> => ({
+  ...(related?.parameters === undefined || related.parameters.length === 0
+    ? {}
+    : { related_parameters: [...related.parameters] }),
+  ...(related?.operations === undefined || related.operations.length === 0
+    ? {}
+    : { related_operations: [...related.operations] }),
+});
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -131,9 +148,7 @@ export function* unretainedEvidenceCandidates(
   ] as const) {
     const value = projected.details?.[field];
     if (
-      typeof value === "object" &&
-      value !== null &&
-      !Array.isArray(value) &&
+      isRecord(value) &&
       (value.kind === "unretained-evidence" ||
         value.kind === "unretained-observation" ||
         value.kind === "inline-evidence")
@@ -214,12 +229,7 @@ export const omitUnretainedEvidenceFromError = (
   }
   const { [field]: _partial, ...details } = projected.details!;
   const evidence = partial.evidence;
-  const evidenceId =
-    typeof evidence === "object" &&
-    evidence !== null &&
-    !Array.isArray(evidence)
-      ? evidence.evidence_id
-      : undefined;
+  const evidenceId = isRecord(evidence) ? evidence.evidence_id : undefined;
   const retention =
     partial.kind === "inline-evidence"
       ? typeof partial.retention === "string"
@@ -380,6 +390,16 @@ const projectError = (
     owner = owner.cleanupPrimary
   )
     partialObservation = owner.partialObservation;
+  let argumentObservations =
+    composed.argumentObservations.length > 0
+      ? composed.argumentObservations
+      : error.argumentObservations;
+  for (
+    let owner = composed.cleanupPrimary;
+    argumentObservations.length === 0 && owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    argumentObservations = owner.argumentObservations;
   const completedSourceObservation =
     publication?.completed.kind === "omitted"
       ? undefined
@@ -434,6 +454,7 @@ const projectError = (
     ...(refusal === undefined
       ? {}
       : { refusal: analysisRefusalDetails(refusal) }),
+    ...relatedInputDetails(primary.related),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {
@@ -483,6 +504,18 @@ const projectError = (
           partial_observation: isImmutableJsonSnapshot(partialObservation)
             ? partialObservation
             : jsonValueSchema.parse(partialObservation),
+        }),
+    ...(!options.partialObservation || argumentObservations.length === 0
+      ? {}
+      : {
+          argument_observations: argumentObservations.map(
+            ({ argument, observation }) => ({
+              argument,
+              observation: isImmutableJsonSnapshot(observation)
+                ? observation
+                : jsonValueSchema.parse(observation),
+            }),
+          ),
         }),
     ...(!options.partialObservation || completedSourceObservation === undefined
       ? {}

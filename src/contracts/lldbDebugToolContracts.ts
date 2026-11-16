@@ -4,7 +4,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import { coverageStatusSchema } from "../domain/coverage.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, toolEffects } from "./toolEffects.js";
 
 const sessionId = z.string().uuid();
 const lldbCommandResult = z.strictObject({
@@ -23,7 +23,17 @@ const lldbCommandResult = z.strictObject({
 export const LLDB_DEBUG_TOOL_CONTRACTS = [
   {
     name: "start_lldb_session",
-    ...toolContractMetadata("start_lldb_session"),
+    availability: { host: "persistentDebugger" },
+    ...toolContractMetadata(
+      "start_lldb_session",
+      toolEffects({
+        launchesProcess: true,
+        mutatesSession: true,
+        mutatesTarget: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Start a persistent Apple Silicon LLDB debugger session using native SBDebugger on macOS. Optionally launch an owned target binary or attach to a live process by PID. Disables ASLR by default to ensure deterministic memory addresses across turns. Persistent LLDB sessions are hosted within this REA MCP server process and receive an explicit session ID. In a shared MCP server, starting this session retires any active binary-analysis session; after target effects have settled, call open_binary before further analysis.",
@@ -88,7 +98,18 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
   },
   {
     name: "lldb_command",
-    ...toolContractMetadata("lldb_command"),
+    ...toolContractMetadata(
+      "lldb_command",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        writesFilesystem: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Execute one unrestricted LLDB console command (e.g. `po $x0`, `register read`, `thread backtrace`, `x/16gx $sp`, `c`, `b -[Class selector]`, `memory read`) in an active LLDB session and return output inline with Evidence. A command timeout preserves collected records with completion_status unknown. Commands can alter target memory, execute expressions, access files, and resume execution. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis.",
@@ -112,7 +133,10 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
   },
   {
     name: "lldb_session_status",
-    ...toolContractMetadata("lldb_session_status"),
+    ...toolContractMetadata(
+      "lldb_session_status",
+      toolEffects(),
+    ),
     kind: "native-provider",
     description:
       "Return the observed lifecycle state, inferior PID, target path, and process state for one persistent REA LLDB session.",
@@ -133,7 +157,16 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
   },
   {
     name: "close_lldb_session",
-    ...toolContractMetadata("close_lldb_session"),
+    ...toolContractMetadata(
+      "close_lldb_session",
+      toolEffects({
+        launchesProcess: true,
+        mutatesSession: true,
+        mutatesTarget: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Close the owned LLDB session, terminate or detach the debugged inferior process, and destroy the underlying SBDebugger instance. In a shared MCP server, this admitted close retires any active binary-analysis session; after target effects have settled, call open_binary before further analysis.",

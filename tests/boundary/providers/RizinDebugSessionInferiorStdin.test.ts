@@ -1,24 +1,23 @@
 import { execFileSync, type ChildProcess } from "node:child_process";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { once } from "node:events";
 import { chmod, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { spawn } from "@lydell/node-pty";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
 import pino from "pino";
 import { expect, it, onTestFinished } from "vitest";
 
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import type { CliInstance } from "../../../src/cli/types.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import type { Result } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rizinTestTtyPathPattern } from "./RizinTestInferiorTty.js";
@@ -348,13 +347,7 @@ linuxIt.each([
   async ({ target, staysRunning }) => {
     const current = await createFixture({ target, reportsInferior: true });
     const manager = createManager(current);
-    const server = new McpServer({ name: "rizin-stdin", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
-    );
+    const server = rizinDebugMcpServer("rizin-stdin", manager);
     const client = new Client({ name: "rizin-stdin", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

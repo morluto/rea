@@ -2,7 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import {
@@ -21,7 +21,7 @@ import {
   type WithAdmittedAnalysis,
 } from "../../../src/server/analysisAdmission.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { registerEvidenceTools } from "../../../src/server/registerEvidenceTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -45,11 +45,13 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       () => ({
         execute: async () =>
           ok({
-            ...createAnalysisExecution(["0x100"], provider, {
-              ...(mode === "source" && source !== undefined
+            ...createAnalysisExecution(
+              ["0x100"],
+              provider,
+              mode === "source" && source !== undefined
                 ? { sourceEvidence: [source] }
-                : {}),
-            }),
+                : {},
+            ),
             ...(mode === "forged" && forged !== undefined
               ? { evidenceId: forged.evidence_id }
               : {}),
@@ -104,22 +106,30 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       ({ name }) => name === "xrefs",
     );
     if (contract === undefined) throw new Error("Missing xrefs contract");
-    registerEvidenceTools(server, [contract], {
-      logger: silentLogger,
-      activeTarget: () => session.activeTarget(),
-      recordEvidence: session.recordEvidence.bind(session),
-      evidenceById: session.evidenceForAnalysis.bind(session),
-      admitRecovery: session.admitRecoveryObservation.bind(session),
-      withAdmittedAnalysis: admitted,
-      ...(mode === "parameters"
-        ? {
-            parametersForExecution: (_operation, parameters) => ({
-              ...parameters,
-              address: "0x300",
-            }),
-          }
-        : {}),
-    });
+    registerServiceTools(
+      server,
+      {
+        providerOperations: {
+          contracts: [contract],
+          activeTarget: () => session.activeTarget(),
+          admitRecovery: session.admitRecoveryObservation.bind(session),
+          ...(mode === "parameters"
+            ? {
+                parametersForExecution: (_operation, parameters) => ({
+                  ...parameters,
+                  address: "0x300",
+                }),
+              }
+            : {}),
+        },
+      },
+      {
+        logger: silentLogger,
+        recordEvidence: session.recordEvidence.bind(session),
+        evidenceById: session.evidenceForAnalysis.bind(session),
+        withAdmittedAnalysis: admitted,
+      },
+    );
     const client = new Client({ name: "reuse-control", version: "1" });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {

@@ -11,33 +11,39 @@ import type {
   ReleaseExposurePort,
   ReleaseExposureScanVisitor,
   ReleaseExposureTextVisitor,
-} from "../application/releaseExposure/ReleaseExposurePort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+} from "../ports/releaseExposure/ReleaseExposurePort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import {
+  BoundedListCollector,
+  boundedList,
+  type BoundedList,
+} from "../domain/boundedList.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
-import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
-import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "./ArtifactFileOperation.js";
-import { decodeBinaryPlistText } from "./apple/BinaryPlistMaterializer.js";
+  readStableArtifact,
+  projectArtifactCloseFailure,
+  projectStableArtifactFailure,
+  readerIntegrityFailure,
+  hashStableRootArtifactHandle,
+  openRootArtifact,
+  releaseRootArtifact,
+  asarHeaderAdmissionRecovery,
+  createAsarHeaderSignatureProbe,
+} from "../resources/index.js";
+import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
 import {
   InternalInvariantError,
   invariantViolation,
 } from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
-import {
-  asarHeaderAdmissionRecovery,
-  createAsarHeaderSignatureProbe,
-} from "./AsarHeader.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -46,18 +52,7 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
-import {
-  hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-} from "./inventory/hashStableRootArtifact.js";
 import { createArtifactReader } from "./createArtifactReader.js";
-import { readStableArtifact } from "./readStableArtifact.js";
-import {
-  projectArtifactCloseFailure,
-  projectStableArtifactFailure,
-  readerIntegrityFailure,
-} from "./StableArtifactFailure.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -121,11 +116,12 @@ import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
   inspectSourceMap,
   inspectSourceMapSourceContent,
-} from "../javascript/sourceMaps/SourceMapFormat.js";
+} from "../domain/sourceMapFormat.js";
 import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferences.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "audit_release_exposure";
 type PackageFormat = Extract<
@@ -157,6 +153,47 @@ const OPEN_CONTAINER_LIMIT = 8;
 const EMBEDDED_PROBE_LIMIT = 8;
 const PDB_READ_LIMIT = 4;
 const LIMITATION_CAP = 8;
+const LIMITATIONS_SUBJECT = "limitations";
+
+/**
+ * Bound limitations to LIMITATION_CAP; the count of reports past it is a
+ * coverage omission, so the report says how many more there were.
+ */
+const boundedLimitations = (
+  scan: Pick<ReleaseExposureScan, "omitted">,
+  limitations: BoundedList<string>,
+): Pick<ReleaseExposureScan, "limitations" | "omitted"> => ({
+  limitations: limitations.items,
+  omitted: [
+    ...scan.omitted.filter(({ subject }) => subject !== LIMITATIONS_SUBJECT),
+    ...(limitations.omitted > 0
+      ? [
+          {
+            subject: LIMITATIONS_SUBJECT,
+            count: limitations.omitted,
+            reason: `Only the first ${String(LIMITATION_CAP)} scan limitations are retained; the count includes repeated reports.`,
+          },
+        ]
+      : []),
+  ],
+});
+
+/** Put `leading` limitations first, counting any this pushes past the cap. */
+const prependLimitations = (
+  scan: ReleaseExposureScan,
+  leading: readonly string[],
+): ReleaseExposureScan => ({
+  ...scan,
+  ...boundedLimitations(
+    scan,
+    boundedList(
+      [...leading, ...scan.limitations],
+      LIMITATION_CAP,
+      scan.omitted.find(({ subject }) => subject === LIMITATIONS_SUBJECT)
+        ?.count ?? 0,
+    ),
+  ),
+});
 const SCAN_INTERRUPTED =
   "The member scan stopped on unfinished cleanup. Members it did not reach are unknown.";
 const SCAN_CANCELLED =
@@ -355,12 +392,8 @@ const scanFile = async (
     inventory,
   });
   return {
-    ...scanned,
+    ...prependLimitations(scanned, limitations),
     coverage: inventory === undefined ? "unknown" : scanned.coverage,
-    limitations: [...limitations, ...scanned.limitations].slice(
-      0,
-      LIMITATION_CAP,
-    ),
   };
 };
 
@@ -475,9 +508,8 @@ const reportInterruptedScan = (
 ): void => {
   if (scan === undefined) return;
   input.visitInterruptedScan?.({
-    ...scan,
+    ...prependLimitations(scan, [reason]),
     coverage: "unknown",
-    limitations: [reason, ...scan.limitations].slice(0, LIMITATION_CAP),
   });
 };
 
@@ -673,7 +705,7 @@ const assembleScan = (
     const sha256 = state.nativeDigests.get(path);
     return { path, format, ...(sha256 === undefined ? {} : { sha256 }) };
   });
-  return {
+  const scan = {
     target: {
       selected_path: input.path,
       kind,
@@ -786,10 +818,18 @@ const assembleScan = (
           ]
         : []),
     ],
-    limitations: [
-      ...(input.inventory?.limitations ?? []),
-      ...state.limitations,
-    ].slice(0, LIMITATION_CAP),
+  } satisfies Omit<ReleaseExposureScan, "limitations">;
+  const collected = state.limitations.toList();
+  return {
+    ...scan,
+    ...boundedLimitations(
+      scan,
+      boundedList(
+        [...(input.inventory?.limitations ?? []), ...collected.items],
+        LIMITATION_CAP,
+        collected.omitted,
+      ),
+    ),
   };
 };
 
@@ -833,7 +873,7 @@ interface ScanState {
   unprobedImages: number;
   native: Map<string, NativeFormat>;
   nativeDigests: Map<string, string>;
-  limitations: string[];
+  limitations: BoundedListCollector<string>;
   mapsRead: number;
   /**
    * Local targets of source-map declarations, whatever their file name, by
@@ -908,7 +948,7 @@ const createState = (
   unprobedImages: 0,
   native: new Map(),
   nativeDigests: new Map(),
-  limitations: [],
+  limitations: new BoundedListCollector(LIMITATION_CAP),
   mapsRead: 0,
   mapTargets: new Map(),
   claimedMapTargets: new Set(),
@@ -3565,20 +3605,15 @@ const pushSample = (samples: string[], value: string): void => {
 };
 
 const pushLimitation = (state: ScanState, message: string): void => {
-  if (
-    state.limitations.length >= LIMITATION_CAP ||
-    state.limitations.includes(message)
-  )
-    return;
-  state.limitations.push(message);
+  if (!state.limitations.retains(message)) state.limitations.push(message);
 };
 
 const fileSizeRecovery = (maxFileBytes: number) =>
   maxFileBytes >= MAX_RELEASE_EXPOSURE_FILE_BYTES
-    ? fixedAllowanceOptions(
-        `The release exposure input allowance of ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes (this release has no runtime override)`,
-        "input",
-      )
+    ? fixedAllowanceOptions("The release exposure input allowance", "input", {
+        limit: MAX_RELEASE_EXPOSURE_FILE_BYTES,
+        unit: "bytes",
+      })
     : {
         retryable: false as const,
         remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
@@ -3688,7 +3723,7 @@ const releaseExposureFailurePrimary = (
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

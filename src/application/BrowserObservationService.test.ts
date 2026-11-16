@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { BrowserObservationPort } from "./BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import {
   listBrowserTargets,
   inspectWebPage,

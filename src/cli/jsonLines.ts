@@ -4,7 +4,7 @@ import { err, ok, type Result } from "../domain/result.js";
 
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Reserved control-record marker, not an advertised external JSON Schema. */
 export const JSON_LINES_PROTOCOL = "jsonl/v1";

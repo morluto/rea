@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,8 +8,8 @@ import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verifi
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
-import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
+import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
+import { compareProcessCaptureFiles } from "../../support/cli/processComparisonCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { processTraceCaptureFixture } from "../../../src/domain/process/processCapture.fixture.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -22,7 +23,7 @@ const temporaryRoots: string[] = [];
 const { capture, traceSpecification } = processTraceCaptureFixture();
 
 const captureEvidence = (side: "left" | "right") =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: { side },
@@ -82,7 +83,7 @@ describe("declared trace adapter parity", () => {
       writeFile(specificationPath, JSON.stringify(traceSpecification)),
     ]);
     const cliEvidence = parseEvidence(
-      await compareProcessEvidenceFiles(leftPath, rightPath, specificationPath),
+      await compareProcessCaptureFiles(leftPath, rightPath, specificationPath),
     );
     const client = await comparisonClient(left, right);
     const response = await client.callTool({
@@ -134,7 +135,7 @@ describe("declared trace adapter parity", () => {
     ]);
     const message =
       "19900 event pairs must be explicitly ordered or unordered; first undeclared pair: e0/e1";
-    const cli = await compareProcessEvidenceFiles(
+    const cli = await compareProcessCaptureFiles(
       leftPath,
       rightPath,
       specificationPath,
@@ -142,7 +143,7 @@ describe("declared trace adapter parity", () => {
     expect(cli).toMatchObject({
       category: "invalid_input",
       details: {
-        issues: [{ path: ["trace_spec", "language"], message }],
+        issues: [{ path: ["traceSpec", "language"], message }],
       },
     });
     const client = await comparisonClient(left, right);
@@ -191,12 +192,12 @@ describe("declared trace adapter parity", () => {
     ]);
     const message = "finite trace variants must not duplicate a trace";
     expect(
-      await compareProcessEvidenceFiles(leftPath, rightPath, specificationPath),
+      await compareProcessCaptureFiles(leftPath, rightPath, specificationPath),
     ).toMatchObject({
       category: "invalid_input",
       details: {
         issues: [
-          { path: ["trace_spec", "language", "variants", 1, "trace"], message },
+          { path: ["traceSpec", "language", "variants", 1, "trace"], message },
         ],
       },
     });

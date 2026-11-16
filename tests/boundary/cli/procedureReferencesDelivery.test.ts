@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Cli } from "incur";
@@ -6,7 +7,7 @@ import { expect, it } from "vitest";
 import {
   createAnalysisExecution,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
@@ -49,7 +50,7 @@ it.each([false, true])(
     const path = join(root, "fixture.hop"),
       output = join(root, "evidence.json");
     await writeFile(path, "synthetic analysis database");
-    const history = createEvidence(undefined, identity, {
+    const history = createEvidence(unknownTarget("not-observed"), identity, {
       operation: "health",
       parameters: {},
       result: "project history",

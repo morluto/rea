@@ -94,6 +94,18 @@ export interface AnalysisContinuingCallerGuidance {
   readonly remediationAction?: string;
 }
 
+/**
+ * Inputs a failure's recovery names: fields of the failing operation's
+ * contract (`path`, or `field.member`) the caller may set instead, and other
+ * operations, by contract name, the caller may call. Each adapter renders its
+ * own spelling (a CLI flag or command, an MCP field or tool), so the
+ * message and remediation name contract fields and operations only.
+ */
+export interface AnalysisRelatedInputs {
+  readonly parameters?: readonly string[];
+  readonly operations?: readonly string[];
+}
+
 /** Optional provider-neutral context that must survive typed error projection. */
 export interface AnalysisErrorOptions extends ErrorOptions {
   /** Typed primary retained when a later lifecycle failure composes this error. */
@@ -101,6 +113,8 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   /** Producer-owned, caller-safe facts retained through every typed projection. */
   readonly diagnostics?: Readonly<Record<string, JsonValue>> | undefined;
   readonly limit?: AnalysisLimit | undefined;
+  /** Inputs the recovery names, rendered by each adapter. */
+  readonly related?: AnalysisRelatedInputs | undefined;
   readonly continuingCallerGuidance?:
     | AnalysisContinuingCallerGuidance
     | undefined;
@@ -114,6 +128,16 @@ export interface AnalysisErrorOptions extends ErrorOptions {
   readonly capturedOutput?: AnalysisCapturedOutput | undefined;
   readonly cleanup?: AnalysisCleanupObservation | undefined;
   readonly partialObservation?: AnalysisPartialObservation | undefined;
+}
+
+/**
+ * A completed observation for one argument of a composite request, kept
+ * beside the failing operation's own partial observation.
+ */
+export interface AnalysisArgumentObservation {
+  /** The composite contract's input field this observation completes. */
+  readonly argument: string;
+  readonly observation: AnalysisPartialObservation;
 }
 
 /** Exact cleanup owner that can attribute its currently unresolved resources. */
@@ -178,6 +202,8 @@ export abstract class AnalysisError extends Error {
     | { readonly cleanupResources: readonly string[] }
     | undefined;
   readonly diagnostics: Readonly<Record<string, JsonValue>> | undefined;
+  /** Inputs the recovery names, rendered by each adapter. */
+  readonly related: Readonly<AnalysisRelatedInputs> | undefined;
   readonly continuingCallerGuidance:
     | Readonly<AnalysisContinuingCallerGuidance>
     | undefined;
@@ -206,6 +232,17 @@ export abstract class AnalysisError extends Error {
     super(message, options);
     this.#cleanupPrimary = options?.cleanupPrimary;
     if (options?.limit !== undefined) this.bindLimit(options.limit);
+    this.related =
+      options?.related === undefined
+        ? undefined
+        : Object.freeze({
+            ...(options.related.parameters === undefined
+              ? {}
+              : { parameters: Object.freeze([...options.related.parameters]) }),
+            ...(options.related.operations === undefined
+              ? {}
+              : { operations: Object.freeze([...options.related.operations]) }),
+          });
     this.diagnostics =
       options?.diagnostics === undefined
         ? undefined
@@ -233,6 +270,11 @@ export abstract class AnalysisError extends Error {
   readonly userCategory: "cancelled" | undefined = undefined;
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
+  #argumentObservations: AnalysisArgumentObservation[] = [];
+  /** Completed argument observations of a composite request, in retention order. */
+  get argumentObservations(): readonly AnalysisArgumentObservation[] {
+    return this.#argumentObservations;
+  }
   sourcePublicationRecovery: SourcePublicationRecovery | undefined;
   workflowUnknownPublication: WorkflowUnknownPublication | undefined;
 
@@ -440,6 +482,19 @@ export abstract class AnalysisError extends Error {
   /** Retain a completed observation when a later step fails. */
   retainPartialObservation(observation: AnalysisPartialObservation): this {
     this.partialObservation ??= observation;
+    return this;
+  }
+
+  /**
+   * Retain a composite argument's completed observation without replacing
+   * this failure's own partial observation; the first per argument wins.
+   */
+  retainArgumentObservation(
+    argument: string,
+    observation: AnalysisPartialObservation,
+  ): this {
+    if (!this.#argumentObservations.some((kept) => kept.argument === argument))
+      this.#argumentObservations.push(Object.freeze({ argument, observation }));
     return this;
   }
 

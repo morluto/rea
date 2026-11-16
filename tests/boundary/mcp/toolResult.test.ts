@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -13,6 +14,10 @@ import {
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { ToolContract } from "../../../src/contracts/toolContractTypes.js";
+import {
+  annotationsFromEffects,
+  toolEffects,
+} from "../../../src/contracts/toolEffects.js";
 import { err } from "../../../src/domain/result.js";
 import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
@@ -56,24 +61,9 @@ const contract: ToolContract = {
   kind: "enhanced",
   inputSchema: z.object({}),
   outputSchema: z.object({ value: z.string() }),
-  effects: {
-    mutatesTarget: false,
-    mutatesSession: false,
-    writesFilesystem: false,
-    launchesProcess: false,
-    accessesNetwork: false,
-    changesUiState: false,
-    mayDiscardData: false,
-    executesForeignCode: false,
-    mutatesDevice: false,
-    idempotent: true,
-  },
-  annotations: {
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: false,
-  },
+  effects: toolEffects(),
+  sessionEffects: toolEffects(),
+  annotations: annotationsFromEffects(toolEffects()),
   returnsTargetContent: false,
   examples: [{ title: "Example fixture request", input: {} }],
 };
@@ -414,7 +404,7 @@ describe("tool result projection", () => {
   });
   it("returns one complete Evidence record with its typed normalized result", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "fixture",
@@ -449,7 +439,7 @@ describe("tool result projection", () => {
     "preserves a complete reusable Evidence record for JSON result %j",
     (value) => {
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "fixture", name: "Fixture", version: "1" },
         { operation: "fixture", parameters: {}, result: value },
       );
@@ -503,7 +493,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Partial observation fixture", version: "1" },
       { operation: "fixture", parameters: {}, result: { observed: true } },
     );
@@ -543,7 +533,7 @@ describe("untrusted provenance on failed tool results", () => {
 
   it("preserves cleanup details when an unretained partial exceeds the response budget", () => {
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "get_call_graph",

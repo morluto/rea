@@ -1,4 +1,4 @@
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type { BigIntStats } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";

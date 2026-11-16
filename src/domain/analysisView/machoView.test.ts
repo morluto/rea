@@ -1,8 +1,10 @@
+import { UNKNOWN_EVIDENCE_SUBJECT } from "../../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
 
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { evidenceSubject } from "../evidence.js";
 import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 it("binds every Mach-O facet to its rows, including empty pages", () => {
@@ -201,13 +203,13 @@ const report = {
 };
 const parent = (
   normalizedResult: unknown = report,
-  subject: AnalysisViewParent["subject"] = {
+  subject: AnalysisViewParent["subject"] = evidenceSubject({
     name: "tool",
-    digest: { sha256: "b".repeat(64) },
+    sha256: "b".repeat(64),
     format: "mach-o",
     architecture: "arm64",
-    local_path: "/bin/tool",
-  },
+    path: "/bin/tool",
+  }),
 ): AnalysisViewParent => ({
   predicateType: "rea.analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
@@ -417,9 +419,12 @@ describe("Mach-O analysis views", () => {
 
 describe("Mach-O view uncertainty", () => {
   it("keeps a missing subject unknown instead of inventing identity", () => {
-    const projected = projectAnalysisView(parent(report, null), {
-      kind: "summary",
-    });
+    const projected = projectAnalysisView(
+      parent(report, UNKNOWN_EVIDENCE_SUBJECT),
+      {
+        kind: "summary",
+      },
+    );
     if (!projected.ok) throw projected.error;
     expect(projected.value.artifact).toEqual({ path: "", sha256: null });
     expect(projected.value.unknowns).toContain(
@@ -445,13 +450,15 @@ describe("Mach-O view uncertainty", () => {
       ],
     });
     const contradictory = projectAnalysisView(
-      parent(report, {
-        name: "tool",
-        digest: { sha256: "b".repeat(64) },
-        format: "elf",
-        architecture: null,
-        local_path: "/bin/tool",
-      }),
+      parent(
+        report,
+        evidenceSubject({
+          name: "tool",
+          sha256: "b".repeat(64),
+          format: "elf",
+          path: "/bin/tool",
+        }),
+      ),
       { kind: "summary" },
     );
     if (contradictory.ok) throw new Error("expected a subject refusal");

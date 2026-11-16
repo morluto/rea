@@ -124,8 +124,10 @@ describe("PE import stable filesystem boundary", () => {
       reportedLimits: { limit: "retained_text", maximum: 16777216 },
       remediationAction: undefined,
       fixedAllowance: {
-        name: expect.stringContaining("16777216-byte PE import retained-text"),
+        name: expect.stringContaining("PE import retained-text allowance"),
         kind: "bytes",
+        limit: 16777216,
+        unit: "bytes",
       },
       retryable: false,
     });

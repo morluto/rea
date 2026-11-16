@@ -14,9 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi, onTestFinished } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ok, err } from "../domain/result.js";
@@ -24,7 +24,7 @@ import {
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "./CommandRunner.js";
+} from "../providers/NativeCommandRunner.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { NativeCallTracer } from "./LldbCallTracer.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
@@ -240,20 +240,14 @@ it("retries a retained signature root when the provider client closes", async ()
 
 it("waits for an in-flight signature binding before provider close", async () => {
   const target = await createTarget("observed", "expected");
-  let rootFactoryEntered!: () => void;
-  let releaseRootFactory!: () => void;
-  const entered = new Promise<void>(
-    (resolve) => (rootFactoryEntered = resolve),
-  );
-  const gate = new Promise<void>((resolve) => (releaseRootFactory = resolve));
+  const rootFactory = phaseGate();
   const provider = new NativeMacOSProvider(
     {},
     unusedRunner,
     "darwin",
     () => unusedTracer,
     async () => {
-      rootFactoryEntered();
-      await gate;
+      await rootFactory.hold();
       return createRoot();
     },
   );
@@ -262,17 +256,13 @@ it("waits for an in-flight signature binding before provider close", async () =>
   let closeSettled = false;
   let closing: ReturnType<typeof client.close> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(
-      entered,
-      operation,
-      "signature root acquisition",
-    );
+    await rootFactory.reached(operation, "signature root acquisition");
     closing = client.close().finally(() => {
       closeSettled = true;
     });
     await Promise.resolve();
     expect(closeSettled).toBe(false);
-    releaseRootFactory();
+    rootFactory.release();
     await expect(operation).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisArtifactChangedError" },
@@ -281,7 +271,7 @@ it("waits for an in-flight signature binding before provider close", async () =>
     expect(closeSettled).toBe(true);
     await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
   }, [
-    releaseRootFactory,
+    rootFactory.release,
     async () => {
       await operation;
     },

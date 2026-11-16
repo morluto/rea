@@ -2,7 +2,7 @@ import { SdkError, type Client } from "@modelcontextprotocol/client";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  decodeMcpTextReply,
+  decodeMcpJsonText,
 } from "../providers/McpToolResult.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -23,6 +23,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { SharedStartupAttempt } from "../process/SharedStartupAttempt.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { JebMcpDeadline, selectedJebMcpTimeout } from "./JebMcpDeadline.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Upstream protocol names for the operations REA exposes. */
 export const JEB_ENGINE_TOOLS = {
@@ -70,7 +71,7 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
       throw new AnalysisProtocolError(
         "JEB MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
       );
-    const text = decodeMcpTextReply(blocks[0]!, "json");
+    const text = decodeMcpJsonText(blocks[0]!);
     if (!text.ok && result.isError !== true)
       throw new AnalysisProtocolError("JEB MCP returned malformed JSON text", {
         cause: text.error.cause,
@@ -87,10 +88,7 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
 };
 
 const isJebFailureEnvelope = (value: JsonValue): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  !Array.isArray(value) &&
-  value.success === false;
+  isRecord(value) && value.success === false;
 
 export interface JebMcpConnectionTimeouts {
   /** Absolute catalog connection and pagination deadline. */

@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
-import { z } from "incur";
+import { z } from "zod";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";

@@ -3,6 +3,7 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { DebuggerCleanupIncomplete } from "../domain/debuggerSessionErrors.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   AnalysisCancelledError,
@@ -14,6 +15,7 @@ import {
   retainedDebuggerCleanupFailure,
   type OwnedDebuggerStopResult,
 } from "./ownedDebuggerSession.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** What the registry needs from a persistent debugger session it owns. */
 export interface RegisteredDebuggerSession {
@@ -139,6 +141,8 @@ export class OwnedDebuggerSessionRegistry<
       controller.abort(callerSignal?.reason);
     };
     callerSignal?.addEventListener("abort", relayAbort, { once: true });
+    // An abort dispatched while the listener was being added never reaches it.
+    if (callerSignal?.aborted) relayAbort();
     const started = Promise.resolve()
       .then(() => run(controller.signal))
       .finally(() => {
@@ -185,7 +189,8 @@ export class OwnedDebuggerSessionRegistry<
       .then(() => this.#options.stopProcess(session))
       .catch((cause: unknown): OwnedDebuggerStopResult => ({
         status: "incomplete",
-        reason: `${this.#options.stopFailurePrefix}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        code: "stop-failed",
+        reason: `${this.#options.stopFailurePrefix}: ${errorMessage(cause)}`,
       }))
       .then((stopped) => {
         if (stopped.status !== "incomplete") {
@@ -217,7 +222,7 @@ export class OwnedDebuggerSessionRegistry<
   retainCleanupFailure(
     session: Session,
     operation: string,
-    reason: string,
+    stopped: DebuggerCleanupIncomplete,
     options: AnalysisErrorOptions = {},
   ): AnalysisError {
     return this.retain(
@@ -228,7 +233,7 @@ export class OwnedDebuggerSessionRegistry<
           displayName: this.#options.displayName,
         },
         operation,
-        reason,
+        stopped,
         [session.id],
         options,
       ),

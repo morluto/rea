@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { readMachoCommandNames } from "../../../../src/native/MachoCommandNames.js";
+import { readMachoCommandNames } from "../../../../src/domain/apple/machoCommandNames.js";
 import { projectMachoBinary } from "../../../../src/native/MachoBinaryProjection.js";
 
 it.each([

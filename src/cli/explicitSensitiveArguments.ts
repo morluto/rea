@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { Errors, z, type MiddlewareHandler } from "incur";
+import { Errors, type MiddlewareHandler } from "incur";
+import { z } from "zod";
 
 import {
   parseCliOutputArguments,
