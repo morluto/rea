@@ -40,6 +40,7 @@ import {
   createEvidenceToolHandler,
   createRetainedSummaryToolHandler,
   createValueToolHandler,
+  type CommittedValue,
   type ContractToolService,
   type ValueToolRequest,
 } from "./contractToolHandler.js";
@@ -118,7 +119,7 @@ type EvidenceBinding<Input = unknown> = (
 type ValueOperation<Input> = (
   input: Input,
   request: ValueToolRequest,
-) => Promise<Result<JsonValue, AnalysisError>>;
+) => Promise<Result<JsonValue | CommittedValue, AnalysisError>>;
 
 /**
  * Run a workflow that returns a plain JSON value rather than Evidence, and

@@ -31,10 +31,6 @@ import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { registerCloseLifecycleTool } from "./registerCloseLifecycleTool.js";
 import { registerResetInvestigationTool } from "./registerResetInvestigationTool.js";
-import {
-  registerEvidenceTools,
-  registerUnknownTools,
-} from "./registerSessionRecordTools.js";
 import { registerServiceTools } from "./serviceToolBindings.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
@@ -340,10 +336,7 @@ export const registerSessionTools = (
   const openContract = toolContract("open_binary");
   const openBundleResourcesContract = toolContract("open_bundle_resources");
   const closeContract = toolContract("close_binary");
-  const exportContract = toolContract("export_evidence_bundle");
-  const importContract = toolContract("import_evidence_bundle");
   const captureContract = toolContract("capture_process_scenario");
-  const snapshotContract = toolContract("get_evidence_bundle");
   const processResources = new ProcessCaptureResourceScope();
   server.registerTool(
     openBundleResourcesContract.name,
@@ -419,14 +412,6 @@ export const registerSessionTools = (
       }
     },
   });
-  registerEvidenceTools({
-    server,
-    session,
-    resources: options.artifactResources,
-    exportContract,
-    importContract,
-    snapshotContract,
-  });
   registerProcessTools({
     server,
     session,
@@ -465,8 +450,12 @@ export const registerSessionTools = (
     server,
     {
       sessionDerived: { session, resources: options.artifactResources },
+      sessionRecords: { session, resources: options.artifactResources },
     },
-    { logger },
+    {
+      logger,
+      withAdmittedAnalysis: withAdmittedAnalysis({ kind: "session", session }),
+    },
   );
   registerNativeFunctionMatchingTool(
     server,
@@ -474,7 +463,6 @@ export const registerSessionTools = (
     logger,
     options.environment,
   );
-  registerUnknownTools({ server, session });
   registerContextTools(server, session);
 };
 

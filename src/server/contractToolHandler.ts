@@ -27,7 +27,7 @@ import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { err, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -188,6 +188,17 @@ export interface ValueToolRequest {
 }
 
 /**
+ * A value that commits a record, with the receipt an overflowing response
+ * names so the caller still learns what was committed.
+ */
+export class CommittedValue {
+  constructor(
+    readonly value: JsonValue,
+    readonly receipt: Readonly<Record<string, JsonValue>>,
+  ) {}
+}
+
+/**
  * Bind a named workflow returning a plain JSON value to shared logging and
  * delivery. A success records no Evidence; a failure's partial Evidence (a
  * cancelled session's cleanup record, say) is delivered through the session
@@ -200,7 +211,7 @@ export const createValueToolHandler =
     operation: (
       input: unknown,
       request: ValueToolRequest,
-    ) => Promise<Result<JsonValue, AnalysisError>>,
+    ) => Promise<Result<JsonValue | CommittedValue, AnalysisError>>,
     logger: Logger,
     withAdmittedAnalysis?: WithAdmittedAnalysis,
     recordEvidence?: EvidenceWriter["recordEvidence"],
@@ -220,13 +231,20 @@ export const createValueToolHandler =
             context,
           }),
         );
-        return result.ok
-          ? server.delivery.toCallToolResult(result, contract)
-          : server.delivery.toPartialErrorToolResult(
-              result.error,
-              contract.returnsTargetContent,
-              recordEvidence,
-            );
+        if (!result.ok)
+          return server.delivery.toPartialErrorToolResult(
+            result.error,
+            contract.returnsTargetContent,
+            recordEvidence,
+          );
+        const { value } = result;
+        return value instanceof CommittedValue
+          ? server.delivery.toCallToolResult(
+              ok(value.value),
+              contract,
+              value.receipt,
+            )
+          : server.delivery.toCallToolResult(ok(value), contract);
       },
     );
 

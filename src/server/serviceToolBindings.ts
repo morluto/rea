@@ -142,6 +142,15 @@ import {
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import { exportWebScriptsValidated } from "../application/WebScriptExportService.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
+import { CommittedValue } from "./contractToolHandler.js";
+import type { ResidualUnknown } from "../domain/residualUnknown.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
+import {
+  evidenceBundleExportReceipt,
+  readImmutableEvidenceBundle,
+  writeEvidenceBundle,
+} from "../application/EvidenceBundleFiles.js";
+import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";
 import {
   contractServiceBindings,
   registerContractTools,
@@ -169,6 +178,29 @@ export interface SessionDerivedToolOptions {
   readonly session: BinarySessionPort;
   readonly resources: ArtifactResourceScope;
 }
+
+/**
+ * A committed residual unknown, with the receipt naming its revision and
+ * mutation Evidence for a response too large to deliver.
+ */
+const committedUnknown = (
+  result: Result<ResidualUnknown, AnalysisError>,
+): Result<CommittedValue, AnalysisError> =>
+  result.ok
+    ? ok(
+        new CommittedValue(result.value, {
+          committed_unknown: {
+            unknown_id: result.value.unknown_id,
+            revision: result.value.revision,
+            mutation_evidence_ids: result.value.mutation_evidence_ids,
+          },
+          evidence_reference: {
+            kind: "retained-evidence",
+            evidence_id: result.value.mutation_evidence_ids[0]!,
+          },
+        }),
+      )
+    : result;
 
 /** The browser observation provider, or why it failed to load. */
 export interface BrowserObservationToolOptions {
@@ -1066,6 +1098,87 @@ const SERVICE_TOOL_BINDINGS = {
         executeSessionFunctionAnalysis(input, analysis, session, request),
     },
   })) satisfies Bind<{ readonly session: WorkflowSession | undefined }>,
+  // The session's Evidence bundle and residual unknowns, read and written
+  // under session admission.
+  sessionRecords: (({ session, resources }) => ({
+    export_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input, { signal }) => {
+        const bundle = session.immutableEvidenceBundle();
+        const written = await writeEvidenceBundle(
+          bundle,
+          input.path,
+          input.overwrite,
+          resources,
+          signal,
+        );
+        return written.ok
+          ? ok(evidenceBundleExportReceipt(bundle, written.value))
+          : written;
+      },
+    },
+    import_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input, { signal }) => {
+        const loaded = await readImmutableEvidenceBundle(
+          input.path,
+          signal,
+          resources,
+          "import_evidence_bundle",
+        );
+        if (!loaded.ok) return loaded;
+        if (signal.aborted)
+          return err(cancelledBy("import_evidence_bundle", signal));
+        const imported = session.importEvidenceBundle(loaded.value);
+        return imported.ok
+          ? ok({
+              imported: imported.value.recordsAdded,
+              unknowns_added: imported.value.unknownsAdded,
+              total: imported.value.totalRecords,
+            })
+          : imported;
+      },
+    },
+    get_evidence_bundle: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) =>
+        inspectEvidenceBundle(session.immutableEvidenceBundle(), input),
+    },
+    list_unknowns: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) =>
+        ok(
+          session.listUnknownsPage({
+            ...(input.status === undefined ? {} : { status: input.status }),
+            ...(input.severity === undefined
+              ? {}
+              : { severity: input.severity }),
+            ...(input.domain === undefined ? {} : { domain: input.domain }),
+            offset: input.offset,
+            ...(input.limit === undefined ? {} : { limit: input.limit }),
+          }),
+        ),
+    },
+    record_unknown: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => committedUnknown(session.recordUnknown(input)),
+    },
+    update_unknown: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => committedUnknown(session.updateUnknown(input)),
+    },
+    verify_unknown_resolution: {
+      admission: "sdk",
+      admitted: true,
+      value: async (input) => session.verifyUnknownResolution(input.unknown_id),
+    },
+  })) satisfies Bind<SessionDerivedToolOptions>,
   // Browser observation runs through an optional provider; when it failed
   // to load, every call reports it unavailable before admission.
   browserObservation: (({ browser, loadFailure }, retention) => {
