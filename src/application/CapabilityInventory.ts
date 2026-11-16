@@ -686,7 +686,7 @@ const HOST_FEATURES: Readonly<
   javascriptRecovery: {
     enabled: (policy) => policy.javascriptRecoveryEnabled,
     remediation:
-      "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/guides/javascript/javascript-recovery.md#install-wakaru. No binary target is required.",
+      "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/guides/javascript/javascript-recovery.md#install-wakaru. No binary target is required. On unsupported hosts (including Windows), integrated recovery is unavailable; see docs/guides/javascript/javascript-recovery.md#unsupported-hosts-and-manual-recovery-example-windows for manual external recovery.",
   },
   binaryLayout: {
     enabled: (policy) => policy.binaryLayoutEnabled,
