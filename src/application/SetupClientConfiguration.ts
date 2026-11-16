@@ -105,6 +105,16 @@ export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanu
   }
 }
 
+/**
+ * Temporary Windows trace for the Kimi configuration readback failure.
+ * Prints only on Windows (or when REA_WIN_DEBUG is set) and is removed once
+ * the failure is understood.
+ */
+const winDebug = (message: string): void => {
+  if (HOST_PLATFORM.platform === "win32" || process.env.REA_WIN_DEBUG === "1")
+    process.stderr.write(`REA-WIN-DEBUG ${message}\n`);
+};
+
 /** Configure one supported client's native stdio MCP registration shape. */
 export const configureClientConfiguration = async (
   client: SetupClient,
@@ -121,23 +131,35 @@ export const configureClientConfiguration = async (
       detail:
         "The running REA entrypoint could not be identified; run setup from an installed REA command.",
     };
-  if (client.configPathError !== undefined)
+  if (client.configPathError !== undefined) {
+    winDebug(`path-error ${String(client.configPathError)}`);
     return { status: "failed", reason: "path" };
+  }
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
+  );
+  winDebug(
+    `entry client=${client.name} format=${String(client.format)} platform=${platform} configPath=${client.configPath} transactionPath=${String(transactionPath)}`,
   );
   if (transactionPath === undefined)
     return { status: "failed", reason: "path" };
   try {
-    return await withClientConfigurationTransaction(transactionPath, () =>
-      configureClientDocument(
-        { client, transactionPath, platform },
-        environment,
-        command,
-        resolveProviderRequestBudget,
-      ),
+    const result = await withClientConfigurationTransaction(
+      transactionPath,
+      () =>
+        configureClientDocument(
+          { client, transactionPath, platform },
+          environment,
+          command,
+          resolveProviderRequestBudget,
+        ),
     );
+    winDebug(`result ${JSON.stringify(result)}`);
+    return result;
   } catch (cause: unknown) {
+    winDebug(
+      `transaction-throw ${errorMessage(cause)}\n${(cause as Error)?.stack ?? ""}`,
+    );
     if (cause instanceof ConfigurationError && !cause.cleanupIncomplete)
       return { status: "failed", reason: "readback" };
     throw cause;
@@ -172,6 +194,7 @@ const configureClientDocument = async (
     environment,
   );
   if (!files.ok) {
+    winDebug(`files-not-ok ${JSON.stringify(files.error)}`);
     throwCleanupFailure(files.error);
     return { status: "failed", reason: "readback" };
   }
@@ -182,8 +205,10 @@ const configureClientDocument = async (
     existing?.dialect === "dsh"
       ? dshDocument(existing.document).editabilityError
       : undefined;
-  if (editabilityError !== undefined)
+  if (editabilityError !== undefined) {
+    winDebug(`dsh-editability ${editabilityError}`);
     return { status: "failed", reason: "readback" };
+  }
   // Policy admission belongs to the transaction snapshot below, not the
   // earlier layered discovery document.
   let snapshot:
@@ -235,19 +260,24 @@ const configureClientDocument = async (
       ),
     );
     if (!policy.ok) {
+      winDebug(`policy-error ${errorMessage(policy.error)}`);
       throwCleanupFailure(policy.error);
       return { status: "failed", reason: "readback" };
     }
-    if (policy.value !== undefined)
+    if (policy.value !== undefined) {
+      winDebug(`policy-refusal ${JSON.stringify(policy.value)}`);
       return { status: "failed", reason: "readback" };
+    }
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure) throw cause;
     // Malformed existing configuration fails the readback gate.
+    winDebug(`policy-catch ${errorMessage(cause)}`);
     void cause;
     return { status: "failed", reason: "readback" };
   }
   const fallback = await readZcodeFallbackServers(client, platform, parsed);
   if (!fallback.ok) {
+    winDebug(`fallback-error ${JSON.stringify(fallback.error)}`);
     if (fallback.error.kind !== "registration_ownership")
       throwCleanupFailure(fallback.error);
     return fallback.error.kind === "registration_ownership"
@@ -278,13 +308,18 @@ const configureClientDocument = async (
     desired,
     platform,
   );
-  if (override !== undefined)
+  if (override !== undefined) {
+    winDebug(`override-blocker ${String(override)}`);
     return { status: "failed", reason: "read_only_override", detail: override };
+  }
   if (
     registrationCurrent(parsed, desired) &&
     (await privateProfileCurrent(client, original))
   )
     return { status: "unchanged" };
+  winDebug(
+    `persist existing=${String(existing !== undefined)} registered=${String(registrationCurrent(parsed, desired))}`,
+  );
   return persistClientConfiguration({
     client,
     transactionPath,
@@ -483,6 +518,9 @@ const persistClientConfiguration = async ({
             !clientConfigurationValuesEqual(readback.servers[name], entry),
         )
       ) {
+        winDebug(
+          `readback-mismatch registered=${String(registrationCurrent(readback, desired))} readback=${JSON.stringify(readback.servers[PRODUCT_IDENTITY.mcpServerKey])} desired=${JSON.stringify(desired)} fallback=${JSON.stringify(fallbackServers)} text=${JSON.stringify(text.slice(0, 400))}`,
+        );
         return await rollbackOrReadbackFailure(
           publication,
           original,
@@ -502,6 +540,9 @@ const persistClientConfiguration = async ({
         throw cause;
       }
       // Readback failure restores the transaction before reporting.
+      winDebug(
+        `readback-throw ${errorMessage(cause)}\n${(cause as Error)?.stack ?? ""}`,
+      );
       void cause;
       return rollbackOrReadbackFailure(
         publication,
