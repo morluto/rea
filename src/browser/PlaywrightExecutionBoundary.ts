@@ -1,6 +1,8 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 
 export const PLAYWRIGHT_NETWORK_READ_TIMEOUT_MS = 5_000;
@@ -20,9 +22,7 @@ export const withPlaywrightExecutionBoundary = <Value>(
   if (timeoutMs !== undefined && timeoutMs <= 0)
     return Promise.reject(timeoutError());
   if (signal?.aborted === true)
-    return Promise.reject(
-      new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-    );
+    return Promise.reject(cancelledBy(OPERATION, signal));
 
   return new Promise<Value>((resolve, reject) => {
     let settled = false;
@@ -36,7 +36,10 @@ export const withPlaywrightExecutionBoundary = <Value>(
         fail(timeoutError());
         return;
       }
-      timer = setTimeout(scheduleTimeout, Math.min(remaining, 2_147_483_647));
+      timer = setTimeout(
+        scheduleTimeout,
+        Math.min(remaining, MAX_NODE_TIMER_DELAY_MS),
+      );
       timer.unref();
     };
     const cleanup = (): void => {
@@ -56,7 +59,7 @@ export const withPlaywrightExecutionBoundary = <Value>(
       reject(error);
     };
     const onAbort = (): void => {
-      fail(new AnalysisCancelledError(OPERATION, { cause: signal?.reason }));
+      fail(cancelledBy(OPERATION, carriedReason(signal?.reason)));
     };
     scheduleTimeout();
     if (settled) return;

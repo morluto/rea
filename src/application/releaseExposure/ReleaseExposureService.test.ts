@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -25,9 +25,10 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 import { ReleaseExposureService } from "./ReleaseExposureService.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const SHA = "ab".repeat(32);
 
@@ -2126,9 +2127,9 @@ describe("ReleaseExposureService cleanup", () => {
       "/work/app/desktop",
       "/work/app/go",
     ]);
-    first.resolveCleanup();
+    releaseOwnedCleanup(first);
     expect(failure.cleanupIncomplete).toBe(true);
-    second.resolveCleanup();
+    releaseOwnedCleanup(second);
     expect(failure.cleanupIncomplete).toBe(false);
   });
 });

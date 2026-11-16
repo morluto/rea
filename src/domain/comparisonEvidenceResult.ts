@@ -49,6 +49,7 @@ export function readComparisonResult(
     const parsed = readEvidencePayload(
       processCaptureComparisonSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!parsed.ok) return parsed;
     return ok({ operation, evidence, result: parsed.value });
@@ -57,6 +58,7 @@ export function readComparisonResult(
     const parsed = readEvidencePayload(
       functionComparisonResultSchema,
       evidence.normalized_result,
+      { within: ["normalized_result"] },
     );
     if (!parsed.ok) return parsed;
     if (parsed.value.function_match.method === "same-evidence") {
@@ -102,10 +104,12 @@ export function readComparisonResult(
   const parsed = readEvidencePayload(
     artifactComparisonResultSchema,
     evidence.normalized_result,
+    { within: ["normalized_result"] },
   );
   if (!parsed.ok) return parsed;
   const links = validateFindingLinks(evidence, [
     ...parsed.value.changes.flatMap(({ evidence_links }) => evidence_links),
+    // optional-fact-default: only retained IDs are links to validate.
     ...(parsed.value.integrity_mismatch_evidence_ids ?? []),
   ]);
   if (!links.ok) return links;

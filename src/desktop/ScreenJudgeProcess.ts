@@ -1,3 +1,4 @@
+import { AnalysisCleanupLease } from "../resources/index.js";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,7 +7,7 @@ import { z } from "zod";
 
 import type { ScreenJudge } from "../domain/desktop/appTaskScreen.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { RetainedCommandCleanup } from "../process/RetainedCommandCleanup.js";
@@ -14,11 +15,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import {
-  AGENTENV_PROVIDER,
-  agentEnvInterpreter,
-  type ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
+import { agentEnvInterpreter } from "./AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const JUDGE_TIMEOUT_MS = 10 * 60 * 1000;
 const answerSchema = z.object({
@@ -27,10 +27,21 @@ const answerSchema = z.object({
   description: z.string(),
 });
 
+/** A failure whose cleanup completes when its owner's lease is released. */
 interface Retained {
-  readonly owner: RetainedCommandCleanup;
+  readonly lease: AnalysisCleanupLease;
   readonly failure: ProviderCleanupError;
 }
+
+const retained = (
+  owner: RetainedCommandCleanup,
+  failure: ProviderCleanupError,
+): Retained => {
+  failure.bindCleanupResourceOwner(owner);
+  const lease = AnalysisCleanupLease.forCloseOwner(owner, "screen-judge");
+  lease.bindCleanupError(failure);
+  return { lease, failure };
+};
 
 /** A complete answer remains evidence even when subsequent process cleanup fails. */
 const completedAnswer = (
@@ -83,10 +94,7 @@ export class ScreenJudgeProcess {
         },
       ).bindCleanupDependencies(pending);
     }
-    if (signal.aborted)
-      throw new AnalysisCancelledError("check_build_task", {
-        cause: signal.reason,
-      });
+    if (signal.aborted) throw cancelledBy("check_build_task", signal);
     const python = await agentEnvInterpreter(
       this.environment,
       "check_build_task",
@@ -129,9 +137,10 @@ export class ScreenJudgeProcess {
         primary = {
           cause:
             cause.reason === "cancelled"
-              ? new AnalysisCancelledError("check_build_task", {
-                  cause: cause.cancellation?.reason,
-                })
+              ? cancelledBy(
+                  "check_build_task",
+                  carriedReason(cause.cancellation?.reason),
+                )
               : new ProviderAdapterError(
                   AGENTENV_PROVIDER,
                   "check_build_task",
@@ -166,7 +175,7 @@ export class ScreenJudgeProcess {
         AGENTENV_PROVIDER,
         [folder],
         {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           ...(outcome === undefined ? {} : { completed_judge_result: outcome }),
         },
         {
@@ -179,9 +188,9 @@ export class ScreenJudgeProcess {
             "Close the build computer to retry screenshot cleanup.",
         },
       );
-      const owner = new RetainedCommandCleanup(folder, undefined);
-      failure.bindCleanupResourceOwner(owner);
-      this.#retained.add({ owner, failure });
+      this.#retained.add(
+        retained(new RetainedCommandCleanup(folder, undefined), failure),
+      );
       throw failure;
     }
   }
@@ -195,13 +204,14 @@ export class ScreenJudgeProcess {
     const completed = completedAnswer(cause);
     const original =
       cause instanceof OwnedCommandFailure && cause.reason === "cancelled"
-        ? new AnalysisCancelledError("check_build_task", {
-            cause: cause.cancellation?.reason,
-          })
+        ? cancelledBy(
+            "check_build_task",
+            carriedReason(cause.cancellation?.reason),
+          )
         : new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
             cause,
           });
-    const message = cause instanceof Error ? cause.message : String(cause);
+    const message = errorMessage(cause);
     const failure = new ProviderCleanupError(
       AGENTENV_PROVIDER,
       owner.cleanupResources,
@@ -222,8 +232,7 @@ export class ScreenJudgeProcess {
         remediationAction: "Close the build computer to retry judge cleanup.",
       },
     );
-    failure.bindCleanupResourceOwner(owner);
-    this.#retained.add({ owner, failure });
+    this.#retained.add(retained(owner, failure));
     return failure;
   }
 
@@ -233,12 +242,11 @@ export class ScreenJudgeProcess {
     const resources: string[] = [];
     for (const item of this.#retained) {
       try {
-        await item.owner.close();
+        await item.lease.release();
         this.#retained.delete(item);
-        item.failure.resolveCleanup();
       } catch (cause: unknown) {
-        failures.push(cause instanceof Error ? cause.message : String(cause));
-        resources.push(...item.owner.cleanupResources);
+        failures.push(errorMessage(cause));
+        resources.push(...(item.lease.cleanupResources ?? []));
       }
     }
     return failures.length === 0

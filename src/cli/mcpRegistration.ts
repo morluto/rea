@@ -1,22 +1,31 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { Writable } from "node:stream";
 
-import { Help, z } from "incur";
+import { z } from "zod";
 
 import {
+  mcpClientRegistrationWritten,
   registerMcpClients,
   type McpClientRegistrationOutcome,
 } from "../application/McpClientRegistration.js";
-import { resolveMcpRegistrationClients } from "../application/McpRegistrationCatalog.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  resolveMcpRegistrationClients,
+  type McpRegistrationClient,
+} from "../application/McpRegistrationCatalog.js";
+import { runningClientRewriteNotice } from "../application/SupportedClients.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   classifyMcpAddDiscovery,
   declaredSensitiveValues,
   readMcpAddArguments,
-  splitIncurBuiltinArguments,
+  type CliGlobalArguments,
 } from "../cliBuiltinArguments.js";
 import {
-  parseCliOutputArguments,
+  CLI_DOCUMENT_OUTPUT_FORMATS,
+  readCliOutputArguments,
   renderCliDocument,
   renderCliOutputArgumentError,
   type CliOutputArgumentValidation,
@@ -39,6 +48,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { createCliResultOutput } from "./cliResultOutput.js";
+import { formatCommandHelp } from "./help.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 import { ownCliProcessResource } from "./cliResources.js";
@@ -88,7 +98,7 @@ const precedingFlags = [
 
 /** Route only the named REA registration operation; other Incur commands remain theirs. */
 export const serveMcpRegistration = (
-  arguments_: readonly string[],
+  global: CliGlobalArguments,
   environment: Readonly<NodeJS.ProcessEnv>,
   defaultCommand: Result<
     ClientRegistrationCommand,
@@ -96,27 +106,22 @@ export const serveMcpRegistration = (
   >,
   options: ServeOptions,
 ): Promise<void> | undefined => {
-  const split = splitIncurBuiltinArguments(arguments_);
-  const offset = split.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+  const offset = global.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
   if (
-    split.command[offset] !== "mcp" ||
-    split.command[offset + 1] !== "add" ||
-    precedingFlags.some((flag) => split.flags.has(flag))
+    global.command[offset] !== "mcp" ||
+    global.command[offset + 1] !== "add" ||
+    precedingFlags.some((flag) => global.flags.has(flag))
   )
     return undefined;
   return (async () => {
-    const presentation = createRegistrationPresentation(
-      arguments_,
-      split.command,
-      options,
-    );
+    const presentation = createRegistrationPresentation(global, options);
     if (
       presentation === undefined ||
-      (await serveRegistrationDiscovery(split.flags, presentation))
+      (await serveRegistrationDiscovery(global.flags, presentation))
     )
       return Promise.resolve();
     const request = readRegistrationRequest(
-      split.command.slice(offset + 2),
+      global.command.slice(offset + 2),
       defaultCommand,
     );
     if (!request.ok) {
@@ -136,8 +141,7 @@ export const serveMcpRegistration = (
 
 /** Bind one invocation's rendering, explicit redaction and exit behavior. */
 const createRegistrationPresentation = (
-  arguments_: readonly string[],
-  command: readonly string[],
+  global: CliGlobalArguments,
   options: ServeOptions,
 ): RegistrationPresentation | undefined => {
   const write =
@@ -146,7 +150,7 @@ const createRegistrationPresentation = (
     if (options.exit !== undefined) options.exit(1);
     else process.exitCode = 1;
   };
-  const output = parseCliOutputArguments(arguments_);
+  const output = readCliOutputArguments(global);
   const validation: CliOutputArgumentValidation =
     output.validation.ok && (output.format === "csv" || output.format === "tsv")
       ? {
@@ -199,7 +203,7 @@ const createRegistrationPresentation = (
     async validation(message, field, error, code = "invalid_value") {
       const retained = redactExplicitText(
         message,
-        declaredSensitiveValues(command),
+        declaredSensitiveValues(global.command),
       );
       await document(
         {
@@ -231,12 +235,13 @@ const serveRegistrationDiscovery = async (
 ): Promise<boolean> => {
   if (flags.has("--help") || flags.has("-h")) {
     presentation.write(
-      `${Help.formatCommand("rea mcp add", {
+      `${formatCommandHelp("rea mcp add", {
         description:
           "Register exact stdio launcher arguments in selected client settings, with backups and verified publication.",
         options: mcpRegistrationOptionsSchema,
         alias: { command: "c" },
         hint: "No package acquisition or server execution. --no-global never writes global settings.",
+        globalOptions: { formats: CLI_DOCUMENT_OUTPUT_FORMATS },
       })}\n`,
     );
     return true;
@@ -302,13 +307,14 @@ const executeRegistration = async (
   const resources = (retainedResources ??= new ArtifactResourceScope());
   const outcomes = await resources
     .run(async () => {
+      const { platform } = HOST_PLATFORM;
       const targets = await resolveMcpRegistrationClients(
         {
           agents: request.agents,
           global: request.global,
           cwd: process.cwd(),
-          home: homeDirectoryFromEnvironment(environment, process.platform),
-          platform: process.platform,
+          home: homeDirectoryFromEnvironment(environment, platform),
+          platform,
           environment,
           signal,
         },
@@ -322,12 +328,16 @@ const executeRegistration = async (
         );
         return undefined;
       }
-      return registerMcpClients(
-        targets.value,
-        request.launcher,
-        signal,
-        resources,
-      );
+      return {
+        targets: targets.value,
+        outcomes: await registerMcpClients(
+          targets.value,
+          request.launcher,
+          signal,
+          resources,
+          platform,
+        ),
+      };
     })
     .catch(async (cause: unknown) => {
       if (!(cause instanceof ArtifactReaderFailure)) throw cause;
@@ -345,7 +355,12 @@ const executeRegistration = async (
       return undefined;
     });
   if (outcomes !== undefined)
-    await presentRegistration(outcomes, request.launcher, presentation);
+    await presentRegistration(
+      outcomes.outcomes,
+      outcomes.targets,
+      request.launcher,
+      presentation,
+    );
 };
 
 const clientReport = (
@@ -386,6 +401,7 @@ const clientReport = (
 
 const presentRegistration = async (
   outcomes: readonly McpClientRegistrationOutcome[],
+  targets: readonly McpRegistrationClient[],
   launcher: ClientRegistrationCommand,
   presentation: RegistrationPresentation,
 ): Promise<void> => {
@@ -401,14 +417,23 @@ const presentRegistration = async (
     clients,
   };
   await presentation.document(report, !report.ok);
-  for (const outcome of outcomes)
-    if (
-      outcome.status === "completed" &&
-      outcome.result.ok &&
-      outcome.result.value.backupPath !== undefined
-    )
+  for (const outcome of outcomes) {
+    if (outcome.status !== "completed") continue;
+    const target = targets.find(
+      ({ id, configPath }) =>
+        id === outcome.client && configPath === outcome.configPath,
+    );
+    const name = target?.displayName ?? outcome.client;
+    const { result } = outcome;
+    if (result.ok && result.value.backupPath !== undefined)
       process.stderr.write(
-        `${outcome.client === "amp" ? "Amp" : outcome.client} MCP registration backup retained at ${outcome.result.value.backupPath}\n`,
+        `${name} MCP registration backup retained at ${result.value.backupPath}\n`,
       );
+    const notice =
+      mcpClientRegistrationWritten(result) && target?.setupClient !== undefined
+        ? runningClientRewriteNotice(target.setupClient)
+        : undefined;
+    if (notice !== undefined) process.stderr.write(`${notice}\n`);
+  }
   if (!report.ok) presentation.fail();
 };

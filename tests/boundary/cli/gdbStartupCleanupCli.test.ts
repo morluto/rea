@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 
 import pino from "pino";
 import { expect, it, vi } from "vitest";
@@ -7,9 +8,10 @@ import { expect, it, vi } from "vitest";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { answerFakeGdbStartup } from "../providers/gdbTestHelpers.js";
 
 const registerGdbCommand = (
   createManager: () => GdbSessionManager,
@@ -143,12 +145,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
   "keeps selected GDB launch recovery in the public CLI for %s",
   async (code) => {
     const selected = "/selected/gdb command";
-    const launchFailure = Object.assign(
-      new Error(`spawn ${selected} ${code}`),
-      {
-        code,
-      },
-    );
+    const launchFailure = spawnFailure(code, selected);
     const spawnProcess = vi.fn(async () => {
       throw launchFailure;
     });
@@ -169,7 +166,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
         message: expect.stringContaining(JSON.stringify(selected)),
         remediation: { action: expect.stringContaining("REA_GDB_COMMAND") },
         details: {
-          reason: launchFailure.message,
+          reason: expect.stringContaining(JSON.stringify(selected)),
           diagnostics: {
             boundary: "provider-launch",
             command: selected,
@@ -250,6 +247,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         requests++;
         const token = match[1] ?? "";
         const tail = match[2] ?? "";
+        if (answerFakeGdbStartup(child.stdout, token, tail)) continue;
         const reply = modeledGdbReplies.get(tail);
         if (reply === undefined) unmodeled.push(line);
         child.stdout.write(
@@ -277,6 +275,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
         if (mode === "incomplete" && !recovering)
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "synthetic stop remains pending",
           };
         child.kill("SIGTERM");

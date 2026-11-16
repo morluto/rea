@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -20,7 +21,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 const resultEnvelope = z.object({ result: z.unknown() });
 
 const capture = (changed: boolean) =>
-  createEvidence(undefined, PROCESS_PROVIDER, {
+  createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
     predicateType: "rea.process-capture",
     operation: "capture_process_scenario",
     parameters: {},

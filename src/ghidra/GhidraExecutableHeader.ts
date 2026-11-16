@@ -1,12 +1,14 @@
-import { createHash } from "node:crypto";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import type { GhidraExecutableHeaderProbe } from "./GhidraInstallation.js";
 import type { GhidraInstallationFileOptions } from "./GhidraInstallationProperties.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import { withArtifactRegularFile } from "../resources/index.js";
 import { readStableFilePrefix } from "../filesystem/readStableFileBytes.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Only this prefix is examined; the remainder is never retained or read. */
 const GHIDRA_EXECUTABLE_HEADER_BYTES = 4096;
@@ -53,7 +55,11 @@ export const readGhidraExecutableHeader = async (
                 },
                 {
                   diagnostics: { path, stage: "native_decompiler_header" },
-                  retryable: false,
+                  ...fixedAllowanceOptions(
+                    "The header parser's exactly representable executable extent",
+                    "parser",
+                    { limit: Number.MAX_SAFE_INTEGER, unit: "bytes" },
+                  ),
                 },
               );
             completedHeader = {
@@ -68,21 +74,22 @@ export const readGhidraExecutableHeader = async (
     );
   } catch (cause: unknown) {
     return err(
-      ghidraFileFailure(cause, "ghidra:installation", {
-        path,
-        stage: "native_decompiler_header",
-        ...(completedHeader === undefined
-          ? {}
-          : {
-              completed_header: {
-                file_bytes: completedHeader.size,
-                examined_bytes: completedHeader.bytes.length,
-                prefix_sha256: createHash("sha256")
-                  .update(completedHeader.bytes)
-                  .digest("hex"),
-              },
-            }),
-      }),
+      classifyProviderFailure(
+        cause,
+        ghidraFileDialect("ghidra:installation", {
+          path,
+          stage: "native_decompiler_header",
+          ...(completedHeader === undefined
+            ? {}
+            : {
+                completed_header: {
+                  file_bytes: completedHeader.size,
+                  examined_bytes: completedHeader.bytes.length,
+                  prefix_sha256: sha256Hex(completedHeader.bytes),
+                },
+              }),
+        }),
+      ),
     );
   }
 };
