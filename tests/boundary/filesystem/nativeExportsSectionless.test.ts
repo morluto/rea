@@ -40,7 +40,7 @@ describe("sectionless ELF export filesystem boundary", () => {
         operation: "inspect_native_exports",
         provider: { id: "rea-native-exports" },
         confidence: "observed",
-        subject: { local_path: path, format: "elf", digest: { sha256 } },
+        subject: { local_path: path, identity: { format: "elf", sha256 } },
       });
       expect(
         nativeExportsSchema.parse(evidence.normalized_result),

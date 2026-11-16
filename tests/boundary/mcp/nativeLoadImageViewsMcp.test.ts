@@ -1,12 +1,12 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import {
   nativeDolLoadImageFixture,
   nativeRawLoadImageFixture,
@@ -99,7 +99,7 @@ it("preserves raw and DOL verification facts and selected DOL sections through t
       limitations: expect.arrayContaining(report.limitations),
     });
   }
-}, 30_000);
+});
 
 it("delivers load-image summaries from the complete retained public-tool observation", async () => {
   const report = nativeRawLoadImageFixture();

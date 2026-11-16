@@ -471,7 +471,7 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
             confidence: "observed",
             subject: {
               local_path: database.path,
-              digest: { sha256: digestForTest(original) },
+              identity: { sha256: digestForTest(original) },
             },
             parameters: {
               path: database.path,
@@ -509,7 +509,7 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
             confidence: "observed",
             subject: {
               local_path: database.path,
-              digest: { sha256: digestForTest(original) },
+              identity: { sha256: digestForTest(original) },
             },
             parameters: {
               path: database.path,
@@ -1366,6 +1366,32 @@ nativeTest(
     const acquiredPid = pid;
     expect(() => process.kill(acquiredPid, 0)).toThrow();
     await expectPrivateRootRemoved(ownedRoot);
+  },
+);
+
+nativeTest(
+  "reports the worker's V8 heap report even when its output overflows the diagnostic budget",
+  async () => {
+    const { database } = await createFixture();
+    const provider = new SqliteDatabaseProvider({}, (spawn) =>
+      spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: [
+          "-e",
+          `process.stderr.write('FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n'); process.stdout.write('x'.repeat(${String(SQLITE_DATABASE_LIMITS.diagnosticBytes + 1)})); setInterval(() => {}, 1000)`,
+        ],
+      }),
+    );
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({ path: database.path });
+    if (result.ok) throw new Error("Expected heap exhaustion");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: { javascript_heap_bytes: 256 * 1024 * 1024 },
+      },
+    });
   },
 );
 

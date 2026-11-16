@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactParseFailure,
+} from "../../resources/index.js";
 import type {
   InspectPeCertificatesInput,
   PeCertificates,
@@ -11,10 +14,19 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "./PeResourceLayout.js";
+import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
+};
+
+/** Shared PE header admission, with malformed headers as format failures. */
+const readCertificateImageHeaders = (bytes: Buffer) => {
+  try {
+    return readPeHeaders(bytes);
+  } catch (cause) {
+    throw artifactParseFailure(cause, undefined);
+  }
 };
 
 const requireRange = (bytes: Buffer, offset: number, length: number): void => {
@@ -43,7 +55,7 @@ const LIMITATIONS = [
 const TELETEX_LIMITATION =
   "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.";
 
-export const UNSIGNED_ATTRIBUTES_LIMITATION =
+const UNSIGNED_ATTRIBUTES_LIMITATION =
   "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.";
 
 const ABSENT_LIMITATIONS = [
@@ -58,7 +70,7 @@ export const parsePeCertificates = (
   input: InspectPeCertificatesInput,
 ): PeCertificates => {
   const { machine, format, dataDirectories, headerSize, optionalHeaderOffset } =
-    readPeHeaders(bytes);
+    readCertificateImageHeaders(bytes);
   const security = dataDirectories[4];
   if (
     security === undefined ||

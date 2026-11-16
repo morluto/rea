@@ -68,18 +68,14 @@ processTest.for(cases)(
     const sourceRoot = "root" in scenario ? scenario.root : null;
     // Import the built production helper in a child. A native assertion must
     // become a failed signal assertion here, never terminate the Vitest worker.
-    const result = await processes.run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `import { resolveJavaScriptSourceMapReferences } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import { resolveJavaScriptSourceMapReferences } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
        const [source, root] = JSON.parse(process.argv[1]);
        console.log(JSON.stringify(resolveJavaScriptSourceMapReferences([source], root, "maps/main.js.map")[0]));`,
-        JSON.stringify([scenario.source, sourceRoot]),
-      ],
-      { timeoutMs: 10_000 },
-    );
+      JSON.stringify([scenario.source, sourceRoot]),
+    ]);
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({

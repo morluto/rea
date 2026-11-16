@@ -442,26 +442,24 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
   unbiased 16-bit EAT index; reported biased ordinals may exceed 16 bits. The
   directory's DLL name, ordinal base and timestamp are reported, and an image
   without an export directory is a complete empty inventory.
-- ELF rows list defined dynamic symbols with global, weak or GNU-unique
+- ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
   (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`,
-  `binding` and `visibility` (`"default"` or `"protected"`; `"unknown"` in older
-  historical Evidence where visibility was not recorded). ELF string tables do
+  `binding` and `visibility` (`"default"` or `"protected"`). ELF string tables do
   not declare a text encoding. Names that
   contain non-ASCII bytes are decoded as UTF-8 when those bytes form valid
   UTF-8; `name_utf8_decodable` records whether the non-ASCII name bytes are
   valid UTF-8 and `name_bytes_base64` retains those exact bytes (`null` for
   ASCII names). When they are not valid UTF-8, `name` uses a byte-preserving
-  Latin-1 mapping and the raw bytes remain available. Older retained results
-  report null for the newly added encoding fields. `version` is null for an
+  Latin-1 mapping and the raw bytes remain available. `version` is null for an
   unversioned symbol. A versioned
-  symbol reports its GNU index, a name when resolved from `.gnu.version_d` or
+  symbol reports its GNU index, a name resolved from `.gnu.version_d` or
   `.gnu.version_r`, the corresponding `name_bytes_base64` and
-  `name_utf8_decodable` facts, and the `hidden` flag from `.gnu.version`.
+  `name_utf8_decodable` facts (both null when the version name is unresolved),
+  and the `hidden` flag from `.gnu.version`.
   Version names use the same UTF-8-when-valid, otherwise byte-preserving
   Latin-1 display mapping as symbol names; ELF does not declare either
-  string's text encoding. Older retained results report null for the added
-  version-name encoding fields. `"unknown"`
+  string's text encoding. `"unknown"`
   means the symbol-version table could not be read. A hidden version is not
   the default version that a by-name `dlsym` lookup selects.
   Definition names take precedence when both tables name the same index.
@@ -474,9 +472,15 @@ unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
 Unresolved symbol versions keep their rows: the version name is null when no
 definition or requirement names the index, and `version` is
 `"unknown"` when the version table cannot be read; coverage is likewise
-`partial`. A dynamic symbol table without its null entry is malformed. When
-`SHT_DYNSYM` is absent, including an ELF with no section headers, the reader
-locates symbols and strings through `PT_DYNAMIC` and their file-backed
+`partial`. A dynamic symbol table without its null entry is malformed.
+Entry 0 is the reserved undefined symbol: `st_info`, `st_other`, `st_shndx`,
+`st_value` and `st_size` must be zero, and any other value rejects the table.
+The gABI also requires `st_name` to be zero. A nonzero `st_name` with those
+fields zero does not define an export: the entry is skipped, coverage stays
+complete, and `limitations` records the name offset.
+
+When `SHT_DYNSYM` is absent, including an ELF with no section headers, the
+reader locates symbols and strings through `PT_DYNAMIC` and their file-backed
 `PT_LOAD` mappings. `DT_HASH` or a nonempty `DT_GNU_HASH` supplies the symbol
 count; if both supply a count, they must agree. A missing hash table or empty
 GNU buckets without a SysV count leaves coverage `unsupported`, because the

@@ -12,7 +12,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok } from "../../domain/result.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
@@ -20,6 +20,7 @@ import {
   SessionProviderRouter,
   type SessionProviderRoute,
 } from "./SessionProviderRouter.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 it.each([false, true])(
   "refreshes state published by close on alias switch (incoming fails: %s)",
@@ -225,7 +226,7 @@ it.each([
             restorationCloseCalls += 1;
             if (cleanupFails && restorationCloseCalls === 1)
               return err(cleanupFailure);
-            cleanupFailure.resolveCleanup();
+            releaseOwnedCleanup(cleanupFailure);
             return ok(null);
           },
         };

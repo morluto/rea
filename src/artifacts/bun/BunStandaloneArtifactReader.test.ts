@@ -1,13 +1,15 @@
 import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import * as artifactPaths from "../ArtifactPaths.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import { inventoryArtifact } from "../inventory/ArtifactInventory.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { resolveArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 import {
   bunModuleGraphPayload,
@@ -16,6 +18,34 @@ import {
   elfPrefix,
   elfAppendedBunPayload,
 } from "./BunStandalone.fixture.js";
+
+it.each(["close", "cancel"] as const)(
+  "does not report a complete inventory after %s while iteration is paused",
+  async (interruption) => {
+    const path = join(await createTestTempDirectory("rea-bun-paused-"), "app");
+    await writeFile(
+      path,
+      elfAppendedBunPayload(
+        bunModuleGraphPayload({
+          modules: [{ name: "main.js", contents: Buffer.from("body") }],
+        }),
+      ),
+    );
+    const reader = new BunStandaloneArtifactReader(path);
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("keeps duplicate and unsafe names distinct while extracting exact bytes", async () => {
   const path = join(await createTestTempDirectory("rea-bun-reader-"), "app");
@@ -130,6 +160,35 @@ async function collect<T>(values: AsyncIterable<T>): Promise<T[]> {
   return result;
 }
 
+it("cancels buffered member bytes after production finishes", async () => {
+  const path = join(await createTestTempDirectory("rea-bun-buffered-"), "app");
+  await writeFile(
+    path,
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: [{ name: "main.js", contents: Buffer.from("buffered") }],
+      }),
+    ),
+  );
+  const reader = new BunStandaloneArtifactReader(path);
+  const controller = new AbortController();
+  const reason = new Error("cancel buffered Bun member");
+  try {
+    const [entry] = await collect(reader.entries());
+    if (entry === undefined) throw new Error("Expected Bun member");
+    const stream = await reader.open(entry, controller.signal);
+    await once(stream, "finish");
+    expect(stream.readableLength).toBeGreaterThan(0);
+    controller.abort(reason);
+    await expect(buffer(stream)).rejects.toMatchObject({
+      reason: "cancelled",
+      cause: reason,
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 it("allows an uncancelled inventory after a cancelled graph preparation", async () => {
   const path = join(
     await createTestTempDirectory("rea-bun-cancel-retry-"),
@@ -197,14 +256,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
   const observed = await open(path, "r");
   const prototype = Object.getPrototypeOf(observed) as FileHandle;
   const original = prototype.read;
-  let entered!: () => void;
-  let resume!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    resume = resolve;
-  });
+  const artifactRead = phaseGate();
   let firstRead = true;
   const spy = vi.spyOn(prototype, "read").mockImplementation(async function (
     this: FileHandle,
@@ -213,8 +265,7 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
     const result = await original.apply(this, args);
     if (firstRead) {
       firstRead = false;
-      entered();
-      await gate;
+      await artifactRead.hold();
     }
     return result;
   });
@@ -226,17 +277,17 @@ it("keeps another caller's in-flight inventory independent of cancelled preparat
       },
       (cause: unknown) => cause,
     );
-    await started;
+    await artifactRead.reached(first, "Bun artifact read");
     const second = collect(reader.entries());
     controller.abort(reason);
-    resume();
+    artifactRead.release();
     expect(await rejected).toMatchObject({
       reason: "cancelled",
       cause: reason,
     });
     expect((await second).map((entry) => entry.path)).toEqual(["$bunfs/a.js"]);
   } finally {
-    resume();
+    artifactRead.release();
     spy.mockRestore();
     await observed.close();
     await reader.close();

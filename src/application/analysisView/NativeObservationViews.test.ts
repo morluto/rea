@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { nativeGraphViewItemsSchema } from "../../domain/analysisView/nativeObservationSchemas.js";
@@ -13,11 +14,11 @@ import {
   nativeCallGraphSchema,
   type NativeCallGraph,
 } from "../../domain/native/nativeCallGraph.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewResultSchema,
-  type AnalysisViewRequest,
   type AnalysisViewResult,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   inspectAnalysisView,
   projectRetainedAnalysis,
@@ -225,7 +226,7 @@ it("pages complete context fields and changes its digest when source profile or 
 });
 
 it("keeps absent profile and inapplicable result caveats distinct from observed empty data", async () => {
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "procedure_address",
     parameters: {},
     result: "0x0000",
@@ -612,7 +613,7 @@ it.each([
 ])(
   "keeps $status relationship coverage on every context facet",
   async (coverage) => {
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_callees",
       parameters: {},
       result: [],

@@ -6,10 +6,10 @@ import { expect, it, vi } from "vitest";
 
 import { registerWebScriptCommands } from "../../../src/cli/webScriptCommands.js";
 import * as webScriptExport from "../../../src/application/WebScriptExportService.js";
-import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../../src/contracts/cliCommandNames.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   scriptCaptureEvidenceFixture,
@@ -29,7 +29,7 @@ const registeredExportCommand = () => {
     },
   } as unknown as Parameters<typeof registerWebScriptCommands>[0];
   registerWebScriptCommands(cli, pino({ enabled: false }));
-  return commands.get(CLI_COMMANDS.exportWebScripts)!;
+  return commands.get(cliCommandFor("export_web_scripts"))!;
 };
 
 it("forwards an interrupt into the export workflow and reports cancellation", async () => {
@@ -130,15 +130,12 @@ cliTest.skipIf(process.platform === "win32")(
     const root = await createTestTempDirectory("rea-script-selection-cli-");
     const capturePath = join(root, "capture.pipe");
     const outputDirectory = join(root, "export");
-    const created = await processes.run("mkfifo", [capturePath], {
-      timeoutMs: 5_000,
-    });
+    const created = await processes.run("mkfifo", [capturePath]);
     expect(created.exitCode).toBe(0);
 
     const response = await cli.run({
       arguments: ["export-web-scripts", capturePath, outputDirectory, "--json"],
       environment: { REA_LOG_LEVEL: "silent" },
-      timeoutMs: 5_000,
     });
     expect(response.exitCode).toBe(1);
     expect(response.signal).toBeNull();
@@ -149,7 +146,7 @@ cliTest.skipIf(process.platform === "win32")(
         operation: "export_web_scripts",
         issues: [
           {
-            path: ["capture_path"],
+            path: ["capturePath"],
             reason: "invalid_value",
             message: expect.stringContaining("regular file"),
           },
@@ -201,7 +198,7 @@ cliTest(
           operation: "export_web_scripts",
           issues: [
             {
-              path: ["output_directory"],
+              path: ["outputDirectory"],
               reason: "invalid_value",
               message: "Output root already exists",
             },

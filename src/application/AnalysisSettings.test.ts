@@ -5,8 +5,7 @@ import {
   applyWindowsChangeTimeSnapshot,
   resolveWindowsChangeTimeSettle,
 } from "../config/windowsChangeTimeSettle.js";
-import { pwntoolsInputBytes } from "../native/pwntools/PwntoolsInputLimit.js";
-import { resolveBridgeMaxRequestBytes } from "../config/bridgeMaxRequestBytes.js";
+import { pwntoolsInputBytes } from "../config/pwntoolsInputLimit.js";
 import { resolveCaptureDecoderHeap } from "../config/captureDecoderHeap.js";
 import { resolveRegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
 import { resolveRegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
@@ -182,7 +181,11 @@ it("exposes shared provider controls and preserves the explicit unbounded decomp
     store
       .inspect({ provider: "ghidra", operation: "search_strings" })
       .settings.map(({ setting }) => setting),
-  ).toEqual(["ghidra.startup_timeout_ms", "bridge.max_request_bytes"]);
+  ).toEqual([
+    "ghidra.startup_timeout_ms",
+    "bridge.max_request_bytes",
+    "bridge.max_reply_bytes",
+  ]);
   for (const operation of ["list_cutter_sessions", "cutter_command"] as const)
     expect(
       store
@@ -366,7 +369,6 @@ it("reads an accepted override before an invalid launch seed", () => {
     {
       revision: 1,
       overrides: {
-        "bridge.max_request_bytes": 8192,
         "capture.decoder_old_generation_mib": 64,
         "regex.matching_deadline_ms": 250,
         "regex.worker_heap_request_mib": 128,
@@ -375,9 +377,6 @@ it("reads an accepted override before an invalid launch seed", () => {
       },
     },
     () => ({
-      bridge: resolveBridgeMaxRequestBytes({
-        REA_BRIDGE_MAX_REQUEST_BYTES: "nope",
-      }),
       capture: resolveCaptureDecoderHeap({
         REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "0",
       }),
@@ -393,10 +392,6 @@ it("reads an accepted override before an invalid launch seed", () => {
       }),
     }),
   );
-  expect(resolved.bridge).toMatchObject({
-    maximumBytes: 8192,
-    source: "runtime",
-  });
   expect(resolved.capture).toMatchObject({
     oldGenerationMiB: 64,
     source: "runtime",

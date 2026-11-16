@@ -1,8 +1,14 @@
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import {
-  AnalysisCancelledError,
+  readTsharkJsonPackets,
+  type TsharkJsonBudget,
+  type TsharkPacketLayers,
+} from "../domain/pcap/tsharkJsonPackets.js";
+import {
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { parsePcapHttpUri } from "./PcapHttpUri.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -16,8 +22,7 @@ const MAX_RETAINED_BYTES = 16 * 1024 * 1024;
 const MAX_DECODED_BYTES = 128 * 1024 * 1024;
 
 const assertOutputReadActive = (signal: AbortSignal | undefined): void => {
-  if (signal?.aborted)
-    throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
+  if (signal?.aborted) throw cancelledBy(OPERATION, signal);
 };
 
 const protocolFailure = (reason: string): never => {
@@ -141,7 +146,7 @@ export interface TsharkFields {
   readonly endpointCount: number;
   readonly dnsQueries: {
     query: string;
-    query_labels_hex?: string[] | null;
+    query_labels_hex: string[] | null;
     response_addresses: string[];
     response_address_count: number;
   }[];
@@ -164,58 +169,42 @@ export interface TsharkFields {
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** Map a refused tshark document to the pcap operation's typed failure. */
 const decodeTsharkPackets = async (
   stdout: string,
-  budget: { decodedBytes: number },
-  signal?: AbortSignal,
-): Promise<unknown[]> => {
-  assertOutputReadActive(signal);
-  if (Buffer.byteLength(stdout) > TSHARK_JSON_MAX_BYTES)
-    throw new AnalysisResourceConstraintError(
-      OPERATION,
-      "memory",
-      "tshark JSON exceeds the bounded decoding budget",
-      { max_json_bytes: TSHARK_JSON_MAX_BYTES },
-      fixedAllowanceOptions("The tshark JSON decoding allowance", "capture"),
-    );
-  // Account for source-driven JSON expansion before materializing protocol trees.
-  let quoted = false,
-    escaped = false;
-  budget.decodedBytes += stdout.length * 2;
-  for (let index = 0; index < stdout.length; index += 1) {
-    if (index % 65536 === 0) {
-      await yieldToEventLoop();
-      assertOutputReadActive(signal);
-    }
-    const char = stdout[index];
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quoted = false;
-    } else if (char === '"') {
-      quoted = true;
-      budget.decodedBytes += 64;
-    } else if (char === "{" || char === "[") {
-      budget.decodedBytes += 128;
-    } else if (char === ":" || char === ",") budget.decodedBytes += 128;
-    if (budget.decodedBytes > MAX_DECODED_BYTES)
+  budget: TsharkJsonBudget,
+  signal: AbortSignal | undefined,
+  acquisition: string,
+): Promise<TsharkPacketLayers[]> => {
+  const read = await readTsharkJsonPackets(stdout, budget, signal);
+  if (read.ok) return read.value;
+  const failure = read.error;
+  switch (failure.kind) {
+    case "cancelled":
+      throw cancelledBy(OPERATION, carriedReason(failure.cause));
+    case "json-bytes":
+      throw new AnalysisResourceConstraintError(
+        OPERATION,
+        "memory",
+        "tshark JSON exceeds the bounded decoding budget",
+        { max_json_bytes: failure.maxBytes },
+        fixedAllowanceOptions("The tshark JSON decoding allowance", "capture"),
+      );
+    case "json-expansion":
       throw new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
         "tshark JSON expansion exceeds the decoding budget",
-        { max_decoded_bytes: MAX_DECODED_BYTES },
+        { max_decoded_bytes: failure.maxDecodedBytes },
         fixedAllowanceOptions("The tshark JSON expansion allowance", "capture"),
       );
+    case "malformed-json":
+      throw new AnalysisProtocolError("tshark emitted malformed JSON", {
+        cause: failure.cause,
+      });
+    case "malformed-packet":
+      return protocolFailure(`${acquisition}${failure.reason}`);
   }
-  let packets: unknown;
-  try {
-    packets = JSON.parse(stdout) as unknown;
-  } catch (cause) {
-    throw new AnalysisProtocolError("tshark emitted malformed JSON", { cause });
-  }
-  if (!Array.isArray(packets))
-    return protocolFailure("tshark packet root must be an array");
-  return packets;
 };
 
 /** Decode each bounded acquisition, then join DNS PDUs by unique capture frame. */
@@ -224,16 +213,13 @@ export const parseTsharkJsonOutput = async (
   signal?: AbortSignal,
   dnsStdout?: string,
 ): Promise<TsharkFields> => {
-  const budget = { decodedBytes: 0 };
-  const packets = await decodeTsharkPackets(stdout, budget, signal);
-  for (const packet of packets) {
-    if (
-      !object(packet) ||
-      !object(packet._source) ||
-      !object(packet._source.layers)
-    )
-      return protocolFailure("packet lacks _source.layers");
-    const layers = packet._source.layers;
+  const budget: TsharkJsonBudget = {
+    maxBytes: TSHARK_JSON_MAX_BYTES,
+    maxDecodedBytes: MAX_DECODED_BYTES,
+    decodedBytes: 0,
+  };
+  const packets = await decodeTsharkPackets(stdout, budget, signal, "");
+  for (const layers of packets) {
     // Selected-field acquisitions have a flat frame.number key. Protocol-tree
     // acquisitions are separately parsed for producer goldens and DNS PDUs.
     if ("frame.number" in layers) {
@@ -256,14 +242,12 @@ export const parseTsharkJsonOutput = async (
   }
   if (dnsStdout !== undefined) {
     const seen = new Set<number>();
-    for (const packet of await decodeTsharkPackets(dnsStdout, budget, signal)) {
-      if (
-        !object(packet) ||
-        !object(packet._source) ||
-        !object(packet._source.layers)
-      )
-        return protocolFailure("DNS packet lacks _source.layers");
-      const layers = packet._source.layers;
+    for (const layers of await decodeTsharkPackets(
+      dnsStdout,
+      budget,
+      signal,
+      "DNS ",
+    )) {
       const frame = object(layers.frame)
         ? layers.frame["frame.number"]
         : undefined;
@@ -274,17 +258,15 @@ export const parseTsharkJsonOutput = async (
       if (
         !Number.isSafeInteger(number) ||
         seen.has(number) ||
-        !object(base) ||
-        !object(base._source) ||
-        !object(base._source.layers)
+        base === undefined
       )
         return protocolFailure(
           "DNS frame is duplicated or outside the capture inventory",
         );
       seen.add(number);
       for (const family of ["dns", "mdns", "llmnr"]) {
-        base._source.layers[family] = layers[family];
-        base._source.layers[`${family}_raw`] = layers[`${family}_raw`];
+        base[family] = layers[family];
+        base[`${family}_raw`] = layers[`${family}_raw`];
       }
     }
   }
@@ -324,21 +306,11 @@ export const parseTsharkJsonOutput = async (
       set.add(value);
     }
   };
-  for (let index = 0; index < packets.length; index += 1) {
+  for (const [index, layers] of packets.entries()) {
     if (index % 256 === 0) {
       await yieldToEventLoop();
       assertOutputReadActive(signal);
     }
-    const packet: unknown = packets[index];
-    if (
-      !object(packet) ||
-      !object(packet._source) ||
-      !object(packet._source.layers)
-    )
-      return protocolFailure(
-        `packet ${String(index + 1)} lacks _source.layers`,
-      );
-    const layers = packet._source.layers;
     // The tree is the producer-owned hierarchy; flatten only selected scalar
     // observations. DNS identity and RR ownership remain scoped to each PDU.
     const values = new Map<string, string[]>();

@@ -1,8 +1,8 @@
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { open } from "node:fs/promises";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   assertArtifactReadActive,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
@@ -10,23 +10,25 @@ import {
   bindArtifactFileCleanup,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   readStableFileBytes,
   RegularFileCapacityError,
 } from "../filesystem/readStableFileBytes.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Bounded serial read; the caller owns admission and final descriptor cleanup. */
 export const readGhidraProfileArtifact = <Value>(
@@ -103,9 +105,7 @@ export const ghidraFileFailure = (
   const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
   const admission =
     primary instanceof GhidraAdmissionError ? primary : undefined;
-  const reason =
-    admission?.code ??
-    (primary instanceof Error ? primary.message : String(primary));
+  const reason = admission?.code ?? errorMessage(primary);
   const systemCode =
     admission === undefined &&
     primary instanceof Error &&
@@ -137,11 +137,11 @@ export const ghidraFileFailure = (
   }
   const error =
     cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
-      ? new AnalysisCancelledError(operation, {
-          cause: artifactFileCancellationCause(cause),
-          cleanup,
-          diagnostics,
-        })
+      ? cancelledBy(
+          operation,
+          carriedReason(artifactFileCancellationCause(cause)),
+          { cleanup, diagnostics },
+        )
       : new ProviderAdapterError("ghidra", operation, {
           cause,
           cleanup,

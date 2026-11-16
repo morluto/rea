@@ -2,7 +2,7 @@ import { expect, expectTypeOf, it, vi } from "vitest";
 import { z } from "zod";
 import { evmInterfaceModule } from "../../src/composition/evm.js";
 import { wasmArtifactModule } from "../../src/composition/wasm.js";
-import { CLI_COMMANDS } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import { INSPECT_EVM_INTERFACE_CONTRACT } from "../../src/contracts/evm/evmToolContracts.js";
 
 it("rejects incompatible static bindings through the complete project typecheck", () => {
@@ -14,7 +14,7 @@ it("rejects incompatible static bindings through the complete project typecheck"
   }).not.toExtend<typeof evmInterfaceModule>();
   expectTypeOf({
     ...evmInterfaceModule,
-    cliCommand: CLI_COMMANDS.inspectWasmArtifact,
+    cliCommand: cliCommandFor("inspect_wasm_artifact"),
   }).not.toExtend<typeof evmInterfaceModule>();
   expectTypeOf({
     ...evmInterfaceModule,
@@ -38,7 +38,9 @@ it("rejects incompatible static bindings through the complete project typecheck"
 
 it("keeps the named binding and gives each caller a separate lazy service owner", async () => {
   expect(evmInterfaceModule.contract).toBe(INSPECT_EVM_INTERFACE_CONTRACT);
-  expect(evmInterfaceModule.cliCommand).toBe(CLI_COMMANDS.inspectEvmInterface);
+  expect(evmInterfaceModule.cliCommand).toBe(
+    cliCommandFor("inspect_evm_interface"),
+  );
   const first = evmInterfaceModule.create({});
   const second = evmInterfaceModule.create({});
   try {

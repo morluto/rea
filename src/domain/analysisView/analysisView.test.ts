@@ -27,13 +27,10 @@ import {
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import { javascriptModulePaths } from "./javascriptApplicationView.js";
-import {
-  analysisViewResultSchema,
-  inspectAnalysisViewInputSchema,
-  projectAnalysisView,
-  type AnalysisViewParent,
-} from "./analysisView.js";
+import { inspectAnalysisViewInputSchema } from "./analysisViewRequest.js";
+import { projectAnalysisView } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import { analysisViewResultSchema } from "./analysisViewResult.js";
 
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
@@ -203,7 +200,7 @@ it("keeps value-flow counts unknown when value flow is unrecorded or unavailable
   if (!unrecorded.ok) throw unrecorded.error;
   expect(analysisViewResultSchema.parse(unrecorded.value)).toMatchObject({
     summary: {
-      value_flow: { available: false, truncated: false },
+      value_flow: { available: false, truncated: null },
       counts: flowCounts,
     },
     unknowns: expect.arrayContaining(["native_value_flow was not recorded"]),
@@ -582,7 +579,7 @@ it("projects layout summary, facet, item, and stable pages", () => {
       format: "elf",
       counts: { sections: 3, symbols: 3, segments: 0, relocations: 0 },
     },
-    coverage: completeWithinViewCoverage(6, 6),
+    coverage: completeWithinViewCoverage(6),
   });
   const mitigations = projectAnalysisView(parent, {
     kind: "facet",
@@ -793,9 +790,6 @@ it("projects JavaScript summary and preserves selected module observations", () 
     selector: { path: "renderer.js" },
   });
   if (!item.ok) throw item.error;
-  const moduleNode = analysis.graph.nodes[0];
-  if (moduleNode === undefined) throw new Error("missing module");
-  expect(javascriptModulePaths(moduleNode)).toEqual(["renderer.js"]);
   if (item.value.kind !== "item") throw new Error("expected item view");
   expect(item.value.item).toMatchObject({
     path: "renderer.js",

@@ -1,9 +1,5 @@
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import {
-  createAsarHeaderSignatureProbe,
-  type FinalAsarHeaderProbeObservation,
-} from "./AsarHeader.js";
-import {
   createXmlPlistSignatureProbe,
   MAX_XML_PLIST_PROBE_BYTES,
 } from "../domain/apple/appleArchiveFormat.js";
@@ -20,6 +16,10 @@ import {
   type MzWindowsHeaderSignatureEvidence,
 } from "../domain/dosMz.js";
 import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
+import {
+  createAsarHeaderSignatureProbe,
+  type FinalAsarHeaderProbeObservation,
+} from "../resources/index.js";
 
 /** Initial bytes required by the other bounded format classifiers. */
 export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;

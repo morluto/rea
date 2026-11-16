@@ -1,8 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
@@ -28,10 +30,18 @@ import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import {
   validateDebuggerStatusResponse,
   waitForStartedFile,
 } from "../../support/reverseDebuggerMcpTestHelpers.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
+import {
+  expectNoUnmodeledGdbCommands,
+  FAKE_GDB_SESSION_REPLIES,
+  fakeGdbModeledReplies,
+  fakeGdbStartupPreamble,
+} from "../providers/gdbTestHelpers.js";
 
 it.skipIf(process.platform === "win32")(
   "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
@@ -41,15 +51,17 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"))}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    process.stdout.write(match[1] + (line.includes("auto-load off")
-      ? "^error,msg=\\"setting rejected\\"\\n"
-      : "^done\\n"));
+    if (line.slice(match[1].length) === "-gdb-set auto-load off")
+      process.stdout.write(match[1] + "^error,msg=\\"setting rejected\\"\\n");
+    else answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -65,6 +77,7 @@ process.stdin.on("data", (chunk) => {
         if (stopCalls === 1)
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "simulated startup stop uncertainty",
           };
         const stopped = await stopOwnedDebuggerProcess(session, name);
@@ -131,7 +144,11 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
+          try {
+            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
         },
       ]);
     }
@@ -147,6 +164,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", async (chunk) => {
@@ -222,8 +240,32 @@ process.stdin.on("data", async (chunk) => {
         "gdb_session_status",
         sessionId,
       );
-      expect(status.state).toBe("closed");
+      expect(status).toMatchObject({
+        state: "closed",
+        closed_reason: expect.stringContaining(
+          "A GDB MI command was cancelled",
+        ),
+      });
       expect(status).toHaveProperty("diagnostics_truncated");
+      // A later command names the retained reason instead of an argument error.
+      expect(
+        parseMcpToolError(
+          (await client.callTool({
+            name: "gdb_console",
+            arguments: { session_id: sessionId, command: "info registers" },
+          })) as CallToolResult,
+        ).error,
+      ).toMatchObject({
+        code: "capability_unavailable",
+        message: expect.stringContaining(
+          "The GDB debug session stopped and accepts no more commands. A GDB MI command was cancelled",
+        ),
+        remediation: {
+          action: expect.stringMatching(
+            /close_gdb_session.*start_gdb_session/u,
+          ),
+        },
+      });
       await manager.closeAll();
       expect(stopResults).toContain("stopped");
     } finally {
@@ -248,15 +290,16 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"), { ...FAKE_GDB_SESSION_REPLIES, [`-inferior-tty-set ${JSON.stringify(tty)}`]: "^done" })}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    if (line.includes("inferior-tty-show")) process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
-    else if (line.includes("list-thread-groups")) process.stdout.write(match[1] + "^done,groups=[]\\n");
-    else process.stdout.write(match[1] + "^done\\n");
+    if (line.slice(match[1].length) === "-inferior-tty-show") process.stdout.write(match[1] + "^done,inferior_tty_terminal=" + ${JSON.stringify(JSON.stringify(tty))} + "\\n");
+    else answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -319,7 +362,11 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
+          try {
+            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
         },
       ]);
     }
@@ -334,17 +381,18 @@ it.skipIf(process.platform === "win32")(
     await writeFile(
       provider,
       `#!${process.execPath}
+${fakeGdbStartupPreamble}
+${fakeGdbModeledReplies(join(directory, "unmodeled"))}
 process.stdout.write("(gdb)\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (!match) continue;
-    if (line.includes("auto-load off")) {
+    if (line.slice(match[1].length) === "-gdb-set auto-load off") {
       process.stdout.write(match[1] + "^done\\n");
       process.stdout.write(Buffer.from([0xff, 0x0a]));
-    } else if (line.includes("list-thread-groups")) process.stdout.write(match[1] + "^done,groups=[]\\n");
-    else process.stdout.write(match[1] + "^done\\n");
+    } else answerModeled(match[1], line.slice(match[1].length));
   }
 });
 `,
@@ -389,7 +437,11 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
+          try {
+            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
+          } finally {
+            await rm(directory, { recursive: true, force: true });
+          }
         },
       ]);
     }
@@ -398,7 +450,7 @@ process.stdin.on("data", (chunk) => {
 
 it("records partial GDB Evidence from an MCP command error", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "gnu.gdb",
       name: "GNU GDB",
@@ -437,8 +489,7 @@ it("records partial GDB Evidence from an MCP command error", async () => {
         output_truncated: false,
         completion_status: "unknown",
       },
-      subjectUnavailableReason:
-        "The debugger session does not identify an inferior.",
+      limitations: ["The debugger session does not identify an inferior."],
     },
   );
   expect(
@@ -530,7 +581,7 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
     status: () => undefined,
     close: async (sessionId: string) => {
       closeCalls.push(sessionId);
-      if (sessionId === ownerId) retainedFailure.resolveCleanup();
+      if (sessionId === ownerId) releaseOwnedCleanup(retainedFailure);
       return ok({ target_state: "unknown" as const });
     },
     retryCleanupFailures: async () => ok(null),
@@ -590,7 +641,7 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
 
 it("records partial GDB startup Evidence from an MCP start error", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "gnu.gdb",
       name: "GNU GDB",
@@ -626,8 +677,7 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
         output_truncated: false,
         completion_status: "unknown",
       },
-      subjectUnavailableReason:
-        "No debugger session became ready before GDB exited.",
+      limitations: ["No debugger session became ready before GDB exited."],
     },
   );
   const manager = {

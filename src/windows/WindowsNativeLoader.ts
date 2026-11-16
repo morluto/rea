@@ -1,3 +1,4 @@
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -10,7 +11,8 @@ import {
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
 } from "../domain/windowsNativeArtifact.js";
-import { RuntimeControlUnavailableError } from "../process/RuntimeControlUnavailableError.js";
+import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** A native resource remains opaque until the addon validates its object tag. */
 export const windowsHandleSchema = z.custom<object>(
@@ -181,7 +183,7 @@ export const loadWindowsNativeAuthority = (
       return {
         available: false,
         failureStage: "load",
-        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${cause instanceof Error ? cause.message : String(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
+        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${errorMessage(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
       };
     }
     const binding = bindingSchema.parse(loadedModule);
@@ -193,7 +195,7 @@ export const loadWindowsNativeAuthority = (
         available: false,
         failureStage: "self-test",
         retryable: true,
-        reason: `REA Windows native self-test failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: `REA Windows native self-test failed: ${errorMessage(cause)}`,
       };
     }
     const parsed = inspectionSchema.safeParse(observed);
@@ -209,20 +211,20 @@ export const loadWindowsNativeAuthority = (
     return {
       available: false,
       failureStage: "artifact",
-      reason: `REA Windows native controls are unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      reason: `REA Windows native controls are unavailable: ${errorMessage(cause)}`,
     };
   }
 };
 
 let cached: WindowsNativeLoadResult | undefined;
 
-/** Cache stable admission; let a later query retry failed owned inspection. */
-export const systemWindowsNativeAuthority = (): WindowsNativeLoadResult => {
-  if (cached?.available === false && cached.retryable === true)
-    cached = undefined;
-  cached ??= loadWindowsNativeAuthority({
-    platform: process.platform,
-    architecture: process.arch,
+const loadPackagedWindowsNativeAuthority = ({
+  platform,
+  architecture,
+}: HostPlatform): WindowsNativeLoadResult =>
+  loadWindowsNativeAuthority({
+    platform,
+    architecture,
     nodeApiVersion: process.versions.napi,
     packageVersion: PACKAGE_METADATA.version,
     readManifest: () => {
@@ -252,6 +254,19 @@ export const systemWindowsNativeAuthority = (): WindowsNativeLoadResult => {
       return value;
     },
   });
+
+/**
+ * Cache stable admission; let a later query retry failed owned inspection.
+ * Only this host's result is cached: another host's admission rules are a
+ * test seam and load the packaged artifact uncached.
+ */
+export const systemWindowsNativeAuthority = (
+  host: HostPlatform = HOST_PLATFORM,
+): WindowsNativeLoadResult => {
+  if (host !== HOST_PLATFORM) return loadPackagedWindowsNativeAuthority(host);
+  if (cached?.available === false && cached.retryable === true)
+    cached = undefined;
+  cached ??= loadPackagedWindowsNativeAuthority(host);
   return cached;
 };
 

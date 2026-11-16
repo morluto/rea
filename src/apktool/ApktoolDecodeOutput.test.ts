@@ -346,9 +346,9 @@ describe("parseDecodedStrings", () => {
     expect(parseDecodedStrings(xml)).toMatchObject({
       ok: false,
       error: {
-        _tag: "ApktoolStringsDocumentError",
-        reason: "malformed",
-        cause: { _tag: "XmlDocumentParseError" },
+        _tag: "ParseFailureError",
+        kind: "malformed",
+        failure: { format: "xml" },
       },
     });
   });
@@ -436,7 +436,11 @@ describe("string document validity and omission counts", () => {
       parseDecodedStrings("<resources><string name='broken'>no</resources>"),
     ).toMatchObject({
       ok: false,
-      error: { _tag: "ApktoolStringsDocumentError", reason: "malformed" },
+      error: {
+        _tag: "ParseFailureError",
+        kind: "malformed",
+        failure: { format: "xml" },
+      },
     });
     expect(
       parseDecodedStrings(
@@ -452,7 +456,14 @@ it.each(["<manifest/>", '<other><string name="a">one</string></other>'])(
     const parsed = parseDecodedStrings(xml);
     expect(parsed).toMatchObject({
       ok: false,
-      error: { _tag: "ApktoolStringsDocumentError", reason: "wrong_root" },
+      error: {
+        _tag: "ParseFailureError",
+        kind: "malformed",
+        failure: {
+          format: "android-string-resources",
+          field: "documentElement",
+        },
+      },
     });
     expect(parsed).not.toHaveProperty("value");
     if (parsed.ok) throw new Error("Expected document failure");

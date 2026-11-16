@@ -1,6 +1,7 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { createHash } from "node:crypto";
-import { mkdir, type FileHandle } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import type { FileHandle } from "node:fs/promises";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 
 import {
@@ -10,18 +11,20 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { EnvironmentBundlePublication } from "../../domain/environmentBundleExport.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  streamChunkToBuffer,
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
-import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
-import { withRegularFile } from "../RegularFileRead.js";
+import { withRegularFile } from "../../process/RegularFileRead.js";
 import {
   ENVIRONMENT_EXPORT_OPERATION,
   type EnvironmentBundlePlan,
@@ -30,6 +33,7 @@ import type {
   EnvironmentExportInput,
   WrittenBundleFile,
 } from "./environmentExport.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /**
  * A host failure on one file the bundle writer was reading or writing.
@@ -168,12 +172,15 @@ const writeBundleFiles = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    if (input.exclusiveDestination !== true)
-      await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
     try {
-      tree = await SafeOutputTree.create(input.directory, process.platform, {
-        acceptExistingEmpty: input.exclusiveDestination !== true,
-      });
+      tree = await SafeOutputTree.create(
+        input.directory,
+        HOST_PLATFORM.platform,
+        {
+          acceptExistingEmpty: input.exclusiveDestination !== true,
+          createParents: input.exclusiveDestination !== true,
+        },
+      );
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;
       throw cause;
@@ -338,11 +345,10 @@ export const writeEnvironmentBundle = async (
         const primary = isHostSystemFailure(cause)
           ? new BundleFileHostFailure(plan.packageSource.path, "reading", cause)
           : cause;
-        throw new ArtifactReaderFailure(
-          "io",
-          primary instanceof Error ? primary.message : String(primary),
-          { cause: primary, partialObservation: publication },
-        );
+        throw new ArtifactReaderFailure("io", errorMessage(primary), {
+          cause: primary,
+          partialObservation: publication,
+        });
       }
     }
     throw cause;

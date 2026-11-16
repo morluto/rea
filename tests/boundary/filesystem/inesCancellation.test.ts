@@ -5,21 +5,48 @@ import { expect, it, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js";
 import { scanReader } from "../../../src/artifacts/inventory/scanReader.js";
-import { hashStableRootArtifactHandle } from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
+import { hashStableRootArtifactHandle } from "../../../src/resources/StableRootArtifact.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { inesFixture } from "../../fixtures/ines.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { RetainedRegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
+import { RetainedRegularFileCleanupFailure } from "../../../src/process/RegularFileRead.js";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
   artifactFilePrimaryFacts,
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
+} from "../../../src/resources/ArtifactFileOperation.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
-import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
+import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
+
+it.each(["close", "cancel"] as const)(
+  "does not complete an iNES inventory after %s while paused",
+  async (interruption) => {
+    const root = await createTestTempDirectory("rea-ines-paused-");
+    const path = join(root, "source.nes");
+    await writeFile(path, inesFixture());
+    const handle = await open(path, "r");
+    const reader = new InesArtifactReader(path, {
+      handle,
+      initial: await handle.stat(),
+    });
+    const controller = new AbortController();
+    try {
+      const entries = reader.entries(controller.signal)[Symbol.asyncIterator]();
+      expect((await entries.next()).done).toBe(false);
+      if (interruption === "close") await reader.close();
+      else controller.abort();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: interruption === "close" ? "unavailable" : "cancelled",
+      });
+    } finally {
+      await reader.close();
+      await handle.close();
+    }
+  },
+);
 
 // Complete the real I/O, then cancel while its caller is still awaiting it.
 const cancelAfterNextStat = (

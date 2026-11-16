@@ -4,7 +4,7 @@ import {
   AnalysisError,
   primaryAnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { ArtifactResourceRetryFailure } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "../resources/ArtifactResourceScope.js";
 import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,

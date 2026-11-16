@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
-import { CLI_COMMANDS } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import * as composition from "../../src/composition/binaryDiagnostics.js";
 import { BinaryLayoutService } from "../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { RecordedCrashService } from "../../src/application/binaryDiagnostics/RecordedCrashService.js";
@@ -9,6 +9,7 @@ import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../../src/domain/providerCleanupError.js";
 import { err } from "../../src/domain/result.js";
 import { analysisErrorWithCleanupFailure } from "../../src/domain/analysisErrorCleanup.js";
+import { releaseOwnedCleanup } from "../support/cleanupRelease.js";
 
 const exitCode = process.exitCode;
 afterEach(() => {
@@ -45,7 +46,7 @@ it.each(
       cleanup,
       "inspect_binary_layout",
     ).bindCleanupDependencies([primary, cleanup]);
-    if (recovered) cleanup.resolveCleanup();
+    if (recovered) releaseOwnedCleanup(cleanup);
     const inspectAndClose = vi.fn(async () => err(composed));
     const identity = {
       id: "fixture-decoder",
@@ -78,8 +79,8 @@ it.each(
     await cli.serve(
       [
         scenario === "layout"
-          ? CLI_COMMANDS.inspectBinaryLayout
-          : CLI_COMMANDS.inspectRecordedCrash,
+          ? cliCommandFor("inspect_binary_layout")
+          : cliCommandFor("inspect_recorded_crash"),
         "/selected/fixture.elf",
         "--json",
       ],

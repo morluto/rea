@@ -15,7 +15,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { hasWxapkgHeader } from "../domain/wxapkgFormat.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
 
@@ -173,6 +173,20 @@ describe("WxapkgArtifactReader", () => {
         directory_status: "encrypted",
         file_count: null,
         info: null,
+      });
+    });
+  });
+
+  it("reports cancellation during encrypted-directory coverage", async () => {
+    await withReader(wxapkgEncryptedBytes(), async (reader) => {
+      const controller = new AbortController();
+      const entries = reader
+        .entries(controller.signal, {
+          onCoverage: () => controller.abort(),
+        })
+        [Symbol.asyncIterator]();
+      await expect(entries.next()).rejects.toMatchObject({
+        reason: "cancelled",
       });
     });
   });

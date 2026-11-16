@@ -1,3 +1,5 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import {
@@ -8,7 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
@@ -89,7 +91,7 @@ const callPseudoCode = async (
     const advertised = (await client.listTools()).tools.find(
       ({ name }) => name === "procedure_pseudo_code",
     );
-    if (advertised?.outputSchema === undefined)
+    if (advertised === undefined)
       throw new Error("Missing named procedure_pseudo_code output schema");
     const result = await client.callTool({
       name: "procedure_pseudo_code",
@@ -99,7 +101,9 @@ const callPseudoCode = async (
       result,
       responseWire,
       records,
-      outputSchema: jsonObjectSchema.parse(advertised.outputSchema),
+      outputSchema: jsonObjectSchema.parse(
+        canonicalOutputSchema(advertised.name),
+      ),
     };
   } finally {
     await Promise.all([client.close(), server.close()]);
@@ -300,7 +304,7 @@ describe("large complete Evidence MCP delivery", () => {
   });
 
   it("does not claim retention without a recording acknowledgment", () => {
-    const evidence = createEvidence(undefined, provider, {
+    const evidence = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_pseudo_code",
       parameters: {},
       result: "x".repeat(Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2)),

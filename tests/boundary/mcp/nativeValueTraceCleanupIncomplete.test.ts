@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -5,9 +6,9 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
-import { CLEANUP_STOPPED_VALUE_TRACE } from "../../../src/application/native/NativeValueTrace.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import {
+  EXPECTED_CLEANUP_STOPPED_TRACE,
   failingValueTraceReads,
   valueTraceDiamond,
   valueTraceProvider as provider,
@@ -148,7 +149,7 @@ describe("trace_native_values after a validated seed", () => {
       });
       expect(admitted.unknowns).toContainEqual({
         ...stop,
-        reason: CLEANUP_STOPPED_VALUE_TRACE,
+        reason: EXPECTED_CLEANUP_STOPPED_TRACE,
       });
       // The stopping failure is the outcome, not one of the trace's unknowns.
       expect(JSON.stringify(admitted.unknowns)).not.toContain(CHILD_FAILURE);
@@ -214,7 +215,7 @@ describe("trace_native_values after a validated seed", () => {
       {
         procedure: "0x1000",
         address: "0x1008",
-        reason: CLEANUP_STOPPED_VALUE_TRACE,
+        reason: EXPECTED_CLEANUP_STOPPED_TRACE,
       },
     ]);
   });
@@ -291,7 +292,7 @@ it("keeps the stopped trace and source-publication failure together", async () =
   const { port } = failingDiamond({
     "analyze_function:0x2000": childFailure("analyze_function", true),
   });
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "analyze_function",
     parameters: { procedure: "0x1000" },
     result: { source: "observed" },
@@ -368,7 +369,7 @@ it("retains the admitted trace and its completed sources as session Evidence", a
   const retained = session.evidenceForAnalysis(reference.evidence_id);
   expect(retained).toMatchObject({
     operation: "trace_native_values",
-    subject: { format: "dos-com" },
+    subject: { identity: { format: "dos-com" } },
   });
   expect(
     nativeValueTraceSchema.parse(retained?.normalized_result).traversal,
