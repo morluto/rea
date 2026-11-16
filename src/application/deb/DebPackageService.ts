@@ -6,12 +6,27 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectDebPackageInputSchema,
   debPackageSchema,
+  type InspectDebPackageInput,
 } from "../../domain/deb/debPackage.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_deb_package";
+
+/** Admitted values for only the fields the caller supplied; omitted budgets stay omitted. */
+const callerSelectedParameters = (
+  rawInput: unknown,
+  input: InspectDebPackageInput,
+): Partial<InspectDebPackageInput> =>
+  Object.fromEntries(
+    Object.entries(input).filter(
+      ([key]) =>
+        typeof rawInput === "object" &&
+        rawInput !== null &&
+        Object.hasOwn(rawInput, key),
+    ),
+  );
 
 /** Shared caller validation, output parsing and Evidence provenance for CLI and MCP. */
 export class DebPackageService {
@@ -60,7 +75,7 @@ export class DebPackageService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.value,
+          parameters: callerSelectedParameters(rawInput, input.value),
           result: value,
           confidence: "observed",
           limitations: value.limitations,

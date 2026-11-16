@@ -134,6 +134,20 @@ it("records the selected artifact as observed Evidence", async () => {
     { kind: "artifact-path", path: report.artifact.path },
     { kind: "file-offset-range", start: 0, end: report.artifact.bytes },
   ]);
+  expect(result.value.parameters).toEqual({ path: report.artifact.path });
+});
+
+it("records only the budgets the caller selected", async () => {
+  const result = await new DebPackageService({
+    close: async () => {},
+    identity,
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ path: report.artifact.path, max_data_entries: 8 });
+  if (!result.ok) throw result.error;
+  expect(result.value.parameters).toEqual({
+    path: report.artifact.path,
+    max_data_entries: 8,
+  });
 });
 
 it("retains completed Debian package Evidence on late cancellation", async () => {
