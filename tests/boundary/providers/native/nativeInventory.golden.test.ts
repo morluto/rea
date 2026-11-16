@@ -171,11 +171,14 @@ it("reports unsigned slices when a universal Mach-O has mixed signatures", async
       identifier: "com.example.fixture",
       designated_requirement: null,
       entitlements: { "com.apple.security.app-sandbox": true },
+      slices: {
+        described: signedArchitecture,
+        architectures: expect.arrayContaining([signedArchitecture, "x86_64"]),
+        unmapped: false,
+        checked: expect.arrayContaining([signedArchitecture, "x86_64"]),
+        unsigned: ["x86_64"],
+      },
       limitations: expect.arrayContaining([
-        expect.stringContaining(
-          "signature identity, hashes, designated requirement",
-        ),
-        "Unsigned Mach-O slices: x86_64.",
         "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
       ]),
       provenance: expect.arrayContaining([
@@ -223,10 +226,14 @@ it("uses the admitted universal target when codesign describes only its selected
   expect(execution.value.result).toMatchObject({
     signed: true,
     format: "Mach-O thin (arm64)",
-    limitations: expect.arrayContaining([
-      expect.stringContaining("Partial signature coverage"),
-      "Unsigned Mach-O slices: x86_64.",
-    ]),
+    // The admitted universal target, not codesign's thin format, lists the slices.
+    slices: {
+      described: "arm64",
+      architectures: ["x86_64", "arm64"],
+      unmapped: false,
+      checked: ["x86_64", "arm64"],
+      unsigned: ["x86_64"],
+    },
     provenance: expect.arrayContaining([
       expect.objectContaining({
         command: expect.arrayContaining(["-a", "x86_64"]),
@@ -279,10 +286,13 @@ it("retains distinct same-family FAT slices for signature coverage", async () =>
   const execution = await client.execute("inspect_signature", {});
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
-    limitations: expect.arrayContaining([
-      expect.stringContaining("Partial signature coverage"),
-      "Unsigned Mach-O slices: arm64e.",
-    ]),
+    slices: {
+      described: "arm64",
+      architectures: ["arm64", "arm64e"],
+      unmapped: false,
+      checked: ["arm64", "arm64e"],
+      unsigned: ["arm64e"],
+    },
     provenance: expect.arrayContaining([
       expect.objectContaining({
         command: expect.arrayContaining(["-a", "arm64e"]),
@@ -328,11 +338,15 @@ it.each([42, 0xc1000002])(
     });
     const execution = await client.execute("inspect_signature", {});
     if (!execution.ok) throw execution.error;
+    // The one known slice is the described one; no per-slice check runs.
     expect(execution.value.result).toMatchObject({
-      limitations: expect.arrayContaining([
-        expect.stringContaining("signature states are unknown"),
-        expect.stringContaining("Partial signature coverage"),
-      ]),
+      slices: {
+        described: "arm64",
+        architectures: ["arm64"],
+        unmapped: true,
+        checked: [],
+        unsigned: [],
+      },
     });
   },
 );
@@ -384,14 +398,9 @@ it.each([
     if (!result.ok) throw result.error;
     expect(calls[0]).toEqual(expect.arrayContaining(["-a", "arm64e"]));
     // A later slice with the same selector name has no exact selector.
-    const unknown = expect.stringContaining("signature states are unknown");
     expect(
-      inspectSignatureSchema.parse(result.value.result).limitations,
-    ).toEqual(
-      laterSliceShadowed
-        ? expect.arrayContaining([unknown])
-        : expect.not.arrayContaining([unknown]),
-    );
+      inspectSignatureSchema.parse(result.value.result).slices.unmapped,
+    ).toBe(laterSliceShadowed);
   },
 );
 
@@ -438,11 +447,9 @@ it("keeps an arm64e.v1 slice unknown behind an unmapped arm64e variant", async (
   // codesign -a arm64e may resolve to the earlier variant, so neither arm64e
   // slice has an exact selector.
   expect(calls.filter((args) => args.includes("arm64e"))).toEqual([]);
-  expect(inspectSignatureSchema.parse(result.value.result).limitations).toEqual(
-    expect.arrayContaining([
-      expect.stringContaining("signature states are unknown"),
-    ]),
-  );
+  expect(
+    inspectSignatureSchema.parse(result.value.result).slices.unmapped,
+  ).toBe(true);
 });
 
 it.each(["x64", "arm64"] as const)(
@@ -483,7 +490,7 @@ it.each(["x64", "arm64"] as const)(
     if (!result.ok) throw result.error;
     expect(calls.some((args) => args.includes("x86_64"))).toBe(true);
     expect(result.value.result).toMatchObject({
-      limitations: expect.arrayContaining(["Unsigned Mach-O slices: x86_64."]),
+      slices: { unsigned: ["x86_64"] },
     });
     if (host === "x64")
       expect(calls.slice(0, 3).every((args) => args.includes("x86_64"))).toBe(
@@ -578,10 +585,12 @@ it.each([
       identifier: "com.example.fixture",
       entitlements: { "com.apple.security.app-sandbox": true },
       designated_requirement: null,
-      limitations: expect.arrayContaining([
-        expect.stringContaining("Partial signature coverage"),
-        expect.stringContaining("did not complete"),
-      ]),
+      // Slices checked before the failing one keep their states; the rest stay unknown.
+      slices: {
+        architectures: ["x86_64", "arm64"],
+        checked: kind === "later slice diagnostic" ? ["x86_64"] : [],
+        unsigned: kind === "later slice diagnostic" ? ["x86_64"] : [],
+      },
     });
     expect(partial.provenance).toHaveLength(
       kind === "later slice diagnostic" ? 5 : 4,
@@ -592,7 +601,6 @@ it.each([
     if (kind === "later slice diagnostic") {
       expect(partial.limitations).toEqual(
         expect.arrayContaining([
-          "Unsigned Mach-O slices: x86_64.",
           "The designated requirement for the requested architecture is unavailable because codesign reported it unsigned.",
         ]),
       );
@@ -1499,7 +1507,11 @@ it("lets codesign select the only slice of a thin arm64e target", async () => {
   );
   const result = await client.execute("inspect_signature", {});
   if (!result.ok) throw result.error;
-  expect(result.value.result).toMatchObject({ signed: true });
+  // The admitted architecture is the arm64 family; codesign names the slice.
+  expect(result.value.result).toMatchObject({
+    signed: true,
+    slices: { described: "arm64e", architectures: [], checked: [] },
+  });
   expect(calls).toHaveLength(3);
   expect(calls.every((args) => !args.includes("-a"))).toBe(true);
   await client.close();

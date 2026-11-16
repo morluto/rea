@@ -32,6 +32,7 @@ import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import { readElfHardening } from "./ElfHardening.js";
 import { readMachoHardening } from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
 
@@ -182,7 +183,7 @@ const binaryHardeningFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

@@ -130,7 +130,7 @@ import {
 } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitReason } from "./javascriptSemanticResourceLimits.js";
 import {
-  javaScriptProgramStrictness,
+  javaScriptStrictnessAt,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
@@ -1107,6 +1107,7 @@ const createState = (
     ambientWrites: new SemanticPropertyPathCoverage(),
     escapingReferenceStores: new WeakSet(),
     retainedGlobalCallReceivers: new WeakSet(),
+    escapingThrows: [],
     ambientEscapes: new SemanticPropertyPathCoverage(),
     ambientEscapeEffects: [],
     ambientWriteEffects: [],
@@ -1370,6 +1371,10 @@ function* collectDefinitionsSteps(
     }
   }
   for (const { node, ancestors } of thrownValues) {
+    // A value not caught in its own function or class body reaches a
+    // caller's handler, and one thrown uncaught at the top level reaches the
+    // host's uncaught-exception handlers; neither is linked to the throw.
+    let caught = false;
     let child: t.Node = node;
     for (let index = ancestors.length - 1; index >= 0; index--) {
       const parent = ancestors[index]!;
@@ -1399,16 +1404,20 @@ function* collectDefinitionsSteps(
             referenceOnly: true,
             entryBody: parent.handler.body,
           });
+        caught = true;
         break;
       }
       child = parent;
     }
+    if (!caught) state.escapingThrows.push(node);
   }
   for (const { node, scope } of legacyBlockFunctions) {
     if (
       node.id == null ||
-      semanticStrictnessAt(state.parentsByNode.get(node) ?? node, state) ===
-        "strict"
+      javaScriptStrictnessAt(
+        state.parentsByNode.get(node) ?? node,
+        state.parentsByNode,
+      ) === "strict"
     )
       continue;
     let outer =
@@ -1957,29 +1966,8 @@ const mappedArgumentsOwner = (
   return {
     scope,
     parameters: mapped,
-    strictness: semanticStrictnessAt(owner, state),
+    strictness: javaScriptStrictnessAt(owner, state.parentsByNode),
   };
-};
-
-const semanticStrictnessAt = (
-  owner: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): MappedArgumentsOwner["strictness"] => {
-  for (
-    let current: t.Node | undefined = owner;
-    current !== undefined;
-    current = state.parentsByNode.get(current)
-  ) {
-    if (t.isClass(current)) return "strict";
-    if (
-      t.isFunction(current) &&
-      t.isBlockStatement(current.body) &&
-      current.body.directives.some(({ value }) => value.value === "use strict")
-    )
-      return "strict";
-    if (t.isProgram(current)) return javaScriptProgramStrictness(current);
-  }
-  return "unknown";
 };
 
 /** A mapped arguments property write is another write to its formal binding. */

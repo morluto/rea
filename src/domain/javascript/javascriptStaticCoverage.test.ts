@@ -43,6 +43,19 @@ it("distinguishes recovered syntax from unparseable source without inventing an 
   });
 });
 
+it("does not report complete parsing when the unknown-finding count is itself unknown", () => {
+  const complete = analyzeJavaScriptStaticSource(
+    "export const value = 1;",
+  ).analysis_coverage;
+  expect(javaScriptStaticParseStatus(complete)).toBe("complete");
+  expect(
+    javaScriptStaticParseStatus({
+      ...complete,
+      semantics: { ...complete.semantics, unknown_findings: null },
+    }),
+  ).toBe("partial");
+});
+
 it("keeps framework applicability unknown without positive Electron evidence", () => {
   const ordinary = analyzeJavaScriptStaticSource("export const value = 1;");
   expect(ordinary.parse_status).toBe("complete");

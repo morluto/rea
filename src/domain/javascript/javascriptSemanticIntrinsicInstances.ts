@@ -5,7 +5,10 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isIntrinsicGlobalReference } from "./javascriptSemanticGlobalReference.js";
-import { ambientPathMayHaveChanged } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientPathMayHaveChanged,
+  ambientPathMayObserveAt,
+} from "./javascriptSemanticEffectLog.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
@@ -25,20 +28,22 @@ interface JavaScriptIntrinsicInstanceMethods {
 /**
  * Whether a source-visible write or escape may have replaced a member on the
  * intrinsic prototype, on `Object.prototype`, or the prototype link itself.
+ * With `read`, only effects that may run before that read count; without it,
+ * the answer holds at every read site.
  */
 export const intrinsicPrototypeMemberMayHaveChanged = (
   state: JavaScriptSemanticAnalysisState,
   constructor: string,
   member: string,
+  read?: t.Node,
 ): boolean =>
   [constructor, "Object"].some((owner) =>
-    [member, "__proto__"].some((key) =>
-      ambientPathMayHaveChanged(
-        state,
-        ["global", owner, "prototype", key],
-        "contents",
-      ),
-    ),
+    [member, "__proto__"].some((key) => {
+      const path = ["global", owner, "prototype", key];
+      return read === undefined
+        ? ambientPathMayHaveChanged(state, path, "contents")
+        : ambientPathMayObserveAt(state, read, path, "contents");
+    }),
   );
 
 /**

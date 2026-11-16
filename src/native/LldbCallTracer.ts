@@ -78,6 +78,7 @@ import {
   readPartialCapture,
   projectLldbPartialObservation,
 } from "./LldbRetainedObservations.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "observe_native_calls";
 const PROVIDER = "native-macos";
@@ -303,7 +304,7 @@ export class LldbCallTracer implements NativeCallTracer {
             this.#pendingCleanup = owner;
           const failure = new ProviderAdapterError(PROVIDER, OPERATION, {
             cause,
-            diagnostics: { reason: errorReason(cause) },
+            diagnostics: { reason: errorMessage(cause) },
             partialObservation: partial.observation,
             ...(this.#pendingCleanup === owner
               ? {
@@ -356,7 +357,7 @@ export class LldbCallTracer implements NativeCallTracer {
             this.#pendingCleanup = owner;
             if (primaryFailure?.cleanupIncomplete === true)
               bindLldbCleanup(primaryFailure, owner);
-            throw lldbCleanupFailure(owner, errorReason(cause), cause);
+            throw lldbCleanupFailure(owner, errorMessage(cause), cause);
           }
         },
         // A cancellation keeps the trace as cancelled; a retained cleanup
@@ -476,7 +477,7 @@ export class LldbCallTracer implements NativeCallTracer {
     }
     return lldbCleanupFailure(
       owner,
-      failures.map(errorReason).join("; "),
+      failures.map(errorMessage).join("; "),
       new AggregateError(failures, "LLDB cleanup remains incomplete"),
     );
   }
@@ -891,9 +892,7 @@ export class LldbCallTracer implements NativeCallTracer {
                     result_failure:
                       readback.error instanceof z.ZodError
                         ? `Tracer result failed schema validation (${readback.error.issues.length} issues)`
-                        : readback.error instanceof Error
-                          ? readback.error.message
-                          : String(readback.error),
+                        : errorMessage(readback.error),
                   }
                 : {}),
               exit_code: exited.exitCode,
@@ -939,10 +938,10 @@ export class LldbCallTracer implements NativeCallTracer {
             reason: "LLDB target output capture could not be read",
             ...(stdout.ok
               ? {}
-              : { stdout_capture_error: errorReason(stdout.error) }),
+              : { stdout_capture_error: errorMessage(stdout.error) }),
             ...(stderr.ok
               ? {}
-              : { stderr_capture_error: errorReason(stderr.error) }),
+              : { stderr_capture_error: errorMessage(stderr.error) }),
             ...(lifecycleCleanup === undefined
               ? {}
               : { target_cleanup: lifecycleCleanup }),
@@ -1064,7 +1063,7 @@ const retainPartialReadFailures = <Failure extends AnalysisError>(
         : new AggregateError(readFailures, "LLDB partial readback failed"),
     diagnostics: {
       reason: "LLDB could not read all available partial observation data",
-      read_failures: readFailures.map(errorReason),
+      read_failures: readFailures.map(errorMessage),
     },
   });
   return failure.retainSecondaryFailure(readbackFailure, {
@@ -1123,18 +1122,18 @@ const partialNativeObservation = async (options: {
     journalLimitations: journal.ok
       ? journal.value.limitations
       : [
-          `The observation journal could not be read: ${errorReason(journal.error)}`,
+          `The observation journal could not be read: ${errorMessage(journal.error)}`,
         ],
     limitations: [
       ...(stdout.ok
         ? stdout.value.limitations
         : [
-            `The target stdout capture could not be read: ${errorReason(stdout.error)}`,
+            `The target stdout capture could not be read: ${errorMessage(stdout.error)}`,
           ]),
       ...(stderr.ok
         ? stderr.value.limitations
         : [
-            `The target stderr capture could not be read: ${errorReason(stderr.error)}`,
+            `The target stderr capture could not be read: ${errorMessage(stderr.error)}`,
           ]),
     ],
     reason: options.reason,
@@ -1291,9 +1290,6 @@ interface RetainedLldbResources {
   processStopped: boolean;
   targetStopped: boolean;
 }
-
-const errorReason = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /** Preserve compiler facts and a foreign helper marker without inventing an LLDB exit. */
 const lldbPreparationFailure = (
@@ -1538,8 +1534,7 @@ const runLldb = async (
             targetIdentityFailure = observation.reason;
         } catch (cause: unknown) {
           observation = undefined;
-          targetIdentityFailure =
-            cause instanceof Error ? cause.message : String(cause);
+          targetIdentityFailure = errorMessage(cause);
         }
         if (observation?.state === "readable")
           targetIdentity = observation.identity;
@@ -1594,7 +1589,7 @@ const runLldb = async (
         ? {
             kind: "exited",
             exitCode: null,
-            output: cause instanceof Error ? cause.message : String(cause),
+            output: errorMessage(cause),
           }
         : { kind: interruption },
     );

@@ -8,6 +8,7 @@ import { compareKunaAddresses } from "./KunaAddress.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 import { parseKunaJson } from "./KunaJson.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The raw xref budget also bounds its materialized rows. */
 export const KUNA_XREF_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -387,7 +388,7 @@ export const parseKunaIncomingReferences = (
       );
     }
     return err({
-      code: cause instanceof Error ? cause.message : String(cause),
+      code: errorMessage(cause),
     });
   }
 };

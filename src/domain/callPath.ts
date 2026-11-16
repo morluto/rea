@@ -314,8 +314,9 @@ const inspectSearch = ({
         incompleteExpandedCoverage = true;
       }
       // Explicit, Evidence-bound relationship coverage owns completeness;
-      // generic provider/dossier limitations remain contextual. Legacy Evidence
-      // without that metadata retains its conservative limitation-based rule.
+      // generic provider/dossier limitations remain contextual. Evidence from
+      // a provider that reports no relationship coverage keeps the
+      // conservative limitation-based rule.
       // The search only expands callee edges, so coverage that is unknown
       // solely because callers are unobservable does not make the searched
       // callee closure incomplete; the caller caveat stays in limitations.

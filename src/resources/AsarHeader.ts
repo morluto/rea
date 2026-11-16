@@ -186,6 +186,7 @@ class AsarHeaderSignatureProbeImpl implements AsarHeaderSignatureProbe {
   readonly limit: number;
   readonly #fixed = Buffer.alloc(16);
   #fixedBytes = 0;
+  // not-an-allowance: scan position in the JSON header; reaching the probe limit stops the probe, it charges nothing.
   #scannedJsonBytes = 0;
   #extents: Omit<AsarHeaderExtents, "archiveBytes"> | undefined;
   #stop: ProbeStop = { state: "pending" };

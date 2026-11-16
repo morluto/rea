@@ -26,8 +26,8 @@ import {
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import { fridaCaptureLimitations } from "../../frida/fridaCaptureLimits.js";
-import { unknownFridaSession } from "../../frida/fridaInputErrors.js";
+import { fridaCaptureLimitations } from "../../domain/fridaCaptureLimits.js";
+import { unknownFridaSession } from "../../domain/fridaInputErrors.js";
 import { FridaScriptLoadCancelledError } from "../../ports/frida/FridaInstrumentationPort.js";
 import type {
   FridaDeviceList,

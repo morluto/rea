@@ -55,6 +55,15 @@ import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheS
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import {
+  executeSessionFunctionAnalysis,
+  executeSessionWorkflowEvidence,
+  type WorkflowSession,
+} from "../application/SessionWorkflowEvidence.js";
+import { projectManagedApplicationGraphExecution } from "../application/managed/ManagedApplicationGraphService.js";
+import { compareManagedMembersExecution } from "../application/managed/ManagedMemberComparisonService.js";
+import { verifyManagedNativeBoundariesExecution } from "../application/managed/ManagedNativeVerificationService.js";
+import { importManagedReconstructionExecution } from "../application/managed/ManagedReconstructionService.js";
 import { compareFunctionEvidence } from "../application/investigation/FunctionComparisonEvidence.js";
 import { compareProcessEvidence } from "../application/process/ProcessComparisonService.js";
 import {
@@ -63,7 +72,39 @@ import {
   findChangedBehaviorEvidence,
   verifyReconstructionEvidence,
 } from "../application/investigation/InvestigationWorkflows.js";
+import {
+  artifactComparisonExecution,
+  resolveArtifactComparisonSources,
+} from "../application/artifacts/ArtifactComparisonEvidence.js";
+import {
+  bundleComparisonExecution,
+  readBundleComparisonSources,
+} from "../application/investigation/BundleComparisonEvidence.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
+import {
+  compareApplicationVersionsExecution,
+  compareJavaScriptExportShapesExecution,
+  inspectionExecution,
+  reconstructionObligationLedgerExecution,
+  settledExecution,
+  sourceToBundleComparisonExecution,
+} from "../application/ApplicationToolExecutions.js";
+import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
+import { inspectApiContractEvidence } from "../application/apiContract/ApiContractService.js";
+import { projectAppleApplicationEvidence } from "../application/apple/AppleApplicationService.js";
+import { projectHarmonyApplicationEvidence } from "../application/harmony/HarmonyApplicationService.js";
+import type { EvidenceWorkflowExecution } from "../application/investigation/EvidenceWorkflowExecution.js";
+import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
+import { traceApplicationFeatureEvidence } from "../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { traceJavaScriptSemanticsEvidence } from "../application/javascript/JavaScriptSemanticTraceService.js";
+import { compareStaticAndObservedEndpointsEvidence } from "../application/javascript/StaticObservedEndpointComparisonService.js";
+import { inspectNtfsJournalEvidence } from "../application/ntfs/NtfsJournalService.js";
+import { evaluateReconstructionCoverage } from "../application/ReconstructionCoverageService.js";
+import { exportEnvironmentBundleTool } from "../application/environment/environmentBundleTool.js";
+import { PlaywrightTraceService } from "../application/playwrightTrace/PlaywrightTraceService.js";
+import { PlaywrightTraceDecoder } from "../browser/history/playwrightTrace/PlaywrightTraceDecoder.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
@@ -98,6 +139,37 @@ export interface AnalysisSettingsToolOptions {
   readonly settings: AnalysisSettings;
   readonly delivery: ToolResultDelivery;
 }
+
+/**
+ * The session that admits and records derived Evidence, and the artifact
+ * resource scope its comparisons of caller-named files read under.
+ */
+export interface SessionDerivedToolOptions {
+  readonly session: BinarySessionPort;
+  readonly resources: ArtifactResourceScope;
+}
+
+/** The artifact resource scope application workflows read caller-named files under. */
+export interface ApplicationWorkflowToolOptions {
+  readonly resources: ArtifactResourceScope;
+}
+
+/** A requested view, or the summary view a `detail: "summary"` request selects. */
+const requestedView = (input: {
+  readonly detail?: "complete" | "summary";
+  readonly view?: AnalysisViewRequest | undefined;
+}): AnalysisViewRequest | undefined =>
+  input.view ?? (input.detail === "summary" ? { kind: "summary" } : undefined);
+
+const exportEnvironmentBundleContract = toolContract(
+  "export_environment_bundle",
+);
+
+/** A completed workflow that leaves no residual unknown. */
+const settledResult = (
+  result: Result<EvidenceWorkflowExecution, AnalysisError>,
+): Result<InvestigationWorkflowExecution, AnalysisError> =>
+  result.ok ? ok(settledExecution(result.value)) : result;
 
 /** Artifact resources a selected view may read, when the server owns them. */
 export interface AnalysisViewToolOptions {
@@ -580,7 +652,7 @@ const SERVICE_TOOL_BINDINGS = {
         }),
     },
   })) satisfies Bind<AnalysisViewToolOptions>,
-  sessionDerived: ((session) => ({
+  sessionDerived: (({ session, resources }) => ({
     compare_functions: {
       admission: "sdk",
       session,
@@ -622,7 +694,357 @@ const SERVICE_TOOL_BINDINGS = {
       session,
       derive: (input) => verifyReconstructionEvidence(input, session),
     },
+    // Comparisons of caller-named files read them under the server's
+    // artifact resource scope before deriving.
+    compare_artifacts: {
+      admission: "application",
+      session,
+      resources,
+      acquire: async (input, { evidenceForAnalysis, signal, resources }) => {
+        const sources = await resolveArtifactComparisonSources(
+          input,
+          evidenceForAnalysis,
+          { signal, resources },
+        );
+        return sources.ok
+          ? ok(() => artifactComparisonExecution(sources.value))
+          : sources;
+      },
+    },
+    compare_bundles: {
+      admission: "sdk",
+      session,
+      resources,
+      acquire: async (input, { signal, resources }) => {
+        const sources = await readBundleComparisonSources(input, {
+          signal,
+          resources,
+        });
+        return sources.ok
+          ? ok(() => bundleComparisonExecution(sources.value))
+          : sources;
+      },
+    },
+  })) satisfies Bind<SessionDerivedToolOptions>,
+  // Managed-code workflows derive from session-held managed and native
+  // Evidence; the CLI runs the same owners without a session.
+  managedWorkflows: ((session) => ({
+    compare_managed_members: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        compareManagedMembersExecution(input, evidenceForAnalysis, { signal }),
+    },
+    verify_managed_native_boundaries: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        verifyManagedNativeBoundariesExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+    import_managed_reconstruction: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        importManagedReconstructionExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
+    project_managed_application_graph: {
+      admission: "sdk",
+      session,
+      derive: (input, evidenceForAnalysis, signal) =>
+        projectManagedApplicationGraphExecution(input, evidenceForAnalysis, {
+          signal,
+        }),
+    },
   })) satisfies Bind<BinarySessionPort>,
+  // Application workflows complete Evidence from session-held Evidence or
+  // caller-named files under analysis admission; a requested view or summary
+  // is staged against it.
+  applicationWorkflows: (({ resources }, { evidenceById }) => {
+    const playwright = new PlaywrightTraceService(
+      new PlaywrightTraceDecoder(resources),
+    );
+    return {
+      trace_application_feature: {
+        admission: "sdk",
+        view: ({ view }) => view,
+        workflow: async ({ view: _selected, ...input }, { signal }) =>
+          settledResult(
+            traceApplicationFeatureEvidence(input, evidenceById, { signal }),
+          ),
+      },
+      trace_javascript_semantics: {
+        admission: "sdk",
+        workflow: async (input, { signal }) =>
+          settledResult(
+            traceJavaScriptSemanticsEvidence(input, evidenceById, { signal }),
+          ),
+      },
+      compare_application_versions: {
+        admission: "sdk",
+        workflow: async (input, { signal }) =>
+          compareApplicationVersionsExecution(input, evidenceById, { signal }),
+      },
+      compare_static_and_observed_endpoints: {
+        admission: "sdk",
+        view: requestedView,
+        workflow: async (input, { signal }) =>
+          settledResult(
+            await compareStaticAndObservedEndpointsEvidence(
+              input,
+              evidenceById,
+              { signal },
+            ),
+          ),
+      },
+      inspect_api_contract: {
+        admission: "sdk",
+        view: requestedView,
+        workflow: async (input, { signal }) =>
+          inspectionExecution(
+            await inspectApiContractEvidence(input, resources, { signal }),
+          ),
+      },
+      inspect_ntfs_journal: {
+        admission: "sdk",
+        workflow: async (input, { signal }) =>
+          inspectionExecution(
+            await inspectNtfsJournalEvidence(input, resources, signal),
+          ),
+      },
+      inspect_playwright_trace: {
+        admission: "sdk",
+        view: requestedView,
+        workflow: async (input, { signal }) =>
+          inspectionExecution(await playwright.inspect(input, signal)),
+      },
+      compare_source_to_bundle: {
+        admission: "sdk",
+        view: ({ view }) => view,
+        workflow: (input, { signal }) =>
+          sourceToBundleComparisonExecution(input, evidenceById, resources, {
+            signal,
+          }),
+      },
+      compare_javascript_export_shapes: {
+        admission: "sdk",
+        workflow: async (input, { signal }) =>
+          compareJavaScriptExportShapesExecution(input, evidenceById, {
+            signal,
+          }),
+      },
+      // The ledger refuses Evidence formats through the format owner.
+      build_reconstruction_obligation_ledger: {
+        admission: "application",
+        workflow: async (input) =>
+          reconstructionObligationLedgerExecution(input),
+      },
+      project_android_application_graph: {
+        admission: "sdk",
+        workflow: async (input, { signal }) =>
+          settledResult(
+            projectAndroidApplicationEvidence(input, evidenceById, { signal }),
+          ),
+      },
+      project_apple_application_graph: {
+        admission: "sdk",
+        workflow: async (input, { signal }) =>
+          settledResult(
+            projectAppleApplicationEvidence(input, evidenceById, { signal }),
+          ),
+      },
+      project_harmony_application_graph: {
+        admission: "sdk",
+        workflow: async (input, { signal }) =>
+          settledResult(
+            projectHarmonyApplicationEvidence(input, evidenceById, { signal }),
+          ),
+      },
+      // Plain results under the same admission as the workflows above.
+      evaluate_reconstruction_coverage: {
+        admission: "application",
+        admitted: true,
+        value: async (input) => evaluateReconstructionCoverage(input),
+      },
+      // The export validates its own request so refusals name the field.
+      export_environment_bundle: {
+        admission: "application",
+        admitted: true,
+        value: async (rawInput, { signal }) => {
+          const parsed =
+            exportEnvironmentBundleContract.inputSchema.safeParse(rawInput);
+          return parsed.success
+            ? exportEnvironmentBundleTool(parsed.data, evidenceById, {
+                signal,
+              })
+            : err(
+                analysisInputErrorFromIssues(
+                  exportEnvironmentBundleContract.name,
+                  parsed.error.issues,
+                  rawInput,
+                  { cause: parsed.error },
+                ),
+              );
+        },
+      },
+    };
+  }) satisfies Bind<ApplicationWorkflowToolOptions>,
+  // Provider-backed workflows run on the analysis admission grants and
+  // complete their Evidence in the session, when the server has one.
+  enhancedWorkflows: (({ session }) => ({
+    trace_native_values: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_native_values", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    inspect_native_dispatch_metadata: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "inspect_native_dispatch_metadata", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_objc_classes: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_objc_classes", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_objc_protocols: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_objc_protocols", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    batch_decompile: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "batch_decompile", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    decompile_all: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "decompile_all", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    get_call_graph: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "get_call_graph", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    analyze_swift_types: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "analyze_swift_types", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    find_xrefs_to_name: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "find_xrefs_to_name", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    binary_overview: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "binary_overview", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    inspect_native_api: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "inspect_native_api", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_feature: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_feature", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_call_path: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_call_path", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    trace_native_ui_action: {
+      admission: "sdk",
+      analyze: (input, analysis, request) =>
+        executeSessionWorkflowEvidence(
+          { name: "trace_native_ui_action", input },
+          analysis,
+          session,
+          request,
+        ),
+    },
+    analyze_function: {
+      admission: "sdk",
+      detail: "delivery",
+      analyze: (input, analysis, request) =>
+        executeSessionFunctionAnalysis(input, analysis, session, request),
+    },
+  })) satisfies Bind<{ readonly session: WorkflowSession | undefined }>,
   sessionStatus: ((options) => ({
     binary_session: {
       admission: "sdk",

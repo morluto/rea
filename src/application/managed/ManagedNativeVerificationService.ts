@@ -20,6 +20,8 @@ import {
   type ManagedNativeVerificationResult,
 } from "../../domain/managed/managedNativeVerificationSchemas.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
+import { workflowUnknownInput } from "../investigation/WorkflowUnknown.js";
 
 const OPERATION = "verify_managed_native_boundaries" as const;
 
@@ -29,6 +31,46 @@ export interface ManagedNativeVerificationExecution {
   readonly sourceEvidence: readonly Evidence[];
   readonly hasUnknowns: boolean;
 }
+
+/**
+ * Verify session-held boundaries and keep declarations that remain
+ * unresolved or contradicted as the verification's residual unknown.
+ */
+export const verifyManagedNativeBoundariesExecution = (
+  rawInput: unknown,
+  lookup: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal">,
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const verified = executeManagedNativeBoundaries(rawInput, lookup, options);
+  if (!verified.ok) return verified;
+  const { evidence, sourceEvidence: sources, hasUnknowns } = verified.value;
+  if (!hasUnknowns) return ok({ evidence, sources, unknown: undefined });
+  const unknown = workflowUnknownInput(evidence.evidence_id, {
+    question:
+      "Which managed/native boundaries remain unresolved or contradicted by the supplied native Evidence?",
+    severity: "medium",
+    domain: "managed-native-verification",
+    required_authority: "shipped-artifact",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [
+      {
+        operation: "inspect_managed_native_boundaries",
+        rationale:
+          "Review the inspection Evidence coverage and limit diagnostics; this operation has no page override, so unresolved declarations must remain unknown.",
+      },
+      {
+        operation: "analyze_function",
+        rationale:
+          "Analyze the provider-resolved native function candidate for the declared export.",
+      },
+    ],
+    relationships: [],
+  });
+  return unknown.ok
+    ? ok({ evidence, sources, unknown: unknown.value })
+    : unknown;
+};
 
 /** Resolve untrusted source Evidence, then execute over the trusted parsed source. */
 export const executeManagedNativeBoundaries = (

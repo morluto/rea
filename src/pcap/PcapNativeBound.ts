@@ -20,6 +20,7 @@ import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResou
 import { prlimitCeilingArguments } from "../process/LinuxResourceLimits.js";
 import type { runPcapCommand } from "./PcapCommand.js";
 import type { ArtifactCommandPath } from "../process/ArtifactCommandPath.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const PRLIMIT_COMMAND_ENV = "REA_TSHARK_PRLIMIT_COMMAND";
 /** Repair for an unusable selected capture limiter; readiness and admission share it. */
@@ -179,7 +180,7 @@ export const preparePcapNativeBound = async (
         configuration_key: PRLIMIT_COMMAND_ENV,
         configured,
       },
-      userMessage: `${reason} (${cause instanceof Error ? cause.message : String(cause)}) ${PCAP_LIMITER_REMEDIATION}`,
+      userMessage: `${reason} (${errorMessage(cause)}) ${PCAP_LIMITER_REMEDIATION}`,
       remediationAction: PCAP_LIMITER_REMEDIATION,
     });
   }

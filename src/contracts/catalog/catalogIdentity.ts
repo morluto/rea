@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 
 import { contractsForToolFamilies } from "../toolFamilies.js";
@@ -30,6 +28,7 @@ import {
   type McpOutputSchemaProfile,
   COMPACT_INPUT_SCHEMA_PRESENTATION,
 } from "../mcpSchemaPresentation.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /**
  * Digested per-tool projection. Every contract field that changes what a
@@ -120,9 +119,6 @@ const canonicalJson = (value: unknown): string => {
   return encoded;
 };
 
-const sha256 = (encoded: string): string =>
-  createHash("sha256").update(encoded).digest("hex");
-
 /**
  * Digests of an already presented tool and prompt catalog. Exported so tests
  * can compare the composed combined document with whole-document
@@ -143,9 +139,9 @@ export const digestPresentedCatalogs = (
   // prompt texts instead of canonicalizing the whole catalog a second time.
   const combined = `{"cli":${canonicalJson(CLI_COMMAND_NAMES)},"prompts":${promptCatalog},"tools":${tools}}`;
   return {
-    tools_sha256: sha256(tools),
-    prompts_sha256: sha256(promptCatalog),
-    combined_sha256: sha256(combined),
+    tools_sha256: sha256Hex(tools),
+    prompts_sha256: sha256Hex(promptCatalog),
+    combined_sha256: sha256Hex(combined),
   } as const;
 };
 

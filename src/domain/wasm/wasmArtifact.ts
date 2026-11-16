@@ -5,10 +5,10 @@ import {
 } from "./wasmInterface.js";
 import { z } from "zod";
 import { knownCoverageStatusSchema } from "../coverage.js";
-import { createHash } from "node:crypto";
 import { constants as bufferConstants } from "node:buffer";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 /** Exact upstream release whose tool profile REA verified. */
 export const WABT_VERSION = "1.0.42";
 const WABT_MINIMUM_PATCH = Number(WABT_VERSION.split(".")[2]);
@@ -131,6 +131,7 @@ export const wasmArtifactSchema = z
     interface: wasmInterfaceSchema.exactOptional(),
     imports: z.array(z.string()),
     exports: z.array(z.string()),
+    // domain-vocabulary: the state of the WebAssembly name section.
     debug_name_metadata: z
       .enum(["unknown", "not-present", "complete", "uninterpretable"])
       .default("unknown"),
@@ -199,10 +200,7 @@ export const wasmArtifactSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((value, context) => {
-    if (
-      createHash("sha256").update(value.wat.text, "utf8").digest("hex") !==
-      value.wat.sha256
-    )
+    if (sha256Hex(value.wat.text) !== value.wat.sha256)
       context.addIssue({
         code: "custom",
         path: ["wat", "sha256"],

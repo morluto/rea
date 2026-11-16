@@ -5,6 +5,7 @@ import {
   readConfigurationText,
   type ClientConfigurationFileError,
 } from "./ClientConfigurationFiles.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Inputs that decide whether Junie loads its default user MCP location. They
@@ -55,7 +56,7 @@ export const readJunieLocationBlock = async (
     return err({
       kind: "malformed",
       path: settings.userConfigPath,
-      detail: `Cannot parse Junie's user configuration as JSON to determine its MCP locations: ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `Cannot parse Junie's user configuration as JSON to determine its MCP locations: ${errorMessage(cause)}`,
     });
   }
   const record = clientConfigurationRecordSchema.safeParse(parsed);

@@ -43,16 +43,20 @@ import { AnalysisCleanupLease } from "../resources/index.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { unknownFridaScript, unknownFridaSession } from "./fridaInputErrors.js";
+import {
+  unknownFridaScript,
+  unknownFridaSession,
+} from "../domain/fridaInputErrors.js";
 import {
   MAX_MESSAGE_METADATA_BYTES,
   type FridaOwnedCaptureLimit,
-} from "./fridaCaptureLimits.js";
+} from "../domain/fridaCaptureLimits.js";
 import {
   resolveFridaCapturePolicy,
   type FridaCapturePolicy,
 } from "../domain/fridaCapturePolicy.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEVICE_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -1705,9 +1709,6 @@ const providerError = (
         }),
   });
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const cancelledOperation = (
   operation: string,

@@ -33,6 +33,8 @@ import {
   sameTargetIdentity,
   unknownTarget,
 } from "../../domain/targetIdentity.js";
+import type { RecordUnknownInput } from "../../domain/residualUnknown.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
 
 const OPERATION = "compare_artifacts";
 
@@ -199,3 +201,66 @@ const mismatch = (): Result<never, EvidenceIntegrityError> =>
       `Artifact summary does not match its retained parent inventory. A summary from an earlier Evidence format no longer matches. ${RECREATE_EVIDENCE_GUIDANCE}`,
     ),
   );
+
+/**
+ * Compare resolved inventories for a session: the derived Evidence, both
+ * sources to retain, and the residual question a changed, unknown or
+ * truncated comparison leaves.
+ */
+export const artifactComparisonExecution = (
+  sources: ArtifactComparisonSources,
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const compared = compareArtifactEvidence(sources);
+  if (!compared.ok) return compared;
+  const { left, right } = sources;
+  const { comparison, evidence } = compared.value;
+  return ok({
+    evidence,
+    sources: [left, right],
+    unknown: artifactUnknownInput(
+      left,
+      right,
+      comparison,
+      evidence.evidence_id,
+    ),
+  });
+};
+
+const artifactUnknownInput = (
+  left: { readonly evidence_id: string },
+  right: { readonly evidence_id: string },
+  comparison: ArtifactComparisonResult,
+  comparisonEvidenceId: string,
+): RecordUnknownInput | undefined => {
+  const { status } = comparison;
+  if (status === "unchanged") return undefined;
+  const sourceIds = [...new Set([left.evidence_id, right.evidence_id])];
+  // optional-fact-default: legacy absence names no side; content contradictions apply.
+  const contradictingIds = comparison.integrity_mismatch_evidence_ids ?? [];
+  const contentContradictions =
+    status === "changed" && left.evidence_id !== right.evidence_id
+      ? [right.evidence_id]
+      : [];
+  const contradictions =
+    contradictingIds.length > 0 ? contradictingIds : contentContradictions;
+  return {
+    question: `Artifact comparison is ${status} (comparison ${comparisonEvidenceId})`,
+    severity:
+      status === "unknown" || status === "truncated" ? "high" : "medium",
+    domain: "artifact-comparison",
+    supporting_evidence_ids: sourceIds.filter(
+      (id) => !contradictions.includes(id),
+    ),
+    contradicting_evidence_ids: contradictions,
+    required_authority: "shipped-artifact",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [
+      {
+        operation: "inspect_artifact",
+        rationale: "Inspect both artifacts and compare their complete graphs.",
+      },
+    ],
+    relationships: [],
+  };
+};

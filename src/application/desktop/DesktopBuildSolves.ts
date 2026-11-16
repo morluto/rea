@@ -38,7 +38,7 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   runSolveHelper,
   SolveCleanupError,
@@ -56,7 +56,7 @@ import {
   silentProgressReporter,
   type ProgressReporter,
 } from "../../ports/ProgressReporter.js";
-import { errorText } from "./DesktopBuildCommands.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const MEASURE = "measure_build_task";
 /** The file at the bundle's root that records each measured task. */
@@ -122,7 +122,7 @@ const recordsSchema = z.looseObject({
       passes: z.int(),
       k: z.int(),
       band: z.enum(["in_band", "too_easy", "too_hard", "undecided"]),
-      usd: z.number(),
+      usd: z.number().nullable(),
     }),
   ),
 });
@@ -416,7 +416,7 @@ export const measureBuildTask = async (
         : signal.aborted
           ? cancelledBy(MEASURE, signal)
           : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
-              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
+              userMessage: `Measuring ${task} failed after ${String(solves.length)} solve(s): ${errorMessage(cause)}`,
               remediationAction:
                 "Check the bundle files and host I/O error, then retry or retain the completed solve results.",
               cause,

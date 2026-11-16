@@ -3,8 +3,8 @@ import {
   ArtifactReaderFailure,
   type ArtifactResourceScope,
   streamChunkToBuffer,
+  ZipArtifactReader,
 } from "../resources/index.js";
-import { ZipArtifactReader } from "../artifacts/ZipArtifactReader.js";
 import type {
   AndroidJniLibraryObservation,
   AndroidJniReport,
@@ -23,6 +23,8 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Bounds cover the live library buffer, completed scan work and retained JSON separately. */
 export const ANDROID_JNI_LIBRARY_LIMITS = Object.freeze({
@@ -36,6 +38,25 @@ export interface AndroidJniLibraries {
   readonly libraries: readonly AndroidJniLibraryObservation[];
   readonly inventory: AndroidJniReport["library_inventory"];
 }
+
+/** A library read failure, with the reader check an `integrity` failure names. */
+const jniReadFailure = (
+  cause: unknown,
+): NonNullable<AndroidJniLibraryObservation["failure"]> => {
+  const message = errorMessage(cause);
+  if (!(cause instanceof ArtifactReaderFailure)) return { kind: "io", message };
+  if (cause.reason !== "integrity") return { kind: cause.reason, message };
+  if (cause.integrityCheck === undefined)
+    throw invariantViolation(
+      "An integrity reader failure reached the JNI inventory without its check.",
+      { cause },
+    );
+  return {
+    kind: "integrity",
+    message,
+    integrity_check: cause.integrityCheck,
+  };
+};
 
 /** Read each exact ZIP occurrence once from the provider's immutable admitted APK. */
 export const readAndroidJniLibraries = async (input: {
@@ -202,18 +223,7 @@ export const readAndroidJniLibraries = async (input: {
               observation = {
                 ...identity,
                 facts: null,
-                failure: {
-                  kind:
-                    cause instanceof ArtifactReaderFailure
-                      ? cause.reason
-                      : "io",
-                  message:
-                    cause instanceof Error ? cause.message : String(cause),
-                  ...(cause instanceof ArtifactReaderFailure &&
-                  cause.integrityCheck !== undefined
-                    ? { integrity_check: cause.integrityCheck }
-                    : {}),
-                },
+                failure: jniReadFailure(cause),
               };
             }
           }
@@ -278,10 +288,7 @@ export const readAndroidJniLibraries = async (input: {
           "jadx",
           [owner.resource],
           {
-            reason:
-              released.cause instanceof Error
-                ? released.cause.message
-                : String(released.cause),
+            reason: errorMessage(released.cause),
           },
           { operation, cause: released.cause },
         );

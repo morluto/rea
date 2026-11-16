@@ -8,11 +8,11 @@ import {
   mapArtifactFileFailure,
   withArtifactFileHandle,
   withArtifactRegularFile,
+  DirectoryArtifactReader,
 } from "../resources/index.js";
 import { createHash } from "node:crypto";
 import { chmod, open } from "node:fs/promises";
 import { join } from "node:path";
-import { DirectoryArtifactReader } from "../artifacts/DirectoryArtifactReader.js";
 import {
   AnalysisInputError,
   AnalysisAccessDeniedError,

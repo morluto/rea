@@ -78,7 +78,4 @@ export const fixedProducerInputAllowance = (
   bytes: number,
   allowance: string,
 ): { readonly retryable: false; readonly fixedAllowance: FixedAllowance } =>
-  fixedAllowanceOptions(
-    `${allowance} of ${String(bytes)} bytes (this release has no runtime override)`,
-    "input",
-  );
+  fixedAllowanceOptions(allowance, "input", { limit: bytes, unit: "bytes" });

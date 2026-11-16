@@ -92,16 +92,9 @@ const fixture = async () => {
       "xrefs_to",
     ],
     call: (name, args) => producer.call(name, args),
-    readResource: async (uri) => {
+    readResource: (uri, options) => {
       resources.push(uri);
-      const metadata = await producer.call("get_metadata", {});
-      if (
-        metadata === null ||
-        typeof metadata !== "object" ||
-        Array.isArray(metadata)
-      )
-        throw new Error("Invalid metadata fixture");
-      return { ...metadata, path: `${producer.inputPath}.i64` };
+      return producer.readResource(uri, options);
     },
     serverInfo: () => producer.serverInfo(),
     close: () => producer.close(),
@@ -130,7 +123,7 @@ describe("native IDA attached protocol", () => {
       JSON.stringify({
         command: "first-server",
         mode: "attached",
-        protocol: "legacy",
+        protocol: "native",
       }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
@@ -175,7 +168,7 @@ describe("native IDA attached protocol", () => {
     const path = join(root, "independent-registration.json");
     await writeFile(
       path,
-      JSON.stringify({ command: "first-server", protocol: "legacy" }),
+      JSON.stringify({ command: "first-server", protocol: "native" }),
     );
     const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
     if (!config.ok) throw config.error;
@@ -196,7 +189,7 @@ describe("native IDA attached protocol", () => {
     if (!firstProfile.ok) throw firstProfile.error;
     await writeFile(
       path,
-      JSON.stringify({ command: "second-server", protocol: "legacy" }),
+      JSON.stringify({ command: "second-server", protocol: "native" }),
     );
     const secondScope = new ProviderInspectionScope();
     const second = await provider.inspectReadinessSnapshot({
@@ -244,7 +237,7 @@ describe("IDA selected registration factories", () => {
     for (let index = 0; index < 40; index += 1) {
       await writeFile(
         path,
-        JSON.stringify({ command: `server-${index}`, protocol: "legacy" }),
+        JSON.stringify({ command: `server-${index}`, protocol: "native" }),
       );
       const scope = new ProviderInspectionScope();
       const resolution = await provider.resolveAnalysisProfile(target, {
@@ -315,8 +308,10 @@ describe("IDA selected registration factories", () => {
       path,
       JSON.stringify({ command: "python", protocol: "legacy" }),
     );
-    const old = await readIdaConfiguration(path, { resourceScope });
-    expect(old.ok && old.value.protocol).toBe("legacy");
+    expect(
+      (await readIdaConfiguration(path, { resourceScope })).ok,
+      "the removed legacy protocol is refused, not read as native",
+    ).toBe(false);
   });
 
   it("commits native profile semantics and advertises GUI effects without starting a provider", async () => {
@@ -511,11 +506,6 @@ describe("native IDA provider observations", () => {
       declared.find(({ operation }) => operation === "procedure_pseudo_code")
         ?.effects,
     ).toMatchObject({ mayShowUi: true, mayAccessNetwork: true });
-    expect(
-      idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false).find(
-        ({ operation }) => operation === "procedure_callers",
-      )?.available,
-    ).toBe(true);
   });
 
   it("rejects unavailable or mismatched recorded input hashes and database switches", async () => {

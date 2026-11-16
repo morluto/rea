@@ -19,6 +19,7 @@ import {
   rebindEvidenceToTargetPath,
   evidenceFileTarget,
   evidenceSubjectDisplay,
+  evidenceSubject,
 } from "./evidence.js";
 import {
   MAX_JSON_DEPTH,
@@ -1079,4 +1080,37 @@ it("retains safe auxiliary paths when the direct caller path is unavailable", ()
       descriptor_set_path: "bad\0path",
     }),
   ).toThrow();
+});
+
+it("validates a debugger session subject's launch file with the file subject declaration", () => {
+  const session = {
+    kind: "session",
+    session_kind: "rizin",
+    id: "00000000-0000-4000-8000-000000000001",
+    target: {
+      kind: "file",
+      sha256: "a".repeat(64),
+      format: "file",
+      architecture: null,
+      selection: null,
+    },
+  } as const;
+
+  expect(
+    evidenceSubject(session),
+    "a session bound to its hashed launch file has no file display facts",
+  ).toEqual({ identity: session, name: null, local_path: null });
+  expect(
+    () =>
+      evidenceSubject({
+        ...session,
+        target: { ...session.target, format: "not-a-format" },
+      }),
+    "the nested launch file obeys the format-owned declaration",
+  ).toThrow();
+  expect(
+    evidenceSubject({ ...session, target: unknownTarget("not-observed") })
+      .identity,
+    "an unobserved launch target stays an explicit unknown",
+  ).toEqual({ ...session, target: unknownTarget("not-observed") });
 });

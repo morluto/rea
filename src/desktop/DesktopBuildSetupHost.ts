@@ -34,6 +34,7 @@ import {
   desktopBuildOwnedCommandReason,
   runDesktopBuildOwnedCommand,
 } from "./DesktopBuildOwnedCommand.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const PACK_SCRIPT = fileURLToPath(
   new URL("../../scripts/pack-build-computer-runtime.mjs", import.meta.url),
@@ -65,7 +66,7 @@ const exists = (path: string): Promise<boolean> =>
 
 const failureReason = (cause: unknown): string => {
   const stderr = execFileOutputFailure(cause)?.stderr.trim() ?? "";
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return stderr === "" ? message : `${message}: ${stderr.slice(-2000)}`;
 };
 
