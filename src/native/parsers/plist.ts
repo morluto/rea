@@ -6,8 +6,9 @@ import {
 
 import {
   AnalysisOutputError,
-  AnalysisResourceConstraintError,
+  type AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
@@ -23,7 +24,10 @@ import {
   PlistNestingLimitError,
 } from "../../domain/apple/plistValue.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
-import { malformedInput } from "../../domain/parseFailure.js";
+import {
+  malformedInput,
+  type ParseFailureError,
+} from "../../domain/parseFailure.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
@@ -100,38 +104,32 @@ export interface PlistJsonParseAttempt {
 
 type PlistParseError = AnalysisOutputError | AnalysisResourceConstraintError;
 
-const plistNestingError = (cause: unknown): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
+const plistNestingError = (
+  cause: PlistNestingLimitError,
+): AnalysisResourceConstraintError =>
+  parseLimitConstraint(
     "inspect_plist",
     "memory",
-    errorMessage(cause),
-    { maximum_nesting_depth: MAX_NATIVE_PLIST_NESTING_DEPTH },
-    {
-      cause,
-      ...fixedAllowanceOptions("The native plist nesting allowance", "parser", {
-        limit: MAX_NATIVE_PLIST_NESTING_DEPTH,
-        unit: "levels",
-      }),
-    },
+    cause,
+    fixedAllowanceOptions("The native plist nesting allowance", "parser", {
+      limit: MAX_NATIVE_PLIST_NESTING_DEPTH,
+      unit: "levels",
+    }),
   );
 
 const plistDecodeBudgetError = (
-  cause: Error,
+  cause: ParseFailureError<"limit">,
   encoding: "XML" | "binary",
 ): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
+  parseLimitConstraint(
     "inspect_plist",
     "memory",
-    cause.message,
-    { maximum_decoded_bytes: MAX_NATIVE_PLIST_DECODE_BYTES },
-    {
-      cause,
-      ...fixedAllowanceOptions(
-        `The native ${encoding} plist decode allowance`,
-        "parser",
-        { limit: MAX_NATIVE_PLIST_DECODE_BYTES, unit: "bytes" },
-      ),
-    },
+    cause,
+    fixedAllowanceOptions(
+      `The native ${encoding} plist decode allowance`,
+      "parser",
+      { limit: MAX_NATIVE_PLIST_DECODE_BYTES, unit: "bytes" },
+    ),
   );
 
 /**

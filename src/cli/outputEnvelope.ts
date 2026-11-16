@@ -23,8 +23,8 @@
  */
 import { estimateTokenCount, sliceByTokens } from "tokenx";
 
-import type { CliOutputFormat } from "../cliOutput.js";
-import { formatCliOutput } from "./cliOutputFormatter.js";
+import { renderCliDocument, type CliOutputFormat } from "../cliOutput.js";
+import { jsonLinesErrorRecord } from "./jsonLines.js";
 
 /** Suggested commands that follow a document. */
 export interface CallToAction {
@@ -56,7 +56,10 @@ const humanError = ({ code, message }: CliFailure): string =>
   `${code === "UNKNOWN" || code === "COMMAND_NOT_FOUND" ? "Error" : `Error (${code})`}: ${message}`;
 
 /** A blank line, the description, then each command with its aligned comment. */
-const humanCallToAction = ({ description, commands }: CallToAction): string => {
+export const formatCliCallToAction = ({
+  description,
+  commands,
+}: CallToAction): string => {
   const width = Math.max(...commands.map(({ command }) => command.length));
   return [
     "",
@@ -108,16 +111,30 @@ export const renderFailure = (
     command,
     duration,
   }: { readonly command: string; readonly duration: string },
-  cta: CallToAction,
+  cta: CallToAction | undefined,
   presentation: EnvelopePresentation,
 ): string => {
   const { format } = presentation;
-  const meta = { command, cta, duration };
+  const encode = (value: unknown): string =>
+    renderCliDocument(value, format, process.stdout.isTTY === true).replace(
+      /\n$/u,
+      "",
+    );
+  const meta = { command, ...(cta === undefined ? {} : { cta }), duration };
+  const bare = cta === undefined ? failure : { ...failure, cta };
+  if (format === "jsonl")
+    return renderCliDocument(
+      jsonLinesErrorRecord(
+        presentation.fullOutput ? { ok: false, error: failure, meta } : bare,
+      ),
+      "jsonl",
+      false,
+    );
   if (presentation.tokenCount) {
     const document = presentation.fullOutput
       ? { ok: false, error: failure, meta }
-      : { ...failure, cta };
-    return line(String(estimateTokenCount(formatCliOutput(document, format))));
+      : bare;
+    return line(String(estimateTokenCount(encode(document))));
   }
   if (
     presentation.human &&
@@ -125,11 +142,14 @@ export const renderFailure = (
     presentation.tokenLimit === undefined &&
     presentation.tokenOffset === undefined
   )
-    return line(humanError(failure)) + line(humanCallToAction(cta));
+    return (
+      line(humanError(failure)) +
+      (cta === undefined ? "" : line(formatCliCallToAction(cta)))
+    );
   if (presentation.fullOutput) {
-    const window = tokenWindow(formatCliOutput(failure, format), presentation);
+    const window = tokenWindow(encode(failure), presentation);
     return line(
-      formatCliOutput(
+      encode(
         window.truncated
           ? {
               ok: false,
@@ -142,12 +162,8 @@ export const renderFailure = (
               },
             }
           : { ok: false, error: failure, meta },
-        format,
       ),
     );
   }
-  return line(
-    tokenWindow(formatCliOutput({ ...failure, cta }, format), presentation)
-      .text,
-  );
+  return line(tokenWindow(encode(bare), presentation).text);
 };

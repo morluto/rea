@@ -47,6 +47,12 @@ import {
 import { createJavaScriptRpcScan } from "./javascript/javascriptRpcEndpoints.js";
 import { semanticStaticModuleSource } from "./javascript/javascriptModuleDeclaration.js";
 import { parseJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import {
+  semanticPrecisionControl,
+  semanticResourceLimitFacts,
+  semanticResourceLimitReason,
+} from "./javascript/javascriptSemanticResourceLimits.js";
+import type { WebBundleSemanticLimit } from "./webBundleScriptAnalysis.js";
 
 type BundleObservations = WebBundleAnalysis["observations"];
 type ChunkEdge = BundleObservations["chunks"]["edges"][number];
@@ -58,11 +64,14 @@ export const analyzeScript = (
   accumulator: AnalysisAccumulator,
   precision?: JavaScriptSemanticPrecisionInput,
   memberMutationAllowance?: JavaScriptMemberMutationAllowance,
-): JavaScriptRouteSourceFacts | null => {
+): {
+  readonly routeFacts: JavaScriptRouteSourceFacts | null;
+  readonly semanticLimits: readonly WebBundleSemanticLimit[];
+} => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
     accumulator.failedScripts.push(script.script_key);
-    return null;
+    return { routeFacts: null, semanticLimits: [] };
   }
   accumulator.parsedScripts += 1;
   if ((file.errors?.length ?? 0) > 0)
@@ -146,7 +155,24 @@ export const analyzeScript = (
       });
   if (index.bindings.returnedReferenceWidenings.size > 0)
     accumulator.widenedScripts.push(script.script_key);
-  return completeSemanticSteps(routeScan.finishSteps());
+  // Finishing route recovery can itself exhaust a getter or alias budget.
+  // Snapshot the evaluator's facts only after every consumer has finished.
+  const routeFacts = completeSemanticSteps(routeScan.finishSteps());
+  const { bindings } = index;
+  const reached = new Set([
+    ...bindings.valueResourceLimits,
+    ...bindings.getterResourceLimits,
+  ]);
+  return {
+    routeFacts,
+    semanticLimits: [...reached].sort().map((resource) => ({
+      reason: semanticResourceLimitReason(resource, bindings.precision),
+      limit: semanticPrecisionControl(
+        semanticResourceLimitFacts(resource, bindings.precision).control,
+        bindings.precision,
+      ),
+    })),
+  };
 };
 
 const inspectNode = (
