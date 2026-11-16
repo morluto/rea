@@ -665,6 +665,8 @@ const ingestEvent = (event: CdpReceivedEvent, state: CaptureState): void => {
       state.eventsObserved += 1;
       ingestContext(registered, state);
       return;
+    default:
+      return;
   }
 };
 

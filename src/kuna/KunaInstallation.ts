@@ -177,7 +177,7 @@ export const kunaInstallationCancellation = (
 };
 
 /** One installation inspection's retained owners and originating errors. */
-interface KunaResourceScope {
+export interface KunaResourceScope {
   readonly owner: RetainedResourceScope;
   readonly cleanupResources: readonly string[] | undefined;
   readonly hasPending: boolean;

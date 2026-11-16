@@ -20,7 +20,7 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
+import { acquireHopperTargetLease } from "../../../../src/hopper/HopperLease.js";
 
 // Failure assertions keep the external document unknown. Teardown then publishes
 // this run's authenticated bridge so normal cleanup can release its runtime/lease.

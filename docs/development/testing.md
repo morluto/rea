@@ -799,11 +799,14 @@ should assert canonical failure categories and provider-call controls where
 rejection before provider work matters. Do not make today's omission of a
 constraint a compact-profile invariant.
 
-When a file repeatedly validates the same MCP schemas, use
-`createMcpSchemaValidation` for file-owned preparation and clear it in
-`afterAll`. Its content keys include the complete schema, and the SDK provider
-keeps dialect and format validation. Keep sessions and connections scoped to
-each test; share immutable schema preparation through the fixture's validator
+Give every MCP SDK test client the validator from
+`createMcpSchemaValidation` (or use `mcpTest`); the architecture guards count
+clients that keep the SDK default. Compiled validators are shared across the
+worker in a bounded cache keyed by the complete schema, and the SDK provider
+keeps dialect and format validation. A fixture created inline for one client
+is released with that client. When a file holds one fixture for several
+clients, clear it in `afterAll`. Keep sessions and connections scoped to each
+test; share immutable schema preparation through the fixture's validator
 dependency.
 
 Artifact verification uses `artifactMcpCall` for both lifecycle and analysis

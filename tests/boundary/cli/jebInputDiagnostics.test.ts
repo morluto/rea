@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 
@@ -43,7 +43,7 @@ const invoke = async (argv: readonly string[]) => {
       );
     },
   };
-  const cli = Cli.create("rea-jeb-input-test", { sync: false });
+  const cli = createCommandCli();
   registerJebCommands(cli, silentLogger, {}, provider);
   let stdout = "";
   let exitCode = 0;

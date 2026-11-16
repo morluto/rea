@@ -19,6 +19,7 @@ import {
 import { buildManagedMemberCapacityFixture } from "../fixtures/managedMemberCapacity.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const createTransport = () =>
   new StdioClientTransport({
@@ -49,7 +50,10 @@ cliTest(
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const transport = createTransport();
     transport.stderr?.on("data", () => undefined);
-    const client = new Client({ name: "managed-type-recovery", version: "1" });
+    const client = new Client(
+      { name: "managed-type-recovery", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     try {
       await client.connect(transport);
       const definition = (await client.listTools()).tools.find(

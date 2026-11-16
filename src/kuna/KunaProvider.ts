@@ -14,8 +14,8 @@ import {
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { err, ok } from "../domain/result.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   resolveRegexMatchingDeadline,
   type RegexMatchingDeadline,
@@ -26,8 +26,7 @@ import {
 } from "../config/regexWorkerHeapRequest.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
-  kunaFileCleanupError,
-  kunaRetainedResourceCleanupError,
+  kunaInstallationDialect,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import {
@@ -197,22 +196,20 @@ export class KunaProvider implements AnalysisProviderCandidate {
           : { processLauncher: this.#launcher }),
       });
     } catch (cause: unknown) {
-      const retainedCleanup = kunaRetainedResourceCleanupError(
-        cause,
-        "kuna:profile",
-      );
-      if (retainedCleanup !== undefined) return err(retainedCleanup);
-      if (!(cause instanceof RegularFileCleanupFailure)) {
-        const cancellation = kunaResources.installationCancellationError(
+      return err(
+        classifyProviderFailure(
           cause,
-          "kuna:profile",
-        );
-        if (cancellation !== undefined) return err(cancellation);
-      }
-      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-      const error = kunaFileCleanupError(cause, "kuna:profile");
-      kunaResources.bindFailure(cause, error);
-      return err(error);
+          kunaInstallationDialect(
+            "kuna:profile",
+            kunaResources,
+            (unrecognised) => {
+              // The inspection reports expected failures in its Result; any
+              // other rejection is not a Kuna outcome and stays the caller's.
+              throw unrecognised;
+            },
+          ),
+        ),
+      );
     }
     if (!installation.ok) {
       const error = kunaUnavailable("open_binary", installation.error.reason, {

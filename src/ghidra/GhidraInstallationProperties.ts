@@ -1,3 +1,4 @@
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   artifactFileCompletion,
@@ -15,7 +16,7 @@ import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js"
 import { fixedProducerInputAllowance } from "../domain/fixedAllowanceRemediation.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { ghidraApplicationProperties } from "./GhidraInstallationPolicy.js";
-import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Metadata admission budget, not a Java Properties format limit. */
@@ -110,6 +111,9 @@ export const readGhidraInstallationProperties = async (
           )
         : primary,
     );
-    throw ghidraFileFailure(qualified, "ghidra:installation", diagnostics);
+    throw classifyProviderFailure(
+      qualified,
+      ghidraFileDialect("ghidra:installation", diagnostics),
+    );
   }
 };

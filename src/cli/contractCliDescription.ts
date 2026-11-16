@@ -25,6 +25,7 @@ import {
   selectCliAnalysisSelector,
   type CliSelectorKind,
 } from "./analysisSelector.js";
+import { optionFlagName } from "./optionFields.js";
 
 /**
  * Framework-neutral CLI description of a tool contract. This module owns
@@ -382,6 +383,8 @@ export interface ContractCliSessionTarget {
   /** The positional key, taken before every other positional. */
   readonly key: string;
   readonly schema: z.ZodType;
+  /** The contract that opens the target, when the command takes its fields. */
+  readonly opening: string | undefined;
   /** Options that supply fields of the opening contract. */
   readonly options: readonly ContractCliOpeningOption[];
   /**
@@ -699,7 +702,9 @@ export interface ContractCliDescription {
    * Contract fields the CLI spells differently, so input issues reported
    * after argv parsing can name the CLI key, and the flag of each contract
    * field (or `field.member`) the command takes as an option, so a failure
-   * that names a per-call control can name the flag that sets it.
+   * that names a per-call control can name the flag that sets it. Each field
+   * of a field group maps to the group's option, and a positional selector
+   * to its named option.
    */
   readonly inputBinding: {
     readonly operation: string;
@@ -753,26 +758,31 @@ const camelCase = (field: string): string =>
 const admitsOmission = (field: z.ZodType): boolean =>
   z.object({ value: field }).safeParse({}).success;
 
+const isWrapper = (value: z.ZodType) =>
+  value instanceof z.ZodOptional ||
+  value instanceof z.ZodExactOptional ||
+  value instanceof z.ZodDefault ||
+  value instanceof z.ZodPrefault ||
+  value instanceof z.ZodNullable ||
+  value instanceof z.ZodReadonly;
+
 const core = (value: z.ZodType): z.ZodType => {
   let current = value;
-  while (
-    current instanceof z.ZodOptional ||
-    current instanceof z.ZodExactOptional ||
-    current instanceof z.ZodDefault ||
-    current instanceof z.ZodPrefault ||
-    current instanceof z.ZodNullable ||
-    current instanceof z.ZodReadonly
-  )
-    current = current.unwrap() as z.ZodType;
+  while (isWrapper(current)) current = current.unwrap() as z.ZodType;
   return current;
 };
 
 /**
- * Accept only field forms argv can carry, so a new contract field cannot
- * reach the CLI with an unreviewed spelling.
+ * The description of a field, read through wrappers such as `.optional()`:
+ * zod does not carry a wrapped schema's description to its wrapper, and the
+ * advertised JSON Schema shows the wrapped description.
  */
-const kebabCase = (key: string): string =>
-  key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
+const describedThroughWrappers = (value: z.ZodType): string | undefined => {
+  let current = value;
+  while (current.description === undefined && isWrapper(current))
+    current = current.unwrap() as z.ZodType;
+  return current.description;
+};
 
 /**
  * JSON text for a structured contract field. Argv carries text; the decoded
@@ -1401,7 +1411,8 @@ const describeTargetOpening = (
           throw new Error(`${opener}.${field} does not admit ${value}`);
       schema = z.enum(projected.values).optional();
     }
-    const description = projected.description ?? declared.description;
+    const description =
+      projected.description ?? describedThroughWrappers(declared);
     if (description !== undefined) schema = schema.describe(description);
     return {
       field,
@@ -1475,6 +1486,7 @@ const describeSessionTarget = (
   return {
     key: SESSION_TARGET_KEY,
     schema: localPathStringSchema.describe(target.description),
+    opening: target.open?.contract.name,
     options,
     admitOpening: (operation, values) =>
       admit(operation, values, values[SESSION_TARGET_KEY] as string),
@@ -1517,7 +1529,7 @@ const describeEvidenceTargets = (
     targets: described,
     options,
     sourceFlags: Object.fromEntries(
-      options.map(({ field, key }) => [field, `--${kebabCase(key)}`]),
+      options.map(({ field, key }) => [field, `--${optionFlagName(key)}`]),
     ),
     admitSource: (operation, values) => {
       let admitted: Result<
@@ -1895,30 +1907,24 @@ export const describeContractCommand = <
             : text;
       if (viewSelection && viewDelivery !== undefined)
         schema = schema.describe(viewOptionHelp(viewDelivery));
-      else if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else if (nullFlag !== undefined) {
       // The flag spells null, so the option itself takes only a value.
       if (!declared.safeParse(null).success)
         throw new Error(`${contract.name}.${field} does not admit null`);
       assertArgvField(contract.name, field, declared);
       schema = argvDecimal(core(declared).optional());
-      if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else if (delivery)
       schema =
         viewDelivery?.viewSelectsSummary === true
           ? analysisEvidenceDeliveryOptions.detail.unwrap().optional()
           : analysisEvidenceDeliveryOptions.detail;
-    else if (jsonText) schema = jsonTextField(declared, kebabCase(key));
+    else if (jsonText) schema = jsonTextField(declared, optionFlagName(key));
     else if (callerPath) {
       const admitted =
         core(declared) instanceof z.ZodArray
           ? z.array(localPathStringSchema)
           : localPathStringSchema;
       schema = admitsOmission(declared) ? admitted.optional() : admitted;
-      if (declared.description !== undefined)
-        schema = schema.describe(declared.description);
     } else {
       assertArgvField(contract.name, field, declared);
       schema = argvDecimal(argvOptional(declared));
@@ -1935,9 +1941,12 @@ export const describeContractCommand = <
       schema = schema.default(projected.default as never);
       if (described !== undefined) schema = schema.describe(described);
     }
-    if (projected?.description !== undefined)
-      schema = schema.describe(projected.description);
-    const description = schema.description;
+    const description =
+      projected?.description ??
+      schema.description ??
+      describedThroughWrappers(declared);
+    if (description !== undefined && description !== schema.description)
+      schema = schema.describe(description);
     const value = core(declared);
     const selector = selectorOptions[field];
     let selectorOption: ContractCliSelectorOption | undefined;
@@ -2060,7 +2069,8 @@ export const describeContractCommand = <
           // An omitted member stays omitted; the contract applies its default.
           schema = argvDecimal(omittable(withoutDefault(memberDeclared)));
         }
-        const description = projected.description ?? memberDeclared.description;
+        const description =
+          projected.description ?? describedThroughWrappers(memberDeclared);
         if (description !== undefined) schema = schema.describe(description);
         const value = core(memberDeclared);
         return [
@@ -2424,15 +2434,33 @@ export const describeContractCommand = <
         ].flatMap(({ field, key }) => (key === field ? [] : [[field, key]])),
       ),
       flags: Object.fromEntries(
-        parameters.flatMap(({ field, key, member, positional, delivery }) =>
-          positional || delivery
-            ? []
-            : [
-                [
-                  member === undefined ? field : [field, ...member].join("."),
-                  `--${kebabCase(key)}`,
-                ],
-              ],
+        parameters.flatMap(
+          ({
+            field,
+            key,
+            member,
+            positional,
+            delivery,
+            group,
+            selectorOption,
+          }) => {
+            if (delivery) return [];
+            // A positional selector is also set by its named option.
+            if (positional)
+              return selectorOption === undefined
+                ? []
+                : [[field, `--${optionFlagName(selectorOption.key)}`] as const];
+            const flag = `--${optionFlagName(key)}`;
+            // A field group's option supplies each of its contract fields.
+            if (group !== undefined)
+              return group.map((grouped) => [grouped, flag] as const);
+            return [
+              [
+                member === undefined ? field : [field, ...member].join("."),
+                flag,
+              ] as const,
+            ];
+          },
         ),
       ),
     },

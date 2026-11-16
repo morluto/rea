@@ -8,7 +8,7 @@ import {
   type HopperStartupFailureDiagnostic,
   type HopperStartupFailureCode,
   type HopperStartupReadyDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   ProviderProcessSupervisor,
