@@ -23,7 +23,7 @@ const lldbCommandResult = z.strictObject({
 export const LLDB_DEBUG_TOOL_CONTRACTS = [
   {
     name: "start_lldb_session",
-    availability: { host: "persistentDebugger" },
+    availability: { host: "lldbDebugger" },
     ...toolContractMetadata(
       "start_lldb_session",
       toolEffects({
@@ -133,10 +133,7 @@ export const LLDB_DEBUG_TOOL_CONTRACTS = [
   },
   {
     name: "lldb_session_status",
-    ...toolContractMetadata(
-      "lldb_session_status",
-      toolEffects(),
-    ),
+    ...toolContractMetadata("lldb_session_status", toolEffects()),
     kind: "native-provider",
     description:
       "Return the observed lifecycle state, inferior PID, target path, and process state for one persistent REA LLDB session.",

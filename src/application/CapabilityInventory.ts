@@ -683,6 +683,11 @@ const HOST_FEATURES: Readonly<
     remediation:
       "Run persistent debugger sessions on Linux with /proc descriptor readback.",
   },
+  lldbDebugger: {
+    enabled: () => true,
+    remediation:
+      "Run persistent LLDB debugger sessions on Apple Silicon macOS (Darwin).",
+  },
   javascriptRecovery: {
     enabled: (policy) => policy.javascriptRecoveryEnabled,
     remediation:
