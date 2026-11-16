@@ -959,6 +959,18 @@ checkCounted(
   [],
 );
 
+// Every CLI command is registered through src/cli/commandRegistry.ts, which
+// records it in REA's command table (name, inputs, contract operations and
+// their flags) before handing it to the dispatcher (#11654). A direct
+// `cli.command(...)` would be dispatched but missing from that table.
+checkCounted(
+  "CLI command registered outside REA's command table (use registerCliCommand)",
+  "cli-command-outside-registry",
+  files,
+  /\bcli\.command\(/gu,
+  ["src/cli/commandRegistry.ts"],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or

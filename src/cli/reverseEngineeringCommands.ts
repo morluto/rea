@@ -18,6 +18,7 @@ import { ok } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { OBJDUMP_ARTIFACT_OPERATIONS } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../contracts/cliCommandNames.js";
@@ -232,7 +233,7 @@ export const registerReverseEngineeringCommands = (
         ),
       ),
   );
-  cli.command(CLI_COMMANDS.debugWithGdb, {
+  registerCliCommand(cli, CLI_COMMANDS.debugWithGdb, {
     description:
       "Run one unrestricted GDB console command in an ephemeral MI session; provide an inferior TTY so a live target can be safely detached",
     args: z.object({
@@ -308,7 +309,7 @@ export const registerReverseEngineeringCommands = (
         }),
       ),
   });
-  cli.command(CLI_COMMANDS.debugWithRizin, {
+  registerCliCommand(cli, CLI_COMMANDS.debugWithRizin, {
     description:
       "Run one unrestricted Rizin debugger command in an ephemeral session",
     args: z.object({

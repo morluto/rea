@@ -3,11 +3,14 @@ import { Cli } from "incur";
 import { z } from "zod";
 import { expect, it } from "vitest";
 
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCliCompletions } from "../../../src/cli/completions.js";
+import type { CliInstance } from "../../../src/cli/types.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-const registry = () =>
-  Cli.create("rea", { sync: false }).command("instructions", {
+const registry = () => {
+  const cli = Cli.create("rea", { sync: false }) as unknown as CliInstance;
+  registerCliCommand(cli, "instructions", {
     options: z.object({
       procedure: z.string().optional(),
       targetFormat: z.enum(["dos-com", "raw-binary"]).optional(),
@@ -16,6 +19,8 @@ const registry = () =>
       throw new Error("Completion must not execute a command");
     },
   });
+  return cli;
+};
 const complete = (words: string[], index = words.length - 1) => {
   let text = "";
   const callback = createCliCompletions(registry(), {
