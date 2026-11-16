@@ -18,6 +18,7 @@ import { getHeapStatistics } from "node:v8";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
 import { API_CONTRACT_OPERATION } from "../../domain/apiContract/apiContract.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 
 const YAML_ALIAS_LIMIT = 100;
@@ -167,9 +168,7 @@ export const decodeOpenApiYaml = (
     );
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    text = decodeStrictUtf8(bytes, "preserve");
   } catch {
     return err(
       invalidDocument(

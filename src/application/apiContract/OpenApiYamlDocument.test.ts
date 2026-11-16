@@ -287,6 +287,25 @@ it("decodes only the JSON-compatible shape the shared parser already accepts", (
   expect(unsupported.ok).toBe(true);
 });
 
+it("reads a leading byte order mark as an encoding signature", () => {
+  // The shared decoder keeps a leading U+FEFF as content (and its BOM doc
+  // asks for a regression test at each consumer that picks a policy). The
+  // composer treats a leading signature as not part of the document, so the
+  // same declarations come back as the document without one.
+  const document = 'openapi: "3.1.0"\ninfo: {title: t, version: "1"}\n';
+  const withMark = decodeOpenApiYaml(
+    Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(document)]),
+    "/owned.yaml",
+  );
+  expect(withMark).toEqual(
+    decodeOpenApiYaml(Buffer.from(document), "/owned.yaml"),
+  );
+  expect(withMark).toEqual({
+    ok: true,
+    value: { openapi: "3.1.0", info: { title: "t", version: "1" } },
+  });
+});
+
 it("keeps collection-valued sequence items and names the selected format in parser refusals", async () => {
   // A sequence item is a value, never a member name, so these documents are
   // composable and must not be refused as non-scalar keys.
