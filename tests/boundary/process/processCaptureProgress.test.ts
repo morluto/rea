@@ -519,18 +519,14 @@ itWithCaptureCapability(
     expect(messages.some((message) => message.startsWith("running:"))).toBe(
       true,
     );
-    const cleanupIndex = messages.findIndex((message) =>
-      message.startsWith("cleanup:"),
-    );
-    expect(cleanupIndex).toBeGreaterThanOrEqual(0);
-    const cleanup = messages[cleanupIndex]!;
-    expect(cleanup).toContain("owned_process_group=cleaned");
-    expect(cleanup).toContain("disposition=exited");
-    // The shared MCP operation adds its own completion notification after the
-    // provider cleanup. Rate-bound only provider observations preceding cleanup.
+    expect(messages.at(-1)).toContain("cleanup:");
+    expect(messages.at(-1)).toContain("owned_process_group=cleaned");
+    expect(messages.at(-1)).toContain("disposition=exited");
+    const nonTerminal = progress.slice(0, -1);
     assertRateBound(
-      progress.slice(0, cleanupIndex).length,
-      parseProgressMessage(cleanup.slice("cleanup: ".length)).elapsed_ms,
+      nonTerminal.length,
+      parseProgressMessage((messages.at(-1) ?? "").slice("cleanup: ".length))
+        .elapsed_ms,
     );
     const tokenEvidence = toolContract(
       "capture_process_scenario",
