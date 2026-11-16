@@ -547,13 +547,11 @@ export const espImageMetadataSchema = z.strictObject({
    * `flash_offset`, and a partition table sits at `table_file_offset`, where
    * that origin puts the default `0x8000`. Reopen the file as
    * `esp-flash-image` with that `flash_offset`. Null otherwise, and in the
-   * nested facts of a flash layout. Absent from Evidence recorded before REA
-   * reported it; its graph digest covers the record without the field.
+   * nested facts of a flash layout.
    */
   flash_dump: z
     .strictObject({ flash_offset: uint32, table_file_offset: offset })
-    .nullable()
-    .exactOptional(),
+    .nullable(),
 });
 export type EspImageMetadata = z.infer<typeof espImageMetadataSchema>;
 

@@ -18,9 +18,9 @@ import {
   sameArtifactSourceIdentity,
   type ArtifactEntry,
   type ArtifactReaderTraversal,
+  DirectoryArtifactReader,
   translateArtifactFailure,
 } from "../../resources/index.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../../domain/investigationProviders.js";

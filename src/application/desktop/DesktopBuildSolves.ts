@@ -122,7 +122,7 @@ const recordsSchema = z.looseObject({
       passes: z.int(),
       k: z.int(),
       band: z.enum(["in_band", "too_easy", "too_hard", "undecided"]),
-      usd: z.number(),
+      usd: z.number().nullable(),
     }),
   ),
 });

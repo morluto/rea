@@ -4,6 +4,7 @@ import type {
   AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
 import {
+  AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   cancelledBy,
@@ -12,6 +13,11 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { AnalysisLimit } from "../domain/analysisSettings.js";
+import {
+  describeLaunchFailure,
+  type LaunchExhaustedResource,
+  type LauncherFailure,
+} from "./launchFailure.js";
 import type { ProviderOutcome } from "./ProviderOutcome.js";
 import type { ProviderProcessSnapshot } from "./ProviderProcess.js";
 import {
@@ -35,13 +41,134 @@ const AREA_NAMES = {
 /** Outcomes whose meaning depends on the provider's own dialect. */
 export type ProviderDialectOutcome = Extract<
   ProviderOutcome,
-  { readonly kind: "launch-refused" | "exited" | "protocol" }
+  { readonly kind: "exited" | "protocol" }
 >;
+
+/** A launch failure that leaves the provider unavailable for this call. */
+export type LaunchUnavailableFailure = Extract<
+  LauncherFailure,
+  { readonly kind: "missing" | "not_executable" | "failed" }
+>;
+
+const EXHAUSTED_RESOURCE_NAMES = {
+  processes: "process",
+  memory: "memory",
+  "file-descriptors": "file-descriptor",
+} as const satisfies Record<LaunchExhaustedResource, string>;
+
+/** What one launch failure report needs beyond the launcher's facts. */
+export interface LaunchFailureContext {
+  readonly providerId: string;
+  readonly operation: string;
+  /** Options every classified error carries, such as the cause and cleanup. */
+  readonly details?: AnalysisErrorOptions;
+  /** The command the caller selected, when the launcher did not name it. */
+  readonly command?: string;
+  /** The setting that selected the command; a host constraint leaves it unchanged. */
+  readonly selection?: string;
+  /** Bytes of the refused argument list, when the caller measured them. */
+  readonly argumentBytes?: number;
+  /**
+   * The provider's report that it cannot be started, such as a message naming
+   * its configured executable. Without it the shared report names the
+   * executable and the errno.
+   */
+  readonly unavailable?: (
+    failure: LaunchUnavailableFailure,
+    details: AnalysisErrorOptions,
+  ) => AnalysisError;
+}
+
+/**
+ * The one mapping from a launcher's failure to a typed error. Host capacity
+ * (EAGAIN, ENOMEM, EMFILE, ENFILE) and an oversized argument list (E2BIG) are
+ * resource constraints of this call, not provider faults; every other errno
+ * leaves the provider unavailable, reported with its errno and syscall.
+ */
+export const classifyLaunchFailure = (
+  failure: LauncherFailure,
+  context: LaunchFailureContext,
+): AnalysisError => {
+  const { operation } = context;
+  const command = failure.executable ?? context.command;
+  const subject = command ?? "the provider command";
+  const launchFacts: Readonly<Record<string, JsonValue>> = {
+    system_code: failure.code ?? null,
+    ...(failure.syscall === undefined ? {} : { syscall: failure.syscall }),
+    ...(command === undefined ? {} : { command }),
+  };
+  const details: AnalysisErrorOptions = {
+    ...context.details,
+    diagnostics: {
+      ...context.details?.diagnostics,
+      ...launchFacts,
+      boundary:
+        failure.kind === "host-exhausted" ? "host-capacity" : "provider-launch",
+    },
+  };
+  const unchanged = `${context.selection ?? "the selected command"} does not need to change`;
+  switch (failure.kind) {
+    case "host-exhausted": {
+      const name = EXHAUSTED_RESOURCE_NAMES[failure.resource];
+      return new AnalysisResourceConstraintError(
+        operation,
+        "capacity",
+        `The host ran out of ${name} capacity (${failure.code}) to start ${subject}.`,
+        {
+          spawn_error: failure.code,
+          exhausted_resource: failure.resource,
+          ...(command === undefined ? {} : { command }),
+        },
+        {
+          ...details,
+          retryable: true,
+          remediationAction: `The host ran out of ${name} capacity (${failure.code}). Close unused processes or files, or raise the process or open-file limit of the REA process, then retry; ${unchanged}.`,
+        },
+      );
+    }
+    case "argument-list":
+      return new AnalysisResourceConstraintError(
+        operation,
+        "transport",
+        `The host rejected ${subject} because its argument list and environment exceed the process launch limit (${failure.code}).`,
+        {
+          spawn_error: failure.code,
+          ...(context.argumentBytes === undefined
+            ? {}
+            : { argument_bytes: context.argumentBytes }),
+        },
+        {
+          ...details,
+          retryable: false,
+          remediationAction: `Select less input for one call, or pass large values through a file, then retry; ${unchanged}. An unchanged request fails the same way.`,
+        },
+      );
+    case "missing":
+    case "not_executable":
+    case "failed": {
+      if (context.unavailable !== undefined)
+        return context.unavailable(failure, details);
+      const reason =
+        failure.kind === "missing"
+          ? `${subject} was not found (${describeLaunchFailure(failure)}).`
+          : failure.kind === "not_executable"
+            ? `${subject} exists but could not be executed (${describeLaunchFailure(failure)}).`
+            : `${subject} could not be launched (${describeLaunchFailure(failure)}).`;
+      return new AnalysisCapabilityUnavailableError(
+        context.providerId,
+        operation,
+        reason,
+        { ...details, userMessage: reason },
+      );
+    }
+  }
+};
 
 type ReportedLimits = Readonly<Record<string, JsonValue>> | null;
 
 /** What one provider command needs to turn its outcome into a typed error. */
 export interface ProviderOutcomeContext {
+  readonly providerId: string;
   readonly operation: string;
   /** The provider's redacted projection of retained output. */
   readonly capturedOutput: (
@@ -85,7 +212,13 @@ export interface ProviderOutcomeContext {
     readonly limits: ReportedLimits;
     readonly recovery: ResourceConstraintRecovery;
   };
-  /** Provider-specific meaning of a launch refusal, an exit, or a stream failure. */
+  /**
+   * The provider's report that its command cannot be started; see
+   * `LaunchFailureContext.unavailable`. Host constraints are not the
+   * provider's to interpret.
+   */
+  readonly launchUnavailable?: LaunchFailureContext["unavailable"];
+  /** Provider-specific meaning of an exit or a stream failure. */
   readonly dialect: (
     outcome: ProviderDialectOutcome,
     details: AnalysisErrorOptions,
@@ -94,8 +227,8 @@ export interface ProviderOutcomeContext {
 
 /**
  * The one mapping from an owned command's physical outcome to a typed error.
- * Owner-observed facts are classified here; only the provider's dialect
- * decides what an exit or a launch refusal means for that provider.
+ * Owner-observed facts, including launch failures, are classified here; only
+ * the provider's dialect decides what an exit or a stream failure means.
  */
 export const classifyProviderOutcome = (
   outcome: ProviderOutcome,
@@ -198,7 +331,15 @@ export const classifyProviderOutcome = (
         },
       );
     }
-    case "launch-refused":
+    case "launch-failed":
+      return classifyLaunchFailure(outcome.failure, {
+        providerId: context.providerId,
+        operation,
+        details,
+        ...(context.launchUnavailable === undefined
+          ? {}
+          : { unavailable: context.launchUnavailable }),
+      });
     case "exited":
     case "protocol":
       return context.dialect(outcome, details);

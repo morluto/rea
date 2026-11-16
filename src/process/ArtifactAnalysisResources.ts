@@ -467,6 +467,7 @@ export class ArtifactAnalysisResources {
     budgetParameter?: "producer_limits",
   ): ProviderOutcomeContext {
     return {
+      providerId: this.providerId,
       operation,
       capturedOutput: capturedProviderOutput,
       timeout: {

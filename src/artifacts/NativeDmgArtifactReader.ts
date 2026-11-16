@@ -11,8 +11,8 @@ import {
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
+  DirectoryArtifactReader,
 } from "../resources/index.js";
-import { DirectoryArtifactReader } from "./DirectoryArtifactReader.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
 import {
   NonRegularFileReadError,
@@ -98,9 +98,8 @@ class NativeDmgCommandFailure extends ArtifactReaderFailure {
         ? {}
         : { cancellation: options.cancellation }),
       // Only hdiutil verify classifies a DMG failure as integrity.
-      ...(failure.reason === "integrity"
-        ? { integrityCheck: "image-checksum" as const }
-        : {}),
+      integrityCheck:
+        failure.reason === "integrity" ? "image-checksum" : undefined,
     });
     this.processNotStarted = options?.processNotStarted ?? false;
     this.verifyDiagnostic = failure.verifyDiagnostic;
