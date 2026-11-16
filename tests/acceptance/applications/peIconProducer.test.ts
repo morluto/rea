@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -102,7 +103,7 @@ for (const sample of oracle.samples) {
       expect(result.exitCode, result.stdout + result.stderr).toBe(0);
       const evidence = contract.outputSchema.parse(result.json);
       const report = peResourcesSchema.parse(evidence.normalized_result);
-      expect(evidence.subject?.digest.sha256).toBe(sample.sha256);
+      expect(fileIdentity(evidence.subject).sha256).toBe(sample.sha256);
       expect(report).toMatchObject({
         artifact: { path, bytes: sample.size, sha256: sample.sha256 },
         format: sample.format,
