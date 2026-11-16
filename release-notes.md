@@ -699,6 +699,7 @@
 * **cli:** cover terminal stdout behaviour in the CLI parity goldens ([#11677](https://github.com/morluto/rea/issues/11677)) ([80c60ac](https://github.com/morluto/rea/commit/80c60ac68ca965ad4158cb5b3dbd9fb1b1b2e697))
 * **cli:** expect the update alias to pass the host platform to the update host ([#11263](https://github.com/morluto/rea/issues/11263)) ([c4154b0](https://github.com/morluto/rea/commit/c4154b0c7ea240bef55ae9e1af155ed0152f2824))
 * **cli:** publish polled readiness files only when complete ([#10563](https://github.com/morluto/rea/issues/10563)) ([dfad81a](https://github.com/morluto/rea/commit/dfad81a48bd3e72cd22d2a2add4ddac9c565637e))
+* **cli:** register decompile-all once in the overnight CLI schema registry ([#11689](https://github.com/morluto/rea/issues/11689)) ([6c4e2bb](https://github.com/morluto/rea/commit/6c4e2bba9d79e54446f5fdff2ac32e54503a4a2b))
 * **cli:** report CLI fields that admit values their contract refuses ([#10575](https://github.com/morluto/rea/issues/10575)) ([4822082](https://github.com/morluto/rea/commit/48220827c484ae0ecb82d3122ff74aa3e23859c8))
 * **cli:** scope the entropy cleanup regression to the provider id ([abd6449](https://github.com/morluto/rea/commit/abd64498b7969956debeb45875db54ec11a28622))
 * **cli:** spy on union branches through the base Zod type so main typechecks ([#11627](https://github.com/morluto/rea/issues/11627)) ([18a47ee](https://github.com/morluto/rea/commit/18a47ee5aa863f1d2f990d2ded3168f6333b9d04))
