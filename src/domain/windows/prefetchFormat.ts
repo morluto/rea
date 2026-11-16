@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../result.js";
+import { BinaryReader } from "../binaryContainer.js";
 import { z } from "zod";
 
 /**
@@ -86,8 +87,9 @@ export interface PrefetchDecodeFailure {
 
 const readVersionTag = (bytes: Uint8Array): PrefetchVersion | null => {
   if (bytes.length < VERSION_BYTES) return null;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const tag = String(view.getUint32(0, true));
+  const tag = String(
+    new BinaryReader(Buffer.from(bytes), true, "prefetch").u32(0),
+  );
   return (SUPPORTED_VERSIONS as readonly string[]).includes(tag)
     ? (tag as PrefetchVersion)
     : null;
@@ -131,8 +133,8 @@ const hasMamMagic = (bytes: Uint8Array): boolean =>
 export const hasMamSignature = hasMamMagic;
 
 /** Prefetch header fields are little-endian. */
-const u32 = (view: DataView, offset: number, end: number): number | null =>
-  offset + 4 <= end ? view.getUint32(offset, true) : null;
+const readerFor = (bytes: Uint8Array): BinaryReader =>
+  new BinaryReader(Buffer.from(bytes), true, "prefetch");
 
 /** The common header is required before the declared size at 0x0c is reachable. */
 const MIN_FILE_BYTES = COMMON_HEADER_BYTES;
@@ -204,12 +206,12 @@ export const parsePrefetchFile = (
       kind: "unsupported",
       message: `Prefetch v${version} is not one of the header generations this reader parses (17, 23).`,
     });
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const reader = readerFor(bytes);
   const end = bytes.byteLength;
   const limitations: string[] = [];
   // The common-header check above guarantees the DWORD at 0x0c is present, so a
   // successful parse always reports a declared size.
-  const declaredFileBytes = view.getUint32(FILE_SIZE_OFFSET, true);
+  const declaredFileBytes = reader.u32(FILE_SIZE_OFFSET);
   const executableName = utf16Name(
     bytes.subarray(
       EXECUTABLE_NAME_OFFSET,
@@ -236,7 +238,7 @@ export const parsePrefetchFile = (
     limitations.push(
       "The file ends before the run count field, so the recorded run total is unknown.",
     );
-  else runCount = u32(view, RUN_COUNT_OFFSET, end);
+  else runCount = reader.u32(RUN_COUNT_OFFSET);
   if (runTimeSlots === null)
     limitations.push(
       "The file ends before the last-run timestamp, so no run time is reported.",
@@ -247,7 +249,7 @@ export const parsePrefetchFile = (
     fileBytes: bytes.length,
     declaredFileBytes,
     executableName,
-    executablePathHash: hexHash(view.getUint32(EXECUTABLE_HASH_OFFSET, true)),
+    executablePathHash: hexHash(reader.u32(EXECUTABLE_HASH_OFFSET)),
     runCount,
     runTimeSlots,
     limitations,
