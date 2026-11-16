@@ -672,6 +672,36 @@ describe("interactive setup journey", () => {
   });
 });
 
+describe("interactive setup storage guidance", () => {
+  it("shows unresolved client storage guidance instead of a repair hint", async () => {
+    const remediation =
+      "Found migrated Claude Desktop storage at C:\\Users\\test\\Claude-Data. Register REA manually in the active file.";
+    const result = await runJourney(
+      [step("Which agents should use REA?", "\r")],
+      false,
+      [actions[0]],
+      [],
+      [
+        {
+          ...clientStates[0],
+          client: {
+            ...clientStates[0].client,
+            name: "claude_desktop",
+            configPathError: remediation,
+          },
+          status: "invalid",
+        },
+      ],
+    );
+    expect(result.output).toContain("Found migrated Claude Desktop storage at");
+    expect(result.output).toContain("Register REA manually");
+    expect(result.output).not.toContain(
+      "Existing configuration needs repair before setup",
+    );
+    expect(result.decision.selectedActionIds).toEqual([]);
+  });
+});
+
 describe("interactive setup completion", () => {
   it.each([
     { npmCommand: "", userAgent: "", launcher: "rea" },
@@ -832,12 +862,13 @@ const runJourney = async (
   accessible = false,
   journeyActions: readonly object[] = agentActions,
   initialClientIds: readonly string[] = [],
+  journeyClientStates: readonly object[] = clientStates,
 ): Promise<JourneyResult> => {
   const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
     'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
     `const actions = ${JSON.stringify(journeyActions)};`,
-    `const context = ${JSON.stringify({ stage: "select", clientStates, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
+    `const context = ${JSON.stringify({ stage: "select", clientStates: journeyClientStates, selectedClientIds: initialClientIds, clientSelectionAllowed: true })};`,
     `let decision = await confirmInteractiveSetup(actions, ${JSON.stringify(accessible)}, context);`,
     "if (!decision.cancelled && decision.selectedActionIds.length > 0) {",
     "  const selected = new Set(decision.selectedActionIds);",
