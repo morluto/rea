@@ -1,3 +1,4 @@
+import { spawnFailure } from "../support/process/spawnFailure.js";
 import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
@@ -14,7 +15,6 @@ import { TestReverseEngineeringService as ReverseEngineeringService } from "../s
 import {
   fixtureCommandRepair,
   ownedFailure,
-  ownedLaunchRefusal,
   ownedOutput,
   providerSnapshot,
 } from "../support/reverseEngineeringCompositionFixtures.js";
@@ -200,7 +200,7 @@ describe("reverse engineering command services", () => {
     await writeFile(path, "fixture");
     const service = new ReverseEngineeringService({
       runOwned: async (spawn) => {
-        throw ownedLaunchRefusal("ENOENT", spawn.command);
+        throw spawnFailure("ENOENT", spawn.command);
       },
     });
 
