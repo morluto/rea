@@ -22,6 +22,21 @@ export interface InitializerPage {
   readonly limit: number;
 }
 
+/** A name known to exceed the byte limit, kept until an entry uses it. */
+export const withheldInitializerSymbolName = Symbol(
+  "withheld initializer symbol name",
+);
+export type InitializerSymbolName =
+  | string
+  | typeof withheldInitializerSymbolName;
+
+/** Keep a readable name in the existing preference order, even beside a withheld alias. */
+export const preferInitializerSymbolName = (
+  preferred: InitializerSymbolName | null | undefined,
+  fallback: InitializerSymbolName | null | undefined,
+): InitializerSymbolName | null =>
+  typeof preferred === "string" ? preferred : (fallback ?? preferred ?? null);
+
 /** One collected slot before paging. `index` is assigned from file order. */
 export interface CollectedInitializer {
   readonly index: number;
@@ -34,7 +49,7 @@ export interface CollectedInitializer {
   readonly valueFileOffset: number | null;
   readonly slotSection: string | null;
   readonly section: string | null;
-  readonly symbol: string | null;
+  readonly symbol: InitializerSymbolName | null;
   readonly resolution: NativeInitializerResolution;
   readonly detail: string | null;
 }
@@ -42,13 +57,15 @@ export interface CollectedInitializer {
 /** Lowercase `0x` hex without leading zeros other than `0x0`. */
 export const hexAddress = (value: bigint): string => `0x${value.toString(16)}`;
 
-const fitsName = (name: string | null): name is string =>
-  name !== null &&
+const fitsName = (name: InitializerSymbolName | null): name is string =>
+  typeof name === "string" &&
   name.length > 0 &&
   name.length <= MAX_NATIVE_INITIALIZER_NAME_BYTES;
 
 /** Target-derived text. Empty and over-long names are not reported. */
-const untrustedName = (name: string | null): NativeInitializerName | null =>
+const untrustedName = (
+  name: InitializerSymbolName | null,
+): NativeInitializerName | null =>
   fitsName(name) ? { name, trust: "observed-untrusted" } : null;
 
 const pageOf = (
@@ -108,19 +125,25 @@ export const finishInitializerReport = (
   coverage: CoverageStatus,
 ): NativeInitializerInspection => {
   let withheld = 0;
-  for (const entry of entries)
+  let indexedNameWithheld = false;
+  for (const entry of entries) {
+    indexedNameWithheld ||= entry.symbol === withheldInitializerSymbolName;
     for (const name of [
       entry.slotSection,
       entry.section,
       entry.symbol,
       entry.detail,
     ])
-      if (name !== null && name.length > MAX_NATIVE_INITIALIZER_NAME_BYTES)
+      if (
+        typeof name === "string" &&
+        name.length > MAX_NATIVE_INITIALIZER_NAME_BYTES
+      )
         withheld += 1;
+  }
   // A withheld name is a known gap in this entry's reported facts.
   const status = joinCoverageStatus([
     coverage,
-    withheld > 0 ? "partial" : "complete",
+    withheld > 0 || indexedNameWithheld ? "partial" : "complete",
   ]);
   const paged = pageOf(entries, examined, page, status);
   const returned = paged.entries.map(toEntry);

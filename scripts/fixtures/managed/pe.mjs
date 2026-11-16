@@ -1,8 +1,69 @@
 import { Buffer } from "node:buffer";
 
-// Named types come from the declaration file TypeScript consumers import.
-/** @typedef {import("./pe.mjs").ManagedPeFixtureOptions} ManagedPeFixtureOptions */
-/** @typedef {import("./pe.mjs").ManagedPeFixtureMethod} ManagedPeFixtureMethod */
+/**
+ * `params` are the Param rows the method owns; a row's sequence defaults to its
+ * one-based position, and `nameIndex` is a raw #Strings index that replaces
+ * `name`'s entry. `paramList` is a raw ParamList coordinate that defaults to
+ * the run after earlier methods' params. `signature` is the MethodDefSig blob,
+ * by default a static void method without parameters. An explicit `rva` of
+ * zero represents a method without an IL body.
+ * @typedef {{
+ *   readonly body?: Buffer;
+ *   readonly flags?: number;
+ *   readonly implFlags?: number;
+ *   readonly name: string;
+ *   readonly params?: readonly {
+ *     readonly name: string;
+ *     readonly flags?: number;
+ *     readonly sequence?: number;
+ *     readonly nameIndex?: number;
+ *   }[];
+ *   readonly paramList?: number;
+ *   readonly signature?: Buffer;
+ *   readonly rva?: number;
+ * }} ManagedPeFixtureMethod
+ */
+/**
+ * A Constant row's HasConstant parent defaults to Field row 1; Param row r is
+ * `(r << 2) | 1`. `paramPointers` are ParamPtr rows, which method ParamList
+ * coordinates then index.
+ * @typedef {{
+ *   readonly cliFlags?: number;
+ *   readonly corruptMetadataSignature?: boolean;
+ *   readonly fieldName?: string;
+ *   readonly fields?: readonly {
+ *     readonly name: string;
+ *     readonly flags?: number;
+ *     readonly signature?: Buffer;
+ *   }[];
+ *   readonly constants?: readonly {
+ *     readonly typeCode: number;
+ *     readonly padding?: number;
+ *     readonly parentRaw?: number;
+ *     readonly value: Buffer;
+ *   }[];
+ *   readonly ilBody?: Buffer;
+ *   readonly machine?: number;
+ *   readonly metadataValidMaskExtra?: bigint;
+ *   readonly methodImplFlags?: number;
+ *   readonly methodName?: string;
+ *   readonly methods?: readonly ManagedPeFixtureMethod[];
+ *   readonly mvid?: Buffer;
+ *   readonly paramPointers?: readonly number[];
+ *   readonly pinvoke?: {
+ *     readonly importName?: string;
+ *     readonly mappingFlags?: number;
+ *     readonly memberRow?: number;
+ *     readonly moduleName?: string;
+ *   };
+ *   readonly readyToRun?: boolean;
+ *   readonly references?: readonly string[];
+ *   readonly resourceData?: Buffer;
+ *   readonly targetFramework?: string | null;
+ *   readonly typeName?: string;
+ *   readonly typeNamespace?: string;
+ * }} ManagedPeFixtureOptions
+ */
 /** A method whose metadata row has an RVA. @typedef {ManagedPeFixtureMethod & { readonly rva: number }} PlacedFixtureMethod */
 
 const textEncoder = new TextEncoder();
