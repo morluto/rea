@@ -111,7 +111,8 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
       const { handle, initial } = await this.#source.read(signal);
       this.#assertOpen(signal);
       const refused = androidOtaExtractRefusalError(stored.partition);
-      if (refused !== null) throw reconstructFailure(refused);
+      if (refused !== null && stored.partition.extractRefusal !== null)
+        throw refusedContent(stored.partition.extractRefusal, refused);
       const payload = this.#payload;
       if (payload === undefined)
         throw new ArtifactReaderFailure(
@@ -309,6 +310,22 @@ const parseFailure = (
     case "malformed":
       return formatFailure(failure.message, { cause: failure });
   }
+};
+
+/**
+ * The inventory already recorded why it will not rebuild this partition, so
+ * every refusal stays per-member content that is unavailable. Inventory keeps
+ * the partition table and the reason instead of failing the whole scan.
+ */
+const refusedContent = (
+  refusal: NonNullable<AndroidOtaPartition["extractRefusal"]>,
+  failure: AndroidOtaPayloadReconstructError,
+): ArtifactEntryContentUnavailable => {
+  const limitation = androidOtaExtractRefusalLimitation(refusal);
+  return new ArtifactEntryContentUnavailable(failure.message, limitation, {
+    traversal: { status: "unknown", limitations: [limitation] },
+    cause: failure,
+  });
 };
 
 const reconstructFailure = (

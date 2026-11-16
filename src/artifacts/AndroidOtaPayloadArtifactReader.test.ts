@@ -189,6 +189,51 @@ it("refuses to extract a delta partition", async () => {
   }
 });
 
+it("keeps the manifest when a partition exceeds the extraction limit", async () => {
+  const path = await writeCarrier(
+    "large.bin",
+    buildAndroidOtaPayload({
+      partitions: [
+        {
+          name: "boot",
+          operations: [{ type: 0, data: Buffer.from("KERNEL") }],
+        },
+        {
+          name: "system",
+          newSize: 64 * 1024 * 1024,
+          newHash: Buffer.alloc(32, 0xaa),
+          operations: [
+            { type: 6, dstExtents: [{ startBlock: 0, numBlocks: 1 }] },
+          ],
+        },
+      ],
+    }),
+  );
+  const reader = new AndroidOtaPayloadArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const system = entries.find((entry) => entry.path === "system.img");
+    await expect(reader.open(system!)).rejects.toBeInstanceOf(
+      ArtifactEntryContentUnavailable,
+    );
+  } finally {
+    await reader.close();
+  }
+  const kept = await scanCanonicalArtifactInventory(path);
+  expect(kept.manifest.root_format).toBe("android-ota-payload");
+  expect(
+    kept.occurrences.find((row) => row.logical_path === ".")?.format_metadata,
+  ).toMatchObject({
+    kind: "android-ota-payload",
+    partitions: [{ name: "boot" }, { name: "system" }],
+  });
+  expect(
+    kept.occurrences.find((row) => row.logical_path === "system.img")
+      ?.hash_status,
+  ).toBe("unavailable");
+});
+
 it("keeps partition inventory when the blob is truncated", async () => {
   const full = fullAndroidOtaPayload();
   const snapshot = await scanCanonicalArtifactInventory(
