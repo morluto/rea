@@ -73,6 +73,7 @@
 * **evidence:** require firmware budgets and managed row resolution that producers always write ([#11334](https://github.com/morluto/rea/issues/11334)) ([6bc74fb](https://github.com/morluto/rea/commit/6bc74fbc40012fb04c03130b42e43530be385945))
 * **evidence:** require JavaScript, browser, managed and reference-source facts their producers always write ([#10990](https://github.com/morluto/rea/issues/10990)) ([15de1d4](https://github.com/morluto/rea/commit/15de1d4dce9d94ec71924004c0c38782069c8479))
 * **flutter:** carry the value of each fixed Flutter allowance ([#11641](https://github.com/morluto/rea/issues/11641)) ([2a31e06](https://github.com/morluto/rea/commit/2a31e064f35e53b40915cfc3ee3d698295d93715))
+* **gdb:** bind sessions to an optional executable ([230db70](https://github.com/morluto/rea/commit/230db70fb473dd15928ae6c1a885f7e8a5507dae))
 * **gdb:** name why close requires an explicit inferior disposition ([#11652](https://github.com/morluto/rea/issues/11652)) ([162097b](https://github.com/morluto/rea/commit/162097b95add4a14110e32b1d55010c354c2ac82))
 * **ida:** require an explicit protocol for attached IDA registrations ([#10846](https://github.com/morluto/rea/issues/10846)) ([8428de1](https://github.com/morluto/rea/commit/8428de13d3e9b2faadfeac8bca0e60eb28d7b674))
 * **javascript:** make the member-mutation work allowance a runtime setting ([#11181](https://github.com/morluto/rea/issues/11181)) ([0f53849](https://github.com/morluto/rea/commit/0f53849160d48026d885aa90948020eeaaa867f1))
