@@ -1,6 +1,6 @@
 import { contractNamed } from "./contractCliDescription.js";
 import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
-import { z } from "incur";
+import { z } from "zod";
 import { cliDecimalField } from "./options.js";
 import { requirePresence } from "../domain/schemaConstraints.js";
 

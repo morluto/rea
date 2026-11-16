@@ -9,6 +9,7 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
+import { incurZodImportCount } from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
@@ -431,6 +432,22 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// A refusal for a limit a parser stopped at is built from the failure's
+// LimitRef by parseLimitConstraint in src/domain/parseFailureAnalysisError; a
+// hand-built AnalysisResourceConstraintError spells the limit key and reason
+// again beside the parser that named them (#11456). Each migrated producer
+// lowers this count.
+checkCounted(
+  "hand-built resource-constraint refusal (use parseLimitConstraint from src/domain/parseFailureAnalysisError when the cause is a parse limit)",
+  "resource-constraint-constructor",
+  files,
+  /new AnalysisResourceConstraintError\(/gu,
+  [
+    "src/domain/analysisErrorCore.ts",
+    "src/domain/parseFailureAnalysisError.ts",
+  ],
 );
 
 // A limit a parser stopped at is a ParseFailureError<"limit"> (decodeLimit in
@@ -889,6 +906,18 @@ checkCounted(
   "test-host-platform-stub",
   testFiles,
   /\b(?:defineProperty|spyOn)\(\s*(?:globalThis\.)?process\s*,\s*["'`](?:platform|arch)["'`]/gu,
+  [],
+);
+
+// Schemas import zod directly. incur's `z` is a re-export of the same package;
+// importing it through the CLI framework ties schemas to a dependency REA is
+// removing (#11654). Declarations are read from code tokens, so the text in a
+// comment or string fixture does not count.
+checkCounted(
+  'zod imported through incur (import { z } from "zod")',
+  "incur-zod-reexport",
+  [...files, ...testFiles],
+  (_content, file) => incurZodImportCount(file.source ?? file.content),
   [],
 );
 

@@ -6,7 +6,7 @@ import {
   undeliveredSourceClosure,
 } from "../application/AnalysisEvidenceSources.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
-import { z } from "incur";
+import { z } from "zod";
 import {
   isImmutableEvidence,
   parseEvidence,

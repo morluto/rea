@@ -9,6 +9,7 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
+  type ArtifactFixedLimit,
 } from "../../resources/index.js";
 import {
   readElfFixedHeader,
@@ -42,6 +43,17 @@ const HEX_DESCRIPTOR_LIMIT = 64;
 /** The existing Linux note layouts do not establish another declared ABI. */
 const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
   (header.osAbi === 0 || header.osAbi === 3) && header.abiVersion === 0;
+
+/**
+ * The note text, hash, and scan ceiling. It equals the admitted image length
+ * plus decoded section names, so host memory cannot raise it.
+ */
+const noteTextAllowance = (budget: TextBudget): ArtifactFixedLimit => ({
+  name: "The ELF note text, hash, and scan allowance (derived from the image length and section names)",
+  kind: "parser",
+  limit: budget.limit,
+  unit: "bytes",
+});
 
 interface TextBudget {
   limit: number;
@@ -113,7 +125,7 @@ const chargeText = (
     throw new ArtifactReaderFailure(
       "limit",
       `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
-      { boundary: "memory" },
+      { boundary: "memory", fixedAllowance: noteTextAllowance(budget) },
     );
   budget[field] += bytes;
 };
@@ -453,7 +465,7 @@ const decodeCoreFile = (
     throw new ArtifactReaderFailure(
       "limit",
       `ELF note text exceeds the ${String(text.limit)}-byte budget.`,
-      { boundary: "memory" },
+      { boundary: "memory", fixedAllowance: noteTextAllowance(text) },
     );
   }
 

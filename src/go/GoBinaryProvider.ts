@@ -38,7 +38,10 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
 import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
-import { BinaryResourceFailure } from "../domain/binaryContainer.js";
+import {
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../domain/binaryContainer.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_go_binary";
@@ -107,7 +110,7 @@ const failureForPrimary = (
           ? fixedAllowanceOptions(
               "The Go structural decoding allowance",
               "parser",
-              { limit: cause.maximum_bytes, unit: "bytes" },
+              binaryResourceCeiling(cause),
             )
           : {
               retryable: false,

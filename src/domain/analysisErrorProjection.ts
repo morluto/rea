@@ -57,12 +57,28 @@ import {
   type AnalysisCallerLifetime,
   type AnalysisError,
   type AnalysisErrorOptions,
+  type AnalysisRelatedInputs,
   type AnalysisErrorTag,
 } from "./analysisErrorBase.js";
 import { invocationLimit } from "./analysisSettingDefinitions.js";
 import { analysisErrorRefusal } from "./analysisErrorRefusal.js";
 import { analysisRefusalDetails } from "./analysisRefusal.js";
 import { isRecord } from "../kernel/isRecord.js";
+
+/**
+ * Inputs the recovery names, by contract field and operation name. Each
+ * adapter renders them in its own spelling.
+ */
+const relatedInputDetails = (
+  related: AnalysisRelatedInputs | undefined,
+): Record<string, JsonValue> => ({
+  ...(related?.parameters === undefined || related.parameters.length === 0
+    ? {}
+    : { related_parameters: [...related.parameters] }),
+  ...(related?.operations === undefined || related.operations.length === 0
+    ? {}
+    : { related_operations: [...related.operations] }),
+});
 
 /**
  * Project expected failures into exhaustive, secret-safe caller fields. The
@@ -438,6 +454,7 @@ const projectError = (
     ...(refusal === undefined
       ? {}
       : { refusal: analysisRefusalDetails(refusal) }),
+    ...relatedInputDetails(primary.related),
     ...(!options.secondary || secondary.size === 0
       ? {}
       : {

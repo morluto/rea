@@ -75,7 +75,7 @@ import {
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
-import { retainProcessInspectionOwners } from "../providers/OwnedCommandCleanup.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import type { BridgeLaunch, BridgeLauncher } from "./BridgeLauncher.js";
 import { hopperOperationStage } from "./HopperOperationStage.js";
@@ -707,7 +707,7 @@ export class HopperClient<
       } catch (cause: unknown) {
         // The identity stays unavailable; descriptors the read left open stay
         // owned until session cleanup releases them.
-        retainProcessInspectionOwners(
+        retainArtifactCommandCleanup(
           cause,
           this.#resources.inspections,
           "open_binary",
