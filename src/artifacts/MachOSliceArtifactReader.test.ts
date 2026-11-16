@@ -1,5 +1,6 @@
 import { EventEmitter, once } from "node:events";
 import { PassThrough } from "node:stream";
+import { buffer } from "node:stream/consumers";
 import { truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -11,11 +12,11 @@ import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { err, ok } from "../domain/result.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import type { NativeCommandRunner } from "../native/CommandRunner.js";
-import { NativeCommandFailure } from "../native/CommandRunner.js";
-import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import type { NativeCommandRunner } from "../providers/NativeCommandRunner.js";
+import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 
 const sliceOwnershipFixture = async (secondSlice = false) => {
   const root = await createTestTempDirectory("rea-slice-ownership-");
@@ -119,24 +120,13 @@ describe("Mach-O command cleanup lifecycle", () => {
     const root = await createTestTempDirectory("rea-slices-close-race-");
     const binary = join(root, "input");
     await writeFile(binary, Buffer.from("fixture"));
-    let finishCommand!: (
-      result: Awaited<ReturnType<NativeCommandRunner["run"]>>,
-    ) => void;
-    let commandStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      commandStarted = resolve;
-    });
-    const command = new Promise<
+    const capture = phaseGate<
+      void,
       Awaited<ReturnType<NativeCommandRunner["run"]>>
-    >((resolve) => {
-      finishCommand = resolve;
-    });
+    >();
     let cleanupRetries = 0;
     const runner: NativeCommandRunner = {
-      run: () => {
-        commandStarted();
-        return command;
-      },
+      run: () => capture.hold(),
       retryCleanup: async () => {
         cleanupRetries += 1;
         if (cleanupRetries > 1) return [];
@@ -157,56 +147,60 @@ describe("Mach-O command cleanup lifecycle", () => {
     const reader = new MachOSliceArtifactReader(binary, {}, runner);
     const iteration = reader.entries();
     const firstEntry = iteration[Symbol.asyncIterator]().next();
-    await started;
-    const closing = reader.close();
-    await Promise.resolve();
-    expect(cleanupRetries).toBe(0);
-    finishCommand(
-      err(
-        new NativeCommandFailure(
-          "lipo",
-          "timeout",
-          null,
-          undefined,
-          {
-            stdout: "partial lipo output",
-            stderr: "partial lipo diagnostic",
-            stdoutBytes: 19,
-            stderrBytes: 23,
-            exitCode: null,
-            signal: null,
-            truncated: false,
-          },
-          "capture process group remains unverified",
-          ["capture-group:9999"],
-        ),
+    const commandResult = err(
+      new NativeCommandFailure(
+        "lipo",
+        "timeout",
+        null,
+        undefined,
+        {
+          stdout: "partial lipo output",
+          stderr: "partial lipo diagnostic",
+          stdoutBytes: 19,
+          stderrBytes: 23,
+          exitCode: null,
+          signal: null,
+          truncated: false,
+        },
+        "capture process group remains unverified",
+        ["capture-group:9999"],
       ),
     );
-
-    await expect(firstEntry).rejects.toMatchObject({
-      reason: "unavailable",
-      cause: expect.objectContaining({
-        cleanupFailure: "capture process group remains unverified",
-      }),
-      cleanup: {
-        reason: "capture process group remains unverified",
-        resources: ["capture-group:9999"],
-      },
-    });
-    await expect(closing).rejects.toMatchObject({
-      cleanup: {
-        reason:
-          "run:first, process-group:1234: first process group remains live; run:second, process-group:5678: second process group remains live",
-        resources: [
-          "run:first",
-          "process-group:1234",
-          "run:second",
-          "process-group:5678",
-        ],
-      },
-    });
-    await reader.close();
-    expect(cleanupRetries).toBe(2);
+    try {
+      await capture.reached(firstEntry, "lipo capture start");
+      const closing = reader.close();
+      await Promise.resolve();
+      expect(cleanupRetries).toBe(0);
+      capture.release(commandResult);
+      await expect(firstEntry).rejects.toMatchObject({
+        reason: "unavailable",
+        cause: expect.objectContaining({
+          cleanupFailure: "capture process group remains unverified",
+        }),
+        cleanup: {
+          reason: "capture process group remains unverified",
+          resources: ["capture-group:9999"],
+        },
+      });
+      await expect(closing).rejects.toMatchObject({
+        cleanup: {
+          reason:
+            "run:first, process-group:1234: first process group remains live; run:second, process-group:5678: second process group remains live",
+          resources: [
+            "run:first",
+            "process-group:1234",
+            "run:second",
+            "process-group:5678",
+          ],
+        },
+      });
+      await reader.close();
+      expect(cleanupRetries).toBe(2);
+    } finally {
+      capture.release(commandResult);
+      await firstEntry.catch(() => undefined);
+      await reader.close().catch(() => undefined);
+    }
   });
 });
 
@@ -344,7 +338,7 @@ describe("MachOSliceArtifactReader", () => {
       message: expect.stringMatching(
         /lipo.*readable architecture records.*no architectures/i,
       ),
-      cause: new TypeError("lipo output contained no architectures"),
+      cause: { failure: { kind: "malformed", format: "lipo-output" } },
     });
   });
 
@@ -629,36 +623,40 @@ describe("Mach-O slice stream ownership", () => {
       fixture.runner,
       source,
     );
-    const reached = createDeferred<void>();
-    const release = createDeferred<void>();
+    const sliceRead = phaseGate();
     const nativeRead = source.handle.read.bind(source.handle);
     let reads: { mockRestore(): void } | undefined;
+    let consumed: Promise<Buffer> | undefined;
     try {
       const [entry] = await sliceEntries(reader);
       reads = vi.spyOn(source.handle, "read").mockImplementation((async (
         ...args: unknown[]
       ) => {
-        reached.resolve();
-        await release.promise;
+        await sliceRead.hold();
         return Reflect.apply(nativeRead, source.handle, args);
       }) as typeof source.handle.read);
       const stream = await reader.open(entry!);
-      stream.read(0);
-      await reached.promise;
+      consumed = buffer(stream);
+      void consumed.catch(() => undefined);
+      await sliceRead.reached(consumed, "slice read");
       let closed = false;
       const closing = reader.close().then(() => {
         closed = true;
       });
       await Promise.resolve();
       expect(closed).toBe(false);
-      release.resolve();
+      sliceRead.release();
       await closing;
       expect(stream.closed).toBe(true);
     } finally {
-      release.resolve();
-      await reader.close();
-      reads?.mockRestore();
-      await source.handle.close();
+      sliceRead.release();
+      try {
+        await reader.close();
+      } finally {
+        await consumed?.catch(() => undefined);
+        reads?.mockRestore();
+        await source.handle.close();
+      }
     }
   });
 
@@ -716,31 +714,29 @@ it("joins Mach-O structural enumeration reads admitted before close", async () =
     fixture.runner,
     source,
   );
-  const reached = createDeferred<void>();
-  const release = createDeferred<void>();
+  const enumerationRead = phaseGate();
   const nativeRead = source.handle.read.bind(source.handle);
   const reads = vi.spyOn(source.handle, "read").mockImplementation((async (
     ...args: unknown[]
   ) => {
-    reached.resolve();
-    await release.promise;
+    await enumerationRead.hold();
     return Reflect.apply(nativeRead, source.handle, args);
   }) as typeof source.handle.read);
   const traversal = reader.entries()[Symbol.asyncIterator]();
   const next = traversal.next();
   try {
-    await reached.promise;
+    await enumerationRead.reached(next, "slice enumeration read");
     let closed = false;
     const closing = reader.close().then(() => {
       closed = true;
     });
     await Promise.resolve();
     expect(closed).toBe(false);
-    release.resolve();
+    enumerationRead.release();
     await expect(next).rejects.toMatchObject({ reason: "unavailable" });
     await closing;
   } finally {
-    release.resolve();
+    enumerationRead.release();
     await next.catch(() => undefined);
     await reader.close();
     reads.mockRestore();

@@ -3,10 +3,10 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
+import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "pages only module units for a CommonJS file that exports symbols",
@@ -23,7 +23,7 @@ cliTest(
         "exports.beta = function beta() { return 2; };",
       ].join("\n"),
     );
-    const analyzed = await runFileCli(cli, {
+    const analyzed = await cli.run({
       arguments: ["analyze-javascript-application", root, "--format", "json"],
     });
     expect(analyzed.exitCode, analyzed.stdout + analyzed.stderr).toBe(0);
@@ -54,7 +54,7 @@ cliTest(
         traceInput,
         JSON.stringify({ application: evidence, seed }),
       );
-      const traced = await runFileCli(cli, {
+      const traced = await cli.run({
         arguments: ["trace-application-feature", traceInput, "--json"],
       });
       expect(traced.exitCode, traced.stdout + traced.stderr).toBe(0);
@@ -86,7 +86,7 @@ cliTest(
           view,
         }),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-analysis-view", queryPath, "--json"],
       });
       expect(result.exitCode, result.stdout + result.stderr).toBe(0);

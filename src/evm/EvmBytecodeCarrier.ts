@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 /** Expected carrier encoding failure, independent of the analysis engine. */
 export class EvmCarrierFailure extends Error {}
 
@@ -13,9 +14,7 @@ export const decodeEvmBytecodeCarrier = (
   if (encoding === "raw") return Uint8Array.from(bytes);
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
+    text = decodeStrictUtf8(bytes, "preserve");
   } catch (cause: unknown) {
     throw new EvmCarrierFailure("Hex carrier must be valid UTF-8.", { cause });
   }

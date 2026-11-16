@@ -80,6 +80,7 @@ const mutations: ReadonlyArray<
         offset: 0x100,
         status: "APPLIED",
         type: 0,
+        symbol: null,
         values: [],
         original_bytes_hex: null,
         memory_bytes_hex: null,
@@ -124,27 +125,39 @@ describe("COM independent load-image checks", () => {
       value: { status: "mismatch", observations: f.observation },
     });
   });
-  it("accepts an older observation without measured permissions", () => {
+  it("refuses an observation without measured permissions or relocation symbols", () => {
     const f = fixtureDosComLoadImage();
-    for (const mapping of f.observation.mappings) {
-      delete mapping.readable;
-      delete mapping.writable;
-      delete mapping.executable;
-    }
-    expect(
-      nativeLoadImageObservationSchema.safeParse(f.observation).success,
-    ).toBe(true);
-    const result = attestGhidraDosComLoadImage(
-      f.bytes,
-      f.sha256,
-      f.observation,
-    );
-    expect(result).toMatchObject({
-      ok: true,
-      value: { status: "verified", format: "dos-com" },
+    const { readable: _r, ...unmeasured } = f.observation.mappings[0]!;
+    const withoutPermissions = nativeLoadImageObservationSchema.safeParse({
+      ...f.observation,
+      mappings: [unmeasured, ...f.observation.mappings.slice(1)],
     });
-    if (!result.ok) throw new Error(result.error);
-    expect(nativeLoadImageSchema.safeParse(result.value).success).toBe(true);
+    expect(withoutPermissions.success).toBe(false);
+    expect(withoutPermissions.error?.issues[0]?.path).toEqual([
+      "mappings",
+      0,
+      "readable",
+    ]);
+    const withoutSymbol = nativeLoadImageObservationSchema.safeParse({
+      ...f.observation,
+      relocations: [
+        {
+          address: "0x10100",
+          segment: 0x1000,
+          offset: 0x100,
+          status: "APPLIED",
+          type: 0,
+          values: [],
+          original_bytes_hex: null,
+          memory_bytes_hex: null,
+        },
+      ],
+    });
+    expect(withoutSymbol.error?.issues[0]?.path).toEqual([
+      "relocations",
+      0,
+      "symbol",
+    ]);
   });
 
   it("rejects stale snapshot identity", () => {

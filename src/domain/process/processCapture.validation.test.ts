@@ -435,6 +435,41 @@ it("rejects altered v4 commitments and accepts canonical key reordering", () => 
   ).toThrow("executable_identity");
 });
 
+it("withholds the root process identity exactly when PID normalization is selected", () => {
+  const capture = emptyCapture();
+  const observed = {
+    state: "observed",
+    pid: 4242,
+    start_time: "linux-starttime:1",
+  } as const;
+  const withPids = (pids: boolean, root_process: object) =>
+    parseProcessCapture({
+      ...capture,
+      normalization: { ...capture.normalization, pids },
+      manifest: {
+        ...capture.manifest,
+        root_process,
+        normalization_sha256: digestProcessCommitment({
+          ...capture.normalization,
+          pids,
+        }),
+      },
+    });
+
+  expect(
+    () => withPids(true, observed),
+    "a normalized capture never commits the raw root PID",
+  ).toThrow("root_process");
+  expect(
+    () => withPids(false, { state: "withheld-by-caller" }),
+    "an identity is withheld only by the caller's normalization",
+  ).toThrow("root_process");
+  expect(
+    withPids(false, observed).manifest.root_process,
+    "an unnormalized capture keeps the observed root",
+  ).toEqual(observed);
+});
+
 it("requires producer coverage accounting in every parsed capture", () => {
   const capture = emptyCapture();
   const { truncation_details: _details, ...missingCoverage } = capture;
@@ -514,9 +549,9 @@ it("does not infer normalized retention budget from missing scenario defaults", 
   ).toContain("manifest.scenario.limits.output_bytes");
 });
 
-it("rejects settlement and cleanup combinations that cannot occur", () => {
+it("accepts post-quiescence cleanup and rejects unverified settlement combinations", () => {
   const capture = emptyCapture();
-  expect(() =>
+  expect(
     parseProcessCapture({
       ...capture,
       settlement: {
@@ -525,7 +560,9 @@ it("rejects settlement and cleanup combinations that cannot occur", () => {
         cleanup_outcome: "cleaned",
       },
     }),
-  ).toThrow("cleanup_outcome");
+  ).toMatchObject({
+    settlement: { state: "quiesced", cleanup_outcome: "cleaned" },
+  });
   expect(() =>
     parseProcessCapture({
       ...capture,
@@ -1248,7 +1285,7 @@ it("rejects old executable identity representations without migration", () => {
   ).toThrow("legacy_executable_sha256");
 });
 
-it("requires compatible contracts and enforces capture age through a clock seam", () => {
+it("requires compatible contracts and enforces capture age", () => {
   const capture = emptyCapture();
   expect(() =>
     compareProcessCaptures(capture, {
@@ -1274,11 +1311,17 @@ it("requires compatible contracts and enforces capture age through a clock seam"
       ],
     }),
   );
+  const completedAt = new Date(Date.now() - 86_400_000).toISOString();
+  const stale = {
+    ...capture,
+    manifest: {
+      ...capture.manifest,
+      started_at: completedAt,
+      completed_at: completedAt,
+    },
+  };
   expect(() =>
-    compareProcessCaptures(capture, capture, {
-      maxCaptureAgeMs: 1,
-      now: () => Date.parse("2026-01-01T00:00:01.000Z"),
-    }),
+    compareProcessCaptures(stale, stale, { maxCaptureAgeMs: 1_000 }),
   ).toThrow(
     expect.objectContaining({
       issues: [

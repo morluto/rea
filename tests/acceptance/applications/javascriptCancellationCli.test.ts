@@ -9,20 +9,16 @@ processTest(
   "returns a nonzero exit for a streamed JSON analysis failure",
   async ({ processes }) => {
     const root = await createTestTempDirectory("rea-cli-js-missing-");
-    const result = await processes.run(
-      process.execPath,
-      [
-        "scripts/rea.mjs",
-        "analyze-javascript-application",
-        join(root, "missing"),
-        "--json",
-      ],
-      { timeoutMs: 20_000 },
-    );
+    const result = await processes.run(process.execPath, [
+      "scripts/rea.mjs",
+      "analyze-javascript-application",
+      join(root, "missing"),
+      "--json",
+    ]);
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
       code: "invalid_request",
-      details: { issues: [{ path: ["input_path"], reason: "invalid_value" }] },
+      details: { issues: [{ path: ["path"], reason: "invalid_value" }] },
     });
   },
 );

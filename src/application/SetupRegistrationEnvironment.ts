@@ -1,4 +1,4 @@
-import type { DoctorProviderInspection } from "./Doctor.js";
+import type { DoctorProviderInspection } from "../ports/DoctorProviderInspection.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const SELECTED_REGISTRATION_SETTINGS = [
@@ -60,7 +60,9 @@ const SELECTED_REGISTRATION_SETTINGS = [
   "REA_GHIDRA_VALUE_FLOW_MAX_EDGES",
   "REA_GHIDRA_DECOMPILE_MAX_PAYLOAD_MIB",
   "REA_BRIDGE_MAX_REQUEST_BYTES",
+  "REA_BRIDGE_MAX_REPLY_BYTES",
   "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
+  "REA_CAPTURE_PACKET_JSON_EXPANSION_BYTES",
   "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
   "REA_GHIDRA_STARTUP_TIMEOUT_MS",
   "REA_GHIDRA_LANGUAGE_ID",
@@ -75,6 +77,7 @@ const SELECTED_REGISTRATION_SETTINGS = [
   "REA_HOPPER_STARTUP_TIMEOUT_MS",
   "REA_JEB_MCP_URL",
   "REA_JEB_MCP_TIMEOUT_MS",
+  "REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES",
   "REA_MCP_INPUT_SCHEMA_PROFILE",
   "REA_MCP_TOOL_FAMILIES",
   "REA_MCP_OUTPUT_SCHEMA_PROFILE",
@@ -91,6 +94,19 @@ const SELECTED_REGISTRATION_SETTINGS = [
   "REA_MCP_TOOLS_LIST_BUDGET_MS",
   "REA_MCP_FIRST_CATALOG_BUDGET_MS",
   "REA_MCP_DOCTOR_DEADLINE_MS",
+] as const;
+
+/**
+ * Settings setup can add to a registration from provider discovery when the
+ * caller did not select them: Hopper's launcher (doctor's Hopper search) and
+ * Ghidra's installation and Java (Ghidra's inspection). Other providers'
+ * registration settings echo explicit selections. Update maintenance does not
+ * run that discovery, so it cannot tell what setup would write for these.
+ */
+export const DISCOVERED_REGISTRATION_SETTINGS = [
+  "HOPPER_LAUNCHER_PATH",
+  "GHIDRA_INSTALL_DIR",
+  "JAVA_HOME",
 ] as const;
 
 /** Explicit selections override discovered defaults even when a provider is unavailable.

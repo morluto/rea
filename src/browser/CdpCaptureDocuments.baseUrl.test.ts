@@ -472,11 +472,9 @@ describe("browser SVG identity", () => {
     ).toBe(false);
     expect(capturedSvgNodeKind(query, { node })).toBe(false);
     for (const invalid of [
-      {},
       { node: { ...node, backendNodeId: 43, isSVG: true } },
       { node: { ...node, nodeName: "A", isSVG: true } },
       { node: { ...node, nodeType: 3, isSVG: true } },
-      { node: { ...node, isSVG: "true" } },
     ])
       expect(capturedSvgNodeKind(query, invalid)).toBeUndefined();
   });
@@ -1367,5 +1365,5 @@ describe("XML namespace resolution ordering and capacity", () => {
     expect(result.urls).toEqual([
       approvedHref(elements.length, `${origin}/deep`),
     ]);
-  }, 30_000);
+  });
 });

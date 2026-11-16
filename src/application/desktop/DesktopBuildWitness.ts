@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { planOutputTree } from "./DesktopOutputTree.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   parseDesktopTask,
@@ -34,13 +34,12 @@ import type {
   AgentEnvComputer,
   RecordingManifest,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   silentProgressReporter,
   type ProgressReporter,
-} from "../ProgressReporter.js";
+} from "../../ports/ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
-import { errorText } from "./DesktopBuildCommands.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
@@ -55,6 +54,8 @@ import {
   type EndedWitness,
   type WitnessRecord,
 } from "./DesktopBuildWitnessRecord.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const CHECK = "check_build_task";
 const FRESH =
@@ -100,8 +101,7 @@ const refused = (userMessage: string, remediationAction: string) =>
     conformsToInputContract: true,
   });
 
-const taskDigest = (task: DesktopTask) =>
-  createHash("sha256").update(JSON.stringify(task)).digest("hex");
+const taskDigest = (task: DesktopTask) => sha256Hex(JSON.stringify(task));
 
 /** A retry cannot redirect an ended witness to another folder. */
 const recordDirectoryRefusal = (
@@ -114,14 +114,6 @@ const recordDirectoryRefusal = (
         "Ask again without directory or with the original folder; another witness needs a fresh computer.",
       )
     : undefined;
-
-/** Whether a folder can take the record: absent, or empty. */
-const usableFolder = async (directory: string): Promise<boolean> =>
-  readdir(directory).then(
-    (entries) => entries.length === 0,
-    (cause: unknown) =>
-      (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
-  );
 
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
@@ -321,7 +313,7 @@ export class DesktopBuildWitness {
         cause instanceof AnalysisError
           ? cause
           : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-              userMessage: `Reading the app's state failed: ${errorText(cause)}`,
+              userMessage: `Reading the app's state failed: ${errorMessage(cause)}`,
               cause,
             }),
       );
@@ -543,13 +535,15 @@ export class DesktopBuildWitness {
           "Give directory, a new or empty folder on this host for the record and recording.",
         ),
       );
-    if (!(await usableFolder(directory)))
-      return err(
-        refused(
-          `${directory} exists and is not empty.`,
-          "Give a new or empty folder.",
-        ),
-      );
+    // Admit the folder by the same rule the record is saved under, so the
+    // seed cannot accept a folder (a symlink, a file, a denied path) that the
+    // save would refuse.
+    try {
+      await planOutputTree(directory, { operation: CHECK, field: "directory" });
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisError) return err(cause);
+      throw cause;
+    }
     let differs: string | undefined;
     if (this.#bundle !== undefined) {
       try {
@@ -592,7 +586,7 @@ export class DesktopBuildWitness {
     } catch (cause: unknown) {
       return err(
         new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-          userMessage: `The witness could not start its recording: ${errorText(cause)}`,
+          userMessage: `The witness could not start its recording: ${errorMessage(cause)}`,
           cause,
         }),
       );

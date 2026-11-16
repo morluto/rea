@@ -5,7 +5,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { findApplicationFeatureSeeds } from "./javascriptFeatureSeed.js";
 
 describe("application feature seed property matching", () => {
-  it("finds strings after the former property count ceiling", () => {
+  it("finds a string after 512 other property values", () => {
     const node = graphNodeWithProperties({
       values: Array.from({ length: 513 }, (_, index) => `value-${index}`),
     });
@@ -27,7 +27,7 @@ describe("application feature seed property matching", () => {
     ]);
   });
 
-  it("finds strings deeper than the former traversal cutoff", () => {
+  it("finds a string seven properties deep", () => {
     const node = graphNodeWithProperties({
       one: {
         two: { three: { four: { five: { six: { seven: "deep-value" } } } } },

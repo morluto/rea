@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,7 +13,7 @@ import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js"
 import { renderCliDocument } from "../../../src/cliOutput.js";
 import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 afterAll(() => disposeMdItInstance());
 
@@ -130,7 +131,7 @@ cliTest(
     };
     const result = { scalar: { [literal]: literal }, rows: [row] };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -191,7 +192,7 @@ cliTest(
     const path = join(root, "bundle.json");
     const literal = `left${"\u00a0\u202f\u2003".repeat(80_000)}right`;
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "ordinary-json",
@@ -212,7 +213,6 @@ cliTest(
         "md",
         "--full-output",
       ],
-      timeoutMs: 20_000,
     });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     const renderer = await createMarkdownRenderer(root, { linkify: false });
@@ -231,7 +231,7 @@ cliTest(
   "preserves capability provider identities in rendered Markdown",
   async ({ cli }) => {
     const json = await cli.run({ arguments: ["capabilities", "--json"] });
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: ["capabilities", "--format", "md"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
@@ -266,7 +266,7 @@ cliTest(
       after: "still visible",
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -277,7 +277,7 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [...base, "--format", "md"],
     });
     const json = await cli.run({ arguments: [...base, "--json"] });
@@ -343,7 +343,7 @@ cliTest(
     );
     const base = ["inspect-model-artifact", path, "--detail", "complete"];
     const json = await cli.run({ arguments: [...base, "--json"] });
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [...base, "--format", "md"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
@@ -387,7 +387,7 @@ cliTest(
       nested: { value: 1 },
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -398,7 +398,7 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const markdown = await runFileCli(cli, {
+    const markdown = await cli.run({
       arguments: [...base, "--format", "md"],
     });
     const json = await cli.run({ arguments: [...base, "--json"] });
