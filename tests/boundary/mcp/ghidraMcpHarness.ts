@@ -122,9 +122,9 @@ export const sessionEvidence = (session: BinarySession, value: unknown) => {
   const retained = session.evidenceById(evidence.evidence_id);
   // A tool handler stamps the recording session's provider selection onto the
   // copy it delivers, so the two differ in display metadata only.
-  expect(retained !== undefined && evidenceDisplayMetadataAgree(retained, evidence)).toBe(
-    true,
-  );
+  expect(
+    retained !== undefined && evidenceDisplayMetadataAgree(retained, evidence),
+  ).toBe(true);
   return evidence;
 };
 

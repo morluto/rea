@@ -159,8 +159,9 @@ export const createProviderOperationToolHandler =
           // must carry the same stamp or the response and the retained view
           // disagree for one id.
           const recorded = dependencies.recordEvidence?.(projected.value);
-          const retained =
-            dependencies.evidenceById?.(projected.value.evidence_id);
+          const retained = dependencies.evidenceById?.(
+            projected.value.evidence_id,
+          );
           const delivered =
             retained?.provider_selection === undefined
               ? projected.value
@@ -169,11 +170,7 @@ export const createProviderOperationToolHandler =
                   retained.provider_selection,
                 );
           return progress.complete(
-            server.delivery.toEvidenceToolResult(
-              delivered,
-              contract,
-              recorded,
-            ),
+            server.delivery.toEvidenceToolResult(delivered, contract, recorded),
           );
         },
       );
