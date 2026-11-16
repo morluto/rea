@@ -11,6 +11,7 @@ import {
   DEFAULT_CONTROL_TEXT,
   debPackageFixture,
   notArBytes,
+  tarArchive,
   tarMember,
   truncatedAfterDebianBinaryBytes,
   truncatedArMemberBytes,
@@ -560,6 +561,28 @@ it("flags extra ar members without treating them as control or data", () => {
   );
   expect(report.ar.extra_member_names).toEqual(["_gpgorigin"]);
   expect(report.coverage.status).toBe("partial");
+});
+
+it("flags a repeated data member as extra and keeps coverage partial", () => {
+  const report = parse(
+    debPackageFixture({
+      dataEntries: [],
+      extraMembers: [
+        {
+          name: "data.tar.gz",
+          data: gzipSync(
+            tarArchive([{ name: "./usr/bin/hidden", content: "x" }]),
+          ),
+        },
+      ],
+    }),
+  );
+  expect(report.ar.extra_member_names).toEqual(["data.tar.gz"]);
+  expect(report.data_entries).toEqual([]);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.limitations).toContain(
+    "ar member data.tar.gz repeats an earlier member's role and was not read.",
+  );
 });
 
 it("summarizes retained Debian package facts without reopening the archive", () => {

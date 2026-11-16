@@ -1051,8 +1051,20 @@ export const parseDebPackage = (
       compression: detectCompression(member.name, payload),
     }),
   );
+  // Only the first debian-binary, control, and data member is read; a later
+  // member with the same role is left unread and flagged as extra.
+  const seenRoles = new Set<DebArMember["role"]>();
+  const repeated_member_names: string[] = [];
   const extra_member_names = members
-    .filter((member) => member.role === "unknown")
+    .filter((member) => {
+      if (member.role === "unknown") return true;
+      if (!seenRoles.has(member.role)) {
+        seenRoles.add(member.role);
+        return false;
+      }
+      repeated_member_names.push(member.name);
+      return true;
+    })
     .map((member) => member.name);
   const debianBinary = arMembers.find(
     (member) => member.role === "debian-binary",
@@ -1070,6 +1082,10 @@ export const parseDebPackage = (
   const controlMember = arMembers.find((member) => member.role === "control");
   const dataMember = arMembers.find((member) => member.role === "data");
   const limitations: string[] = [...BASE_LIMITATIONS];
+  for (const name of repeated_member_names)
+    limitations.push(
+      `ar member ${name} repeats an earlier member's role and was not read.`,
+    );
   const snapshot = (): DebPackage =>
     draftReport({
       artifact,

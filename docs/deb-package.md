@@ -24,7 +24,10 @@ requires an absolute filesystem path and preserves that exact selection:
 `ar` records the global `!<arch>\n` magic, each member's stored name, role,
 size and file offset, and the `debian-binary` format version. Extra members
 that are neither `debian-binary`, `control.tar*`, nor `data.tar*` stay in
-`extra_member_names`; they are not guessed as control or data.
+`extra_member_names`; they are not guessed as control or data. Only the first
+`debian-binary`, `control.tar*`, and `data.tar*` member is read; a later member
+with the same role is also listed in `extra_member_names`, is not decoded, and
+keeps coverage partial.
 
 `control` holds Package, Version (epoch, upstream, revision), Architecture,
 Maintainer, Installed-Size, Section, Priority, Homepage, the Description
