@@ -47,5 +47,24 @@ in unchanged JSON-token, browser CDP and V8-inspector files. Focused typed-lint
 runs on those same four files in the unmodified base reproduced every error;
 none was reported in the files changed here.
 
-The feature reads retained metadata only. No real analysis-provider runtime or
-performance benchmark was exercised or claimed.
+## Real-provider handoff verification
+
+A local integration build also exercised the compiled stdio MCP server with
+actual JADX headless MCP 0.7.1 and OpenJDK 21. The selected JAR matched SHA-256
+`6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75`.
+Two self-authored APKs were compiled with aapt into binary Android manifests.
+Both real inspections retained complete source Evidence; a companion Android
+declaration comparison linked those exact sources. For each source, the new
+target selector returned the retained comparison as a direct referrer, both
+without source filters and with the comparison operation selected.
+
+The complete five-record session bundle was exported. The compiled CLI reused
+that same bundle and returned the same referrer rows as MCP for both source
+IDs. All eight MCP calls and three CLI parity commands passed canonical and
+advertised schema checks and result assertions. The standalone query semantics
+do not depend on an Android provider or the companion comparison operation.
+
+The samples use `hasCode=false` and contain no DEX. This establishes a real
+static-provider handoff into retained-link inspection for those samples, without
+APK installation, target execution or business-code/runtime coverage. The query
+itself reads retained metadata only. No performance improvement is claimed.
