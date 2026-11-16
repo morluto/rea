@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../tests/fixtures/evidenceSubject.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,6 +8,7 @@ import {
   immutableAnalysisSnapshot,
   snapshotBinding,
   snapshotEvidenceForQuery,
+  sameSnapshotTarget,
   snapshotTarget,
   snapshotMatchesTarget,
 } from "./analysisSnapshot.js";
@@ -15,7 +17,8 @@ import {
   ANALYSIS_SNAPSHOT_PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET,
 } from "./analysisSnapshot.fixture.js";
-import { createEvidence } from "./evidence.js";
+import { createEvidence, evidenceSubject } from "./evidence.js";
+import { unknownTarget } from "./targetIdentity.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import {
   RAW_ONLY_ARCHITECTURES,
@@ -45,12 +48,7 @@ const snapshotWithHistoricalEvidence = () => {
       limitations: [],
       relationship_coverage: null,
       locations: [],
-      subject: {
-        path: ANALYSIS_SNAPSHOT_TARGET.path,
-        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
-        format: ANALYSIS_SNAPSHOT_TARGET.format,
-        architecture: ANALYSIS_SNAPSHOT_TARGET.architecture ?? null,
-      },
+      subject: current.subject,
     },
   };
   return {
@@ -120,22 +118,25 @@ describe("analysis snapshot target identity", () => {
   it.each(RAW_ONLY_ARCHITECTURES)(
     "keeps %s confined to executable raw snapshots",
     (architecture) => {
-      const target = {
+      const identity = {
+        kind: "file",
         sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
-        kind: "executable",
         architecture,
       };
       expect(
         analysisSnapshotSchema.shape.target.safeParse({
-          ...target,
-          format: "pe",
+          kind: "executable",
+          identity: { ...identity, format: "pe", selection: null },
         }).success,
       ).toBe(false);
       expect(
         analysisSnapshotSchema.shape.target.safeParse({
-          ...target,
-          format: "raw-binary",
-          entry_point: "0x8000",
+          kind: "executable",
+          identity: {
+            ...identity,
+            format: "raw-binary",
+            selection: { kind: "entry-point", entry_point: "0x8000" },
+          },
         }).success,
       ).toBe(true);
     },
@@ -176,27 +177,57 @@ describe("analysis snapshot target identity", () => {
       workflow_entries: [],
       evidence_bundle: createEvidenceBundle([]),
     });
-    expect(parsed.target).toHaveProperty("entry_point", target.entryPoint);
-    const { entry_point: _entry, ...legacy } = {
-      ...snapshot,
+    expect(parsed.target.identity.selection).toEqual({
+      kind: "entry-point",
       entry_point: target.entryPoint,
-    };
+    });
+    // A raw target without its entry selection is not one REA can open.
     expect(
-      analysisSnapshotSchema.safeParse({ ...parsed, target: legacy }).success,
+      analysisSnapshotSchema.safeParse({
+        ...parsed,
+        target: {
+          ...parsed.target,
+          identity: { ...parsed.target.identity, selection: null },
+        },
+      }).success,
     ).toBe(false);
-    expect(snapshotTarget(ANALYSIS_SNAPSHOT_TARGET)).not.toHaveProperty(
-      "entry_point",
+    expect(snapshotTarget(ANALYSIS_SNAPSHOT_TARGET).identity.selection).toBe(
+      null,
     );
+  });
+
+  it("refuses a snapshot target whose kind its format cannot have", () => {
+    const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
+    const snapshot = {
+      target,
+      binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
+      entries: [],
+      workflow_entries: [],
+      evidence_bundle: createEvidenceBundle([]),
+    };
+    expect(analysisSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    // Query IDs commit to the kind: such a header would import entries that no
+    // lookup or export of the executable can reach.
+    expect(
+      analysisSnapshotSchema.safeParse({
+        ...snapshot,
+        target: { ...target, kind: "archive" },
+      }).success,
+    ).toBe(false);
   });
 });
 
 describe("analysis snapshot dSYM companion identity", () => {
   it("hashes a bare target exactly like snapshots written before companions", () => {
     const base = {
-      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
       kind: "executable",
-      architecture: "arm64",
-      format: "mach-o",
+      identity: {
+        kind: "file",
+        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+        format: "mach-o",
+        architecture: "arm64",
+        selection: null,
+      },
     } as const;
     // A legacy file has no debug_companion key; parsing a bare target adds
     // null. Both must hash identically so legacy query IDs keep validating.
@@ -227,6 +258,8 @@ describe("analysis snapshot dSYM companion identity", () => {
     expect(
       analysisQueryId(withCompanion, binding, "list_procedures", {}),
     ).not.toBe(analysisQueryId(legacyShape, binding, "list_procedures", {}));
+    expect(sameSnapshotTarget(parsedShape.target, withCompanion)).toBe(false);
+    expect(sameSnapshotTarget(withCompanion, withCompanion)).toBe(true);
   });
 
   it("partitions session and snapshot identity by the selected dSYM", () => {
@@ -294,12 +327,14 @@ describe("analysis snapshot debug_companion schema contract", () => {
       member_sha256: "a".repeat(64),
     };
     const machoTarget = {
-      path: "/fixture/pair",
-      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
       kind: "executable",
-      format: "mach-o",
-      architecture: "arm64",
-      available_architectures: ["arm64"],
+      identity: {
+        kind: "file",
+        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+        format: "mach-o",
+        architecture: "arm64",
+        selection: null,
+      },
       debug_companion: validCompanion,
     };
     expect(
@@ -311,38 +346,51 @@ describe("analysis snapshot debug_companion schema contract", () => {
         ...snapshot,
         target: {
           ...machoTarget,
-          format: "mach-o-universal",
-          available_architectures: ["arm64", "x86_64"],
+          identity: {
+            ...machoTarget.identity,
+            format: "mach-o-universal",
+            selection: {
+              kind: "universal-slice",
+              offset: 0,
+              size: 4096,
+              cpu_type: null,
+              cpu_subtype: null,
+            },
+          },
         },
       }).success,
     ).toBe(true);
 
     // Non-Mach-O targets must not carry a non-null debug_companion.
     for (const nonMachoTarget of [
-      { ...machoTarget, format: "elf" },
-      { ...machoTarget, format: "pe" },
       {
-        path: "/fixture/image.bin",
-        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+        ...machoTarget,
+        identity: { ...machoTarget.identity, format: "elf" },
+      },
+      {
+        ...machoTarget,
+        identity: { ...machoTarget.identity, format: "pe" },
+      },
+      {
         kind: "executable",
-        format: "raw-binary",
-        architecture: "arm64",
-        available_architectures: ["arm64"],
-        entry_point: "0x1000",
-        load_selection: {
-          format_hint: "raw-binary",
+        identity: {
+          kind: "file",
+          sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+          format: "raw-binary",
           architecture: "arm64",
-          entry_point: "0x1000",
+          selection: { kind: "entry-point", entry_point: "0x1000" },
         },
         debug_companion: validCompanion,
       },
       {
-        path: "/fixture/Info.plist",
-        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
-        kind: "document",
-        format: "plist",
-        architecture: "unknown",
-        available_architectures: [],
+        kind: "artifact",
+        identity: {
+          kind: "file",
+          sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+          format: "plist",
+          architecture: null,
+          selection: null,
+        },
         debug_companion: validCompanion,
       },
     ]) {
@@ -382,8 +430,11 @@ describe("analysis snapshot nested subject contract", () => {
       if (entry === undefined) throw new Error("Fixture has no snapshot entry");
       const malformedSubject = {
         ...entry.execution.subject,
-        format: "pe",
-        architecture,
+        identity: {
+          ...entry.execution.subject.identity,
+          format: "pe",
+          architecture,
+        },
       };
       expect(
         analysisSnapshotSchema.safeParse({
@@ -471,25 +522,29 @@ describe("analysis snapshot contract", () => {
               limitations: [],
               relationship_coverage: null,
               locations: [],
-              subject: target,
+              subject: evidence.subject,
             },
           },
         ],
         workflow_entries: [],
         evidence_bundle: createEvidenceBundle([evidence]),
       });
-      expect(parsed.target).toMatchObject({
+      expect(parsed.target.identity).toMatchObject({
         format,
         architecture,
       });
-      expect(parsed.entries[0]?.execution.subject?.format).toBe(format);
-      expect(parsed.evidence_bundle.records[0]?.subject?.format).toBe(format);
+      expect(fileIdentity(parsed.entries[0]?.execution.subject).format).toBe(
+        format,
+      );
+      expect(
+        fileIdentity(parsed.evidence_bundle.records[0]?.subject).format,
+      ).toBe(format);
     },
   );
 
   it("rejects a snapshot subject path containing NUL", () => {
     const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
-    const entry = {
+    const entry = (localPath: string) => ({
       query_id: `query_${"0".repeat(64)}`,
       operation: "analyze_function",
       parameters: {},
@@ -501,22 +556,28 @@ describe("analysis snapshot contract", () => {
         relationship_coverage: null,
         locations: [],
         subject: {
-          path: "a\u0000b",
-          sha256: "a".repeat(64),
-          format: "elf" as const,
-          architecture: null,
+          identity: {
+            kind: "file",
+            sha256: "a".repeat(64),
+            format: "elf",
+            architecture: null,
+            selection: null,
+          },
+          name: "b",
+          local_path: localPath,
         },
       },
-    };
-    expect(
+    });
+    const parsed = (localPath: string) =>
       analysisSnapshotSchema.safeParse({
         target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
         binding,
-        entries: [entry],
+        entries: [entry(localPath)],
         workflow_entries: [],
         evidence_bundle: createEvidenceBundle([]),
-      }).success,
-    ).toBe(false);
+      }).success;
+    expect(parsed("/fixture/ab")).toBe(true);
+    expect(parsed("a\u0000b")).toBe(false);
   });
 
   it("accepts snapshots with more than ten thousand analysis entries", () => {
@@ -532,7 +593,7 @@ describe("analysis snapshot contract", () => {
         limitations: [],
         relationship_coverage: null,
         locations: [],
-        subject: null,
+        subject: evidenceSubject(unknownTarget("not-observed")),
       },
     };
 
@@ -748,6 +809,73 @@ it("retains linked foreign Evidence without treating it as selected-target repla
   ).toThrow("unrelated to the selected target and its linked sources");
 });
 
+it("binds raw Evidence only when its entry point matches the snapshot target", () => {
+  const raw = (entryPoint: string): BinaryTarget => ({
+    path: "/fixture/image.bin",
+    sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+    kind: "executable",
+    format: "raw-binary",
+    architecture: "arm",
+    availableArchitectures: ["arm"],
+    entryPoint,
+    entryPointSource: entryPoint,
+  });
+  const selected = raw("0x8000000");
+  const target = snapshotTarget(selected);
+  const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+  const parameters = { procedure: "main" };
+  const observe = (observed: BinaryTarget) =>
+    createEvidence(observed, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "analyze_function",
+      parameters,
+      result: { summary: "cached" },
+      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    });
+  const snapshotWith = (evidence: ReturnType<typeof observe>) =>
+    analysisSnapshotSchema.parse({
+      target,
+      binding,
+      entries: [
+        {
+          query_id: analysisQueryId(
+            target,
+            binding,
+            "analyze_function",
+            parameters,
+          ),
+          operation: "analyze_function",
+          parameters,
+          execution: {
+            result: { summary: "cached" },
+            raw_result: null,
+            provider: binding.provider,
+            limitations: [],
+            relationship_coverage: null,
+            locations: [],
+            subject: evidenceSubject(selected),
+          },
+        },
+      ],
+      workflow_entries: [],
+      evidence_bundle: createEvidenceBundle([evidence]),
+    });
+  const query = {
+    target: selected,
+    bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    operation: "analyze_function",
+    parameters,
+    provider: ANALYSIS_SNAPSHOT_PROVIDER,
+    evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+  };
+  const matching = observe(selected);
+  expect(snapshotEvidenceForQuery(snapshotWith(matching), query)).toEqual(
+    matching,
+  );
+  expect(
+    snapshotEvidenceForQuery(snapshotWith(observe(raw("0x9000000"))), query),
+  ).toBeUndefined();
+});
+
 describe("analysis snapshot Evidence binding", () => {
   it("finds only Evidence committed to the exact binding and profile", () => {
     const { current, snapshot } = snapshotWithHistoricalEvidence();
@@ -779,12 +907,7 @@ describe("analysis snapshot Evidence binding", () => {
     const parameters = { address: "0x1000", document: "main" };
     const result = { name: "main" };
     const rawResult = { name: "provider-main" };
-    const subject = {
-      path: ANALYSIS_SNAPSHOT_TARGET.path,
-      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
-      format: ANALYSIS_SNAPSHOT_TARGET.format,
-      architecture: ANALYSIS_SNAPSHOT_TARGET.architecture ?? null,
-    };
+    const subject = evidenceSubject(ANALYSIS_SNAPSHOT_TARGET);
     const entry = {
       query_id: analysisQueryId(target, binding, "address_name", parameters),
       operation: "address_name",
@@ -857,8 +980,8 @@ describe("analysis snapshot Evidence binding", () => {
       },
       (altered: typeof snapshot) => {
         const subject = altered.entries[0]?.execution.subject;
-        if (subject !== null && subject !== undefined)
-          subject.path = "/different/path";
+        if (subject === undefined) throw new TypeError("missing fixture entry");
+        Reflect.set(subject, "local_path", "/different/path");
       },
       (altered: typeof snapshot) => {
         const entry = altered.entries[0];

@@ -11,7 +11,7 @@ import { z } from "zod";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import type { Socket } from "node:net";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 
 import {
   AnalysisCancelledError,
@@ -90,15 +90,15 @@ import {
   type NativeLoadImageObservation,
   type NativeLoadImagePartialObservation,
 } from "../domain/native/nativeLoadImage.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import { stageGhidraDebugCompanion } from "./GhidraDebugCompanion.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import {
@@ -106,7 +106,7 @@ import {
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 
 export type GhidraTargetSnapshot =
   | { readonly kind: "captured"; readonly bytes: Buffer }
@@ -133,6 +133,7 @@ import {
   GhidraCheckpoint,
   type GhidraPackedProgram,
 } from "./GhidraCheckpoint.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 /**
@@ -350,7 +351,7 @@ export class GhidraClient {
       },
       (cause: unknown) => {
         this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Ghidra startup promise rejected during bookkeeping",
         );
         if (this.#startupAttempt === attempt) this.#startupAttempt = undefined;
@@ -845,7 +846,7 @@ export class GhidraClient {
         ),
       ],
       {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         diagnostics: this.#diagnostics(),
       },
       { cause },
@@ -903,7 +904,7 @@ export class GhidraClient {
       () => ok(null),
       (cause: unknown) => {
         this.#logger.error(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Ghidra cleanup after active request cancellation failed",
         );
         return err(this.#cleanupError(cause));
@@ -1573,7 +1574,7 @@ export class GhidraClient {
         firstCause ??= cause;
         leftovers.push({
           path: root.path,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         });
       }
     }
@@ -1595,15 +1596,9 @@ export class GhidraClient {
   }
 
   #redactAuthentication(value: string, incomplete = false): string {
-    for (const token of this.#authenticationTokens) {
-      const bytes = Buffer.byteLength(value);
-      value = redactCapturedTransportCredential(
-        { text: value, bytes, observedBytes: bytes + (incomplete ? 1 : 0) },
-        token,
-        "[REDACTED]",
-      );
-    }
-    return value;
+    return redactExplicitText(value, [...this.#authenticationTokens], {
+      cutOff: incomplete,
+    });
   }
 
   #onProcessDiagnostic(event: ProviderProcessDiagnostic): void {

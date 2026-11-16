@@ -1,4 +1,8 @@
-import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  EVIDENCE_FORMAT_REVISION,
+  RECREATE_EVIDENCE_GUIDANCE,
+} from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
@@ -28,7 +32,7 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 const revisionBundle = () => {
   const records = ["open", "investigate"].map((operation) =>
     createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation, parameters: {}, result: { observed: operation } },
     ),
@@ -408,7 +412,7 @@ cliTest(
       JSON.parse('{"__proto__":{"answer":7},"normal":{"answer":7}}'),
     );
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       { operation: "ordinary-json", parameters: {}, result },
     );
@@ -451,7 +455,7 @@ cliTest(
       literal: "&copy; <br>",
     };
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "ordinary-json",
@@ -482,13 +486,13 @@ cliTest(
 );
 
 cliTest(
-  "diagnoses an obsolete explicit-null Evidence commitment",
+  "refuses an earlier-format record inside a current bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
     const record = PRE_66_NULL_COVERAGE_EVIDENCE;
-    // A current-format bundle carrying the earlier record reaches the
-    // record-level identity diagnosis; an unmarked one is refused earlier.
+    // A current-format bundle carrying an earlier record is refused by the
+    // record's own format marker, before its ID is checked.
     const bundle = {
       evidence_format: EVIDENCE_FORMAT_REVISION,
       artifacts: [],
@@ -507,9 +511,7 @@ cliTest(
     expect(imported.json).toMatchObject({
       code: "evidence_integrity_mismatch",
       retryable: false,
-      message: expect.stringContaining(
-        "earlier relationship_coverage identity commitment",
-      ),
+      message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
     });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
@@ -519,9 +521,7 @@ cliTest(
       error: {
         code: "evidence_integrity_mismatch",
         retryable: false,
-        message: expect.stringContaining(
-          "earlier relationship_coverage identity commitment",
-        ),
+        message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
       },
     });
   },

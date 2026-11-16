@@ -22,7 +22,7 @@ import {
 } from "./SupportedClients.js";
 import { redirectedWriteBlocker } from "./MsixPackageStorage.js";
 import type { ClientRegistrationProfile } from "./ClientRegistrationProfile.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   selectedPath,
   present,

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../support/cli/cliFixture.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const expectRetainedSourceMap = async (
   path: string,
@@ -287,10 +288,13 @@ cliTest(
       },
       stderr: "pipe",
     });
-    const client = new Client({
-      name: "source-location-cli-parity",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "source-location-cli-parity",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       try {
         await client.close();

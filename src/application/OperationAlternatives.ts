@@ -1,4 +1,4 @@
-import type { AnalysisOperation } from "./AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 
 /** One operation that observes part of what a missing operation answers. */
 interface OperationAlternative {

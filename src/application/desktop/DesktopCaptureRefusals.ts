@@ -1,11 +1,11 @@
 import { readdir } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../../artifacts/ArtifactFileOperation.js";
+} from "../../resources/index.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import {
@@ -20,10 +20,12 @@ import { regularFileCancellation } from "../../filesystem/OwnedRegularFile.js";
 import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
-} from "../RegularFileRead.js";
-import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInventory.js";
+} from "../../process/RegularFileRead.js";
 import { resolveProgram } from "../../desktop/ProgramLookup.js";
-import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
+import type {
+  LinuxApplicationRefusal,
+  ObservedWindow,
+} from "../../ports/DesktopApplicationSession.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
 import { processInspectionCancellationError } from "../../providers/OwnedCommandCleanup.js";
 

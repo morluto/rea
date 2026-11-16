@@ -8,15 +8,15 @@ import {
   AnalysisArtifactChangedError,
 } from "../domain/analysisErrorCore.js";
 import type { MachODebugCompanion } from "../domain/binaryTargetTypes.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
+  ArtifactResourceScope,
   assertArtifactReadActive,
   mapArtifactFileFailure,
+  readArtifactFileChunks,
   withArtifactFileHandle,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+} from "../resources/index.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   NonRegularFileReadError,

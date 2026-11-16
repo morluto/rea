@@ -1,15 +1,16 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 import { z } from "zod";
-
-import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 
 import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "./unicodeCodePointOrder.js";
-import { localPathStringSchema } from "./localPath.js";
+import {
+  binaryTargetIdentity,
+  fileTargetIdentitySchema,
+  sameTargetIdentity,
+  type FileTargetSelection,
+} from "./targetIdentity.js";
 
 import {
   analysisProfileSchema,
@@ -20,6 +21,7 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
+  BINARY_TARGET_FORMAT_KINDS,
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
@@ -30,11 +32,12 @@ import {
   parseImmutableEvidenceBundle,
 } from "./evidenceBundle.js";
 import {
+  evidenceFileTarget,
   evidenceLocationSchema,
+  evidenceSubjectSchema,
   rebindEvidenceToTargetPath,
   type Evidence,
   type EvidenceLocation,
-  type EvidenceSubjectTarget,
 } from "./evidence.js";
 import {
   jsonObjectSchema,
@@ -46,13 +49,10 @@ import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import { machODebugCompanionCommitmentSchema } from "./machoDebugCompanion.js";
 import {
-  binaryArchitectureSchema,
-  rawBinaryEntryPointSchema,
-} from "./rawBinary.js";
-import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
 const formatSchema = z.enum([
@@ -94,65 +94,84 @@ const formatSchema = z.enum([
   "uimage",
 ]);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
-const subjectBaseSchema = z.object({
-  path: localPathStringSchema,
-  sha256: digestSchema,
-});
-const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
-/** Non-Mach-O targets never carry a Mach-O dSYM companion. */
-const nonMachOTargetIdentitySchema = z.object({
-  sha256: digestSchema,
-  kind: kindSchema,
-  architecture: architectureSchema.nullable(),
-  debug_companion: z.null().default(null),
-});
-const machOTargetIdentitySchema = nonMachOTargetIdentitySchema.extend({
-  /** Absent in snapshots written before companion admission; null when none. */
-  debug_companion: machODebugCompanionCommitmentSchema.nullable().default(null),
-});
-const targetSchema = z.discriminatedUnion("format", [
-  machOTargetIdentitySchema.extend({
-    format: z.enum(["mach-o", "mach-o-universal"]),
-    architecture: architectureSchema
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  nonMachOTargetIdentitySchema.extend({
-    format: z.enum(
-      formatSchema.options.filter(
-        (format) =>
-          format !== "mach-o" &&
-          format !== "mach-o-universal" &&
-          format !== "raw-binary" &&
-          format !== "gamecube-dol" &&
-          format !== "esp-flash-image",
-      ),
-    ),
-    architecture: architectureSchema
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  nonMachOTargetIdentitySchema.extend({
-    format: z.literal("raw-binary"),
-    kind: z.literal("executable"),
-    architecture: binaryArchitectureSchema,
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  nonMachOTargetIdentitySchema.extend({
-    format: z.literal("gamecube-dol"),
-    kind: z.literal("executable"),
-    architecture: z.literal("powerpc"),
-    entry_point: rawBinaryEntryPointSchema,
-  }),
+type SnapshotFormat = z.infer<typeof formatSchema>;
+/** The selection each format's open targets make inside their bytes. */
+const SNAPSHOT_SELECTION_KINDS: Partial<
+  Record<SnapshotFormat, FileTargetSelection["kind"]>
+> = {
+  "raw-binary": "entry-point",
+  "gamecube-dol": "entry-point",
   // The caller's inputs select how the dump is read, so they are identity.
-  nonMachOTargetIdentitySchema.extend({
-    format: z.literal("esp-flash-image"),
-    kind: z.literal("archive"),
-    architecture: z.null(),
-    flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-    partition_table_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-  }),
-]);
+  "esp-flash-image": "esp-flash",
+  "mach-o-universal": "universal-slice",
+};
+const RAW_ONLY = new Set<string>(RAW_ONLY_ARCHITECTURES);
+/** Whether a format admits an architecture, as `binaryTargetIdentity` produces it. */
+const snapshotArchitectureAllowed = (
+  format: SnapshotFormat,
+  architecture: string | null,
+): boolean =>
+  format === "raw-binary"
+    ? architecture !== null
+    : format === "gamecube-dol"
+      ? architecture === "powerpc"
+      : format === "esp-flash-image"
+        ? architecture === null
+        : architecture === null || !RAW_ONLY.has(architecture);
+/**
+ * The persisted target: the path-free identity `binaryTargetIdentity`
+ * produces, the binary kind that query IDs commit to, and any admitted
+ * Mach-O dSYM companion commitment.
+ */
+const targetSchema = z
+  .strictObject({
+    kind: kindSchema,
+    identity: fileTargetIdentitySchema.extend({
+      format: formatSchema,
+      architecture: architectureSchema.nullable(),
+    }),
+    /** Absent in snapshots written before companion admission; null when none. */
+    debug_companion: machODebugCompanionCommitmentSchema
+      .nullable()
+      .default(null),
+  })
+  .superRefine(({ kind, identity, debug_companion }, context) => {
+    // Query IDs commit to the kind, so a kind the format cannot have would
+    // admit entries that no live lookup or export of this target can reach.
+    if (kind !== BINARY_TARGET_FORMAT_KINDS[identity.format])
+      context.addIssue({
+        code: "custom",
+        path: ["kind"],
+        message: `Snapshot target kind ${kind} does not match format ${identity.format}`,
+      });
+    if (!snapshotArchitectureAllowed(identity.format, identity.architecture))
+      context.addIssue({
+        code: "custom",
+        path: ["identity", "architecture"],
+        message: `Snapshot target architecture ${String(identity.architecture)} does not apply to format ${identity.format}`,
+      });
+    const expected = SNAPSHOT_SELECTION_KINDS[identity.format] ?? null;
+    if ((identity.selection?.kind ?? null) !== expected)
+      context.addIssue({
+        code: "custom",
+        path: ["identity", "selection"],
+        message:
+          expected === null
+            ? `Snapshot target format ${identity.format} makes no selection`
+            : `Snapshot target format ${identity.format} requires a ${expected} selection`,
+      });
+    if (
+      debug_companion !== null &&
+      identity.format !== "mach-o" &&
+      identity.format !== "mach-o-universal"
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["debug_companion"],
+        message:
+          "Only mach-o and mach-o-universal snapshot targets may carry a debug_companion",
+      });
+  });
 const bindingSchema = z
   .object({
     provider: committedProviderSchema,
@@ -182,7 +201,7 @@ const entrySchema = z.object({
     limitations: z.array(z.string()),
     relationship_coverage: relationshipCoverageSchema.nullable(),
     locations: z.array(evidenceLocationSchema),
-    subject: subjectSchema.nullable(),
+    subject: evidenceSubjectSchema,
   }),
 });
 const workflowEntrySchema = entrySchema.extend({
@@ -366,15 +385,7 @@ const snapshotContentDigest = (
   const metadata = jsonObjectSchema.parse({
     limitations: execution.limitations,
     locations: execution.locations,
-    subject:
-      execution.subject === null
-        ? null
-        : {
-            local_path: execution.subject.path,
-            sha256: execution.subject.sha256,
-            format: execution.subject.format,
-            architecture: execution.subject.architecture,
-          },
+    subject: subjectContent(execution.subject),
     relationship_coverage: execution.relationship_coverage,
   });
   return contentDigest({
@@ -383,6 +394,12 @@ const snapshotContentDigest = (
     raw_result: rawResult,
   });
 };
+
+/** The subject facts a snapshot content digest commits to; the display name is not one. */
+const subjectContent = (subject: Evidence["subject"]) => ({
+  identity: subject.identity,
+  local_path: subject.local_path,
+});
 
 const evidenceContentDigest = (evidence: Evidence): string => {
   return contentDigest({
@@ -404,7 +421,7 @@ interface SnapshotExecution {
   readonly limitations: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage | null | undefined;
   readonly locations: readonly EvidenceLocation[];
-  readonly subject: EvidenceSubjectTarget | null;
+  readonly subject: Evidence["subject"];
 }
 
 type SnapshotExecutionProjection = Pick<
@@ -430,13 +447,7 @@ const snapshotExecutionProjection = (
     limitations: execution.limitations,
     relationship_coverage: execution.relationshipCoverage ?? null,
     locations: execution.locations,
-    subject:
-      execution.subject === null
-        ? null
-        : {
-            ...execution.subject,
-            architecture: execution.subject.architecture ?? null,
-          },
+    subject: execution.subject,
   });
 
 const canonicalJson = (value: unknown): string => {
@@ -446,52 +457,6 @@ const canonicalJson = (value: unknown): string => {
     throw new TypeError("RFC 8785 canonicalization rejected snapshot data");
   return encoded;
 };
-
-/** Project a binary into the path-free identity used for cache invalidation. */
-export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
-  target.format === "raw-binary"
-    ? {
-        sha256: target.sha256,
-        kind: target.kind,
-        architecture: target.architecture,
-        debug_companion: null,
-        format: target.format,
-        entry_point: target.entryPoint,
-      }
-    : target.format === "gamecube-dol"
-      ? {
-          sha256: target.sha256,
-          kind: target.kind,
-          architecture: target.architecture,
-          debug_companion: null,
-          format: target.format,
-          entry_point: target.entryPoint,
-        }
-      : target.format === "esp-flash-image"
-        ? {
-            sha256: target.sha256,
-            kind: target.kind,
-            architecture: null,
-            debug_companion: null,
-            format: target.format,
-            flash_offset: target.espFlash.flashOffset,
-            partition_table_offset: target.espFlash.partitionTableOffset,
-          }
-        : target.format === "mach-o" || target.format === "mach-o-universal"
-          ? {
-              sha256: target.sha256,
-              kind: target.kind,
-              architecture: target.architecture,
-              debug_companion: machOCompanionIdentity(target),
-              format: target.format,
-            }
-          : {
-              sha256: target.sha256,
-              kind: target.kind,
-              architecture: target.architecture ?? null,
-              debug_companion: null,
-              format: target.format,
-            };
 
 /** A dSYM change is a different analysis input, not the same target. */
 const machOCompanionIdentity = (
@@ -506,6 +471,14 @@ const machOCompanionIdentity = (
       }
     : null;
 
+/** The persisted snapshot target of an open binary: its target identity, kind, and dSYM companion. */
+export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
+  targetSchema.parse({
+    kind: target.kind,
+    identity: binaryTargetIdentity(target),
+    debug_companion: machOCompanionIdentity(target),
+  });
+
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
   profile: AnalysisProfileCommitment,
@@ -515,42 +488,39 @@ export const snapshotBinding = (
     analysis_profile: profile,
   });
 
+const sameDebugCompanionCommitment = (
+  left: AnalysisSnapshotTarget["debug_companion"],
+  right: AnalysisSnapshotTarget["debug_companion"],
+): boolean =>
+  left === null || right === null
+    ? left === right
+    : left.uuid === right.uuid &&
+      left.member_sha256 === right.member_sha256 &&
+      left.source_path === right.source_path;
+
+/** Whether two persisted snapshot targets agree on kind, identity, and dSYM companion. */
+export const sameSnapshotTarget = (
+  left: AnalysisSnapshotTarget,
+  right: AnalysisSnapshotTarget,
+): boolean =>
+  left.kind === right.kind &&
+  sameTargetIdentity(left.identity, right.identity) &&
+  sameDebugCompanionCommitment(
+    left.debug_companion ?? null,
+    right.debug_companion ?? null,
+  );
+
 /** Compare an open binary with the immutable target identity in a snapshot. */
 export const snapshotMatchesTarget = (
   snapshot: AnalysisSnapshotTarget,
   target: BinaryTarget,
 ): boolean =>
-  snapshot.sha256 === target.sha256 &&
   snapshot.kind === target.kind &&
-  snapshot.format === target.format &&
-  snapshot.architecture === (target.architecture ?? null) &&
-  sameDebugCompanion(snapshot, target) &&
-  (snapshot.format !== "raw-binary" ||
-    (target.format === "raw-binary" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "gamecube-dol" ||
-    (target.format === "gamecube-dol" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "esp-flash-image" ||
-    (target.format === "esp-flash-image" &&
-      snapshot.flash_offset === target.espFlash.flashOffset &&
-      snapshot.partition_table_offset ===
-        target.espFlash.partitionTableOffset));
-
-/** A dSYM change is a different analysis input, not the same target. */
-const sameDebugCompanion = (
-  snapshot: AnalysisSnapshotTarget,
-  target: BinaryTarget,
-): boolean => {
-  const selected = machOCompanionIdentity(target);
-  const recorded = snapshot.debug_companion ?? null;
-  if (selected === null || recorded === null) return selected === recorded;
-  return (
-    recorded.uuid === selected.uuid &&
-    recorded.member_sha256 === selected.member_sha256 &&
-    recorded.source_path === selected.source_path
+  sameTargetIdentity(snapshot.identity, binaryTargetIdentity(target)) &&
+  sameDebugCompanionCommitment(
+    snapshot.debug_companion ?? null,
+    machOCompanionIdentity(target),
   );
-};
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -667,7 +637,7 @@ export const snapshotEvidenceForQuery = (
   for (const record of snapshot.evidence_bundle.records) {
     if (
       !(
-        record.subject?.digest.sha256 === target.sha256 &&
+        evidenceFileTarget(record)?.sha256 === target.sha256 &&
         record.operation === operation &&
         committedProvidersEqual(record.provider, provider) &&
         record.analysis_profile !== null &&
@@ -755,16 +725,14 @@ export const analysisQueryId = (
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
 ): string =>
-  `query_${createHash("sha256")
-    .update(
-      canonicalJson({
-        target: queryIdTarget(target),
-        binding,
-        operation,
-        parameters,
-      }),
-    )
-    .digest("hex")}`;
+  `query_${sha256Hex(
+    canonicalJson({
+      target: queryIdTarget(target),
+      binding,
+      operation,
+      parameters,
+    }),
+  )}`;
 
 /** Create one serializable snapshot entry from a successful provider call. */
 export const createAnalysisSnapshotEntry = (input: {
@@ -853,7 +821,10 @@ const restoreSnapshot = (
   providerRows: readonly Extract<PreparedEntry, { kind: "provider" }>[],
   workflowRows: readonly Extract<PreparedEntry, { kind: "workflow" }>[],
 ): AnalysisSnapshot => {
-  const scopedEvidence = evidenceBundleForTarget(bundle, header.target.sha256);
+  const scopedEvidence = evidenceBundleForTarget(
+    bundle,
+    header.target.identity.sha256,
+  );
   if (
     scopedEvidence.records.length !== bundle.records.length ||
     scopedEvidence.unknowns.length !== bundle.unknowns.length
@@ -872,7 +843,7 @@ const restoreSnapshot = (
     if (
       evidence.predicate_type !== "rea.analysis" ||
       evidence.authority !== "shipped-artifact" ||
-      evidence.subject?.digest.sha256 !== header.target.sha256 ||
+      evidenceFileTarget(evidence)?.sha256 !== header.target.identity.sha256 ||
       evidence.analysis_profile === null ||
       (evidence.confidence !== "observed" && evidence.confidence !== "derived")
     )
@@ -996,6 +967,21 @@ const hasCanonicalQueryOrder = (
   return true;
 };
 
+/**
+ * Whether Evidence is about the snapshot target's bytes. A subject in the
+ * target's own format is the target, so its whole identity, including the
+ * selection that the query IDs commit to, must agree with the header.
+ */
+const subjectNamesSnapshotTarget = (
+  evidence: Evidence,
+  target: AnalysisSnapshotTarget,
+): boolean => {
+  const file = evidenceFileTarget(evidence);
+  const expected = target.identity;
+  if (file === undefined || file.sha256 !== expected.sha256) return false;
+  return file.format !== expected.format || sameTargetIdentity(file, expected);
+};
+
 const isCorrespondingEvidence = (
   evidence: Evidence,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -1003,7 +989,7 @@ const isCorrespondingEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "observed" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1079,7 +1065,7 @@ const isWorkflowEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "derived" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1104,15 +1090,7 @@ const evidenceContentMetadata = (evidence: Evidence) => {
     limitations: evidence.limitations,
     relationship_coverage: evidence.relationship_coverage,
     locations: evidence.locations,
-    subject:
-      evidence.subject === null
-        ? null
-        : {
-            local_path: evidence.subject.local_path,
-            sha256: evidence.subject.digest.sha256,
-            format: evidence.subject.format,
-            architecture: evidence.subject.architecture,
-          },
+    subject: subjectContent(evidence.subject),
   };
 };
 

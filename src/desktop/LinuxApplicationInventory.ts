@@ -19,8 +19,10 @@ import {
 } from "../domain/desktop/linuxPackages.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -40,6 +42,7 @@ import {
 import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
 import { runHostQuery } from "./HostQuery.js";
 import { resolveProgram } from "./ProgramLookup.js";
+import type { LinuxApplicationRefusal } from "../ports/DesktopApplicationSession.js";
 
 const DESKTOP_ENTRY_MAX_BYTES = 1024 * 1024;
 
@@ -56,23 +59,6 @@ export interface LinuxApplicationRequest {
   /** The absolute path of the `.deb` file the application was installed from, whose facts are recorded. */
   readonly packageFile?: string | undefined;
 }
-
-/** Why the request does not name a launchable application. */
-export type LinuxApplicationRefusal =
-  | {
-      readonly reason: "desktop_entry_not_found";
-      readonly searched: readonly string[];
-    }
-  | {
-      readonly reason: "desktop_entry_search_incomplete";
-      readonly searched: readonly string[];
-    }
-  | { readonly reason: "desktop_entry_invalid"; readonly detail: string }
-  | { readonly reason: "executable_not_found"; readonly program: string }
-  | {
-      readonly reason: "executable_on_relative_path";
-      readonly program: string;
-    };
 
 /** The inventory plus limitations found while building it. */
 export interface LinuxApplicationFacts {

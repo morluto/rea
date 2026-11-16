@@ -20,8 +20,8 @@ import {
 } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
@@ -37,7 +37,7 @@ import {
   type AnalysisClientContext,
   type AnalysisOperation,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import {
   ghidraSeedCommitmentSchema,
@@ -173,6 +173,7 @@ import {
 import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
 import { invalidRegexPatternError } from "../process/RegexMatcher.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Production seam for exercising provider projection without a real process. */
 export type GhidraProviderClientFactory = (
@@ -205,9 +206,7 @@ interface GhidraExecutionMetadata {
 const referenceObservationRecord = (
   normalized: JsonValue,
 ): Readonly<Record<string, JsonValue>> | undefined =>
-  typeof normalized === "object" &&
-  normalized !== null &&
-  !Array.isArray(normalized)
+  isRecord(normalized)
     ? (normalized as Readonly<Record<string, JsonValue>>)
     : undefined;
 
@@ -463,6 +462,7 @@ export const createGhidraProviderClient = (input: {
   )
     return err(
       new ProviderAdapterError("ghidra", "open_binary", {
+        related: { parameters: ["dsym_path"] },
         diagnostics: {
           rejection:
             project !== undefined
@@ -545,7 +545,7 @@ export const createGhidraProviderClient = (input: {
     committedProfile.parameters,
     project !== undefined &&
       committedProfile.parameters.import_mode ===
-        "existing-project-private-copy-v1",
+        "existing-project-private-copy",
   );
   if (mipsProfileMismatch !== null)
     return err(ghidraProfileConflict("open_binary", mipsProfileMismatch));
@@ -614,8 +614,7 @@ export const createGhidraProviderClient = (input: {
         ]
       : []),
     ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
-    ...(committedProfile.parameters.mips_abi_basis ===
-    "inferred-o32-assumption-v1"
+    ...(committedProfile.parameters.mips_abi_basis === "inferred-o32-assumption"
       ? [
           "The ELF header declares no ABI field and no ABI flags record was observed; o32 calling conventions are an analysis assumption of this lane, not a declared fact.",
           "Floating-point ABI semantics are unverified for this recordless legacy admission.",
@@ -862,11 +861,11 @@ export const createGhidraProviderClient = (input: {
     const closed = await client.close();
     return closed.ok
       ? extensionFailure
-      : analysisErrorWithCleanupFailure(
+      : analysisErrorWithCleanupDependencies(
           extensionFailure,
           closed.error,
           operation,
-        ).bindCleanupDependencies([extensionFailure, closed.error]);
+        );
   };
   const startSession = async (
     operation: AnalysisOperation,
@@ -1229,12 +1228,7 @@ export const createGhidraProviderClient = (input: {
       if (retained === undefined) return closed;
       return closed.ok
         ? err(retained)
-        : err(
-            analysisErrorWithCleanupFailure(
-              closed.error,
-              retained,
-            ).bindCleanupDependencies([closed.error, retained]),
-          );
+        : err(analysisErrorWithCleanupDependencies(closed.error, retained));
     },
   });
 };
@@ -1362,11 +1356,11 @@ const projectSessionError = (
   );
   return failure.cleanupFailure === undefined
     ? primary
-    : analysisErrorWithCleanupFailure(
+    : analysisErrorWithCleanupDependencies(
         primary,
         failure.cleanupFailure,
         operation,
-      ).bindCleanupDependencies([primary, failure.cleanupFailure]);
+      );
 };
 
 const projectPrimarySessionError = (
@@ -1454,16 +1448,18 @@ const projectPrimarySessionError = (
     const constraint =
       "Existing-project mode opens a saved Ghidra program with -process -noanalysis and does not import or analyze a dsym_path companion";
     const remediationAction =
-      "Unset REA_GHIDRA_PROJECT_PATH (and REA_GHIDRA_PROGRAM_NAME if set) to run a fresh Ghidra import with dsym_path (--dsym-path on the CLI), or omit dsym_path to inspect the saved Ghidra project as-is.";
+      "Unset REA_GHIDRA_PROJECT_PATH (and REA_GHIDRA_PROGRAM_NAME if set) to run a fresh Ghidra import with dsym_path, or omit dsym_path to inspect the saved Ghidra project as-is.";
     if (source === "existing-project")
       return new ConfigurationError(constraint, {
         ...context,
         settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+        related: { parameters: ["dsym_path"] },
         remediationAction,
       });
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
       userMessage: `${constraint}.`,
+      related: { parameters: ["dsym_path"] },
       remediationAction,
     });
   }

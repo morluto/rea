@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -368,7 +369,7 @@ cliTest(
       capture.normalized_result,
     );
     const replacement = (parameters: object, result: unknown) =>
-      createEvidence(undefined, capture.provider, {
+      createEvidence(unknownTarget("not-observed"), capture.provider, {
         operation: capture.operation,
         parameters,
         result,

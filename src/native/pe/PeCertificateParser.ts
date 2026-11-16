@@ -1,5 +1,7 @@
-import { createHash } from "node:crypto";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactParseFailure,
+} from "../../resources/index.js";
 import type {
   InspectPeCertificatesInput,
   PeCertificates,
@@ -11,10 +13,20 @@ import {
   PeCertificateAsn1Failure,
   readAsn1,
 } from "./PeCertificateAsn1.js";
-import { readPeHeaders } from "./PeResourceLayout.js";
+import { readPeHeaders } from "../../domain/pe/peResourceLayout.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const fail = (message: string): never => {
   throw new ArtifactReaderFailure("format", message);
+};
+
+/** Shared PE header admission, with malformed headers as format failures. */
+const readCertificateImageHeaders = (bytes: Buffer) => {
+  try {
+    return readPeHeaders(bytes);
+  } catch (cause) {
+    throw artifactParseFailure(cause, undefined);
+  }
 };
 
 const requireRange = (bytes: Buffer, offset: number, length: number): void => {
@@ -31,9 +43,6 @@ const requireRange = (bytes: Buffer, offset: number, length: number): void => {
 };
 
 const align8 = (value: number): number => Math.ceil(value / 8) * 8;
-
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
 
 const LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
@@ -58,7 +67,7 @@ export const parsePeCertificates = (
   input: InspectPeCertificatesInput,
 ): PeCertificates => {
   const { machine, format, dataDirectories, headerSize, optionalHeaderOffset } =
-    readPeHeaders(bytes);
+    readCertificateImageHeaders(bytes);
   const security = dataDirectories[4];
   if (
     security === undefined ||
@@ -141,7 +150,7 @@ export const parsePeCertificates = (
               offset: tableOffset + at + 8 + certificate.start,
               bytes: certificate.end - certificate.start,
             },
-            der_sha256: sha256(
+            der_sha256: sha256Hex(
               payload.subarray(certificate.start, certificate.end),
             ),
             serial_hex: certificate.serial_hex,
@@ -202,7 +211,7 @@ export const parsePeCertificates = (
       payload: {
         location: { offset: tableOffset + at + 8, bytes: payload.length },
         bytes: payload.length,
-        sha256: sha256(payload),
+        sha256: sha256Hex(payload),
       },
       pkcs7,
     });

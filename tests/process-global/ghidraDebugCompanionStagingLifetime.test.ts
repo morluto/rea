@@ -45,9 +45,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { stageGhidraDebugCompanion } from "../../src/ghidra/GhidraDebugCompanion.js";
 import {
   ArtifactFileCleanupFailure,
+  ArtifactResourceScope,
   artifactFilePrimaryFacts,
-} from "../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+} from "../../src/resources/index.js";
 import { AnalysisArtifactChangedError } from "../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 

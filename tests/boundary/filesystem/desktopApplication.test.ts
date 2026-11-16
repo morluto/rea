@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import {
   mkdir,
   writeFile,
@@ -12,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import { createServer as createNetServer } from "node:net";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { createDesktopApplicationService } from "../../../src/composition/desktop.js";
 import {
   desktopApplicationSchema,
@@ -25,9 +26,9 @@ import {
   buildManagedPeFixture,
   buildNativePeFixture,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedMetadataLayout } from "../../../src/dotnet/ManagedMetadataLayout.js";
-import { readManagedPeLayout } from "../../../src/dotnet/ManagedPeReader.js";
-import { readAssemblyReference } from "../../../src/dotnet/ManagedMetadataInventoryRows.js";
+import { readManagedMetadataLayout } from "../../../src/domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../../../src/domain/managed/managedPeReader.js";
+import { readAssemblyReference } from "../../../src/domain/managed/managedMetadataInventoryRows.js";
 import {
   CPU,
   FILE_TYPE,
@@ -35,12 +36,12 @@ import {
   machoImage,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { locateGodotPck } from "../../../src/artifacts/GodotPckLocation.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { artifactFilePrimaryFacts } from "../../../src/artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { artifactFilePrimaryFacts } from "../../../src/resources/ArtifactFileOperation.js";
 import { DesktopApplicationReader } from "../../../src/artifacts/DesktopApplicationReader.js";
 import { inspectDesktopFile } from "../../../src/artifacts/DesktopFileInspection.js";
 import { DesktopApplicationService } from "../../../src/application/artifacts/DesktopApplicationService.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const inspect = async (path: string, extra: Record<string, number> = {}) => {
   const service = createDesktopApplicationService();
@@ -757,21 +758,13 @@ it("keeps a completed directory report and exact cleanup authority until retry c
 it("bounds simultaneous directory scans without cancelling the admitted caller", async () => {
   const root = await createTestTempDirectory("rea-desktop-capacity-");
   await put(root, "notes.txt", "observed");
-  let release!: () => void;
-  let entered!: () => void;
-  const barrier = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const desktopDirectoryScan = phaseGate();
   const service = new DesktopApplicationService(
     new DesktopApplicationReader((path) => {
       const reader = new DirectoryArtifactReader(path);
       const entries = reader.entries.bind(reader);
       reader.entries = async function* (...args: Parameters<typeof entries>) {
-        entered();
-        await barrier;
+        await desktopDirectoryScan.hold();
         yield* entries(...args);
       };
       return reader;
@@ -779,7 +772,7 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
   );
   const first = service.inspect({ path: root });
   try {
-    await awaitAcknowledgement(started, first, "desktop directory scan");
+    await desktopDirectoryScan.reached(first, "desktop directory scan");
     const second = await service.inspect({ path: root });
     expect(second.ok).toBe(false);
     if (!second.ok)
@@ -788,14 +781,14 @@ it("bounds simultaneous directory scans without cancelling the admitted caller",
         resource: "capacity",
         retryable: true,
       });
-    release();
+    desktopDirectoryScan.release();
     const result = await first;
     if (!result.ok) throw result.error;
     expect(
       desktopApplicationSchema.parse(result.value.normalized_result).files,
     ).toHaveLength(1);
   } finally {
-    release();
+    desktopDirectoryScan.release();
     try {
       await first;
     } finally {
@@ -1784,8 +1777,8 @@ it("keeps snapshot identity stable across limits that preserve source observatio
   expect(first.report.root.snapshot_sha256).toBe(
     second.report.root.snapshot_sha256,
   );
-  expect(first.evidence.subject?.digest.sha256).toBe(
-    second.evidence.subject?.digest.sha256,
+  expect(fileIdentity(first.evidence.subject).sha256).toBe(
+    fileIdentity(second.evidence.subject).sha256,
   );
   expect(first.evidence.evidence_id).not.toBe(second.evidence.evidence_id);
   expect(first.evidence.parameters).toMatchObject({

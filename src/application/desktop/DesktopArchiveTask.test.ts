@@ -13,7 +13,7 @@ import {
 } from "../../domain/desktop/zipArchive.fixture.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { inspectDesktopApplicationState } from "./DesktopApplicationState.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { readZipView } from "./DesktopZipView.js";
 import { DESKTOP_OPERATION } from "./DesktopCaptureRefusals.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";

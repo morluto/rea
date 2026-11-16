@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import type { Dir, Stats } from "node:fs";
 import { opendir, stat, type FileHandle } from "node:fs/promises";
 import { basename, extname, isAbsolute } from "node:path";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import {
   findOverlappingFatSlices,
   readFatContainerHeader,
@@ -60,7 +62,7 @@ import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
   withRegularFileCompletion,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 
 const DSYM_DWARF_DIRECTORY = "Contents/Resources/DWARF";
 const HEADER_READ_LIMIT = 64 * 1024;
@@ -134,6 +136,7 @@ export const debugCompanionRejectedError = (
 ): BinaryTargetError =>
   new BinaryTargetError(targetPath, rejection.reason, {
     constraint: "debug_companion_rejected",
+    related: { parameters: ["dsym_path"] },
     ...(rejection.remediationAction === undefined
       ? {}
       : { remediationAction: rejection.remediationAction }),
@@ -145,7 +148,7 @@ export const debugCompanionRejectedError = (
 const traversalLimit = (): MachOUuidReadFailure => ({
   kind: "resource-limit",
   reason: `the Mach-O UUID traversal exceeds its aggregate read budget of ${String(TRAVERSAL_BUDGET_BYTES >> 20)} MiB (${String(TRAVERSAL_BUDGET_BYTES)} bytes) across the target and dSYM members; the budget is fixed and cannot be raised at runtime`,
-  remediationAction: `Select a target and .dSYM bundle whose Mach-O header and load-command reads stay within the ${String(TRAVERSAL_BUDGET_BYTES >> 20)} MiB (${String(TRAVERSAL_BUDGET_BYTES)} bytes) UUID traversal budget, or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  remediationAction: `Select a target and .dSYM bundle whose Mach-O header and load-command reads stay within the ${String(TRAVERSAL_BUDGET_BYTES >> 20)} MiB (${String(TRAVERSAL_BUDGET_BYTES)} bytes) UUID traversal budget, or omit dsym_path to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
   diagnostics: {
     limit: "dsym_uuid_traversal_bytes",
     maximum_bytes: TRAVERSAL_BUDGET_BYTES,
@@ -155,7 +158,7 @@ const traversalLimit = (): MachOUuidReadFailure => ({
 
 const directoryEntryLimit = (): DebugCompanionRejection => ({
   reason: `dsym_path contains more than ${String(MEMBER_COUNT_LIMIT)} DWARF directory entries; the limit is fixed and cannot be raised at runtime`,
-  remediationAction: `Select a .dSYM bundle whose Contents/Resources/DWARF directory contains at most ${String(MEMBER_COUNT_LIMIT)} entries, or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  remediationAction: `Select a .dSYM bundle whose Contents/Resources/DWARF directory contains at most ${String(MEMBER_COUNT_LIMIT)} entries, or omit dsym_path to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
   diagnostics: {
     limit: "dsym_dwarf_directory_entries",
     maximum_entries: MEMBER_COUNT_LIMIT,
@@ -168,7 +171,7 @@ const memberSizeLimit = (
   observedBytes: number,
 ): DebugCompanionRejection => ({
   reason: `dsym DWARF member exceeds the supported size of ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes; the limit is fixed and cannot be raised at runtime): ${memberPath}`,
-  remediationAction: `Select a .dSYM bundle whose matching DWARF member is at most ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes), or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  remediationAction: `Select a .dSYM bundle whose matching DWARF member is at most ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes), or omit dsym_path to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
   diagnostics: {
     limit: "dsym_member_size_bytes",
     maximum_bytes: MEMBER_SIZE_LIMIT_BYTES,
@@ -180,7 +183,7 @@ const memberSizeLimit = (
 
 const aggregateDigestLimit = (): DebugCompanionRejection => ({
   reason: `the matching dSYM DWARF members exceed the aggregate digest budget of ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes); the budget is fixed and cannot be raised at runtime`,
-  remediationAction: `Remove duplicate or extra matching DWARF members so the distinct matching members in Contents/Resources/DWARF total at most ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes), or omit dsym_path (--dsym-path on the CLI) to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
+  remediationAction: `Remove duplicate or extra matching DWARF members so the distinct matching members in Contents/Resources/DWARF total at most ${String(MEMBER_SIZE_LIMIT_BYTES >> 30)} GiB (${String(MEMBER_SIZE_LIMIT_BYTES)} bytes), or omit dsym_path to analyze without debug types. ${FIXED_LIMIT_NOTICE}`,
   diagnostics: {
     limit: "dsym_aggregate_digest_bytes",
     maximum_bytes: MEMBER_SIZE_LIMIT_BYTES,

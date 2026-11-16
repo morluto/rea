@@ -14,7 +14,9 @@ const environment = {
 } as const;
 
 const resultSchema = z.object({
-  subject: z.object({ format: z.string(), architecture: z.string() }),
+  subject: z.object({
+    identity: z.object({ format: z.string(), architecture: z.string() }),
+  }),
   normalized_result: z.record(z.string(), z.unknown()),
 });
 
@@ -53,8 +55,7 @@ describe.skipIf(process.platform !== "darwin")(
           expect(result.exitCode, `${command}: ${result.stdout}`).toBe(0);
           const parsed = resultSchema.parse(result.json);
           expect(parsed.subject).toMatchObject({
-            format: "mach-o",
-            architecture: "arm64_32",
+            identity: { format: "mach-o", architecture: "arm64_32" },
           });
           if (command === "list-architectures")
             expect(

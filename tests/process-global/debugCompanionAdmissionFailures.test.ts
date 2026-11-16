@@ -123,9 +123,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { admitDebugCompanion } from "../../src/application/DebugCompanionAdmission.js";
-import { RetainedRegularFileCleanupFailure } from "../../src/application/RegularFileRead.js";
-import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { RetainedRegularFileCleanupFailure } from "../../src/process/RegularFileRead.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../../src/resources/index.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,

@@ -1,6 +1,5 @@
-import * as rootHash from "../../../src/artifacts/inventory/hashStableRootArtifact.js";
+import * as rootHash from "../../../src/resources/StableRootArtifact.js";
 import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
-import { abortIfNeeded } from "../../../src/artifacts/ArtifactHash.js";
 import { createHash } from "node:crypto";
 import {
   lstat,
@@ -24,11 +23,12 @@ import {
 } from "../../fixtures/artifactInventory.js";
 import { InesArtifactReader } from "../../../src/artifacts/InesArtifactReader.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   extractArtifact,
   materializeArtifactInventoryInScope as materializeInScope,
 } from "../../../src/artifacts/extraction/ArtifactExtraction.js";
+import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
 
 const AGED_FIXTURE_TIME = new Date("2000-01-01T00:00:00Z");
 
