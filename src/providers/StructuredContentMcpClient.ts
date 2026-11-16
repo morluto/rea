@@ -1,20 +1,24 @@
-import {
-  Client,
-  type CallToolResult,
-  type Request,
-  type RequestMethod,
-  type RequestOptions,
-  type ResultTypeMap,
-  type StandardSchemaV1,
+import type {
+  CallToolResult,
+  Request,
+  RequestMethod,
+  RequestOptions,
+  ResultTypeMap,
+  StandardSchemaV1,
 } from "@modelcontextprotocol/client";
+import { OwnedMcpClient } from "../process/OwnedMcpClient.js";
 
 const isSchema = (
   value: RequestOptions | StandardSchemaV1 | undefined,
 ): value is StandardSchemaV1 =>
   typeof value === "object" && value !== null && "~standard" in value;
 
-/** Preserve observed structured dictionaries across the SDK's era-specific result validation. */
-export class StructuredContentMcpClient extends Client {
+/**
+ * Preserve observed structured dictionaries across the SDK's era-specific
+ * result validation. Owned transports can reject close with a cleanup failure,
+ * so SDK-initiated closes stay observed as in every owned MCP client.
+ */
+export class StructuredContentMcpClient extends OwnedMcpClient {
   readonly #toolResult: StandardSchemaV1<unknown, CallToolResult> = {
     "~standard": {
       version: 1,

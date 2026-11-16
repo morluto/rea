@@ -1,11 +1,15 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { joinCoverageStatus } from "../coverage.js";
 import type { Evidence } from "../evidence.js";
 import { machoRuntimeSymbolName } from "../native/machoSymbolName.js";
 import type {
   ManagedNativeObservationFacts,
   ManagedNativePlatform,
 } from "./managedNativeVerificationSource.js";
-import type { ManagedNativeBoundaryInspection } from "./managedArtifact.js";
+import {
+  managedInspectionCoverage,
+  type ManagedNativeBoundaryInspection,
+} from "./managedArtifact.js";
 import type {
   ManagedNativeVerificationResult,
   NativeSymbol,
@@ -566,13 +570,15 @@ export const buildVerificationResult = ({
     ({ boundary_kind: kind }) =>
       kind !== "pinvoke" && kind !== "runtime-provided",
   ).length;
+  // An unavailable boundary inspection read no P/Invoke declarations, so the
+  // verification cannot tell what it would cover: unknown wins beside the
+  // known gaps of skipped native Evidence or non-exhaustive exports.
+  const status = joinCoverageStatus([
+    managedInspectionCoverage(managed.coverage.state),
+    native.unsupported === 0 && !native.partialExports ? "complete" : "partial",
+  ]);
   const coverage: ManagedNativeVerificationResult["coverage"] = {
-    status:
-      managed.coverage.state === "complete" &&
-      native.unsupported === 0 &&
-      !native.partialExports
-        ? "complete-within-inputs"
-        : "partial",
+    status: status === "complete" ? "complete-within-inputs" : status,
   };
   return {
     algorithm: {

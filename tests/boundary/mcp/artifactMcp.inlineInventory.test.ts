@@ -1,3 +1,9 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { fileSubjectDisplay } from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalInputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
@@ -42,17 +48,15 @@ const assertInventorySubjectValidation = async (
           .substeps[0]?.evidence.normalized_result
       : source.normalized_result;
   const inventory = artifactInventoryResultSchema.parse(result);
-  if (source.subject === null)
-    throw new Error("Fixture requires a known subject");
   for (const target of [
-    undefined,
+    unknownTarget("not-observed"),
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: inventory.manifest.root_sha256,
       format: "file" as const,
     },
     {
-      path: source.subject.local_path,
+      path: fileSubjectDisplay(source.subject).local_path,
       sha256: "f".repeat(64),
       format: inventory.manifest.root_format,
     },
@@ -194,12 +198,12 @@ mcpTest(
 const createInventoryViewReader = async (
   client: Client,
   parent: Evidence,
-  profile: "full" | "compact",
+  profile: "compact",
 ) => {
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("Missing advertised view schemas");
   const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
@@ -207,8 +211,11 @@ const createInventoryViewReader = async (
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
     view: { kind: "inventory", collection: "nodes", logical_paths: [] },
   };
-  if (profile === "full")
-    expect(ajv.validate(inputSchema, malformed)).toBe(false);
+  // The canonical contract refuses the empty selection; the compact
+  // advertisement may not, so the server's refusal below is what callers see.
+  expect(ajv.validate(canonicalInputSchema(advertised.name), malformed)).toBe(
+    false,
+  );
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: malformed,
@@ -230,7 +237,7 @@ const createInventoryViewReader = async (
     ).toBe(true);
     const reply = await client.callTool(
       { name: "inspect_analysis_view", arguments: arguments_ },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     if (reply.isError)
       throw new Error(JSON.stringify(parseMcpToolError(reply)));
@@ -377,7 +384,7 @@ const assertOccurrencePages = async (
   });
 };
 
-mcpTest.for(["full", "compact"] as const)(
+mcpTest.for(["compact"] as const)(
   "keeps complete ZIP output and reads retained inventory views after the source is removed (%s)",
   async (profile, { mcp, onTestFinished }) => {
     const directory = await createTestTempDirectory("rea-artifact-inline-");

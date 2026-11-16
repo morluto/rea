@@ -1,12 +1,13 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
-  AnalysisCancelledError,
   AnalysisTimeoutError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { idaRegistrationTimeoutGuidance } from "./IdaConfiguration.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { busyHealthSchema } from "./IdaProtocolValues.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Pause between health reads while a freshly opened worker reports itself busy. */
 const BUSY_HEALTH_RETRY_MS = 100;
@@ -28,10 +29,7 @@ const busyToolName = (tool: string | undefined): string =>
   tool !== undefined && BUSY_TOOL_NAME.test(tool) ? tool : "unknown";
 
 const isBusyStatus = (raw: JsonValue): boolean =>
-  typeof raw === "object" &&
-  raw !== null &&
-  !Array.isArray(raw) &&
-  raw["status"] === "busy";
+  isRecord(raw) && raw["status"] === "busy";
 
 interface LastBusyHealth {
   readonly raw: JsonValue;
@@ -64,10 +62,7 @@ export const readSettledHealth = async (
   const remaining = (): number => timeoutMs - (clock.now() - started);
   let lastBusy: LastBusyHealth | undefined;
   for (;;) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("server_health", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("server_health", signal);
     const budgetMs = remaining();
     if (budgetMs <= 0)
       throw lastBusy === undefined
@@ -115,15 +110,10 @@ export const readSettledHealth = async (
         cause instanceof Error &&
         cause.name === "AbortError"
       )
-        throw new AnalysisCancelledError("server_health", {
-          cause: signal.reason,
-        });
+        throw cancelledBy("server_health", signal);
       throw cause;
     }
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("server_health", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("server_health", signal);
     if (remaining() <= 0) throw expired();
   }
 };

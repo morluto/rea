@@ -1,3 +1,4 @@
+import { advertiseToolInput } from "../../contracts/advertisedTool.js";
 import { jsonPointerTokens } from "../../domain/jsonPointer.js";
 import {
   ownMember,
@@ -64,6 +65,35 @@ export interface EnvironmentToolDefinition {
   readonly annotations: EnvironmentToolAnnotations;
   readonly tool: EnvironmentManifestTool;
 }
+
+/** What MCP clients and the card receive for one served tool. */
+export interface AdvertisedEnvironmentTool {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+}
+
+/**
+ * The served tool in the portable advertised dialect. A served catalog bounds
+ * its own size, so argument descriptions stay; calls are still checked
+ * against the recorded `inputSchema`.
+ */
+export const advertisedEnvironmentTool = ({
+  name,
+  description,
+  inputSchema,
+}: EnvironmentToolDefinition): AdvertisedEnvironmentTool => {
+  const advertised = advertiseToolInput(
+    description,
+    inputSchema as unknown as Record<string, unknown>,
+    "annotated",
+  );
+  return {
+    name,
+    description: advertised.description ?? description,
+    inputSchema: advertised.inputSchema,
+  };
+};
 
 const environmentToolAnnotations = ({
   method,
@@ -560,10 +590,7 @@ export interface EnvironmentCard {
   readonly capabilities: {
     /** Null for a replay environment; the intake declaration when served from a state. */
     readonly extensions: null | readonly [typeof STATE_INTAKE_EXTENSION];
-    readonly tools: readonly Pick<
-      EnvironmentToolDefinition,
-      "name" | "description" | "inputSchema"
-    >[];
+    readonly tools: readonly AdvertisedEnvironmentTool[];
     readonly operations: readonly [] | typeof STATE_OPERATIONS;
   };
   readonly children_environments: null;
@@ -582,11 +609,7 @@ export const environmentCard = (
   additionalInterfaces: [{ url: "/mcp", transport: "mcp" }],
   capabilities: {
     extensions: dataPlane === "state" ? [STATE_INTAKE_EXTENSION] : null,
-    tools: tools.map(({ name: toolName, description, inputSchema }) => ({
-      name: toolName,
-      description,
-      inputSchema,
-    })),
+    tools: tools.map(advertisedEnvironmentTool),
     operations: dataPlane === "state" ? STATE_OPERATIONS : [],
   },
   children_environments: null,

@@ -1,3 +1,4 @@
+import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -5,23 +6,17 @@ import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
+  ArtifactReaderFailure,
+  readStableArtifact,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { NativeInitializersPort } from "../../application/binaryDiagnostics/NativeInitializersPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { NativeInitializersPort } from "../../ports/binaryDiagnostics/NativeInitializersPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisResourceConstraintError,
-  AnalysisUnsupportedTargetError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_NATIVE_INITIALIZERS_FILE_BYTES,
@@ -36,11 +31,13 @@ import { NATIVE_INITIALIZERS_PROVIDER } from "../../domain/investigationProvider
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
-import { ElfPointerRelocationFailure } from "../metadata/ElfPointerRelocations.js";
-import { requireSelectedNativeImage } from "../metadata/MachoSliceSelection.js";
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
+import { ElfPointerRelocationFailure } from "../../domain/native/elfPointerRelocations.js";
+import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { readElfInitializers } from "./ElfInitializers.js";
 import { readMachoInitializers } from "./MachoInitializers.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_native_initializers";
 
@@ -202,18 +199,22 @@ const failurePrimary = (
   if (identityFailure !== undefined) return identityFailure;
   if (
     cause instanceof ElfPointerRelocationFailure &&
-    cause.reason === "native-index-capacity"
+    cause.failure.kind === "limit"
   )
     return new AnalysisResourceConstraintError(
       OPERATION,
       "capacity",
       `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: "structure" },
+      { boundary: "structure", maximum: cause.failure.limit.maximum },
       {
         cause,
         ...fixedAllowanceOptions(
           "The native initializer structural allowance",
           "parser",
+          {
+            limit: cause.failure.limit.maximum,
+            ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+          },
         ),
       },
     );
@@ -228,24 +229,12 @@ const failurePrimary = (
         ...fixedAllowanceOptions(
           "The native initializer structural allowance",
           "parser",
+          binaryResourceCeiling(cause),
         ),
       },
     );
-  if (cause instanceof BinaryFormatFailure)
-    return cause.kind === "unsupported"
-      ? new AnalysisUnsupportedTargetError(
-          OPERATION,
-          input.path,
-          cause.message,
-          { cause },
-        )
-      : new AnalysisInputError(OPERATION, { cause }, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: `Selected artifact ${input.path}: ${cause.message}`,
-          },
-        ]);
+  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
+  if (formatFailure !== undefined) return formatFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -279,7 +268,7 @@ const failurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

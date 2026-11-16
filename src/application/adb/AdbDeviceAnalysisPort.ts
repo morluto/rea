@@ -2,7 +2,7 @@ import type {
   AnalysisExecution,
   ExecutionOptions,
   ProviderAvailability,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AdbRequest } from "../../domain/adb/adbDeviceAnalysis.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";

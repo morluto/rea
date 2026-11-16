@@ -1,5 +1,12 @@
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
+import {
+  firstKeyed,
+  keyedBy,
+  uniqueKeyed,
+} from "../../domain/keyedCollection.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
@@ -35,7 +42,7 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import {
   ELF_PT_GNU_PROPERTY,
   ELF_PT_GNU_RELRO,
@@ -46,7 +53,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const ET_EXEC = 2;
 const ET_DYN = 3;
@@ -117,6 +124,8 @@ const budgetFailure = (count: number, label: string): BinaryResourceFailure =>
     "structure",
     MAX_BINARY_HARDENING_TABLE_ENTRIES,
     `${label} has ${String(count)} entries, above the ${String(MAX_BINARY_HARDENING_TABLE_ENTRIES)}-entry structural budget. This release has no runtime override.`,
+    "structure",
+    "entries",
   );
 
 const budget = (count: number, label: string): void => {
@@ -489,9 +498,12 @@ const readSymbols = (
   bits: 32 | 64,
   signal?: AbortSignal,
 ): SymbolScan => {
-  const dynsym = sections.filter((section) => section.type === SHT_DYNSYM);
-  if (dynsym.length > 1) malformed("ELF image has more than one SHT_DYNSYM");
-  const section = dynsym[0];
+  const dynsym = uniqueKeyed(
+    keyedBy(sections, ({ type }) => type),
+    SHT_DYNSYM,
+  );
+  if (!dynsym.ok) malformed("ELF image has more than one SHT_DYNSYM");
+  const section = dynsym.value;
   const symtab = dynamic?.entries.get(DT_SYMTAB);
   if (dynamic === null || symtab === undefined)
     return section === undefined
@@ -1262,7 +1274,11 @@ const strippedRow = (
       basis: "Section headers are absent, so SHT_SYMTAB presence is unknown.",
       note: "A missing section header table does not establish that the image was stripped.",
     });
-  const symtab = sections.find((section) => section.type === SHT_SYMTAB);
+  const symtab = firstKeyed(
+    keyedBy(sections, ({ type }) => type),
+    SHT_SYMTAB,
+    "Any SHT_SYMTAB shows the image is not stripped; the first locates it.",
+  );
   if (symtab === undefined)
     return row({
       property: "stripped",

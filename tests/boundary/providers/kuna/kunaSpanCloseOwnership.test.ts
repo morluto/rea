@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
@@ -145,7 +145,8 @@ it.each([
       if (handle === undefined) throw new Error("missing span descriptor");
       if (short) {
         expect(result.error.cleanupPrimary?.cause).toMatchObject({
-          _tag: "KunaDocumentError",
+          name: "KunaDocumentError",
+          kind: "truncated",
           code: "span_short",
         });
         expect(result.error.diagnostics?.span_read).toBeUndefined();

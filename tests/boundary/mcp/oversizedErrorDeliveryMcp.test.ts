@@ -179,23 +179,22 @@ it("retains an oversized failed-open receipt with its original error", async () 
     architecture: "x86_64" as const,
   };
   server.registerTool("open_failure", { inputSchema: z.object({}) }, async () =>
-    limited.toOpenFailureToolResult(
+    limited.toDetailedErrorToolResult(
+      new AnalysisInputError("open_binary", undefined, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: "x".repeat(16384),
+        },
+      ]),
       {
-        ok: false,
-        error: new AnalysisInputError("open_binary", undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_value",
-            message: "x".repeat(16384),
-          },
-        ]),
-        targetAtCompletion: selected,
-        providerIdAtCompletion: "ghidra",
-        selection: {
+        selection_at_failure: {
           kind: "binary",
           path: selected.path,
           sha256: selected.sha256,
         },
+        target_at_open_completion: selected,
+        provider_id_at_open_completion: "ghidra",
       },
       false,
     ),

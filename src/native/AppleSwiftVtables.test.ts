@@ -13,7 +13,7 @@ import type {
   DispatchRecordBudget,
   SwiftDispatchReaders,
 } from "./AppleSwiftDispatchFacets.js";
-import { issue } from "./AppleDispatchDecodeFacts.js";
+import { issue } from "../domain/apple/appleDispatchDecodeFacts.js";
 
 it("propagates unexpected conformance reader failures", () => {
   const failure = new Error("conformance reader invariant failed");
@@ -67,6 +67,38 @@ it("propagates unexpected vtable reader failures", () => {
       },
     }),
   ).toThrow(failure);
+});
+
+it("reports the vtable decoder's slot limit separately from malformed bounds", () => {
+  const vtables = createSwiftClassVtableDecoder({
+    result: objcSwiftMetadataSchema.parse({ db_save_result: null }),
+    readers: {
+      u32: (address) =>
+        address === 0x230n ? 20_001 : address === 0x21cn ? 30_000 : 0,
+      relative: () => ({ kind: "null" }),
+      location: () => ({ address: null, file_offset: null }),
+      evidence: () => [],
+      executable: () => false,
+      admit: () => true,
+    },
+  });
+  vtables.visitor.descriptor({
+    record: 0x100n,
+    descriptor: 0x200n,
+    flags: 0x80000010,
+    name: "Widget",
+    context: {
+      module: "Test",
+      path: "Widget",
+      depth: 2,
+      anonymous: false,
+      reason: null,
+      walkLimited: false,
+    },
+  });
+  expect(vtables.facts().issues).toContainEqual(
+    expect.objectContaining({ message: "Swift vtable count exceeds 20000" }),
+  );
 });
 
 it("preserves unsupported type-metadata tag reasons instead of reporting null", () => {

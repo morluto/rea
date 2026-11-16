@@ -32,6 +32,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const identity = { kind: z.literal("javascript-routes") };
 const paging = {
@@ -348,8 +349,8 @@ export const projectJavaScriptRoutesView = (
       path: identity.data.input_path,
       sha256: identity.data.root_artifact_sha256,
     };
-    const subject = parent.subject;
-    if (subject != null && subject.digest.sha256 !== artifact.sha256)
+    const subject = evidenceFileTarget(parent);
+    if (subject != null && subject.sha256 !== artifact.sha256)
       return err(
         inputError(
           "Parent subject does not match its application artifact identity.",
@@ -425,10 +426,7 @@ export const projectJavaScriptRoutesView = (
         },
       },
       byte_limited: false,
-      coverage: completeWithinViewCoverage(
-        inventory.routes.length,
-        inventory.routes.length,
-      ),
+      coverage: completeWithinViewCoverage(inventory.routes.length),
     };
     return jsonValueByteLength(summary, PROJECTION_BYTES) > PROJECTION_BYTES
       ? tooLarge()

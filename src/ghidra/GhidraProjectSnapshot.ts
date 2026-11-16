@@ -1,4 +1,5 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { ghidraFileFailure } from "./GhidraFileArtifacts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
@@ -13,11 +14,11 @@ import {
   sep,
 } from "node:path";
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type ArtifactResourceScope,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import {
   sameRegularFileState,
   RegularFileChangedError,
@@ -229,7 +230,7 @@ const pathsOverlap = (first: string, second: string): boolean => {
       rel === "" ||
       (!isAbsolute(rel) &&
         rel !== ".." &&
-        !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+        !rel.startsWith(`..${HOST_PLATFORM.platform === "win32" ? "\\" : "/"}`))
     );
   };
   return contains(first, second) || contains(second, first);

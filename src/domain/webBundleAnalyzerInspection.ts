@@ -1,12 +1,14 @@
+import type { JavaScriptMemberMutationAllowance } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { JavaScriptSemanticPrecisionInput } from "./javascript/javascriptSemanticPrecision.js";
 import {
   isBrowserNetworkRequest,
   createXhrOpenRequestQuery,
 } from "./javascript/javascriptNetworkRequests.js";
 import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSemanticState.js";
-import type {
-  AnalysisAccumulator,
-  IncludedScript,
+import {
+  createWebBundleAnalysisAccumulator,
+  type AnalysisAccumulator,
+  type IncludedScript,
 } from "./webBundleAnalyzerState.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascript/javascriptRouteScan.js";
@@ -21,7 +23,7 @@ import {
 } from "./javascript/javascriptSemanticTraversal.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptOpenReceiverFact } from "./javascript/javascriptSemanticReceiverFacts.js";
-import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticMapOperations.js";
+import { isIntrinsicMapLookup } from "./javascript/javascriptSemanticIntrinsicInstances.js";
 import {
   semanticStaticPropertyKey,
   isNullishJavaScriptSyntax,
@@ -55,6 +57,7 @@ export const analyzeScript = (
   script: IncludedScript,
   accumulator: AnalysisAccumulator,
   precision?: JavaScriptSemanticPrecisionInput,
+  memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): JavaScriptRouteSourceFacts | null => {
   const file = parseJavaScriptSource(script.source.artifact.text);
   if (file === null) {
@@ -70,6 +73,7 @@ export const analyzeScript = (
       file.program,
       undefined,
       precision,
+      memberMutationAllowance,
     ),
   );
   completeSemanticSteps(index.indexAmbientWritesSteps());
@@ -238,12 +242,14 @@ const inspectCall = (
     openReceiverFacts.get(node.start ?? -1),
   );
   const mapLookup = isMapLookup(node);
-  const knownRequest =
-    isBrowserNetworkRequest(node, bindings) || isXhrRequest(node);
+  const xhrRequest = isXhrRequest(node);
+  const knownRequest = isBrowserNetworkRequest(node, bindings) || xhrRequest;
   const networkEndpoint =
     endpoint !== undefined && !mapLookup
       ? { ...endpoint, kind: knownRequest ? "endpoint" : endpoint.kind }
       : undefined;
+  if (endpoint === undefined && knownRequest && !mapLookup)
+    addProvenRequestEndpoint(script, node, name, xhrRequest, accumulator);
   if (networkEndpoint?.kind === "candidate")
     addEndpointCandidate(
       script,
@@ -347,6 +353,48 @@ const addEndpointCandidate = (
   );
 };
 
+/**
+ * A proven browser request whose URL the callee spelling did not classify:
+ * the URL is XMLHttpRequest `open`'s second argument, otherwise the first.
+ * A literal URL is an endpoint; any other present argument is kept as an
+ * unknown endpoint at its call site rather than dropped.
+ */
+const addProvenRequestEndpoint = (
+  script: IncludedScript,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  name: string,
+  xhrRequest: boolean,
+  accumulator: AnalysisAccumulator,
+): void => {
+  const url = xhrRequest ? node.arguments[1] : node.arguments[0];
+  if (url === undefined) return;
+  const mechanism = `call:${name}`;
+  const literal = stringValue(url);
+  if (literal !== undefined) {
+    addFinding({
+      collection: accumulator.endpoints,
+      script,
+      rawValue: literal,
+      mechanism,
+      node,
+      accumulator,
+    });
+    return;
+  }
+  const site = location(script.script_key, node);
+  addUnique(
+    accumulator,
+    compositeKey([
+      "unresolved-endpoint",
+      mechanism,
+      site.script_key,
+      String(site.line),
+      String(site.column),
+    ]),
+    () => accumulator.unresolvedEndpoints.push({ mechanism, location: site }),
+  );
+};
+
 const addFinding = (context: AddFindingContext): void => {
   const value = sanitizeEndpointCandidate(context.rawValue);
   const key = `finding\0${context.mechanism}\0${context.script.script_key}\0${value}`;
@@ -434,6 +482,15 @@ const addWebMcpDeclaration = (
       location: location(script.script_key, node),
     }),
   );
+};
+
+/** Inferences read from script text alone, without syntax or semantic facts. */
+export const scriptTextInferences = (
+  script: IncludedScript,
+): AnalysisAccumulator["inferences"] => {
+  const accumulator = createWebBundleAnalysisAccumulator();
+  detectVendorFingerprints(script, accumulator);
+  return accumulator.inferences;
 };
 
 const detectVendorFingerprints = (

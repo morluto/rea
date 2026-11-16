@@ -10,11 +10,13 @@ import {
   pythonPycFixture,
   pythonPycHeader,
 } from "./PythonPyc.fixture.js";
-import { parsePythonPyc } from "./PythonPycParser.js";
 import {
-  PythonPycFormatFailure,
-  PythonPycResourceFailure,
-} from "./PythonPyc.errors.js";
+  emptyPythonPycWork,
+  parsePythonPyc,
+  type PythonPycWork,
+} from "./PythonPycParser.js";
+import { PythonPycResourceFailure } from "./PythonPyc.errors.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 
 const defaults = inspectPythonPycInputSchema.parse({
   path: "/artifacts/sample.pyc",
@@ -26,7 +28,7 @@ const root = (report: PythonPyc) => {
   return code;
 };
 
-const parse = (bytes: Buffer) =>
+const parse = (bytes: Buffer, work?: PythonPycWork) =>
   parsePythonPyc(
     bytes,
     {
@@ -35,7 +37,14 @@ const parse = (bytes: Buffer) =>
       bytes: bytes.length,
     },
     defaults,
+    work,
   );
+
+/** The report and the work the parser counted while building it. */
+const measure = (bytes: Buffer) => {
+  const work = emptyPythonPycWork();
+  return { report: parse(bytes, work), work };
+};
 
 it("reads 3.7, 3.10 and 3.12 layouts including nested code", () => {
   const py37 = parse(pythonPycFixture("py37"));
@@ -133,9 +142,31 @@ it("decodes a hash-based header and a FLAG_REF top-level code object", () => {
 
 it("rejects truncated marshal without partial success", () => {
   expect(() => parse(pythonPycFixture("py311").subarray(0, 20))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
 });
+
+it.each([
+  { type: 0x67, message: "Marshal stream ended inside a float." },
+  { type: 0x49, message: "Marshal stream ended inside a 64-bit integer." },
+])(
+  "reports a truncated 8-byte marshal value 0x$type as a malformed truncation",
+  ({ type, message }) => {
+    const bytes = Buffer.concat([
+      pythonPycHeader(3571),
+      Buffer.from([type, 0, 0, 0, 0]),
+    ]);
+    expect(() => parse(bytes)).toThrow(
+      expect.objectContaining({
+        message,
+        failure: expect.objectContaining({
+          kind: "malformed",
+          field: "truncated",
+        }),
+      }),
+    );
+  },
+);
 
 it.each([
   { magic: 3571, layout: "py311", version: "3.13" },
@@ -169,8 +200,13 @@ it("keeps CPython 3.16 pre-release magics outside standalone decoder coverage", 
 it("does not qualify a magic outside the pinned identity table", () => {
   expect(() => parse(pythonPycHeader(1))).toThrow(
     expect.objectContaining({
-      kind: "unsupported",
-      message: expect.stringMatching(/not a pinned CPython identity.*header/iu),
+      failure: expect.objectContaining({
+        kind: "unsupported",
+        format: "python-pyc",
+        detail: expect.stringMatching(
+          /not a pinned CPython identity.*header/iu,
+        ),
+      }),
     }),
   );
 });
@@ -385,9 +421,10 @@ it("lists a code object shared through TYPE_REF once and refers to it by index",
   ]);
   expect(small.coverage.code_objects).toBe(4);
   expect(pythonPycSchema.safeParse(small).success).toBe(true);
-  const started = Date.now();
-  const deep = parse(sharedChain(25));
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report: deep, work } = measure(sharedChain(25));
+  // Each level references its child three times; every step stays one per level.
+  expect(work.codeVisits).toBe(26);
+  expect(work.constSummaries).toBe(26);
   expect(deep.coverage.code_objects).toBe(26);
   expect(JSON.stringify(deep).length).toBeLessThan(64 * 1024);
 });
@@ -481,10 +518,10 @@ it("charges long digits to the string budget and keeps large previews bounded", 
   expect(root(report).consts[1]).toMatchObject({ kind: "int", value: null });
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
   expect(() => parse(withConsts([marshalLong([1, 0])]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
   expect(() => parse(withConsts([marshalLong([0x8000])]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -522,10 +559,10 @@ it("decodes marshal strings with CPython surrogatepass rules", () => {
   });
   expect(() =>
     parse(withConsts([marshalUnicode(Buffer.from([0xf0, 0x90, 0x80]))])),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
   expect(() =>
     parse(withConsts([marshalUnicode(Buffer.from([0xc0, 0x80]))])),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
@@ -533,7 +570,7 @@ it.each([0x73, 0x74, 0x75, 0x61, 0x41, 0x28, 0x5b, 0x3c, 0x3e])(
   (tag) => {
     expect(() =>
       parse(withConsts([Buffer.concat([Buffer.from([tag]), i32(-1)])])),
-    ).toThrow(PythonPycFormatFailure);
+    ).toThrow(ParseFailureError);
   },
 );
 
@@ -589,7 +626,7 @@ it("rejects a code object whose location tables are not bytes", () => {
         marshalCode("py311", { exceptiontableObject: Buffer.from([0x53]) }),
       ]),
     ),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("hashes one shared byte string no matter how many times it is referenced", () => {
@@ -608,9 +645,9 @@ it("hashes one shared byte string no matter how many times it is referenced", ()
       ]),
     }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  expect(work.constSummaries).toBe(1);
+  expect(work.digestedBytes).toBeLessThan(2 * payload.length);
   expect(root(report).consts).toHaveLength(refs + 1);
   expect(root(report).consts[refs]).toEqual(root(report).consts[0]);
   expect(root(report).consts[0]).toMatchObject({
@@ -658,7 +695,7 @@ it("rejects constant tables whose copies exceed max_objects", () => {
 
 it("rejects NULL tuple items and mismatched local kinds", () => {
   expect(() => parse(withConsts([Buffer.from([0x30])]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
   expect(
     root(parse(withConsts([Buffer.from([0x7b, 0x4e, 0x54, 0x30])]))).consts[0],
@@ -676,7 +713,7 @@ it("rejects NULL tuple items and mismatched local kinds", () => {
         }),
       ]),
     ),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
   const matched = parse(
     Buffer.concat([
       pythonPycHeader(3531),
@@ -778,9 +815,9 @@ it("reuses a shared integer's bit length instead of converting every reference",
       ]),
     }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  // One summary carries the bit length for the integer and all its references.
+  expect(work.constSummaries).toBe(1);
   expect(root(report).consts[0]).toEqual({
     kind: "int",
     bits: digits.length * 15,
@@ -881,7 +918,7 @@ it("reads marshal version 0 text floats inside a code object", () => {
   ]);
   for (const text of ["1.5x", "", "0x1.8p1", " 1.5"]) {
     expect(() => parse(withConsts([textFloat(text)]))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
   }
 });
@@ -993,10 +1030,10 @@ it("applies Python container rules before reporting lengths", () => {
         ]),
       ]),
     ),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
   expect(() =>
     parse(withConsts([setOf(Buffer.concat([Buffer.from([0x5b]), u32(0)]))])),
-  ).toThrow(PythonPycFormatFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("rejects a shared tuple key before its expansion doubles without bound", () => {
@@ -1011,9 +1048,11 @@ it("rejects a shared tuple key before its expansion doubles without bound", () =
   const bytes = withConsts([
     Buffer.concat([Buffer.from([0x3c]), u32(1), body]),
   ]);
-  const started = Date.now();
-  expect(() => parse(bytes)).toThrow(PythonPycResourceFailure);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const work = emptyPythonPycWork();
+  expect(() => parse(bytes, work)).toThrow(PythonPycResourceFailure);
+  // Refused while the walk and its keys are still linear in the depth.
+  expect(work.keySteps).toBeLessThanOrEqual(depth * 4);
+  expect(work.keyBytes).toBeLessThanOrEqual(depth * 8);
   let shallow = Buffer.concat([Buffer.from([0xe9]), i32(1)]);
   for (let index = 7; index >= 0; index -= 1)
     shallow = Buffer.concat([
@@ -1045,9 +1084,10 @@ it("lists a shared container's code objects once per owner and charges each copy
       consts: [container, ...Array.from({ length: 7 }, () => marshalRef(0))],
     }),
   ]);
-  const started = Date.now();
-  const shared = parse(repeated);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report: shared, work } = measure(repeated);
+  // Eight owners share one walk of the container and its children.
+  expect(work.listedChildren).toBe(copies);
+  expect(work.nestedSteps).toBe(copies + 1);
   expect(shared.code_objects.map((code) => code.name)).toEqual([
     "<module>",
     "child",
@@ -1164,14 +1204,12 @@ it("rejects code keys and members whose consts are unhashable", () => {
     Buffer.concat([Buffer.from([0x7b]), key, int, Buffer.from([0x30])]);
   for (const key of [code(list), code(tuple(int, list)), code(code(list))]) {
     expect(() => parse(withConsts([setOf(0x3c, key)]))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
     expect(() => parse(withConsts([setOf(0x3e, key)]))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
-    expect(() => parse(withConsts([dictKey(key)]))).toThrow(
-      PythonPycFormatFailure,
-    );
+    expect(() => parse(withConsts([dictKey(key)]))).toThrow(ParseFailureError);
   }
   const cyclic = Buffer.concat([
     Buffer.from([0x29 | 0x80, 1]),
@@ -1183,7 +1221,7 @@ it("rejects code keys and members whose consts are unhashable", () => {
     }),
   ]);
   expect(() => parse(withConsts([cyclic, setOf(0x3c, marshalRef(1))]))).toThrow(
-    PythonPycFormatFailure,
+    ParseFailureError,
   );
 
   // A set inside a tuple that reaches the unfinished tuple, directly, inside
@@ -1211,7 +1249,7 @@ it("rejects code keys and members whose consts are unhashable", () => {
           ]),
         ]),
       ),
-    ).toThrow(PythonPycFormatFailure);
+    ).toThrow(ParseFailureError);
 
   const unhashed = parse(withConsts([tuple(code(list))]));
   expect(unhashed.coverage.status).toBe("complete");
@@ -1276,10 +1314,10 @@ it("walks a wide dictionary once per child instead of copying it each step", () 
     );
   pieces.push(Buffer.from([0x30]));
   const bytes = withConsts([Buffer.concat(pieces)]);
-  const started = Date.now();
-  const report = parse(bytes);
-  // Rebuilding the child list on every key took about 700ms for 8,000 entries.
-  expect(Date.now() - started).toBeLessThan(250);
+  const { report, work } = measure(bytes);
+  // The dictionary's key and value slots are listed once, not once per step.
+  expect(work.listedChildren).toBe(2 * keys);
+  expect(work.nestedSteps).toBe(2 * keys + 1);
   expect(root(report).consts[0]).toEqual({ kind: "dict", length: keys });
   expect(root(report).nested_code).toEqual([1]);
   expect(report.code_objects[1]?.name).toBe("inside");
@@ -1486,9 +1524,9 @@ it("follows a long TYPE_REF chain without a recursive walk", () => {
     pythonPycHeader(3531),
     marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
   ]);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  expect(work.listedChildren).toBe(links);
+  expect(work.nestedSteps).toBe(2 * links);
   expect(report.code_objects.map((code) => code.name)).toEqual([
     "<module>",
     "hidden",
@@ -1522,7 +1560,7 @@ it("rejects negative CPython code counts and keeps them out of the schema", () =
     "stacksize",
   ] as const) {
     expect(() => parse(negative("py311", { [field]: 0xffffffff }))).toThrow(
-      PythonPycFormatFailure,
+      ParseFailureError,
     );
   }
   expect(() => parse(negative("py37", { nlocals: 0xffffffff }))).toThrow(
@@ -1629,9 +1667,9 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
     marshalCode("py311", { constsObject: Buffer.concat(pieces) }),
   ]);
   expect(bytes.length).toBeLessThan(64_000);
-  const started = Date.now();
-  const report = parse(bytes);
-  expect(Date.now() - started).toBeLessThan(1000);
+  const { report, work } = measure(bytes);
+  // Two key steps per link: each tuple and its reference to the previous one.
+  expect(work.keySteps).toBe(2 * links + 1);
   expect(root(report).consts[0]).toEqual({ kind: "tuple", length: links + 1 });
   expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
   expect(report.coverage.status).toBe("complete");

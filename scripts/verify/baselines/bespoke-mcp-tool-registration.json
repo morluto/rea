@@ -1,0 +1,8 @@
+{
+  "src/server/registerCloseLifecycleTool.ts": 1,
+  "src/server/registerDesktopBuildTools.ts": 2,
+  "src/server/registerElectronTools.ts": 6,
+  "src/server/registerEvidenceTools.ts": 1,
+  "src/server/registerResetInvestigationTool.ts": 1,
+  "src/server/registerReverseEngineeringTools.ts": 2
+}

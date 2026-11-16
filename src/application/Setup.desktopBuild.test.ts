@@ -6,7 +6,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   DesktopBuildSetupFacts,
   DesktopBuildSetupHost,
-} from "./SetupDesktopBuild.js";
+} from "../ports/DesktopBuildHost.js";
 import type { SetupOptions, SetupProviderEnvironment } from "./SetupTypes.js";
 import { supportedClientRegistrationProfile } from "./SupportedClients.js";
 

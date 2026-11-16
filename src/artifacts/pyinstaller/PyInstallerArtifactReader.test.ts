@@ -5,7 +5,7 @@ import { buffer } from "node:stream/consumers";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   materializeArtifactInventory,
@@ -1144,9 +1144,7 @@ it("rejects a stored member whose declared size disagrees with its bytes", async
   );
   await expect(scanCanonicalArtifactInventory(path)).rejects.toMatchObject({
     reason: "integrity",
-    message: expect.stringContaining(
-      "Stored CArchive member size disagrees with its table entry",
-    ),
+    integrityCheck: "layout-consistency",
   });
 });
 

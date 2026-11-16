@@ -82,11 +82,11 @@ Chọn các tác nhân, xem lại những thay đổi được đề xuất và 
 
 Quá trình thiết lập hỗ trợ Claude Code, Codex, Cursor, Gemini CLI, Grok Build và [các tác nhân khác](../getting-started/installation.md#supported-agents). Xem [cài đặt và thiết lập](../getting-started/installation.md) để cấu hình trình phân tích và đăng ký MCP thủ công.
 
-MCP mặc định dùng schema đầu vào gọn. Để có hướng dẫn đầy đủ về trường và xác thực lồng nhau, đặt `REA_MCP_INPUT_SCHEMA_PROFILE=full` trong đăng ký MCP. Cả hai cấu hình giữ toàn bộ công cụ và cùng xác thực chuẩn ở máy chủ; xem hướng dẫn hợp đồng MCP.
+MCP mặc định dùng schema đầu vào gọn. Hướng dẫn mà schema gọn lược bỏ được nối sau mô tả công cụ. Toàn bộ công cụ và xác thực chuẩn ở máy chủ không thay đổi; xem hướng dẫn hợp đồng MCP.
 
 Thiết lập đăng ký trực tiếp runtime đã chọn và script khởi chạy REA. Khi dùng trình chạy gói, hãy giữ mục cache và runtime đó; tải gói từ một thư mục đáng tin cậy bên ngoài dự án đích. Xem hướng dẫn cài đặt.
 
-Schema đầu ra đầy đủ được công bố theo mặc định. Nếu client giới hạn `tools/list`, hãy đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` hoặc `off` trong cấu hình MCP. Xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
+Theo mặc định, schema đầu ra được lược khỏi `tools/list`: không API mô hình nào đọc chúng, và REA tự xác thực mọi kết quả. Đặt `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` trong cấu hình MCP để công bố từng schema đầu ra trong giới hạn 4096 byte. Với mọi thiết lập, xác thực phía server và kết quả có cấu trúc vẫn đầy đủ. Xem mục “Output schemas” trong hướng dẫn hợp đồng MCP.
 
 ### Hỏi tác nhân
 

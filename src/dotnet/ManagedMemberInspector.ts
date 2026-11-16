@@ -2,7 +2,7 @@ import {
   admitManagedProjection,
   managedDecodeBudget,
   ManagedRepresentationFailure,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedMemberInspectionSchema,
@@ -11,16 +11,18 @@ import {
 } from "../domain/managed/managedArtifact.js";
 import {
   readManagedPeLayout,
+  type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
+} from "../domain/managed/managedPeReader.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 import {
   readManagedResourceDirectory,
   readManagedMetadataInventory,
   readManagedModuleIdentity,
-} from "./ManagedMetadataInventory.js";
-import { managedMetadataTypeNames } from "./ManagedMetadataInventoryRows.js";
+} from "../domain/managed/managedMetadataInventory.js";
+import { managedMetadataTypeNames } from "../domain/managed/managedMetadataInventoryRows.js";
 import { managedPeInspectionEnvelope } from "./ManagedPeInspectionEnvelope.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
   appendManagedParseIssues,
   ManagedReaderFailure,
@@ -28,18 +30,18 @@ import {
   uniqueManagedParseIssues,
   managedMetadataFailureStatus,
   type ManagedMetadataHeaderFacts,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 import {
   parseTypes,
   readTypeDefinitions,
   type DecodedTypeDefinition,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import { edgeTargets, methodSpecMethod } from "./ManagedMethodSpecs.js";
-import { managedSignatureTypeNames } from "./ManagedSignatureTypeNames.js";
+import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTypeNames.js";
 import { typeNameLookup } from "./ManagedTypeNames.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
+import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import {
   edges,
@@ -50,7 +52,7 @@ import {
   readReferencedMemberCores,
   type SelectedTypeTokens,
 } from "./ManagedMemberRows.js";
-import type { MetadataTokenFact } from "./ManagedMetadataHeaps.js";
+import type { MetadataTokenFact } from "../domain/managed/managedMetadataHeaps.js";
 
 const unavailable = (
   target: BinaryTarget,
@@ -85,6 +87,7 @@ const unavailable = (
       },
       types: [],
       signature_resolution: "type-names-v2",
+      assembly: null,
       nesting_read: false,
       exported_types: null,
       user_strings: null,
@@ -114,11 +117,9 @@ const unavailable = (
 const readMemberLayout = (
   bytes: Buffer,
   pe: ManagedPeLayout,
+  cli: ManagedCliHeader,
   maxRepresentationBytes?: number,
 ) => {
-  const cli = pe.cli;
-  if (cli === null)
-    throw new TypeError("Managed inventory requires CLI metadata");
   const rootOffset = pe.rvaToOffset(
     cli.metadata.rva,
     cli.metadata.size,
@@ -164,6 +165,35 @@ const selectTypes = (
 };
 
 /**
+ * Literals sit beside the member inventory with their own coverage, so a
+ * capacity failure while decoding them keeps the member facts and reports the
+ * literals as not examined to completion.
+ */
+const withoutUserStrings = (
+  inspection: ManagedMemberInspection,
+  failure: ManagedRepresentationFailure,
+): ManagedMemberInspection =>
+  // Without the literals the members can still exceed capacity; that report
+  // already explains the shared limit.
+  inspection.coverage.issues.some(
+    ({ code, scope }) =>
+      code === failure.issue.code && scope === failure.issue.scope,
+  )
+    ? inspection
+    : managedMemberInspectionSchema.parse({
+        ...inspection,
+        user_strings: {
+          state: "partial",
+          literals: [],
+          issues: [{ ...failure.issue, scope: "metadata.#US" }],
+        },
+        limitations: [
+          ...inspection.limitations,
+          "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
+        ],
+      });
+
+/**
  * Inspect metadata members and method bodies without loading target code.
  * Selected type names restrict full decoding to members of those exact types.
  * A caller that never reads literals, such as member comparison, can skip
@@ -193,7 +223,7 @@ export const inspectManagedMembersBytes = (
     !Number.isSafeInteger(methodLimit) ||
     methodLimit < 0
   )
-    throw new RangeError(
+    throw invariantViolation(
       "methodOffset and methodLimit must be non-negative safe integers",
     );
   const pe = readManagedPeLayout(bytes);
@@ -201,10 +231,14 @@ export const inspectManagedMembersBytes = (
     return unavailable(target, bytes, typeNames, { issue: pe.cliIssue });
   const issues: ManagedParseIssue[] = [];
   let recover: ReturnType<typeof prepareManagedMemberRecovery> | undefined;
+  // Set once the member facts are decoded and the literals start spending the
+  // shared budget; a capacity failure after that point is retried without them.
+  let decodingUserStrings = false;
   try {
     const { layout, memberLists } = readMemberLayout(
       bytes,
       pe,
+      pe.cli,
       maxRepresentationBytes,
     );
     const methodTotal = layout.table(6)?.rowCount ?? 0;
@@ -303,15 +337,17 @@ export const inspectManagedMembersBytes = (
       declarationTypeName,
       selected,
     });
-    const resolveTypeName = typeNameLookup(
+    const { name: resolveTypeName, isResolvedTypeSpec } = typeNameLookup(
       bytes,
       layout,
       ranges,
       issues,
       typeReferences,
+      signatureTypeName,
     );
     const memberRefs = parseMemberRefs(bytes, layout, {
       typeName: resolveTypeName,
+      isResolvedTypeSpec,
       signatureTypeName,
       displayTypeName,
       declarationTypeName,
@@ -418,6 +454,7 @@ export const inspectManagedMembersBytes = (
     }));
     // #US literals sit beside the member inventory and carry their own
     // coverage, so their issues never make member facts partial.
+    decodingUserStrings = readUserStrings;
     const userStrings = readUserStrings
       ? parseUserStrings(bytes, layout, {
           ...methods,
@@ -494,6 +531,19 @@ export const inspectManagedMembersBytes = (
     );
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
+      if (decodingUserStrings && cause instanceof ManagedRepresentationFailure)
+        return withoutUserStrings(
+          inspectManagedMembersBytes(bytes, target, {
+            ...(typeNames === undefined ? {} : { typeNames }),
+            methodOffset,
+            methodLimit,
+            userStrings: false,
+            ...(maxRepresentationBytes === undefined
+              ? {}
+              : { maxRepresentationBytes }),
+          }),
+          cause,
+        );
       if (
         recover !== undefined &&
         cause instanceof ManagedRepresentationFailure

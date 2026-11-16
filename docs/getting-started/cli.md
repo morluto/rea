@@ -220,7 +220,7 @@ or repeat it to select several types.
 Selection limits decoding to the selected types; member references remain an
 assembly-wide inventory, so the output can still be large.
 
-Select `--detail summary --evidence-bundle /absolute/path/members.json` to
+Select `--detail summary --evidence_output /absolute/path/members.json` to
 receive identity, selection, coverage, limitations and collection counts while
 saving the complete original Evidence in a new bundle. Summary requires that
 explicit destination; existing files are preserved. Later
@@ -229,6 +229,24 @@ without reopening the assembly. See
 [CLI summary and saved member rows](../guides/managed/managed-code-analysis.md#cli-summary-and-saved-member-rows)
 for the complete command sequence. Omitted or `--detail complete` retains the
 full inline response.
+
+`compare-managed-members` is a composite command. It runs
+`inspect-managed-members` on its baseline path and then on its candidate path,
+with the same `--type`, `--max-snapshot-bytes` and
+`--max-metadata-representation-bytes` options, and compares the two records as
+MCP `compare_managed_members` does:
+
+```bash
+rea compare-managed-members /absolute/path/v1/Assembly.dll /absolute/path/v2/Assembly.dll --type Example.Parser --json
+```
+
+The comparison Evidence records both selected paths and those options. Two
+identical spellings of one path select the same Evidence and are refused. When
+the candidate fails, the error names its argument. Every failure keeps each
+completed side's member Evidence in `details.argument_observations` as
+`{argument: "left" | "right", observation}`, beside any
+`details.partial_observation` the failing step retained itself, such as the
+completed comparison when cancellation arrives as it settles.
 
 Choose the workflow from the artifact's contents rather than its `.exe` or
 `.dll` extension. The managed parser requires PE/CLI metadata; it does not
@@ -871,11 +889,12 @@ from the bundle for every supported view kind. Bundles exported from MCP work
 for these commands. Its inline source form cannot also select a bundle.
 A missing ID is refused with `details.reason: "missing"`;
 supplying a bundle does not make incompatible Evidence valid for a workflow.
-`compare-managed-members` keeps its two assembly paths and an optional
-repeatable `--type` selection applied to both sides, and
-`compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
-option above selects an input; producer options that write a new bundle, such
-as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
+`compare-managed-members` keeps its two assembly paths and the
+[member inspection options](#managed-assemblies-net) it applies to both sides,
+and `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
+option above selects an input. Producers write a new bundle with
+`--evidence_output`; `inspect-managed-members` spelled that option
+`--evidence-bundle` in earlier releases.
 File selectors remain available only on contracts that explicitly support them.
 
 Compare two artifact inventories with `compare-artifacts`. It takes the same
@@ -978,9 +997,10 @@ as `node_modules/`, `dist/`, and `*.log`. Pattern-based exclusions record the
 matched pattern and whether it came from project, default, caller, or sensitive
 path policy. Links into excluded paths retain their internal target metadata;
 the exclusion explains why the target has no inventory entry, and the inventory
-remains partial. Exclusions record `entry_kind` when the importer observed it;
-older saved exclusions without that field have unknown kind. An excluded
-ancestor proves an internal descendant only when its kind is `directory`.
+remains partial. Every exclusion records `entry_kind` (`unknown` when the
+importer could not observe the kind); a saved graph whose exclusion lacks it is
+malformed. An excluded ancestor proves an internal descendant only when its kind
+is `directory`.
 Set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON array of ignore
 patterns when you want to mark selected paths as sensitive; those patterns are
 reported separately as configured-secret exclusions.

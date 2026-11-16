@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -24,12 +25,12 @@ const traceFixture = () => ({
   residual_unknowns: ["0x1010 owner unknown", "0x1020 owner unknown"],
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "pages retained native trace rows and preserves source coverage across %s offline handoff",
   async (profile) => {
     const result = traceFixture();
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "rea-workflow", name: "REA workflow", version: "1" },
       {
         operation: "trace_feature",

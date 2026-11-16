@@ -161,8 +161,23 @@ it("updates the main frame from a pre-arm root replacement without inventing a n
               timestamp: 21,
             },
           },
+          // The replaced root no longer scopes main-frame lifecycle rows.
+          {
+            method: "Page.lifecycleEvent",
+            sessionId: command.sessionId,
+            params: {
+              frameId: "frame-main",
+              loaderId: "loader-frame-main",
+              name: "load",
+              timestamp: 22,
+            },
+          },
         ]
       : undefined,
+  );
+
+  expect(observation.timeline).not.toContainEqual(
+    expect.objectContaining({ type: "lifecycle", frame_id: "frame-main" }),
   );
 
   expect(observation.timeline).not.toContainEqual(
@@ -395,16 +410,16 @@ it("ends an armed observation at a fatal protocol failure without waiting out it
     malformedEventOnMethod: "Page.setLifecycleEventsEnabled",
   });
   trackBrowser(browser);
-  const started = performance.now();
+  // The window outlasts every test deadline, so returning at all shows the
+  // fatal failure ended it; waiting it out turns into a deadline failure.
   const result = await new CdpBrowserProvider().observeSession(
     observeWebSessionInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
-      observation_ms: 10_000,
+      observation_ms: 600_000,
     }),
   );
-  expect(performance.now() - started).toBeLessThan(5_000);
   expect(result).toMatchObject({
     ok: false,
     error: { _tag: "BrowserObservationError", reason: "protocol_error" },

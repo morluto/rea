@@ -3,6 +3,7 @@ import {
   rethrowProcessOwnershipInspectionFailure,
 } from "../../../src/process/ProcessInspectionCancellation.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { OwnerCancellation } from "../../../src/domain/analysisErrorCore.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
@@ -276,11 +277,16 @@ it.skipIf(process.platform === "win32")(
       expect(failure.message).toMatch(
         /ownership helper.*xcrun.*timed out after 3000 ms/iu,
       );
-      expect(failure.message).toContain("REA_SWIFTC_COMPILE_TIMEOUT_MS");
-      expect(failure.message).toContain("1..2147483647");
-      expect(failure.message).toContain("120000 ms");
-      expect(failure.message).toMatch(/restart REA/i);
-      expect(failure.message).toMatch(/next ownership-helper compile/i);
+      expect(failure.compileTimeout?.limit).toEqual({
+        control_kind: "environment",
+        environment: "REA_SWIFTC_COMPILE_TIMEOUT_MS",
+        effective_value: 3_000,
+        unit: "ms",
+        minimum: 1,
+        maximum: 2_147_483_647,
+        default_value: 120_000,
+        applies_at: "next_startup",
+      });
       expect(failure.message).toContain(
         "error: PCH was compiled with module cache path that differs",
       );
@@ -1066,10 +1072,8 @@ it.skipIf(process.platform === "win32")(
       );
       if (!isProcessOwnershipInspectionCancellation(outcome.cause))
         throw new Error("Expected producer-owned inspection cancellation");
-      expect(outcome.cause.reason).toBeInstanceOf(DOMException);
-      if (!(outcome.cause.reason instanceof DOMException))
-        throw new Error("Expected the reader's default abort reason");
-      expect(outcome.cause.reason.name).toBe("AbortError");
+      // Closing the reader is owner-initiated, so it carries the typed reason.
+      expect(outcome.cause.reason).toBe(OwnerCancellation.ownerClosed);
       await expect(access(state.root)).rejects.toThrow();
       await expect(reader.prepare()).rejects.toMatchObject({
         _tag: "ProcessAdmissionError",
@@ -1670,7 +1674,7 @@ const waitForChildReadiness = async (
   const exit = once(child, "exit", { signal: listeners.signal });
   try {
     await awaitAcknowledgement(
-      message.then(() => undefined),
+      message,
       exit,
       "title-mutating child readiness",
       timeoutMs,

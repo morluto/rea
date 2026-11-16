@@ -6,6 +6,7 @@ import { browserOriginSchema } from "./browserObservation.js";
 import {
   webBundleAnalysisSchema,
   type WebBundleAnalysis,
+  type WebBundleCallSite,
 } from "./webBundleAnalysis.js";
 import {
   createWebBundleAnalysisAccumulator,
@@ -59,16 +60,7 @@ export const buildCapturedWebBundleAnalysis = (
       { readonly status: "unavailable" }
     > => result.status === "unavailable",
   );
-  const accumulator = mergeScriptResults(
-    orderedResults.filter(
-      (
-        result,
-      ): result is Extract<
-        WebBundleScriptAnalysis,
-        { readonly status: "analyzed" }
-      > => result.status === "analyzed",
-    ),
-  );
+  const accumulator = mergeScriptResults(orderedResults);
   const attemptedScripts = orderedResults.filter(
     (result) =>
       !(result.status === "unavailable" && result.reason === "not_started"),
@@ -186,6 +178,7 @@ export const buildCapturedWebBundleAnalysis = (
       failedScripts: accumulator.failedScripts,
       recoveredScripts: accumulator.recoveredScripts,
       widenedScripts: accumulator.widenedScripts,
+      unresolvedEndpoints: accumulator.unresolvedEndpoints,
       unavailableAnalyses,
       sourceMaps,
       omittedScripts,
@@ -203,13 +196,19 @@ export const buildCapturedWebBundleAnalysis = (
 };
 
 const mergeScriptResults = (
-  results: readonly Extract<
-    WebBundleScriptAnalysis,
-    { readonly status: "analyzed" }
-  >[],
+  results: readonly WebBundleScriptAnalysis[],
 ): AnalysisAccumulator => {
   const accumulator = createWebBundleAnalysisAccumulator();
   for (const result of results) {
+    if (result.status === "unavailable") {
+      // A refused script still parsed; its text inferences remain.
+      if (result.partial === undefined) continue;
+      accumulator.parsedScripts += 1;
+      if (result.partial.parse_status === "recovered")
+        accumulator.recoveredScripts.push(result.script_key);
+      appendAll(accumulator.inferences, result.partial.inferences);
+      continue;
+    }
     accumulator.visitedNodes += result.visited_ast_nodes;
     if (result.parse_status === "failed") {
       accumulator.failedScripts.push(result.script_key);
@@ -223,6 +222,10 @@ const mergeScriptResults = (
     appendAll(accumulator.edges, result.observations.edges);
     appendAll(accumulator.routes, result.observations.routes);
     appendAll(accumulator.endpoints, result.observations.endpoints);
+    appendAll(
+      accumulator.unresolvedEndpoints,
+      result.observations.unresolved_endpoints,
+    );
     appendAll(accumulator.webMcp, result.observations.webmcp_declarations);
     appendAll(accumulator.inferences, result.inferences);
   }
@@ -269,6 +272,7 @@ interface UnknownsInput {
   readonly failedScripts: readonly string[];
   readonly recoveredScripts: readonly string[];
   readonly widenedScripts: readonly string[];
+  readonly unresolvedEndpoints: readonly WebBundleCallSite[];
   readonly unavailableAnalyses: readonly Extract<
     WebBundleScriptAnalysis,
     { readonly status: "unavailable" }
@@ -325,12 +329,41 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
   ...(input.unavailableAnalyses.length === 0
     ? []
     : groupUnavailableAnalyses(input.unavailableAnalyses).map(
-        ({ reason, detail, affectedScriptKeys }) => ({
+        ({
+          reason,
+          detail,
+          limit,
+          remediation,
+          refusedPhase,
+          affectedScriptKeys,
+        }) => ({
           dimension: "javascript_analysis" as const,
           reason: analysisUnavailableReason(reason, detail),
           affected_script_keys: affectedScriptKeys,
+          ...(limit === undefined ? {} : { limit }),
+          ...(remediation === undefined ? {} : { remediation }),
+          ...(refusedPhase === undefined
+            ? {}
+            : { refused_phase: refusedPhase }),
         }),
       )),
+  ...(input.unresolvedEndpoints.length === 0
+    ? []
+    : [
+        {
+          dimension: "endpoints" as const,
+          reason:
+            "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+          affected_script_keys: [
+            ...new Set(
+              input.unresolvedEndpoints.map(
+                ({ location }) => location.script_key,
+              ),
+            ),
+          ],
+          call_sites: [...input.unresolvedEndpoints],
+        },
+      ]),
   ...(input.widenedScripts.length === 0
     ? []
     : [
@@ -399,29 +432,42 @@ const groupUnavailableAnalyses = (
 ): {
   readonly reason: (typeof unavailable)[number]["reason"];
   readonly detail: string | undefined;
+  readonly limit: (typeof unavailable)[number]["limit"];
+  readonly remediation: string | undefined;
+  readonly refusedPhase:
+    | NonNullable<(typeof unavailable)[number]["partial"]>["refused_phase"]
+    | undefined;
   readonly affectedScriptKeys: string[];
 }[] => {
+  // Scripts share an unknown only when their structured recovery agrees too.
   const groups = new Map<
-    (typeof unavailable)[number]["reason"],
-    Map<string | undefined, string[]>
-  >();
-  for (const { reason, detail, script_key } of unavailable) {
-    let byDetail = groups.get(reason);
-    if (byDetail === undefined) {
-      byDetail = new Map();
-      groups.set(reason, byDetail);
+    string,
+    {
+      readonly entry: (typeof unavailable)[number];
+      readonly affectedScriptKeys: string[];
     }
-    const keys = byDetail.get(detail) ?? [];
-    keys.push(script_key);
-    byDetail.set(detail, keys);
+  >();
+  for (const entry of unavailable) {
+    const key = JSON.stringify([
+      entry.reason,
+      entry.detail ?? null,
+      entry.limit ?? null,
+      entry.remediation ?? null,
+      entry.partial?.refused_phase ?? null,
+    ]);
+    const group = groups.get(key);
+    if (group === undefined)
+      groups.set(key, { entry, affectedScriptKeys: [entry.script_key] });
+    else group.affectedScriptKeys.push(entry.script_key);
   }
-  return [...groups].flatMap(([reason, byDetail]) =>
-    [...byDetail].map(([detail, affectedScriptKeys]) => ({
-      reason,
-      detail,
-      affectedScriptKeys,
-    })),
-  );
+  return [...groups.values()].map(({ entry, affectedScriptKeys }) => ({
+    reason: entry.reason,
+    detail: entry.detail,
+    limit: entry.limit,
+    remediation: entry.remediation,
+    refusedPhase: entry.partial?.refused_phase,
+    affectedScriptKeys,
+  }));
 };
 
 const analysisUnavailableReason = (

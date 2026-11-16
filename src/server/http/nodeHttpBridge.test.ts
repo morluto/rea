@@ -10,6 +10,7 @@ import {
   type WebResponseOptions,
 } from "./nodeHttpBridge.js";
 import { waitFor } from "../../../tests/support/testWait.js";
+import { CallerAbort } from "../../domain/analysisErrorCore.js";
 
 const servers: Server[] = [];
 const encoder = new TextEncoder();
@@ -241,11 +242,11 @@ it("streams response chunks as the handler produces them", async () => {
 });
 
 it("aborts the web Request and cancels its response body when the client leaves", async () => {
-  let aborted = false;
+  let aborted: unknown;
   let cancelled = false;
   const origin = await serve((request) => {
     request.signal.addEventListener("abort", () => {
-      aborted = true;
+      aborted = request.signal.reason;
     });
     return new Response(
       new ReadableStream({
@@ -268,7 +269,8 @@ it("aborts the web Request and cancels its response body when the client leaves"
   await reader.read();
   controller.abort();
   await waitFor(() => {
-    expect(aborted).toBe(true);
+    expect(aborted).toBeInstanceOf(CallerAbort);
+    expect(aborted).toMatchObject({ kind: "client-disconnected" });
     expect(cancelled).toBe(true);
   });
 });

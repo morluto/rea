@@ -82,11 +82,11 @@ npx rea-agents setup
 
 设置流程支持 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他智能体](../getting-started/installation.md#supported-agents)。提供方配置和手动注册 MCP 的方法见[安装与设置](../getting-started/installation.md)。
 
-MCP 默认使用紧凑输入 Schema 来减少上下文开销。需要完整字段说明和嵌套验证细节时，在 MCP 注册中设置 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。两种配置都保留完整工具集和规范的服务端验证；见 MCP 合约指南。
+MCP 默认使用紧凑输入 Schema 来减少上下文开销。紧凑 Schema 省略的说明会接在工具描述之后。完整工具集和规范的服务端验证保持不变；见 MCP 合约指南。
 
 设置会直接注册所选运行时和 REA 入口脚本。使用包运行器时，请保留其缓存条目和运行时，并从目标项目以外的可信目录获取包。 请参阅安装指南。
 
-默认公布完整输出 Schema。如果客户端限制 `tools/list` 的大小，请在 MCP 注册中设置 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 或 `off`。服务端验证和结构化结果仍保持完整。 请参阅 MCP 合约指南中的“Output schemas”。
+默认从 `tools/list` 中省略输出 Schema：没有任何模型 API 读取它们，REA 会自行验证每个结果。在 MCP 注册中设置 `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` 可在 4096 字节内公布每个输出 Schema。所有设置下，服务端验证和结构化结果仍保持完整。 请参阅 MCP 合约指南中的“Output schemas”。
 
 ### 询问智能体
 

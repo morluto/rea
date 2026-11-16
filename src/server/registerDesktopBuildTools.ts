@@ -9,7 +9,7 @@ import type {
   DesktopBuildComputers,
   ForwardedResult,
 } from "../application/desktop/DesktopBuildComputers.js";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import { DesktopBuildSteps } from "../application/desktop/DesktopBuildSteps.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
@@ -37,16 +37,15 @@ const admit = <Schema extends z.ZodType>(
       );
 };
 
-const HEARTBEAT_MS = 5_000;
-
 /**
- * Report progress every few seconds while a long build step works, so a
+ * Report progress every `intervalMs` while a long build step works, so a
  * client's request timeout can reset; the step reports on the same
  * reporter, whose notifications keep one order.
  */
 const withHeartbeat = async <Value>(
   context: ServerContext,
   phase: string,
+  intervalMs: number,
   run: (progress: ProgressReporter) => Promise<Value>,
 ): Promise<Value> => {
   const progress = mcpProgressReporter(context);
@@ -60,7 +59,7 @@ const withHeartbeat = async <Value>(
         message: `working (${String(Math.round((Date.now() - startedAt) / 1000))} s)`,
       })
       .catch(() => undefined);
-  }, HEARTBEAT_MS);
+  }, intervalMs);
   try {
     return await run(progress);
   } finally {
@@ -173,10 +172,15 @@ export const registerDesktopBuildTools = (
   server: EvidenceMcpServer,
   computers: Pick<
     DesktopBuildComputers,
-    "start" | "act" | "close" | "steps" | "measure" | "redaction"
+    "start" | "act" | "close" | "steps" | "measure" | "redaction" | "progressMs"
   >,
   logger: Logger,
 ): void => {
+  const heartbeat = <Value>(
+    context: ServerContext,
+    phase: string,
+    run: (progress: ProgressReporter) => Promise<Value>,
+  ) => withHeartbeat(context, phase, computers.progressMs, run);
   const tool = <Name extends Parameters<typeof toolContract>[0]>(
     name: Name,
   ) => ({
@@ -191,38 +195,38 @@ export const registerDesktopBuildTools = (
   );
   // An action can wait for the call before it on its computer, and a reset for the relaunched app, which can take minutes.
   registerForwarded(tool("act_on_build_computer"), (input, context) =>
-    withHeartbeat(context, "act_on_build_computer", () =>
+    heartbeat(context, "act_on_build_computer", () =>
       computers.act(input, context.mcpReq.signal),
     ),
   );
   registerForwarded(tool("start_build_capture"), (input, context) =>
-    withHeartbeat(context, "start_build_capture", () =>
+    heartbeat(context, "start_build_capture", () =>
       steps.startCapture(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("mark_build_checkpoint"), (input, context) =>
-    withHeartbeat(context, "mark_build_checkpoint", () =>
+    heartbeat(context, "mark_build_checkpoint", () =>
       steps.markCheckpoint(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("stop_build_capture"), (input, context) =>
-    withHeartbeat(context, "stop_build_capture", () =>
+    heartbeat(context, "stop_build_capture", () =>
       steps.stopCapture(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("export_build_environment"), (input, context) =>
-    withHeartbeat(context, "export_build_environment", () =>
+    heartbeat(context, "export_build_environment", () =>
       steps.exportEnvironment(input, context.mcpReq.signal),
     ),
   );
   registerPlain(tool("check_build_task"), (input, context) =>
-    withHeartbeat(context, "check_build_task", (progress) =>
+    heartbeat(context, "check_build_task", (progress) =>
       steps.checkTask(input, context.mcpReq.signal, progress),
     ),
   );
   // Solves run one at a time for minutes each, so progress keeps the client waiting.
   registerPlain(tool("measure_build_task"), (input, context) =>
-    withHeartbeat(context, "measure_build_task", (progress) =>
+    heartbeat(context, "measure_build_task", (progress) =>
       computers.measure(input, context.mcpReq.signal, progress),
     ),
   );
