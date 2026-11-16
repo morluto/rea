@@ -12,12 +12,12 @@ import {
   type ProviderAdapterErrorOptions,
 } from "../../domain/providerAdapterError.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
+import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
 import {
   DesktopSessionCleanupError,
+  XpropUnavailableError,
   type UnresolvedCleanup,
-} from "../../desktop/DesktopApplicationSession.js";
-import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
-import { XpropUnavailableError } from "../../ports/DesktopApplicationSession.js";
+} from "../../ports/DesktopApplicationSession.js";
 import type { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,
