@@ -1,4 +1,4 @@
-import { BinaryReader } from "../../native/metadata/BinaryContainer.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import {
   MACOS_PKG_FORMAT,
   MACOS_PKG_MAX_TOC_COMPRESSED_BYTES,

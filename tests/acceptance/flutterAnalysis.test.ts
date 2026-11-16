@@ -65,7 +65,7 @@ cliTest(
       expect(report.libapp.sections).toHaveLength(4);
       expect(evidence.subject).toMatchObject({
         local_path: path,
-        digest: { sha256: report.target.sha256 },
+        identity: { sha256: report.target.sha256 },
       });
       reports.push({
         sections: report.libapp.sections,
@@ -135,8 +135,7 @@ cliTest(
       expect(mcp.subject).toEqual(evidence.subject);
       expect(mcp.subject).toMatchObject({
         local_path: path,
-        format: "apk",
-        digest: { sha256: complete.target.sha256 },
+        identity: { format: "apk", sha256: complete.target.sha256 },
       });
       expect(mcp.evidence_id).toBe(evidence.evidence_id);
       if (name === "inspect_dart_aot") {

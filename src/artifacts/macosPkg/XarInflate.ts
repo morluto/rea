@@ -8,8 +8,10 @@ import {
 } from "../../domain/macosPkgFormat.js";
 import { malformedInput, unsupportedInput } from "../../domain/parseFailure.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
+import {
+  ArtifactReaderFailure,
+  artifactReaderLimitFailure,
+} from "../../resources/index.js";
 
 const STORED_ENCODINGS = new Set([
   "application/octet-stream",

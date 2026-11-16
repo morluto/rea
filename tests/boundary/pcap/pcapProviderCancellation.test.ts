@@ -6,9 +6,9 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { readStableArtifact } from "../../../src/resources/readStableArtifact.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { resolvedAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";

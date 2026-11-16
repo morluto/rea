@@ -2,7 +2,7 @@ import { SdkError, type Client } from "@modelcontextprotocol/client";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  decodeMcpTextReply,
+  decodeMcpJsonText,
 } from "../providers/McpToolResult.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -70,7 +70,7 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
       throw new AnalysisProtocolError(
         "JEB MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
       );
-    const text = decodeMcpTextReply(blocks[0]!, "json");
+    const text = decodeMcpJsonText(blocks[0]!);
     if (!text.ok && result.isError !== true)
       throw new AnalysisProtocolError("JEB MCP returned malformed JSON text", {
         cause: text.error.cause,

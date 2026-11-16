@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { HopperRemoteError } from "../domain/hopperErrors.js";

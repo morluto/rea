@@ -20,22 +20,22 @@ import {
 } from "../domain/macosPkgFormat.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import {
   ArtifactEntryContentUnavailable,
+  ArtifactFileSource,
   ArtifactReaderFailure,
+  ArtifactResourceScope,
+  artifactReaderLimitFailure,
+  assertArtifactReadActive,
   assertProducedEntry,
   copyArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactReaderTraversal,
   type ArtifactTraversalOptions,
-} from "./ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
+} from "../resources/index.js";
 import { ownArtifactStream } from "./OwnedArtifactStream.js";
 import {
   detectPayloadCompression,

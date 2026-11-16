@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../../src/platform/HostPlatform.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
@@ -69,7 +70,10 @@ const capture = async (
   runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    await resolveAdbBinary({ ...process.env, REA_ADB_PATH: process.execPath }),
+    await resolveAdbBinary(
+      { ...process.env, REA_ADB_PATH: process.execPath },
+      HOST_PLATFORM.platform,
+    ),
     ["-e", script],
     limits,
     signal,
@@ -155,7 +159,10 @@ const clientScript = async (source: string) => {
   await writeFile(binary, `#!${process.execPath}\n${source}\n`, {
     mode: 0o755,
   });
-  return resolveAdbBinary({ ...process.env, REA_ADB_PATH: binary });
+  return resolveAdbBinary(
+    { ...process.env, REA_ADB_PATH: binary },
+    HOST_PLATFORM.platform,
+  );
 };
 const nativeClientTest = test.skipIf(process.platform === "win32");
 
@@ -165,7 +172,10 @@ test.each([null, "caller stopped", new Error("caller stopped")] as const)(
     const controller = new AbortController();
     controller.abort(reason);
     const error: unknown = await inspectAdbClient(
-      await resolveAdbBinary({ REA_ADB_PATH: process.execPath }),
+      await resolveAdbBinary(
+        { REA_ADB_PATH: process.execPath },
+        HOST_PLATFORM.platform,
+      ),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -209,7 +219,10 @@ nativeClientTest(
     const controller = new AbortController();
     hooks.afterCommand = () => controller.abort(null);
     const error: unknown = await inspectAdbClient(
-      await resolveAdbBinary({ REA_ADB_PATH: join(root, "missing") }),
+      await resolveAdbBinary(
+        { REA_ADB_PATH: join(root, "missing") },
+        HOST_PLATFORM.platform,
+      ),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({

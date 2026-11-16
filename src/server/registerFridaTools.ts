@@ -5,12 +5,16 @@ import type { Logger } from "pino";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
-import type {
-  FridaInstrumentationPort,
-  FridaRemoteConnection,
-} from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  fridaDeviceSelection,
+  fridaRemoteConnection,
+  fridaScriptSource,
+  fridaSessionStart,
+  instrumentWithFrida,
+} from "../application/frida/fridaContractRequests.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -41,7 +45,7 @@ export const registerFridaTools = (
     toolRegistrationOptions(listDevices),
     async (input) => {
       const result = await logToolExecution(logger, listDevices.name, () =>
-        service.listDevices(remoteConnection(input.remote)),
+        service.listDevices(fridaRemoteConnection(input.remote)),
       );
       return delivery.toCallToolResult(result, listDevices);
     },
@@ -50,14 +54,8 @@ export const registerFridaTools = (
     listProcesses.name,
     toolRegistrationOptions(listProcesses),
     async (input) => {
-      const remote = remoteConnection(input.remote);
       const result = await logToolExecution(logger, listProcesses.name, () =>
-        service.listProcesses({
-          ...(input.device_id === undefined
-            ? {}
-            : { deviceId: input.device_id }),
-          ...(remote === undefined ? {} : { remote }),
-        }),
+        service.listProcesses(fridaDeviceSelection(input)),
       );
       return delivery.toCallToolResult(result, listProcesses);
     },
@@ -66,38 +64,14 @@ export const registerFridaTools = (
     start.name,
     toolRegistrationOptions(start),
     async (input, context: ServerContext) => {
-      const remote = remoteConnection(input.remote);
-      const selected = {
-        ...(input.capture_limits === undefined
-          ? {}
-          : { captureLimits: input.capture_limits }),
-        ...(input.device_id === undefined ? {} : { deviceId: input.device_id }),
-        ...(remote === undefined ? {} : { remote }),
-      };
+      const session = fridaSessionStart(input);
       const result = await logToolExecution(logger, start.name, () =>
-        input.mode === "attach" && input.pid !== undefined
-          ? service.startSession(
-              {
-                ...selected,
-                mode: input.mode,
-                pid: input.pid,
-              },
-              context.mcpReq.signal,
-            )
-          : input.mode === "spawn" && input.program !== undefined
-            ? service.startSession(
-                {
-                  ...selected,
-                  mode: input.mode,
-                  program: input.program,
-                  ...(input.argv === undefined ? {} : { argv: input.argv }),
-                },
-                context.mcpReq.signal,
-              )
-            : Promise.resolve({
-                ok: false as const,
-                error: new AnalysisInputError(start.name),
-              }),
+        session === undefined
+          ? Promise.resolve({
+              ok: false as const,
+              error: new AnalysisInputError(start.name),
+            })
+          : service.startSession(session, context.mcpReq.signal),
       );
       if (!result.ok)
         return delivery.toPartialErrorToolResult(
@@ -118,29 +92,14 @@ export const registerFridaTools = (
     load.name,
     toolRegistrationOptions(load),
     async (input, context: ServerContext) => {
+      const source = fridaScriptSource(input);
       const result = await logToolExecution(logger, load.name, () =>
-        input.source_kind === "inline" && input.source !== undefined
-          ? service.loadScript(
-              input.session_id,
-              {
-                sourceKind: "inline",
-                source: input.source,
-              },
-              context.mcpReq.signal,
-            )
-          : input.source_kind === "file" && input.path !== undefined
-            ? service.loadScript(
-                input.session_id,
-                {
-                  sourceKind: "file",
-                  path: input.path,
-                },
-                context.mcpReq.signal,
-              )
-            : Promise.resolve({
-                ok: false as const,
-                error: new AnalysisInputError(load.name),
-              }),
+        source === undefined
+          ? Promise.resolve({
+              ok: false as const,
+              error: new AnalysisInputError(load.name),
+            })
+          : service.loadScript(input.session_id, source, context.mcpReq.signal),
       );
       if (!result.ok)
         return delivery.toPartialErrorToolResult(
@@ -224,53 +183,11 @@ export const registerFridaTools = (
     instrument.name,
     toolRegistrationOptions(instrument),
     async (input, context: ServerContext) => {
-      const remote = remoteConnection(input.remote);
-      const selected = {
-        ...(input.capture_limits === undefined
-          ? {}
-          : { captureLimits: input.capture_limits }),
-        ...(input.device_id === undefined ? {} : { deviceId: input.device_id }),
-        ...(remote === undefined ? {} : { remote }),
-      };
-      const source =
-        input.source_kind === "inline" && input.source !== undefined
-          ? { sourceKind: "inline" as const, source: input.source }
-          : input.source_kind === "file" && input.path !== undefined
-            ? { sourceKind: "file" as const, path: input.path }
-            : undefined;
-      if (source === undefined)
-        return delivery.toCallToolResult(
-          { ok: false, error: new AnalysisInputError(instrument.name) },
-          instrument,
-        );
-      const operation =
-        input.mode === "attach" && input.pid !== undefined
-          ? service.instrument(
-              {
-                ...selected,
-                mode: "attach",
-                pid: input.pid,
-                source,
-                durationMs: input.duration_ms,
-              },
-              context.mcpReq.signal,
-            )
-          : input.mode === "spawn" && input.program !== undefined
-            ? service.instrument(
-                {
-                  ...selected,
-                  mode: "spawn",
-                  program: input.program,
-                  ...(input.argv === undefined ? {} : { argv: input.argv }),
-                  source,
-                  durationMs: input.duration_ms,
-                },
-                context.mcpReq.signal,
-              )
-            : Promise.resolve({
-                ok: false as const,
-                error: new AnalysisInputError(instrument.name),
-              });
+      const operation = instrumentWithFrida(
+        service,
+        input,
+        context.mcpReq.signal,
+      );
       const result = await logToolExecution(
         logger,
         instrument.name,
@@ -290,31 +207,6 @@ export const registerFridaTools = (
     },
   );
 };
-
-const remoteConnection = (
-  input:
-    | {
-        readonly address: string;
-        readonly token?: string | undefined;
-        readonly certificate?: string | undefined;
-        readonly origin?: string | undefined;
-        readonly keepalive_interval?: number | undefined;
-      }
-    | undefined,
-): FridaRemoteConnection | undefined =>
-  input === undefined
-    ? undefined
-    : {
-        address: input.address,
-        ...(typeof input.token === "string" ? { token: input.token } : {}),
-        ...(typeof input.certificate === "string"
-          ? { certificate: input.certificate }
-          : {}),
-        ...(typeof input.origin === "string" ? { origin: input.origin } : {}),
-        ...(typeof input.keepalive_interval === "number"
-          ? { keepaliveInterval: input.keepalive_interval }
-          : {}),
-      };
 
 const sessionOutput = (session: {
   readonly captureLimits?: FridaCapturePolicy;

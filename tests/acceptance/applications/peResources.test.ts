@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
@@ -6,7 +7,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { peResourcesSchema } from "../../../src/domain/native/peResources.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -267,10 +268,12 @@ const expectPeInventoriesAcrossAdapters = async (
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const report = peResourcesSchema.parse(evidence.normalized_result);
-    expect(evidence.subject?.digest).toMatchObject({
+    expect(evidence.subject?.identity).toMatchObject({
       sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
     });
-    expect(evidence.subject?.architecture).toBe(plus ? "x86_64" : "x86");
+    expect(fileIdentity(evidence.subject).architecture).toBe(
+      plus ? "x86_64" : "x86",
+    );
     expect(report.coverage).toMatchObject({
       status: "complete",
       resources: 5,
@@ -406,7 +409,7 @@ const expectPeEmptyBranchesAcrossAdapters = async (
         entry_locations: resource.entry_locations.slice(0, 2),
       });
     }
-    expect(evidence.subject?.digest?.sha256).toBe(
+    expect(fileIdentity(evidence.subject).sha256).toBe(
       createHash("sha256").update(fixture.bytes).digest("hex"),
     );
     expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);

@@ -2,14 +2,12 @@ import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+  type ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   ANDROID_MAPPING_LIMITS,
   type AndroidMappingSource,
@@ -31,6 +29,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface AndroidMappingReadDeadline {
   readonly timeout: AbortSignal;
@@ -123,7 +122,7 @@ const readFailurePrimary = (
     cause: primary,
     diagnostics: {
       mapping_path: read.path,
-      reason: primary instanceof Error ? primary.message : String(primary),
+      reason: errorMessage(primary),
     },
   });
 };

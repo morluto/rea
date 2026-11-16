@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
 
 /** Numeric admission contracts shared by environment parsing and runtime tools.
  * Timer maxima follow signed 32-bit scheduling. ASAR's 256 MiB maximum and
@@ -82,6 +83,25 @@ export const MAX_NODE_TIMER_DELAY_MS = 2_147_483_647;
  * A positive whole-millisecond duration Node can schedule exactly. Zero and
  * negative values are not a deadline.
  */
+/**
+ * The per-call control of a caller-selectable millisecond deadline, named by
+ * its contract field; each adapter names the option that sets it.
+ */
+export const deadlineParameterLimit = (
+  parameter: string,
+  timeoutMs: number,
+  defaultMs: number,
+): AnalysisControlLimit => ({
+  control_kind: "parameter",
+  parameter,
+  effective_value: timeoutMs,
+  unit: "ms",
+  minimum: 1,
+  maximum: MAX_NODE_TIMER_DELAY_MS,
+  default_value: defaultMs,
+  applies_at: "next_call",
+});
+
 export const timerDurationMsSchema = z
   .int()
   .min(1)

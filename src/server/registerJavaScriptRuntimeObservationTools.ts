@@ -1,8 +1,8 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { OptionalProviderLoadFailure } from "../application/OptionalObservationProviders.js";
+import type { OptionalProviderLoadFailure } from "../ports/OptionalObservationProviders.js";
 
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
 import {
   listJavaScriptRuntimeTargets,
   observeJavaScriptRuntime,

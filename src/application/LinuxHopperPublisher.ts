@@ -7,12 +7,10 @@ import { z } from "zod";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import {
+  type AnalysisCleanupLease,
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../artifacts/ArtifactReader.js";
+} from "../resources/index.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -53,7 +51,7 @@ import {
   type LinuxHopperRelease,
   type LinuxPackageFamily,
 } from "./HopperReleaseFeed.js";
-import { withRegularFile } from "./RegularFileRead.js";
+import { withRegularFile } from "../process/RegularFileRead.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** Metadata/key inspection budget, independent of the compressed package budget. */

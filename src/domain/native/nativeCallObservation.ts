@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   nativeCallCaptureLimitsInputSchema,
   nativeCallCaptureLimitsSchema,
@@ -234,7 +235,7 @@ export const nativeCallObservationResultSchema = z.strictObject({
   ),
   events: z.array(nativeCallEventSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     event_limit_reached: z.boolean(),
     resource_limit_reached: z.boolean(),
     capture_limit: z.enum(["trace_bytes", "trace_frames"]).optional(),

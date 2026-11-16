@@ -5,7 +5,7 @@ import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { DEFAULT_CATALOG_IDENTITY } from "../../dist/catalogIdentity.js";
+import { DEFAULT_CATALOG_IDENTITY } from "../../dist/contracts/catalog/catalogIdentity.js";
 import { verifyCompleteToolCatalog } from "./verify-package-core.mjs";
 
 /** Install the selected archive or registry specifier with an owned ten-minute deadline. */

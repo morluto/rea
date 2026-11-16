@@ -304,7 +304,7 @@ async function verifyTarget(path, sha256, fixtures, variant) {
   ]);
 }
 function assertWorkflowIdentity(evidence, sha256) {
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   assert.equal(evidence.operation, "inspect_native_api");
   assert.equal(evidence.provider.id, "rea-workflow");
   assert.equal(evidence.analysis_profile.provider.id, "rea-workflow");

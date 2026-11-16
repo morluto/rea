@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { timerDurationMsSchema } from "./analysisResourceLimits.js";
+import type { AnalysisParameterLimit } from "./analysisSettings.js";
 
 /** Per-call owned producer budgets. Each adapter advertises only consumed fields. */
 export const producerResourceLimitsSchema = z.strictObject({
@@ -39,6 +40,26 @@ export const resolveProducerLimits = <
       selected?.[key as keyof ProducerResourceLimits] ?? value,
     ]),
   ) as { readonly [Key in keyof Defaults]: number };
+
+/**
+ * The per-call control of one exhausted producer budget, named by its
+ * contract path (`producer_limits.<field>`); each adapter names the option
+ * that sets it.
+ */
+export const producerLimitControl = (
+  field: Exclude<keyof ProducerResourceLimits, "command_timeout_ms">,
+  effectiveValue: number,
+  defaultValue: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: `producer_limits.${field}`,
+  effective_value: effectiveValue,
+  unit: field === "cpu_seconds" ? "seconds" : "bytes",
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: defaultValue,
+  applies_at: "next_call",
+});
 
 /** Combined-output producers have no separate diagnostic capture control. */
 export const boundedProducerLimitsSchema = producerResourceLimitsSchema

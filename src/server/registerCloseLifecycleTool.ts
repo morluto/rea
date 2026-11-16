@@ -8,13 +8,14 @@ import {
 } from "./operationProgress.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { AnalysisCleanupRetry } from "../domain/analysisErrorRecovery.js";
 import type { Result } from "../domain/result.js";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import type { LifecycleToolRegistration } from "./registerSessionTools.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Expected lifecycle failures keep the same typed result when a child rejects. */
 const closeResult = async <Value>(
@@ -55,10 +56,7 @@ export const registerCloseLifecycleTool = ({
       if (resourceClose.status === "rejected")
         logger.warn(
           {
-            error:
-              resourceClose.reason instanceof Error
-                ? resourceClose.reason.message
-                : String(resourceClose.reason),
+            error: errorMessage(resourceClose.reason),
           },
           "Process capture cleanup threw while closing the session",
         );
@@ -74,10 +72,10 @@ export const registerCloseLifecycleTool = ({
     const resources = resourceClose.value;
     if (!closed.ok) {
       if (resources.ok) return closed;
-      const combined = analysisErrorWithCleanupFailure(
+      const combined = analysisErrorWithCleanupDependencies(
         closed.error,
         resources.error,
-      ).bindCleanupDependencies([closed.error, resources.error]);
+      );
       // The session offers a retry only after retiring its target; a failed
       // save keeps that target open and needs its own recovery first.
       return err(

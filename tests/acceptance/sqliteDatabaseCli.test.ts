@@ -784,7 +784,7 @@ cliTest
     expect(result.json).toMatchObject({
       operation: "inspect_sqlite_database",
       confidence: "observed",
-      subject: { local_path: path, digest: { sha256: digest(original) } },
+      subject: { local_path: path, identity: { sha256: digest(original) } },
       normalized_result: {
         artifact: { path, sha256: digest(original), bytes: original.length },
         wal: null,
@@ -1167,7 +1167,7 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
       schema_scope: "database",
     });
     const expectedSchema = {
-      subject: { local_path: path, digest: { sha256: digest(before.bytes) } },
+      subject: { local_path: path, identity: { sha256: digest(before.bytes) } },
       normalized_result: {
         rows: null,
         schema: {
