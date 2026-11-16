@@ -393,6 +393,7 @@
 * **reference:** overlap reference-source identity lookups in traversal order ([#11585](https://github.com/morluto/rea/issues/11585)) ([65f78ed](https://github.com/morluto/rea/commit/65f78edce526277a5a563c44bc70418b50d1136f)), closes [#11365](https://github.com/morluto/rea/issues/11365)
 * **test:** remove duplicate full-tree lint from isolation checks ([94bf2bd](https://github.com/morluto/rea/commit/94bf2bdecdfa686527f4b676f06575bee05af53f))
 * **test:** run CI change-scope cases concurrently in workspace-owned repositories ([#11009](https://github.com/morluto/rea/issues/11009)) ([482a98a](https://github.com/morluto/rea/commit/482a98a95b92ac2c0dc0f55eef54ce345b93c114))
+* **tests:** give MCP test clients the shared lazy schema validation ([#10960](https://github.com/morluto/rea/issues/10960)) ([858ff73](https://github.com/morluto/rea/commit/858ff73880f25fb55b1d6c077f1487a4aea5ff8d))
 * **tests:** run plain CLI commands on the file's shared process ([#10412](https://github.com/morluto/rea/issues/10412)) ([b3657c5](https://github.com/morluto/rea/commit/b3657c557f6431d259b2fcb65e73a7c2d48bd4a4))
 * **test:** supervise JADX cleanup-failure children from launch ([#11283](https://github.com/morluto/rea/issues/11283)) ([142d794](https://github.com/morluto/rea/commit/142d79428d9a5588bc33611a5727f1f6ebab3ea9))
 * **test:** supervise the GDB fixture safety child from launch ([#11491](https://github.com/morluto/rea/issues/11491)) ([928b9df](https://github.com/morluto/rea/commit/928b9df5c0f03d3774a3257bdb8102b402404214)), closes [#11363](https://github.com/morluto/rea/issues/11363)
@@ -435,6 +436,7 @@
 * **cli:** derive contract-backed command options from the tool contract ([#10571](https://github.com/morluto/rea/issues/10571)) ([f3b697d](https://github.com/morluto/rea/commit/f3b697da5a698a5548afd3b19d044ec623bdda0b))
 * **cli:** import zod directly instead of through incur ([#11655](https://github.com/morluto/rea/issues/11655)) ([07c5a54](https://github.com/morluto/rea/commit/07c5a54feee8de5ed5079fdebbdd122fa70d108a))
 * **cli:** name a failure's per-call control flag at the CLI boundary ([#11413](https://github.com/morluto/rea/issues/11413)) ([49d4991](https://github.com/morluto/rea/commit/49d4991a18b6c6385aa4e993b3bf40249cee7dce))
+* **cli:** own shell completion behind new CLI parity goldens ([#11662](https://github.com/morluto/rea/issues/11662)) ([f39e5e8](https://github.com/morluto/rea/commit/f39e5e80db20568f92c3d8e6f40f7f61802be226))
 * **cli:** project core native commands with open_binary target options ([#10736](https://github.com/morluto/rea/issues/10736)) ([4eafd9d](https://github.com/morluto/rea/commit/4eafd9dee517d9a660705426adfda5b87295e78b))
 * **cli:** project Go, V8 and delivery inspectors from their contracts ([#10576](https://github.com/morluto/rea/issues/10576)) ([da53dce](https://github.com/morluto/rea/commit/da53dce1f729d33abe0d269061412af7662f2a09))
 * **cli:** project JSON-document workflow commands from their contracts ([#10668](https://github.com/morluto/rea/issues/10668)) ([fc6a960](https://github.com/morluto/rea/commit/fc6a9604a175f3456c99025e142817fdc70d3961))
@@ -455,6 +457,7 @@
 * **desktop:** declare the desktop inventory's use of the Electron fuse reader ([#11494](https://github.com/morluto/rea/issues/11494)) ([e031854](https://github.com/morluto/rea/commit/e03185429fec24fb9c85531e49677c465475a4b5))
 * **desktop:** give the agentenv provider name an entry file and name the build computer's controlled routes as a port ([#11600](https://github.com/morluto/rea/issues/11600)) ([793ab58](https://github.com/morluto/rea/commit/793ab582bebc40fbff2d8f7f969aad5283e7af54))
 * **desktop:** let build-computer and agentenv cleanup errors read their owner's release ([#10855](https://github.com/morluto/rea/issues/10855)) ([df1e647](https://github.com/morluto/rea/commit/df1e647266a91fb15e3b6e92e7ac5eaf92d7d0b8))
+* **desktop:** name the desktop capture's window and application-refusal facts as a port ([#11667](https://github.com/morluto/rea/issues/11667)) ([58a2c79](https://github.com/morluto/rea/commit/58a2c79155419c6193b10ee9679e5f9959f31dbd)), closes [#11583](https://github.com/morluto/rea/issues/11583)
 * **desktop:** release retained screen-judge cleanup through its lease ([#10809](https://github.com/morluto/rea/issues/10809)) ([af5c89a](https://github.com/morluto/rea/commit/af5c89a85713e4438159caf355ec2c525ff45430))
 * **doctor:** compose system diagnostics from one host platform ([#11096](https://github.com/morluto/rea/issues/11096)) ([4c375b8](https://github.com/morluto/rea/commit/4c375b82c819bc61d690e6721a9cb7e882853faf))
 * **domain:** bound a first batch of constant-maximum slices with boundedList ([#11296](https://github.com/morluto/rea/issues/11296)) ([673050f](https://github.com/morluto/rea/commit/673050f7bce4334420fa5fc79d258aed355f4722))
@@ -654,6 +657,7 @@
 
 ### Tests
 
+* **adapters:** compare CLI and MCP Evidence for every CLI analysis operation ([#11672](https://github.com/morluto/rea/issues/11672)) ([74dd9fc](https://github.com/morluto/rea/commit/74dd9fc92c1a18ac1d7dfe133b14a72a75236287))
 * **adb:** drop prose checks for the push guidance fix ([c6046d4](https://github.com/morluto/rea/commit/c6046d4f29a9d757c65eca37b2357b97fc59c2b2))
 * **adb:** expect the CLI key for a refused output directory ([#11432](https://github.com/morluto/rea/issues/11432)) ([1b8ffaa](https://github.com/morluto/rea/commit/1b8ffaa37ca07f56a734f291efa803e84e137d6f))
 * advance the Rizin and build computer fixed waits instead of sleeping through them ([#11026](https://github.com/morluto/rea/issues/11026)) ([f46cd67](https://github.com/morluto/rea/commit/f46cd6770c8dd05e22ead3f082acf4e214bfd8b4))
@@ -715,6 +719,7 @@
 * **ghidra:** expect malformed language XML as a malformed ParseFailure ([#11234](https://github.com/morluto/rea/issues/11234)) ([90e1922](https://github.com/morluto/rea/commit/90e192240ab0166effd9fadd1ecb80841dcf0dc2))
 * **ghidra:** give simulated Linux installs a POSIX path on Windows ([01fcf8e](https://github.com/morluto/rea/commit/01fcf8e3d73f0172595b5504d5a9da3858636a61))
 * **ghidra:** serve fake Ghidra bridge replies checked against the bridge contracts ([#10945](https://github.com/morluto/rea/issues/10945)) ([71c2843](https://github.com/morluto/rea/commit/71c284377284ac983a71089510ffb6478423063a))
+* guard first-catalog, child CDP and queue regressions at the test deadline ([#11675](https://github.com/morluto/rea/issues/11675)) ([d4c2be5](https://github.com/morluto/rea/commit/d4c2be509ec6ae879a12a82ae43e48077b0fdc1c)), closes [#10513](https://github.com/morluto/rea/issues/10513)
 * **hopper:** assert retained cleanup without optional diagnostics ([#10636](https://github.com/morluto/rea/issues/10636)) ([01192ab](https://github.com/morluto/rea/commit/01192ab73712478f90c7407db5d459198bebba44))
 * **ines:** make same-size prefix changes visible on coarse timestamps ([fc4c319](https://github.com/morluto/rea/commit/fc4c319cb4fb8017228892b27a93a33b4b2dd617)), closes [#8685](https://github.com/morluto/rea/issues/8685) [#8689](https://github.com/morluto/rea/issues/8689)
 * **inspector:** keep the cancellation fixture out of underscored temp roots ([f35b6a7](https://github.com/morluto/rea/commit/f35b6a75b31fa36acde9ee6b86db4961a2b52211)), closes [#9996](https://github.com/morluto/rea/issues/9996) [#10118](https://github.com/morluto/rea/issues/10118)
