@@ -83,6 +83,7 @@ interface InitializerPositionCache {
     readonly t.Statement[],
     {
       readonly reads: WeakMap<t.FunctionDeclaration, number | null>;
+      readonly localReads: WeakMap<t.FunctionDeclaration, number | null>;
       readonly memberEffectsComplete: boolean;
       readonly opaquePositions: WeakMap<t.Node, number | null>;
       opaqueSitesIndexed: number;
@@ -709,6 +710,59 @@ const directMutationPosition = cachedStatementPosition(
   computeDirectMutationPosition,
 );
 
+/** Distinguish known local activation from unobserved external export use. */
+export const semanticLocalFunctionActivationAt = (
+  read: t.Node,
+  effect: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+):
+  | { readonly kind: "observed"; readonly relation: "before" | "after" }
+  | { readonly kind: "unobserved" | "unknown" } => {
+  const fn = bindingEnclosingFunction(read, state.parentsByNode);
+  const position = directMutationPosition(effect, state.parentsByNode);
+  if (!t.isFunctionDeclaration(fn) || position === null)
+    return { kind: "unknown" };
+  const index = moduleFunctionFirstRead(
+    fn,
+    position.owner.body,
+    state.parentsByNode,
+    state,
+  );
+  if (index === Infinity) return { kind: "unobserved" };
+  if (index === null || index === undefined) {
+    // An exported reader has no module timing, but it may still have a local
+    // call before the store. That call runs at its statement position, so the
+    // read inside it cannot observe a later store.
+    const local = semanticFunctionLocalActivation(
+      fn,
+      position.owner.body,
+      state.parentsByNode,
+    );
+    return local === null || !Number.isFinite(local)
+      ? { kind: "unobserved" }
+      : {
+          kind: "observed",
+          relation: local <= position.index ? "before" : "after",
+        };
+  }
+  return {
+    kind: "observed",
+    relation: index <= position.index ? "before" : "after",
+  };
+};
+
+/** An unconditional store in the program's one non-repeating activation. */
+export const semanticUnconditionalTopLevelEffect = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const direct = directMutationPosition(node, parents);
+  const topLevel = topLevelStatementPosition(node, parents);
+  return (
+    direct !== null && topLevel !== null && direct.owner === topLevel.owner
+  );
+};
+
 /** Prove that an unconditional member replacement precedes this read. */
 export const semanticDefiniteEffectPrecedesReference = (
   effect: t.Node,
@@ -1043,8 +1097,10 @@ const moduleFunctionFirstRead = (
     retained = undefined;
   if (retained === undefined) {
     const reads = new WeakMap<t.FunctionDeclaration, number | null>();
+    const localReads = new WeakMap<t.FunctionDeclaration, number | null>();
     retained = {
       reads,
+      localReads,
       memberEffectsComplete,
       opaquePositions: new WeakMap(),
       opaqueSitesIndexed: 0,
@@ -1064,12 +1120,17 @@ const moduleFunctionFirstRead = (
       const node = exported ? statement.declaration : statement;
       if (!t.isFunctionDeclaration(node)) continue;
       reads.set(node, exported ? null : Infinity);
+      localReads.set(node, Infinity);
       if (node.id == null) continue;
       const name = node.id.name;
       if (functions.has(name)) {
         const previous = functions.get(name);
-        if (previous != null) reads.set(previous, null);
+        if (previous != null) {
+          reads.set(previous, null);
+          localReads.set(previous, null);
+        }
         reads.set(node, null);
+        localReads.set(node, null);
         functions.set(name, null);
       } else functions.set(name, node);
     }
@@ -1400,6 +1461,9 @@ const moduleFunctionFirstRead = (
     ): void => {
       const fn = functions.get(name);
       if (fn == null || active.has(fn)) return;
+      const local = localReads.get(fn);
+      if (!t.isExportSpecifier(parent) && local !== null && local !== undefined)
+        localReads.set(fn, active.size > 0 ? null : Math.min(local, index));
       const current = indexedReads.get(fn);
       if (current === null || current === undefined) return;
       // Indirect activations and live exports have no proven module timing.
@@ -1514,6 +1578,12 @@ const moduleFunctionFirstRead = (
               state !== undefined &&
               semanticResolutionBlocked(state, node, node.name)
             ) {
+              const local = localReads.get(candidate);
+              if (local !== null && local !== undefined)
+                localReads.set(
+                  candidate,
+                  active.size > 0 ? null : Math.min(local, index),
+                );
               const current = indexedReads.get(candidate);
               if (current !== null && current !== undefined)
                 indexedReads.set(
@@ -1593,6 +1663,14 @@ const moduleFunctionFirstRead = (
     // Unknown global keys share one timing fact across the module functions.
     for (const fn of functions.values()) {
       if (fn == null) continue;
+      const local = localReads.get(fn);
+      if (local !== null && local !== undefined)
+        localReads.set(
+          fn,
+          unknownPropertyRead === null
+            ? null
+            : Math.min(local, unknownPropertyRead),
+        );
       const current = indexedReads.get(fn);
       if (current !== null && current !== undefined)
         indexedReads.set(
@@ -1621,6 +1699,21 @@ const moduleFunctionFirstRead = (
       : Math.min(read, retained.firstOpaqueRead);
   return first !== undefined && Number.isFinite(first) ? first : null;
 };
+
+/**
+ * The earliest proven local call of `declaration`, independent of the export
+ * timing facts `moduleFunctionFirstRead` uses. An exported reader can still be
+ * called locally; that call happens at the returned position, not at module
+ * initialization, so a store after it does not reach a read inside it.
+ */
+export const semanticFunctionLocalActivation = (
+  declaration: t.FunctionDeclaration,
+  body: readonly t.Statement[],
+  parents: WeakMap<t.Node, t.Node>,
+): number | null =>
+  initializerPositionCache(parents)
+    .moduleFunctionReads.get(body)
+    ?.localReads.get(declaration) ?? null;
 
 export const semanticBindingAtRead = (
   binding: JavaScriptSemanticBindingState,
