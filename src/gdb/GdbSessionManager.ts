@@ -43,6 +43,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import {
   GDB_SESSION_TOOLS,
+  type DebuggerCleanupIncompleteCode,
   type DebuggerSessionStop,
   type DebuggerSessionStopCode,
   stoppedDebuggerSessionError,
@@ -1361,6 +1362,18 @@ export class GdbSessionManager {
                     : "Live GDB inferiors require an explicit disposition because no durable inferior TTY is verified.",
                   {
                     retryable: true,
+                    // Why automatic detach is refused, as the cleanup code a
+                    // forced stop would report, and how many inferiors remain.
+                    diagnostics: {
+                      inferior_disposition_required:
+                        groupCount > 1
+                          ? "multiple-inferiors"
+                          : "no-durable-output-sink",
+                      live_inferiors: groupCount,
+                    } satisfies {
+                      readonly inferior_disposition_required: DebuggerCleanupIncompleteCode;
+                      readonly live_inferiors: number;
+                    },
                     userMessage:
                       "Close requires an explicit inferior disposition.",
                     remediationAction:

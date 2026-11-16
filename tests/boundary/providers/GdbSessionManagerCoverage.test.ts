@@ -834,15 +834,21 @@ it.each(["close", "retryCleanupFailures"] as const)(
 );
 
 it.each([
-  { name: "single inferior without TTY", verifiedTty: false, inferiorCount: 1 },
+  {
+    name: "single inferior without TTY",
+    verifiedTty: false,
+    inferiorCount: 1,
+    reason: "no-durable-output-sink",
+  },
   {
     name: "multiple inferiors with verified TTY",
     verifiedTty: true,
     inferiorCount: 2,
+    reason: "multiple-inferiors",
   },
 ])(
   "allows explicit inferior remediation before destructive cleanup: $name",
-  async ({ verifiedTty, inferiorCount }) => {
+  async ({ verifiedTty, inferiorCount, reason }) => {
     const tty = "/dev/pts/42";
     const remainingInferiors = new Set(
       Array.from({ length: inferiorCount }, (_, index) => index + 1),
@@ -890,7 +896,19 @@ it.each([
     expect(manager.status(id)?.state).toBe("ready");
     expect(refused).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisCapabilityUnavailableError", retryable: true },
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        retryable: true,
+        diagnostics: {
+          inferior_disposition_required: reason,
+          live_inferiors: inferiorCount,
+        },
+      },
+    });
+    if (refused.ok) throw new Error("Expected a disposition refusal");
+    expect(projectAnalysisError(refused.error).details?.diagnostics).toEqual({
+      inferior_disposition_required: reason,
+      live_inferiors: inferiorCount,
     });
     expect(stopCalls).toBe(0);
     expect(commands).not.toContain("-target-detach");
