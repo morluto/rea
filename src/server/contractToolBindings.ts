@@ -19,7 +19,12 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import { ok, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { CallToolResult } from "@modelcontextprotocol/server";
+import {
+  optionalProviderUnavailable,
+  type OptionalProviderLoadFailure,
+} from "../ports/OptionalObservationProviders.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { InvestigationWorkflowExecution } from "../application/investigation/InvestigationWorkflows.js";
@@ -103,6 +108,11 @@ type EvidenceBinding<Input = unknown> = (
    * the raw request, when the operation projects a view of other Evidence.
    */
   readonly viewSource?: (input: unknown) => JsonValue | undefined;
+  /**
+   * Why the optional provider behind this operation failed to load. Every
+   * call is then refused as unavailable before admission, naming the tool.
+   */
+  readonly unavailable?: OptionalProviderLoadFailure | undefined;
 };
 
 type ValueOperation<Input> = (
@@ -304,6 +314,19 @@ const derivedAcquisition = (binding: DerivedBinding): DerivedAcquisition => {
     ok(() => derive(input, evidenceForAnalysis, signal));
 };
 
+/** Refuse every call of an operation whose optional provider failed to load. */
+const unavailableToolHandler =
+  (
+    server: EvidenceMcpServer,
+    contract: ToolContract,
+    failure: OptionalProviderLoadFailure,
+  ) =>
+  async (): Promise<CallToolResult> =>
+    server.delivery.toCallToolResult(
+      err(optionalProviderUnavailable(failure, contract.name)),
+      contract,
+    );
+
 /** A provider-backed workflow runs only on the analysis admission grants. */
 const requiredAdmission = (
   admission: WithAdmittedAnalysis | undefined,
@@ -393,55 +416,57 @@ export const registerContractTools = (
         ? toolRegistrationOptions(contract)
         : applicationToolRegistrationOptions(contract);
     const handler =
-      binding.analyze !== undefined
-        ? createAnalysisToolHandler(
-            server,
-            binding.analyze,
-            logger,
-            retention,
-            requiredAdmission(withAdmittedAnalysis, contract.name),
-            binding.detail === "delivery",
-          )(contract)
-        : binding.value !== undefined
-          ? createValueToolHandler(
+      binding.run !== undefined && binding.unavailable !== undefined
+        ? unavailableToolHandler(server, contract, binding.unavailable)
+        : binding.analyze !== undefined
+          ? createAnalysisToolHandler(
               server,
-              binding.value,
+              binding.analyze,
               logger,
-              binding.admitted === true ? withAdmittedAnalysis : undefined,
-              recordEvidence,
+              retention,
+              requiredAdmission(withAdmittedAnalysis, contract.name),
+              binding.detail === "delivery",
             )(contract)
-          : binding.workflow !== undefined
-            ? createApplicationToolHandler(
+          : binding.value !== undefined
+            ? createValueToolHandler(
                 server,
-                binding,
+                binding.value,
                 logger,
-                { recordEvidence, recordEvidenceWithUnknown, evidenceById },
-                withAdmittedAnalysis,
+                binding.admitted === true ? withAdmittedAnalysis : undefined,
+                recordEvidence,
               )(contract)
-            : binding.derive !== undefined || binding.acquire !== undefined
-              ? createDerivedToolHandler(
+            : binding.workflow !== undefined
+              ? createApplicationToolHandler(
                   server,
-                  binding.session,
-                  derivedAcquisition(binding),
+                  binding,
                   logger,
+                  { recordEvidence, recordEvidenceWithUnknown, evidenceById },
+                  withAdmittedAnalysis,
                 )(contract)
-              : binding.run !== undefined
-                ? createEvidenceToolHandler(
+              : binding.derive !== undefined || binding.acquire !== undefined
+                ? createDerivedToolHandler(
                     server,
-                    binding.run,
+                    binding.session,
+                    derivedAcquisition(binding),
                     logger,
-                    recordEvidence,
-                    withAdmittedAnalysis,
-                    binding.viewSource,
                   )(contract)
-                : createRetainedSummaryToolHandler(
-                    server,
-                    contract as SummaryContract,
-                    binding.summary,
-                    logger,
-                    retention,
-                    withAdmittedAnalysis,
-                  );
+                : binding.run !== undefined
+                  ? createEvidenceToolHandler(
+                      server,
+                      binding.run,
+                      logger,
+                      recordEvidence,
+                      withAdmittedAnalysis,
+                      binding.viewSource,
+                    )(contract)
+                  : createRetainedSummaryToolHandler(
+                      server,
+                      contract as SummaryContract,
+                      binding.summary,
+                      logger,
+                      retention,
+                      withAdmittedAnalysis,
+                    );
     server.registerTool(contract.name, registration, handler);
   }
   if (unbound.size > 0)

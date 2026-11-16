@@ -34,7 +34,6 @@ import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 import { registerArtifactTools } from "./registerArtifactTools.js";
 import { registerNativeTools } from "./registerNativeTools.js";
 import { registerBrowserScenarioTool } from "./registerBrowserScenarioTool.js";
-import { registerBrowserTools } from "./registerBrowserTools.js";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { registerElectronTools } from "./registerElectronTools.js";
 import { registerJavaScriptRuntimeObservationTools } from "./registerJavaScriptRuntimeObservationTools.js";
@@ -538,12 +537,17 @@ export const createServer = (
         contractTools,
       ),
     browser: () => {
-      registerBrowserTools(server, {
-        ...common,
-        evidenceById,
-        browser: options.browserObservation,
-        loadFailure: options.optionalProviderLoadFailures?.browserObservation,
-      });
+      registerServiceTools(
+        server,
+        {
+          browserObservation: {
+            browser: options.browserObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.browserObservation,
+          },
+        },
+        contractTools,
+      );
       registerBrowserScenarioTool(server, {
         ...common,
         evidenceById,
