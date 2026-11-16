@@ -146,6 +146,12 @@ const specialMemberType = (mode: number): string => {
   }
 };
 
+/** XAR TOC `<mode>` is octal text; any owner, group or other execute bit counts. */
+const xarModeIsExecutable = (mode: string | null): boolean => {
+  if (mode === null || !/^[0-7]+$/u.test(mode)) return false;
+  return (Number.parseInt(mode, 8) & 0o111) !== 0;
+};
+
 const basename = (path: string): string => {
   const slash = path.lastIndexOf("/");
   return slash === -1 ? path : path.slice(slash + 1);
@@ -566,7 +572,7 @@ export class MacosPkgArtifactReader implements ArtifactReader {
     // Key by TOC occurrence: a later record at the same path is a distinct
     // occurrence, not a replacement of the earlier one.
     const adapterKey = `pkg:xar:${String(tocIndex)}:${file.path}`;
-    const executable = file.mode !== null && /[1357]$/u.test(file.mode);
+    const executable = xarModeIsExecutable(file.mode);
     this.#entries.set(adapterKey, {
       path: file.path,
       sourcePath: file.path,

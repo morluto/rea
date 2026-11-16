@@ -45,7 +45,7 @@ import {
   truncatedPkgHeader,
 } from "./macosPkg/MacosPkg.fixture.js";
 import { parseCpioOdc } from "./macosPkg/CpioOdc.js";
-import { buildCpioOdc } from "./macosPkg/MacosPkg.fixture.js";
+import { buildCpioOdc, buildXar } from "./macosPkg/MacosPkg.fixture.js";
 
 const writePkg = async (name: string, bytes: Buffer): Promise<string> => {
   const directory = await createTestTempDirectory("rea-macos-pkg-");
@@ -659,4 +659,39 @@ it("keeps every TOC record that shares a path as its own occurrence", async () =
   expect(
     inventory.occurrences.filter((row) => row.logical_path === "dup.txt"),
   ).toHaveLength(2);
+});
+
+it("reads XAR TOC execute bits from owner, group and other permissions", async () => {
+  const modes = {
+    "owner-group.sh": "0750",
+    "owner.sh": "0700",
+    "group.sh": "0610",
+    "other.sh": "0601",
+    "plain.txt": "0644",
+    "malformed.txt": "rwxr-x---",
+  };
+  const { reader, entries } = await entriesOf(
+    buildXar({
+      files: Object.entries(modes).map(([path, mode]) => ({
+        path,
+        mode,
+        bytes: Buffer.from(path),
+      })),
+    }),
+  );
+  try {
+    const executable = Object.fromEntries(
+      entries.map((entry) => [entry.path, entry.executable]),
+    );
+    expect(executable).toEqual({
+      "owner-group.sh": true,
+      "owner.sh": true,
+      "group.sh": true,
+      "other.sh": true,
+      "plain.txt": false,
+      "malformed.txt": false,
+    });
+  } finally {
+    await reader.close();
+  }
 });

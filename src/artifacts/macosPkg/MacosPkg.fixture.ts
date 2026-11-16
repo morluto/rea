@@ -92,6 +92,8 @@ export interface XarFixtureFile {
   readonly extractedSize?: number;
   /** Zero bytes appended to the archived heap range after encoding. */
   readonly archivedPadding?: number;
+  /** TOC `<mode>` text, such as `0750`. Omitted from the TOC when absent. */
+  readonly mode?: string;
 }
 
 export interface XarFixtureSignature {
@@ -161,6 +163,8 @@ const renderFiles = (
     const id = nextId.value;
     nextId.value += 1;
     xml += `<file id="${String(id)}"><name>${xmlEscape(name)}</name><type>${node.type}</type>`;
+    if (node.file?.mode !== undefined)
+      xml += `<mode>${xmlEscape(node.file.mode)}</mode>`;
     if (node.type === "file") {
       const stored = heap.find((entry) => entry.path === path);
       if (stored !== undefined) {
