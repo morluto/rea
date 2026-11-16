@@ -17,7 +17,7 @@ import {
   type UnresolvedCleanup,
 } from "../../desktop/DesktopApplicationSession.js";
 import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
-import { XpropUnavailableError } from "../../desktop/X11WindowObserver.js";
+import { XpropUnavailableError } from "../../ports/DesktopApplicationSession.js";
 import type { CaptureFile } from "./DesktopCaptureOutput.js";
 import {
   DESKTOP_OPERATION,

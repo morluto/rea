@@ -21,9 +21,11 @@ import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
 } from "../../process/RegularFileRead.js";
-import type { LinuxApplicationRefusal } from "../../desktop/LinuxApplicationInventory.js";
 import { resolveProgram } from "../../desktop/ProgramLookup.js";
-import type { ObservedWindow } from "../../desktop/X11WindowObserver.js";
+import type {
+  LinuxApplicationRefusal,
+  ObservedWindow,
+} from "../../ports/DesktopApplicationSession.js";
 import type { OutputRefusal } from "./DesktopCaptureOutput.js";
 import { processInspectionCancellationError } from "../../providers/OwnedCommandCleanup.js";
 

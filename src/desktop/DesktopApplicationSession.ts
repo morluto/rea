@@ -37,9 +37,12 @@ import {
   sampleProcesses,
   sampleTokenCarriers,
   trackProcess,
-  type WindowMatching,
 } from "./DesktopSessionObservations.js";
-import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
+import type { X11WindowObserver } from "./X11WindowObserver.js";
+import type {
+  WindowMatching,
+  WindowSample,
+} from "../ports/DesktopApplicationSession.js";
 
 /** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
