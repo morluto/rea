@@ -58,6 +58,7 @@ it.each(["compact"] as const)(
       const summary = z
         .object({
           parent_evidence_id: z.string(),
+          limitations: z.array(z.string()),
           summary: z.object({
             root_format_metadata: z.unknown(),
             source_coverage: z.unknown(),
@@ -73,6 +74,11 @@ it.each(["compact"] as const)(
       expect(summary.summary.source_coverage).toMatchObject({
         status: "unknown",
       });
+      expect(summary.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 block.*absent.*0xe48bff57.*2 numbered blocks.*1/iu,
+        ),
+      );
       const retained = await call("inspect_analysis_view", {
         source: {
           kind: "retained-evidence",
@@ -81,14 +87,19 @@ it.each(["compact"] as const)(
         view: {
           kind: "inventory",
           collection: "occurrences",
-          logical_paths: [REGION],
-          fields: ["format_metadata"],
+          logical_paths: [REGION, ABSOLUTE_REGION],
+          fields: ["logical_path", "format_metadata"],
         },
       });
       expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      expect(JSON.stringify(retained.structuredContent)).toContain(
-        '"family_name":"RP2040"',
-      );
+      expect(
+        parseEvidence(retained.structuredContent).normalized_result,
+      ).toMatchObject({
+        items: [
+          { logical_path: REGION, format_metadata: { family_name: "RP2040" } },
+          { logical_path: ABSOLUTE_REGION },
+        ],
+      });
       const extracted = await call("extract_artifact", {});
       expect(extracted.isError, JSON.stringify(extracted)).not.toBe(true);
       const result = artifactExtractionResultSchema.parse(
