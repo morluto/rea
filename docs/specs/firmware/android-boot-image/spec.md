@@ -23,12 +23,13 @@ these files.
 1. Classification uses the 8-byte magic `ANDROID!` or `VNDRBOOT`, independent
    of filename. `hasAndroidBootImageMagic` is the only magic owner. Target
    resolution and artifact-graph construction call it.
-2. `src/domain/androidBootImageFormat.ts` decodes the header, the vendor
+2. `src/artifacts/AndroidBootImageFormat.ts` decodes the header, the vendor
    ramdisk table, and the AVB footer once. The reader consumes those facts.
    Header multi-byte fields are little-endian. AVB footer sizes and versions
    are big-endian. `u64`, `alignUp`, and range ends reject values that are not
-   safe integers. Parse failures return `Result` with
-   `AndroidBootFormatFailure` or `AndroidBootCapacityFailure`.
+   safe integers. Parse failures return `Result` with shared `ParseFailureError`
+   facts. The artifact error owner preserves `malformed`, `truncated`,
+   `unsupported`, and `limit` through CLI/MCP projection and cleanup retry.
 3. Boot versions 0 through 2 take a power-of-two page size from 2048 through 65536. The header occupies the first page. Kernel, ramdisk, and second
    stage follow, each padded to the next page. Version 1 adds a recovery DTBO
    at a page-aligned file offset. Version 2 adds a DTB after that offset. The
@@ -74,7 +75,9 @@ these files.
 8. The header probe is at most 4096 bytes. The reader admits at most 4096
    vendor ramdisk table entries, an entry size of at most 4096 bytes, and a
    vendor `header_size` of at most 1 MiB. Those checks run before the table
-   is read. A truncated image is malformed. Gaps inside a vendor ramdisk
+   is read. Truncated declared structures return `truncated`; unsupported
+   revisions return `unsupported_target`; malformed layouts return
+   `invalid_request`. Gaps inside a vendor ramdisk
    section, and bytes between the sequential layout and a recovery DTBO, are
    named in limitations. Member bytes stream on demand.
 9. CLI and MCP return the same Evidence shape, including the untrusted-string
@@ -100,9 +103,11 @@ limitations. Temp directories use `createTestTempDirectory` without an
 `afterEach` root removal. The MCP extraction cleanup removes the extraction
 output root.
 
-Fixtures are synthetic headers and stored payloads. This feature includes no
-vendor or device image. No signature check, AVB digest check, or decompressor
-runs.
+Fixtures are synthetic headers and stored payloads. An independent offline
+check also generates boot v0-v4 and vendor_boot v3-v4 images with pinned AOSP
+`mkbootimg.py`, then compares REA ranges and digests with the known inputs and
+official `unpack_bootimg.py` output. This feature includes no device-dumped
+image. No signature check, AVB digest check, or payload decompressor runs.
 
 ## Non-goals
 

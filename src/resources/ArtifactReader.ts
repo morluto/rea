@@ -4,6 +4,7 @@ import type {
   ArtifactAdmissionLimit,
   ArtifactIntegrityCheck,
   ArtifactLimitBoundary,
+  ArtifactOperationError,
 } from "../domain/artifactOperationError.js";
 import type {
   ArtifactContainerIntegrityPair,
@@ -272,14 +273,7 @@ export type CleanupFailedRead = ArtifactReaderFailure & {
 };
 
 /** Why an artifact reader failed. */
-export type ArtifactReaderFailureReason =
-  | "cancelled"
-  | "format"
-  | "integrity"
-  | "io"
-  | "limit"
-  | "path"
-  | "unavailable";
+export type ArtifactReaderFailureReason = ArtifactOperationError["reason"];
 
 export class ArtifactReaderFailure extends Error {
   readonly userMessage: string | undefined;
@@ -470,8 +464,10 @@ export const artifactFixedLimitFailure = (
   allowance: ArtifactFixedLimit,
   outcome: string,
   boundary: ArtifactLimitBoundary = "capacity",
+  options?: ErrorOptions,
 ): ArtifactReaderFailure =>
   new ArtifactReaderFailure("limit", outcome, {
+    ...options,
     boundary,
     userMessage: outcome,
     fixedAllowance: allowance,

@@ -397,3 +397,42 @@ export const declareVendorRamdiskCount = (
   writeU32(copy, VENDOR_V3 + 4, count);
   return copy;
 };
+/** Small byte-format refusals for the public artifact adapters. */
+export const androidBootImageRefusals = () => {
+  const unsupportedBoot = buildBootImage({ version: 0 });
+  unsupportedBoot.writeUInt32LE(5, 40);
+  const unsupportedVendor = buildVendorBootImage({ version: 4 });
+  unsupportedVendor.writeUInt32LE(5, 8);
+  const malformed = buildBootImage({ version: 0 });
+  malformed.writeUInt32LE(1024, 36);
+  return [
+    {
+      name: "boot-version",
+      bytes: unsupportedBoot,
+      kind: "unsupported",
+      code: "unsupported_target",
+      category: "unsupported_target",
+    },
+    {
+      name: "vendor-version",
+      bytes: unsupportedVendor,
+      kind: "unsupported",
+      code: "unsupported_target",
+      category: "unsupported_target",
+    },
+    {
+      name: "short-image",
+      bytes: truncateImage(buildBootImage({ version: 0 })),
+      kind: "truncated",
+      code: "truncated",
+      category: "truncated",
+    },
+    {
+      name: "bad-page",
+      bytes: malformed,
+      kind: "malformed",
+      code: "invalid_request",
+      category: "invalid_input",
+    },
+  ] as const;
+};

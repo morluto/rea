@@ -1,9 +1,11 @@
 import type { FileHandle } from "node:fs/promises";
+import type { ParseFailureError } from "../domain/parseFailure.js";
 
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
   ArtifactReaderFailure,
   artifactFixedLimitFailure,
+  artifactParseFailure,
 } from "../resources/index.js";
 import {
   PositionalArtifactReader,
@@ -17,6 +19,7 @@ import type {
 } from "../domain/artifactFormatMetadata.js";
 import {
   ANDROID_BOOT_HEADER_PROBE_BYTES,
+  ANDROID_BOOT_FIXED_LIMITS,
   AVB_FOOTER_SIZE,
   compressionFromPrefix,
   inspectAvbFooter,
@@ -25,7 +28,6 @@ import {
   type AndroidBootComponentPlan,
   type AndroidBootCompression,
   type AndroidBootParse,
-  type AndroidBootParseError,
   type AvbFooterFacts,
   type VendorRamdiskTableParse,
 } from "./AndroidBootImageFormat.js";
@@ -192,19 +194,30 @@ const formatFailure = (
   options?: ErrorOptions,
 ): ArtifactReaderFailure =>
   new ArtifactReaderFailure(
-    "format",
+    "malformed",
     `Android boot image is malformed: ${detail}`,
     options,
   );
 
-const parseFailure = (failure: AndroidBootParseError): ArtifactReaderFailure =>
-  failure._tag === "AndroidBootCapacityFailure"
-    ? artifactFixedLimitFailure(
-        failure.limit.name,
-        failure.limit.maximum,
-        failure.limit.unit,
-      )
-    : formatFailure(failure.message, { cause: failure });
+const parseFailure = (failure: ParseFailureError): unknown => {
+  const facts = failure.failure;
+  if (facts.kind === "limit") {
+    const ceiling = ANDROID_BOOT_FIXED_LIMITS.get(facts.limit.name);
+    if (ceiling !== undefined)
+      return artifactFixedLimitFailure(
+        {
+          name: ceiling.name,
+          kind: "parser",
+          limit: facts.limit.maximum,
+          unit: ceiling.unit,
+        },
+        failure.message,
+        "capacity",
+        { cause: failure },
+      );
+  }
+  return artifactParseFailure(failure, undefined, () => "capacity");
+};
 
 const entryFor = (
   plan: AndroidBootComponentPlan,

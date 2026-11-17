@@ -139,15 +139,35 @@ it("rejects an unsupported version, a bad page size, and a truncated image", () 
   const version = buildBootImage({ version: 0 });
   version.writeUInt32LE(5, 40);
   expect(failed(version)).toMatchObject({
-    _tag: "AndroidBootFormatFailure",
+    kind: "unsupported",
+    failure: {
+      format: "android-boot-image",
+      field: "header_version",
+      offset: 40,
+    },
     message: "header version 5 is unsupported",
   });
   const page = buildBootImage({ version: 0 });
   page.writeUInt32LE(1024, 36);
-  expect(failed(page).message).toContain("page size 1024");
-  expect(
-    failed(truncateImage(buildBootImage({ version: 0 }))).message,
-  ).toContain("image is truncated");
+  expect(failed(page)).toMatchObject({
+    kind: "malformed",
+    message: expect.stringContaining("page size 1024"),
+  });
+  const vendor = buildVendorBootImage({ version: 4 });
+  vendor.writeUInt32LE(5, 8);
+  expect(failed(vendor)).toMatchObject({
+    kind: "unsupported",
+    failure: {
+      format: "android-boot-image",
+      field: "header_version",
+      offset: 8,
+    },
+  });
+  expect(failed(Buffer.from("ANDROID!"))).toMatchObject({ kind: "truncated" });
+  expect(failed(truncateImage(buildBootImage({ version: 0 })))).toMatchObject({
+    kind: "truncated",
+    failure: { format: "android-boot-image" },
+  });
 });
 
 it("aligns a kernel larger than 2^31 without allocating the image", () => {
@@ -345,6 +365,12 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
       input,
     );
   const overlap = Buffer.from(image);
+  const short = rows(image.subarray(0, table.offset + table.size - 1));
+  if (short.ok) throw new Error("Expected a truncated ramdisk table");
+  expect(short.error).toMatchObject({
+    kind: "truncated",
+    failure: { field: "vendor ramdisk table" },
+  });
   overlap.writeUInt32LE(0, table.offset + entrySize + 4);
   const overlapped = rows(overlap);
   expect(overlapped.ok).toBe(false);
@@ -360,11 +386,13 @@ it("rejects vendor table overlap, overrun, and an excessive entry count", () => 
     declareVendorRamdiskCount(buildVendorBootImage({ version: 4 }), 4097),
   );
   expect(capacity).toMatchObject({
-    _tag: "AndroidBootCapacityFailure",
-    limit: {
-      name: "Android vendor ramdisk table entry count",
-      maximum: 4096,
-      unit: "entries",
+    kind: "limit",
+    failure: {
+      format: "android-boot-image",
+      limit: {
+        name: "Android vendor ramdisk table entry count",
+        maximum: 4096,
+      },
     },
   });
   expect(capacity.message).toContain("4096");

@@ -6,10 +6,12 @@ uImage reader. Requirements are numbered in [spec.md](spec.md).
 
 ## Boundary and contract
 
-1. Keep parsing in `src/domain/androidBootImageFormat.ts`. That module imports
-   only `./result.js`. Export `hasAndroidBootImageMagic`,
+1. Keep parsing in `src/artifacts/AndroidBootImageFormat.ts`, using shared
+   `Result`, `ParseFailureError`, and bounded `BinaryReader` primitives.
+   Keep magic recognition in `src/domain/androidBootImageFormat.ts`. Export
    `parseAndroidBootHeader`, `parseVendorRamdiskTable`, `inspectAvbFooter`,
-   and `compressionFromPrefix`.
+   and `compressionFromPrefix` from the parser. Preserve parser failure kinds
+   through the shared artifact failure owner.
 2. Add `AndroidBootImageArtifactReader` with format `android-boot-image`. It
    probes at most 4096 header bytes, reads a 64-byte tail for the AVB check,
    and streams member bytes on demand. Table admission uses the 4096-entry,
@@ -41,8 +43,10 @@ Synthetic fixtures live in `tests/fixtures/androidBootImage.ts`: version 0,
 version 2 with a DTB, versions 3 and 4 boot, version 4 vendor_boot with two
 ramdisk table entries, and truncated and overlapping-range negatives. Cover
 the parser, the reader, filesystem boundaries, CLI acceptance, and MCP
-boundary output, including matching Evidence limitations. State that no
-vendor or device image was checked.
+boundary output, including matching Evidence limitations and unsupported,
+truncated, and malformed refusals. Use pinned AOSP generation and unpacking
+with small inert component inputs as an independent byte oracle. State that
+no device-dumped image was checked.
 
 ## Effects and compatibility
 

@@ -96,11 +96,19 @@ it("rejects an excessive vendor ramdisk count before reading the table", async (
     expect(failure).toMatchObject({
       reason: "limit",
       boundary: "capacity",
-      userMessage: artifactFixedLimitFailure(
-        "Android vendor ramdisk table entry count",
-        4096,
-        "entries",
-      ).userMessage,
+      fixedAllowance: artifactFixedLimitFailure(
+        {
+          name: "Android vendor ramdisk table entry count",
+          kind: "parser",
+          limit: 4096,
+          unit: "entries",
+        },
+        "table count",
+      ).fixedAllowance,
+      cause: {
+        kind: "limit",
+        failure: { limit: { maximum: 4096 } },
+      },
     });
     expect(reads).toHaveBeenCalledTimes(1);
   } finally {

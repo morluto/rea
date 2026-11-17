@@ -79,8 +79,10 @@ a component, or the footer is malformed.
 
 The reader admits at most 4,096 vendor ramdisk table entries and an entry size
 of at most 4,096 bytes. A vendor `header_size` above 1 MiB is the same kind of
-capacity limit. Those checks happen before the table is read. A truncated
-image is malformed, not an empty inventory. Gaps inside a vendor ramdisk
+capacity limit. Those checks happen before the table is read. Unsupported
+header revisions return `unsupported_target`; truncated declared structures
+return `truncated`; malformed layouts return `invalid_request`. These refusals
+do not produce an empty successful inventory. Gaps inside a vendor ramdisk
 section, or bytes between the sequential layout and a recovery DTBO, are named
 in limitations instead of being invented as entries.
 
@@ -96,8 +98,12 @@ logical paths, batches of occurrence/content IDs, selected fields and pages.
 
 ## Verification scope
 
-Tests use synthetic headers and stored payloads only. No vendor or device
-image was checked in this change. Source and compiled CLI/full/compact MCP
-tests cover versions 0, 2, 3, and 4, a version 4 vendor_boot with two ramdisk
-table entries, compression magics, truncation, overlapping ranges, capacity,
-cancellation, and cleanup. No signature, AVB digest, or decompressor was run.
+Source and compiled CLI/MCP tests cover stored component bytes, compression
+magics, unsupported revisions, truncation, overlapping ranges, capacity,
+cancellation, and cleanup. An independent offline check used AOSP
+`mkbootimg.py` and `unpack_bootimg.py` at commit
+`d2bb0af5ba6d3198a3e99529c97eda1be0b5a093`: boot versions 0 through 4 and
+vendor_boot versions 3 and 4 had component ranges and digests matching their
+small inert input files and official unpacked output. Version 4 vendor_boot
+extraction also matched those inputs. No device-dumped image, signature
+verification, AVB digest verification, or payload decompression was checked.

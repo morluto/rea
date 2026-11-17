@@ -12,10 +12,73 @@ import {
   readerIntegrityFailure,
 } from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
-import { ArtifactFileCleanupFailure } from "./ArtifactFileOperation.js";
+import {
+  ArtifactFileCleanupFailure,
+  artifactParseFailure,
+} from "./ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { artifactReaderLimitFailure } from "./index.js";
+import {
+  malformedInput,
+  truncatedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
+
+it.each([
+  {
+    cause: malformedInput("fixture", "bad field"),
+    code: "invalid_request",
+    category: "invalid_input",
+  },
+  {
+    cause: truncatedInput("fixture", "short field"),
+    code: "truncated",
+    category: "truncated",
+  },
+  {
+    cause: unsupportedInput("fixture", "new revision"),
+    code: "unsupported_target",
+    category: "unsupported_target",
+  },
+])(
+  "preserves $cause.kind parser facts after cleanup retry",
+  async ({ cause, code, category }) => {
+    const readerFailure = artifactParseFailure(cause, undefined);
+    if (!(readerFailure instanceof ArtifactReaderFailure))
+      throw new Error(
+        "Parser failure did not become an artifact reader failure",
+      );
+    expect(readerFailure).toMatchObject({ reason: cause.kind, cause });
+    const lease = new AnalysisCleanupLease(async () => {}, [
+      "fixture descriptor",
+    ]);
+    const wrapped = ArtifactReaderFailure.withCleanup(
+      readerFailure,
+      { reason: "close failed", resources: ["fixture descriptor"] },
+      undefined,
+      [lease],
+    );
+    const projectedOwner = translateArtifactFailure(
+      "inspect_artifact",
+      wrapped,
+    );
+    expect(projectAnalysisError(projectedOwner)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        reason: cause.kind,
+        detail: cause.message,
+        cleanup: "incomplete",
+      },
+    });
+    await lease.release();
+    expect(projectAnalysisError(projectedOwner)).toMatchObject({
+      code,
+      category,
+      details: { reason: cause.kind, detail: cause.message },
+    });
+  },
+);
 
 // The provider ceiling test uses a sparse file and is skipped on Windows.
 it.skipIf(process.platform !== "win32")(

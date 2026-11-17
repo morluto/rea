@@ -9,7 +9,10 @@ import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
 } from "../../src/domain/artifactGraph.js";
-import { buildVendorBootImage } from "../fixtures/androidBootImage.js";
+import {
+  androidBootImageRefusals,
+  buildVendorBootImage,
+} from "../fixtures/androidBootImage.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -22,6 +25,7 @@ cliTest(
     const dtb = Buffer.from("vendor-dtb");
     const bootconfig = Buffer.from("androidboot.hardware=test\n");
     const source = join(root, "vendor_boot.img");
+    const callerPath = `${root}/./vendor_boot.img`;
     await writeFile(
       source,
       buildVendorBootImage({
@@ -37,11 +41,13 @@ cliTest(
       }),
     );
     const inspected = await cli.run({
-      arguments: ["inspect-artifact", source, "--json"],
+      arguments: ["inspect-artifact", callerPath, "--json"],
     });
     expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const evidence = parseEvidence(inspected.json);
+    expect(evidence.caller_input_path).toBe(callerPath);
     const inspection = artifactInspectionResultSchema.parse(
-      parseEvidence(inspected.json).normalized_result,
+      evidence.normalized_result,
     );
     const graph = artifactInventoryResultSchema.parse(
       inspection.substeps[0]?.evidence.normalized_result,
@@ -62,12 +68,14 @@ cliTest(
       component_count: 4,
     });
     const extracted = await cli.run({
-      arguments: ["extract-artifact", source, "--json"],
+      arguments: ["extract-artifact", callerPath, "--json"],
       environment: { TMPDIR: root, TMP: root, TEMP: root },
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
+    const extractedEvidence = parseEvidence(extracted.json);
+    expect(extractedEvidence.caller_input_path).toBe(callerPath);
     const result = artifactExtractionResultSchema.parse(
-      parseEvidence(extracted.json).normalized_result,
+      extractedEvidence.normalized_result,
     );
     expect(result.containment_verified).toBe(true);
     expect(
@@ -88,5 +96,28 @@ cliTest(
         bootconfig,
       ),
     ).toBe(true);
+  },
+);
+
+cliTest(
+  "keeps Android parser refusal kinds through the compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-android-boot-cli-refusals-",
+    );
+    for (const fixture of androidBootImageRefusals()) {
+      const path = join(root, `${fixture.name}.img`);
+      await writeFile(path, fixture.bytes);
+      const result = await cli.run({
+        arguments: ["inspect-artifact", path, "--json"],
+      });
+      expect(result.exitCode, result.stdout + result.stderr).toBe(1);
+      expect(result.json).toMatchObject({
+        code: fixture.code,
+        category: fixture.category,
+        details: { operation: "inspect_artifact", reason: fixture.kind },
+      });
+      expect((await readFile(path)).equals(fixture.bytes)).toBe(true);
+    }
   },
 );

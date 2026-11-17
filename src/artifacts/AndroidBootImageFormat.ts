@@ -10,6 +10,9 @@ import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
+  truncatedInput,
+  unsupportedInput,
+  type LimitRef,
 } from "../domain/parseFailure.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 
@@ -136,21 +139,6 @@ export interface AvbFooterFacts {
   readonly limitations: readonly string[];
 }
 
-export type AndroidBootParseError =
-  | { readonly _tag: "AndroidBootFormatFailure"; readonly message: string }
-  | {
-      readonly _tag: "AndroidBootCapacityFailure";
-      readonly message: string;
-      readonly limit: AndroidBootFixedLimit;
-    };
-
-/** A fixed parser ceiling, named so readers can report shared recovery. */
-export interface AndroidBootFixedLimit {
-  readonly name: string;
-  readonly maximum: number;
-  readonly unit: string;
-}
-
 /** The ParseFailure format of an Android boot or vendor boot image. */
 const ANDROID_BOOT_FORMAT = "android-boot-image";
 
@@ -158,61 +146,50 @@ const formatError = (message: string): never => {
   throw malformedInput(ANDROID_BOOT_FORMAT, message);
 };
 
-const capacityError = (
-  message: string,
-  limit: AndroidBootFixedLimit,
-): never => {
+const capacityError = (message: string, limit: LimitRef): never => {
   throw decodeLimit(ANDROID_BOOT_FORMAT, message, limit);
 };
 
-const HEADER_SIZE_LIMIT: AndroidBootFixedLimit = {
+const HEADER_SIZE_LIMIT = {
   name: "Android boot image header_size",
   maximum: MAX_HEADER_SIZE,
   unit: "bytes",
 };
-const VENDOR_RAMDISK_COUNT_LIMIT: AndroidBootFixedLimit = {
+const VENDOR_RAMDISK_COUNT_LIMIT = {
   name: "Android vendor ramdisk table entry count",
   maximum: MAX_VENDOR_RAMDISKS,
   unit: "entries",
 };
-const VENDOR_RAMDISK_ENTRY_SIZE_LIMIT: AndroidBootFixedLimit = {
+const VENDOR_RAMDISK_ENTRY_SIZE_LIMIT = {
   name: "Android vendor ramdisk table entry size",
   maximum: MAX_RAMDISK_ENTRY_SIZE,
   unit: "bytes",
 };
-/** Each fixed limit's unit by its unique name, for capacity reports. */
-const FIXED_LIMIT_UNITS: ReadonlyMap<string, string> = new Map(
-  [
-    HEADER_SIZE_LIMIT,
-    VENDOR_RAMDISK_COUNT_LIMIT,
-    VENDOR_RAMDISK_ENTRY_SIZE_LIMIT,
-  ].map((limit) => [limit.name, limit.unit]),
-);
+/** Parser-owned fixed ceilings and their units for artifact recovery. */
+export const ANDROID_BOOT_FIXED_LIMITS: ReadonlyMap<
+  string,
+  LimitRef & { readonly unit: string }
+> = new Map([
+  [HEADER_SIZE_LIMIT.name, HEADER_SIZE_LIMIT],
+  [VENDOR_RAMDISK_COUNT_LIMIT.name, VENDOR_RAMDISK_COUNT_LIMIT],
+  [VENDOR_RAMDISK_ENTRY_SIZE_LIMIT.name, VENDOR_RAMDISK_ENTRY_SIZE_LIMIT],
+]);
 
-const parsed = <T>(read: () => T): Result<T, AndroidBootParseError> => {
+const parsed = <T>(read: () => T): Result<T, ParseFailureError> => {
   try {
     return ok(read());
   } catch (cause) {
     if (!(cause instanceof ParseFailureError)) throw cause;
-    const { failure } = cause;
-    if (failure.kind === "limit")
-      return err({
-        _tag: "AndroidBootCapacityFailure",
-        message: failure.detail,
-        limit: {
-          name: failure.limit.name,
-          maximum: failure.limit.maximum,
-          unit: FIXED_LIMIT_UNITS.get(failure.limit.name) ?? "units",
-        },
-      });
-    return err({ _tag: "AndroidBootFormatFailure", message: failure.detail });
+    return err(cause);
   }
 };
 
 const requireBytes = (buffer: Buffer, length: number, what: string): void => {
   if (buffer.length < length)
-    formatError(
+    throw truncatedInput(
+      ANDROID_BOOT_FORMAT,
       `${what} is truncated: ${buffer.length} bytes available, at least ${length} required`,
+      { offset: buffer.length, field: what },
     );
 };
 
@@ -298,8 +275,10 @@ const requireFileCovers = (fileSize: number, imageEnd: number): void => {
   if (!Number.isSafeInteger(fileSize) || fileSize < 0)
     formatError("file size is not a safe nonnegative integer");
   if (imageEnd > fileSize)
-    formatError(
+    throw truncatedInput(
+      ANDROID_BOOT_FORMAT,
       `image is truncated: components end at byte ${imageEnd} but the file is ${fileSize} bytes`,
+      { offset: fileSize, field: "components" },
     );
 };
 
@@ -804,7 +783,11 @@ const parseVendorHeader = (
   requireBytes(prefix, 12, "header");
   const headerVersion = u32(prefix, 8);
   if (headerVersion !== 3 && headerVersion !== 4)
-    formatError(`vendor boot header version ${headerVersion} is unsupported`);
+    throw unsupportedInput(
+      ANDROID_BOOT_FORMAT,
+      `vendor boot header version ${headerVersion} is unsupported`,
+      { offset: 8, field: "header_version", undecodedContent: true },
+    );
   const structSize = headerVersion === 4 ? VENDOR_V4_SIZE : VENDOR_V3_SIZE;
   requireBytes(prefix, structSize, "header");
   const pageSize = requirePageSize(u32(prefix, 12));
@@ -906,14 +889,18 @@ const parseAndroidHeader = (
     return parseLegacyBoot(prefix, fileSize, headerVersion);
   if (headerVersion === 3 || headerVersion === 4)
     return parseModernBoot(prefix, fileSize, headerVersion);
-  return formatError(`header version ${headerVersion} is unsupported`);
+  throw unsupportedInput(
+    ANDROID_BOOT_FORMAT,
+    `header version ${headerVersion} is unsupported`,
+    { offset: 40, field: "header_version", undecodedContent: true },
+  );
 };
 
 /** Decode one boot or vendor_boot header and its page-aligned component ranges. */
 export const parseAndroidBootHeader = (
   prefix: Buffer,
   fileSize: number,
-): Result<AndroidBootParse, AndroidBootParseError> =>
+): Result<AndroidBootParse, ParseFailureError> =>
   parsed(() => {
     if (!Number.isSafeInteger(fileSize) || fileSize < 0)
       formatError("file size is not a safe nonnegative integer");
@@ -986,7 +973,8 @@ const readVendorRamdiskTable = (
       `vendor ramdisk table entry size ${input.entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
     );
   const expected = input.entryCount * input.entrySize;
-  if (table.length !== expected)
+  requireBytes(table, expected, "vendor ramdisk table");
+  if (table.length > expected)
     formatError(
       `vendor ramdisk table is ${table.length} bytes, expected ${expected}`,
     );
@@ -1079,7 +1067,7 @@ export const parseVendorRamdiskTable = (
     readonly sectionOffset: number;
     readonly sectionSize: number;
   },
-): Result<VendorRamdiskTableParse, AndroidBootParseError> =>
+): Result<VendorRamdiskTableParse, ParseFailureError> =>
   parsed(() => readVendorRamdiskTable(table, input));
 
 const absentFooter = (limitations: readonly string[] = []): AvbFooterFacts => ({
@@ -1127,8 +1115,10 @@ const readAvbFooter = (input: {
   readonly tail: Buffer | null;
 }): AvbFooterFacts => {
   if (input.fileSize < input.imageEnd)
-    formatError(
+    throw truncatedInput(
+      ANDROID_BOOT_FORMAT,
       `image is truncated: components end at byte ${input.imageEnd} but the file is ${input.fileSize} bytes`,
+      { offset: input.fileSize, field: "components" },
     );
   const trailing = input.fileSize - input.imageEnd;
   if (trailing === 0) return absentFooter();
@@ -1185,5 +1175,5 @@ export const inspectAvbFooter = (input: {
     readonly size: number;
   }[];
   readonly tail: Buffer | null;
-}): Result<AvbFooterFacts, AndroidBootParseError> =>
+}): Result<AvbFooterFacts, ParseFailureError> =>
   parsed(() => readAvbFooter(input));
