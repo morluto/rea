@@ -114,6 +114,19 @@ describe("utmp profile selection", () => {
     ]);
   });
 
+  it("keeps every stated record size consistent with its own field arithmetic", () => {
+    // The head, the tail and `__glibc_reserved[20]` must add up to the size the
+    // profile advertises, padded to the 8-byte alignment `struct timeval` forces.
+    for (const candidate of UTMP_FORMAT_PROFILES) {
+      const layout = utmpFieldLayout(candidate);
+      const end = layout.addressOffset + 4 * 4 + 20;
+      expect(
+        Math.ceil(end / 8) * 8,
+        `${candidate.name} arithmetic disagrees with its record size`,
+      ).toBe(candidate.recordBytes);
+    }
+  });
+
   it("derives the candidate profiles from the file length", () => {
     expect(utmpProfileCandidates(384).map(({ name }) => name)).toEqual([
       "glibc-time32",

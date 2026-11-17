@@ -15,6 +15,10 @@ glibc selects the tail shape with `__WORDSIZE_TIME64_COMPAT32` in `bits/utmp.h`:
 from glibc's own headers, `sysdeps/x86/bits/wordsize.h` defines that macro as `1`
 and `sysdeps/aarch64/bits/wordsize.h` as `0`.
 
+`utmp(5)` documents the same split with its own spelling
+(`__WORDSIZE == 64 && defined __WORDSIZE_COMPAT32`), so the shape comes from two
+independent sources rather than one header.
+
 musl (`include/utmpx.h`) is a third shape: `ut_session` is always `int`, followed
 (or, on a big-endian host, preceded) by `__ut_pad2`, and `ut_addr_v6` is
 `unsigned` rather than glibc's `int32_t`.
@@ -28,6 +32,11 @@ The consequences that make guessing unsafe:
   high half.
 - Record length narrows the layout but never names the byte order, and a length
   that is a multiple of every layout (9600) narrows nothing.
+
+Record sizes are arithmetic on those fields: the head, the tail and
+`__glibc_reserved[20]`, padded to the 8-byte alignment `struct timeval` forces.
+`utmp.test.ts` re-derives each published size from its own offsets, so a profile
+cannot advertise a length its fields do not fill.
 
 Selection is therefore explicit, and an ambiguous file is refused rather than
 decoded under a guess.
