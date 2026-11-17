@@ -520,6 +520,7 @@
 * **domain:** remove remaining CLI option text and local completeness enum baselines ([#11788](https://github.com/morluto/rea/issues/11788)) ([1e9df09](https://github.com/morluto/rea/commit/1e9df09f6814c6194b83791620161b1951257042))
 * **domain:** type UTF-8 excerpts apart from identity strings ([#11272](https://github.com/morluto/rea/issues/11272)) ([b6659b7](https://github.com/morluto/rea/commit/b6659b70a3e55f6bc0d1e71cee21a87acd6131b9))
 * **errors:** derive parse-limit resource_constraint refusals from LimitRef ([#11775](https://github.com/morluto/rea/issues/11775)) ([ddd0d6d](https://github.com/morluto/rea/commit/ddd0d6d4a4e7a4c967977d6f35e59e81f958b997))
+* **errors:** finish local-limit-error-class and range-error-interpretation guards ([#11784](https://github.com/morluto/rea/issues/11784)) ([08b63cc](https://github.com/morluto/rea/commit/08b63cc8a136b70504bb882a30209981f95278d7))
 * **errors:** give caller aborts a typed reason at the adapters ([#10633](https://github.com/morluto/rea/issues/10633)) ([b655645](https://github.com/morluto/rea/commit/b655645608aeb68cf17a8632927e646b2e52a221))
 * **errors:** read cleanup completion from dependencies instead of pushing it to dependents ([#10744](https://github.com/morluto/rea/issues/10744)) ([dd7597a](https://github.com/morluto/rea/commit/dd7597a108d83b727f81950784c0c8102664fc9d))
 * **errors:** require a reason for every analysis cancellation ([#10566](https://github.com/morluto/rea/issues/10566)) ([85da0bd](https://github.com/morluto/rea/commit/85da0bd4eec0213bdf43cd8f2be02f8c266ec1fa))
