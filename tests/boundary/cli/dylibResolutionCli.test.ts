@@ -943,6 +943,50 @@ cliTest(
 );
 
 cliTest(
+  "names a universal image without the opened slice as the trace subject",
+  async ({ cli }) => {
+    // Opening the file selects one host slice; a trace covers the slices its
+    // own parameters select, so its subject must not inherit that selection.
+    const directory = await createTestTempDirectory(
+      "rea-dylib-universal-subject-",
+    );
+    await writeFiles(directory, {
+      tool: fatImage([
+        { cpu: CPU.arm64, bytes: machoImage({ cpu: CPU.arm64 }) },
+        { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+      ]),
+    });
+    for (const [narrowing, architectures] of [
+      [[], ["arm64", "x86_64"]],
+      [["--architecture", "x86_64"], ["x86_64"]],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "trace-dylib-resolution",
+          join(directory, "tool"),
+          ...narrowing,
+          "--json",
+        ],
+        environment: ENVIRONMENT,
+      });
+      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+      const evidence = parseEvidence(result.json);
+      expect(
+        dylibResolutionResultSchema
+          .parse(evidence.normalized_result)
+          .roots.map(({ architecture }) => architecture)
+          .sort(),
+      ).toEqual(architectures);
+      expect(evidence.subject?.identity).toMatchObject({
+        format: "mach-o-universal",
+        architecture: null,
+        selection: null,
+      });
+    }
+  },
+);
+
+cliTest(
   "retains definitive load findings for an explicitly selected app library root",
   async ({ cli }) => {
     const app = await fixtureApp();

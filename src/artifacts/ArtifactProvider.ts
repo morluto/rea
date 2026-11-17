@@ -486,6 +486,14 @@ class ArtifactClient implements AnalysisClient {
           kind: "artifact-path" as const,
           path,
         })),
+        // The trace covers the roots and slices its parameters select, not
+        // the slice the session opened, so its subject names no slice.
+        subject: {
+          path: this.target.path,
+          sha256: this.target.sha256,
+          format: this.target.format,
+          selection: null,
+        },
       }),
     );
   }
