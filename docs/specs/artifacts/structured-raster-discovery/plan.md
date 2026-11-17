@@ -21,4 +21,4 @@ sufficient and selected software semantics do not establish hardware truth.
 Full export uses the shared acquisition and publication owners, a checked source
 hash, no-clobber destinations, separate output/rendering budgets and a complete
 segment sidecar. Skipped alternatives remain evidence rather than executable
-export plans. See [usage](usage.md) and [validation](validation.md).
+export plans. See [usage](../../../guides/firmware/structured-raster-discovery.md) and [validation](validation.md).

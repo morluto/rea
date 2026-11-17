@@ -223,6 +223,16 @@ export const documentationSections = [
         source: "guides/firmware/firmware-analysis.md",
         route: "/firmware-analysis",
       },
+      {
+        text: "Structured raster discovery and export",
+        source: "guides/firmware/structured-raster-discovery.md",
+        route: "/structured-raster-discovery",
+      },
+      {
+        text: "Experimental raw raster preview",
+        source: "guides/firmware/raw-raster-preview.md",
+        route: "/raw-raster-preview",
+      },
     ],
   },
   {

@@ -65,6 +65,8 @@ product pages. The VitePress documentation source is this `docs/` tree.
 ## Firmware
 
 - [Firmware analysis](guides/firmware/firmware-analysis.md)
+- [Structured raster discovery and export](guides/firmware/structured-raster-discovery.md)
+- [Experimental explicit-layout raster preview](guides/firmware/raw-raster-preview.md)
 
 ## HarmonyOS packages
 
