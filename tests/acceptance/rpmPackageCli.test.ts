@@ -11,6 +11,7 @@ import {
   RPM_TAG,
   RPM_TYPE,
   rpmBinaryPackageFixture,
+  rpmInvalidUtf8UrlFixture,
   rpmUtf8PackageFixture,
 } from "../../src/rpm/RpmPackage.fixture.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
@@ -303,6 +304,55 @@ cliTest(
           code: "resource_constraint",
           details: { resource, reported_limits: { boundary: field, maximum } },
         });
+      }
+    }
+  },
+);
+
+cliTest(
+  "keeps malformed URL credentials out of CLI and MCP diagnostics while retaining source facts",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rpm-url-utf8-");
+    const path = join(root, "url.rpm");
+    const bytes = rpmInvalidUtf8UrlFixture(
+      "HTTPS://alice:secret@Example.invalid/café/../b?token=visible#hash",
+    );
+    await writeFile(path, bytes);
+    const output = await cli.run({
+      arguments: ["inspect-rpm-package", path, "--json"],
+    });
+    expect(output.exitCode).not.toBe(0);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_rpm_package", { path });
+    expect(response.isError).toBe(true);
+    for (const error of [output.json, parseMcpToolError(response).error]) {
+      expect(error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "inspect_rpm_package",
+          issues: [
+            { path: ["path"], observed: { lead: { magic: "edabeedb" } } },
+          ],
+          partial_observation: {
+            kind: "file-snapshot-hash",
+            path,
+            bytes: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          },
+        },
+      });
+      const serialized = JSON.stringify(error);
+      expect(serialized).toContain(`tag ${String(RPM_TAG.url)}`);
+      expect(serialized).toContain("UTF-8");
+      expect(serialized).toContain(
+        Buffer.concat([
+          Buffer.from("HTTPS://Example.invalid/café/../b?token=visible#hash"),
+          Buffer.from([0xff]),
+        ]).toString("hex"),
+      );
+      for (const value of ["alice", "secret"]) {
+        expect(serialized).not.toContain(value);
+        expect(serialized).not.toContain(Buffer.from(value).toString("hex"));
       }
     }
   },

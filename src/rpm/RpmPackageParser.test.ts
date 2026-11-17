@@ -12,6 +12,7 @@ import {
   rpmGroupedTriggerFixture,
   rpmInt32PreinFixture,
   rpmInvalidUtf8FilenameFixture,
+  rpmInvalidUtf8UrlFixture,
   rpmLongFileSizesFixture,
   rpmMismatchedFileModesFixture,
   rpmMismatchedTriggerProgFixture,
@@ -975,4 +976,80 @@ it("charges script source text only when it is included", () => {
   } finally {
     admission.mockRestore();
   }
+});
+
+it("excludes transport credentials from malformed URL byte diagnostics", () => {
+  const bytes = rpmInvalidUtf8UrlFixture(
+    "HTTPS://alice:secret@Example.invalid/café/../b?token=visible#hash",
+  );
+  try {
+    parse(bytes);
+    throw new Error("expected invalid UTF-8 URL refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "malformed",
+      field: `main tag ${String(RPM_TAG.url)}`,
+      observed: { lead: { magic: "edabeedb" } },
+    });
+    for (const value of ["alice", "secret"]) {
+      expect(cause.message).not.toContain(value);
+      expect(cause.message).not.toContain(Buffer.from(value).toString("hex"));
+    }
+    expect(cause.message).toContain(
+      Buffer.concat([
+        Buffer.from("HTTPS://Example.invalid/café/../b?token=visible#hash"),
+        Buffer.from([0xff]),
+      ]).toString("hex"),
+    );
+  }
+});
+
+it.each([
+  "https://Example.invalid/café/../b?password=public-metadata",
+  "//alice:secret@Example.invalid/path",
+  "https:alice:secret@example.invalid/path",
+])("uses the shared URL credential interpretation for malformed %s", (url) => {
+  try {
+    parse(rpmInvalidUtf8UrlFixture(url));
+    throw new Error("expected invalid UTF-8 URL refusal");
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.kind).toBe("malformed");
+    if (url.includes("alice")) {
+      for (const value of ["alice", "secret"]) {
+        expect(cause.message).not.toContain(value);
+        expect(cause.message).not.toContain(Buffer.from(value).toString("hex"));
+      }
+    } else
+      expect(cause.message).toContain(
+        Buffer.concat([Buffer.from(url), Buffer.from([0xff])]).toString("hex"),
+      );
+  }
+});
+
+it("keeps arbitrary script source bytes in malformed-text diagnostics", () => {
+  const raw = Buffer.concat([
+    Buffer.from("https://alice:secret@example.invalid/script-data"),
+    Buffer.from([0xff]),
+  ]);
+  const bytes = encodeRpmPackage({
+    headerTags: [
+      {
+        tag: RPM_TAG.prein,
+        type: RPM_TYPE.string,
+        count: 1,
+        bin: Buffer.concat([raw, Buffer.from([0])]),
+      },
+    ],
+  });
+  expect(() =>
+    parse(bytes, { ...defaults, include_script_text: true }),
+  ).toThrowError(
+    expect.objectContaining({
+      message: expect.stringContaining(raw.toString("hex")),
+    }),
+  );
 });

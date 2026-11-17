@@ -631,3 +631,16 @@ export const rpmMalformedDigestFixture = (): Buffer =>
         : tag,
     ),
   });
+
+/** A known URL whose invalid UTF-8 suffix forces diagnostic projection. */
+export const rpmInvalidUtf8UrlFixture = (url: string): Buffer =>
+  encodeRpmPackage({
+    headerTags: [
+      {
+        tag: RPM_TAG.url,
+        type: RPM_TYPE.string,
+        count: 1,
+        bin: Buffer.concat([Buffer.from(url, "utf8"), Buffer.from([0xff, 0])]),
+      },
+    ],
+  });

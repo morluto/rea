@@ -248,7 +248,38 @@ const readStrings = (
 /** Raw bytes quoted in an invalid-UTF-8 refusal; PATH_MAX covers file paths. */
 const MAX_QUOTED_RAW_BYTES = 4096;
 
-/** Decode one read text value, or refuse it with its exact stored bytes. */
+/** Quote source bytes only after the known field's transport credentials are excluded. */
+const headerByteDiagnostic = (
+  header: DecodedHeader,
+  tag: number,
+  raw: Buffer,
+): string => {
+  // Latin-1 is a reversible byte projection for the URL owner's ASCII syntax,
+  // not a successful UTF-8 decode. No noncredential byte spelling is normalized.
+  const url =
+    header.label === "main" && tag === RPM_TAG.url
+      ? redactRecordedTransportUrl(raw.toString("latin1"))
+      : undefined;
+  if (url?.url === null)
+    return `${String(raw.length)} stored URL bytes; raw byte quote omitted because transport userinfo cannot be separated unambiguously`;
+  const displayed = url?.url;
+  const length = displayed?.length ?? raw.length;
+  const quoted =
+    displayed === undefined
+      ? raw.subarray(0, MAX_QUOTED_RAW_BYTES)
+      : Buffer.from(displayed.slice(0, MAX_QUOTED_RAW_BYTES), "latin1");
+  const kind =
+    url?.url_credentials_redacted === true
+      ? "credential-redacted raw bytes"
+      : "raw bytes";
+  const extent =
+    quoted.length < length
+      ? `first ${String(quoted.length)} of ${String(length)} ${kind}`
+      : kind;
+  return `${extent}: ${hex(quoted)}${url?.url_credentials_redacted === true ? `; ${String(raw.length)} stored bytes before redaction` : ""}`;
+};
+
+/** Decode one read text value, or refuse it with credential-safe byte provenance. */
 const headerText = (
   header: DecodedHeader,
   tag: number,
@@ -259,14 +290,9 @@ const headerText = (
     try {
       return decodeStrictUtf8(raw, "preserve");
     } catch {
-      const quoted = raw.subarray(0, MAX_QUOTED_RAW_BYTES);
       const position = index === undefined ? "" : `[${String(index)}]`;
-      const extent =
-        quoted.length < raw.length
-          ? `first ${String(quoted.length)} of ${String(raw.length)} raw bytes`
-          : `raw bytes`;
       return fail(
-        `RPM ${header.label} header tag ${String(tag)}${position} is not valid UTF-8, so its text cannot be reported without replacing source bytes (${extent}: ${hex(quoted)}).`,
+        `RPM ${header.label} header tag ${String(tag)}${position} is not valid UTF-8, so its text cannot be reported without replacing source bytes (${headerByteDiagnostic(header, tag, raw)}).`,
         { field: `${header.label} tag ${String(tag)}` },
       );
     }

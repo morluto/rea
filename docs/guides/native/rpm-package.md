@@ -89,6 +89,8 @@ rather than reported as missing. Header text is decoded as strict UTF-8 only for
 values the report includes: a file path, package field, dependency, or requested
 scriptlet with invalid UTF-8 is refused as malformed, and the refusal quotes the
 tag, entry index, and raw bytes in hex instead of reporting text with replaced
-bytes. Safely read lead and signature facts stay in `issues[].observed`. A
+bytes. A malformed URL excludes transport userinfo before the byte quote and
+labels that redaction; when the credential span is ambiguous, it omits the byte
+quote. Other malformed text retains its source bytes. Safely read lead and signature facts stay in `issues[].observed`. A
 completed file snapshot remains available as a `file-snapshot-hash` partial
 observation. Foreign magic is `unsupported_target`, not a successful parse.
