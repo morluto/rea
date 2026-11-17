@@ -944,6 +944,13 @@ stored. The v4 signature and any AVB footer are reported with sizes and are
 not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
 [Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
 
+Android A/B OTA `payload.bin` files (CrAU v2) use the same
+inspection/extraction workflows. Prefer a retained summary for header,
+partition table, dynamic groups and signature counts. Signatures are not
+verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
+operations stay inventoried with unavailable content. See
+[Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
+
 ## ESP images
 
 For an ESP32-family app or bootloader image, `open_binary` then

@@ -374,6 +374,16 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
+
+```sh
+rea inspect-artifact ./payload.bin --detail summary --evidence_output payload.json --json
+rea extract-artifact ./payload.bin --json
+```
+
+See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
+facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
