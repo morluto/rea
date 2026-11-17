@@ -8,6 +8,7 @@ import {
 } from "./analysisErrorBase.js";
 import type { ArtifactReaderLimitFact } from "./artifactReaderLimits.js";
 import type { FixedAllowance } from "./fixedAllowanceRemediation.js";
+import type { ParseFailureKind } from "./parseFailure.js";
 
 /** The resource class that refused an artifact operation. */
 export type ArtifactLimitBoundary = "file-size" | "capacity" | "memory";
@@ -99,10 +100,10 @@ export class ArtifactOperationError extends AnalysisError {
       | "trace_web_source_location"
       | "analyze_javascript_application",
     readonly reason:
+      | ParseFailureKind
       | "cancelled"
       | "format"
       | "integrity"
-      | "limit"
       | "path"
       | "unavailable"
       | "io",
