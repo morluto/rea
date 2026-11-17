@@ -23,6 +23,7 @@ import {
   type HopperReply,
 } from "./HopperReplyContracts.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import {
   hopperCallerScanBudgetForMilliseconds,
   hopperCallerScanRecovery,
@@ -358,10 +359,16 @@ export const reconcileHopperCallers = async (
     typeof budget === "number"
       ? hopperCallerScanBudgetForMilliseconds(budget)
       : budget;
-  const budgetMs = scanBudget.milliseconds;
+  const admittedBudget = readRuntimeSetting(() => ({
+    ...scanBudget,
+    milliseconds: scanBudget.milliseconds,
+    source: scanBudget.source,
+  }));
+  if (!admittedBudget.ok) return admittedBudget;
+  const budgetMs = admittedBudget.value.milliseconds;
   const describeScan = (facts: HopperCallerScanFacts): string => {
     const observed = formatHopperCallerScanReason(facts);
-    const recovery = hopperCallerScanRecovery(facts, scanBudget);
+    const recovery = hopperCallerScanRecovery(facts, admittedBudget.value);
     return recovery === "" ? observed : `${observed} ${recovery}`;
   };
   const retainNative = (

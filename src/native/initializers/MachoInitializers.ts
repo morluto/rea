@@ -34,6 +34,9 @@ import {
 } from "../../domain/coverage.js";
 import {
   finishInitializerReport,
+  preferInitializerSymbolName,
+  withheldInitializerSymbolName,
+  type InitializerSymbolName,
   type CollectedInitializer,
   type InitializerPage,
 } from "./initializerReport.js";
@@ -213,23 +216,20 @@ interface SymbolTable {
 }
 
 interface MachoSymbols {
-  readonly names: ReadonlyMap<bigint, string>;
+  readonly names: ReadonlyMap<bigint, InitializerSymbolName>;
   readonly table: SymbolTable | null;
 }
 
 /**
  * Name at `strx`. Index 0 is the empty name; an index outside the table is
- * unreadable, which leaves coverage unknown. `overBudget` is the coverage
- * effect of a name over the name budget: `partial` when it is the reported
- * entry's own name (a known withheld fact), `unknown` when it only feeds the
- * symbol index, where which entries it would have named cannot be told.
+ * unreadable, which leaves coverage unknown. A name exceeding the byte
+ * budget stays marked until a collected entry uses it.
  */
 const nameAt = (
   scan: MachoScan,
   strings: Buffer,
   strx: number,
-  overBudget: "partial" | "unknown",
-): string | null => {
+): InitializerSymbolName | null => {
   if (strx === 0) return null;
   const observed = observeElfStringTableEntry(
     strings,
@@ -237,8 +237,13 @@ const nameAt = (
     MAX_NATIVE_INITIALIZER_NAME_BYTES + 1,
   );
   if (observed.state === "truncated") {
-    scan.notes.tally("long-symbol-name");
-    widen(scan, overBudget);
+    // The table's last NUL establishes a terminator beyond the name window.
+    if (strings.at(-1) === 0) {
+      scan.notes.tally("long-symbol-name");
+      return withheldInitializerSymbolName;
+    }
+    scan.notes.tally("unverified-symbol-terminator");
+    widen(scan, "unknown");
     return null;
   }
   if (observed.state === "outside") {
@@ -260,7 +265,7 @@ const readSymbols = (
   wide: boolean,
   little: boolean,
 ): MachoSymbols => {
-  const names = new Map<bigint, string>();
+  const names = new Map<bigint, InitializerSymbolName>();
   let first: SymbolTable | null = null;
   const done = (): MachoSymbols => ({ names, table: first });
   const header = readMachoLoadCommandTableHeader(scan.bytes, scan.bytes.length);
@@ -329,9 +334,14 @@ const readSymbols = (
               ? scan.bytes.readUInt32LE(at + 8)
               : scan.bytes.readUInt32BE(at + 8),
           );
-      const text = nameAt(scan, strings, strx, "unknown");
-      if (text === null || names.has(value)) continue;
-      names.set(value, text);
+      const text = nameAt(scan, strings, strx);
+      if (text === null) continue;
+      const previous = names.get(value);
+      if (
+        previous === undefined ||
+        (previous === withheldInitializerSymbolName && typeof text === "string")
+      )
+        names.set(value, text);
     }
     if (stopped) {
       note(
@@ -631,8 +641,7 @@ const objectSymbol = (
       );
   // Debugger stabs never name a relocation target.
   if ((type & 0xe0) !== 0) return UNRESOLVED;
-  // The name is this entry's own, so one over the budget is a withheld fact.
-  const ownName = () => nameAt(walk.scan, table.strings, strx, "partial");
+  const ownName = () => nameAt(walk.scan, table.strings, strx);
   // N_UNDF: defined in another object or library.
   if ((type & 0x0e) === 0)
     return {
@@ -762,12 +771,15 @@ const slotsOf = async (
     const symbol =
       applied.method === "unresolved_import"
         ? applied.importName
-        : (applied.definedName ??
-          (applied.value === null
-            ? null
-            : (walk.symbols.names.get(applied.value) ??
-              (code === null ? null : walk.symbols.names.get(code)) ??
-              null)));
+        : typeof applied.definedName === "string" || applied.value === null
+          ? applied.definedName
+          : preferInitializerSymbolName(
+              applied.definedName,
+              preferInitializerSymbolName(
+                walk.symbols.names.get(applied.value),
+                code === null ? null : walk.symbols.names.get(code),
+              ),
+            );
     entries.push({
       index: entries.length,
       kind,
