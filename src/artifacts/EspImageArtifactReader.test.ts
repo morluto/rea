@@ -142,7 +142,7 @@ it("reports truncation and undescribed trailing bytes as coverage", async () => 
   expect(truncated.coverage.status).toBe("unknown");
   expect(truncated.limitations).toContain(ESP_IMAGE_LIMITATIONS.inventoryScope);
   expect(truncated.limitations).toContain(
-    "ESP image is truncated: segment 2 declares 32 bytes at offset 0x160, but the file holds 8.",
+    ESP_IMAGE_LIMITATIONS.truncatedSegment(2, 32, 352, 8),
   );
   const segment = truncated.occurrences.find(
     (row) => row.logical_path === "segment-02.bin",
