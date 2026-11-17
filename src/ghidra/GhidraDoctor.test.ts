@@ -29,6 +29,7 @@ import {
 import { GhidraProvider } from "./GhidraProvider.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { silentLogger } from "../logger.js";
+import * as ghidraInstallation from "./GhidraInstallation.js";
 
 let inspectionResources = createInspectionResources();
 afterEach(async () => {
@@ -108,6 +109,35 @@ const doctorHost = (
   });
 
 describe("Ghidra doctor integration", async () => {
+  it.each([
+    { path: "relative.gpr", available: false },
+    { path: "/work/project.grez", available: false },
+    { path: "/work/project.gzf", available: false },
+    { path: "/work/project.gpr", available: true },
+  ])(
+    "preserves installation facts but validates selected project $path",
+    async ({ path, available }) => {
+      const installed = await inspection();
+      const inspect = vi
+        .spyOn(ghidraInstallation, "inspectGhidraInstallation")
+        .mockResolvedValue(installed);
+      onTestFinished(() => inspect.mockRestore());
+      const result = await inspectSystemGhidraProvider(
+        { REA_GHIDRA_PROJECT_PATH: path },
+        inspectionResources.owner,
+        undefined,
+        "linux",
+      );
+      expect(result).toMatchObject({
+        available,
+        providerVersion: "12.1.4",
+        registrationEnvironment: { GHIDRA_INSTALL_DIR: INSTALL },
+      });
+      expect(
+        result.checks.some((check) => check.code === "invalid_configuration"),
+      ).toBe(!available);
+    },
+  );
   it("accepts a valid BYO Ghidra engine when Hopper is absent", async () => {
     const result = await runDoctor(undefined, doctorHost(await inspection()));
 

@@ -1,4 +1,5 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { ghidraProjectPathSchema } from "../config/ghidraExistingProject.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
@@ -159,9 +160,35 @@ export const inspectSystemGhidraProvider = async (
       installation.status === "available" && installation.platform === "win32"
         ? await probeGhidraTemporaryDirectory(resourceOwner)
         : undefined;
-    return projectGhidraDoctorInspection(installation, temporaryDirectory, {
-      existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
-    });
+    const inspection = projectGhidraDoctorInspection(
+      installation,
+      temporaryDirectory,
+      {
+        existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
+      },
+    );
+    const project = ghidraProjectPathSchema
+      .optional()
+      .safeParse(environment.REA_GHIDRA_PROJECT_PATH);
+    if (project.success) return inspection;
+    const constraint = project.error.issues
+      .map((issue) => issue.message)
+      .join("; ");
+    return {
+      ...inspection,
+      available: false,
+      checks: [
+        ...inspection.checks,
+        {
+          name: "existing_project_configuration",
+          ok: false,
+          code: "invalid_configuration",
+          classification: "config_drift",
+          detail: constraint,
+          remediation: `Fix REA_GHIDRA_PROJECT_PATH or unset it for ephemeral analysis. ${constraint}`,
+        },
+      ],
+    };
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }

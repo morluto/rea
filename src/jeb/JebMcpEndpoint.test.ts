@@ -23,6 +23,7 @@ describe("JEB MCP endpoint", () => {
       "http://127.0.0.1:8425",
       "http://127.0.0.1:8425/",
       "http://127.0.0.1:8425/MCP",
+      "http://127.0.0.1:8425/not-mcp",
     ])
       expect(parseJebMcpEndpoint(value).ok, value).toBe(false);
   });

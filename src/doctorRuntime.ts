@@ -215,9 +215,8 @@ export const settingAffectsProbe = (
       // Java comes from JAVA_HOME when it is explicit; only then is PATH unused.
       return name !== "PATH" || read("JAVA_HOME") === undefined;
     case "ghidra":
-      // An existing project changes admission only on Windows, which cannot
-      // open one. Both the install directory and the JDK fall back to PATH.
-      if (name === "REA_GHIDRA_PROJECT_PATH") return platform === "win32";
+      // Project syntax affects readiness on every host; Windows additionally
+      // refuses existing projects. Installation and JDK selection fall back to PATH.
       return (
         name !== "PATH" ||
         read("GHIDRA_INSTALL_DIR") === undefined ||

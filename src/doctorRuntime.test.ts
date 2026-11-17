@@ -316,7 +316,6 @@ test.each([true, false])(
       () => selected.mockRestore(),
     ]);
   },
-  5_000,
 );
 
 test("joins display finalization before preserving a late cancellation", async () => {
@@ -779,10 +778,10 @@ test("decides whether an unresolved setting is one the probe actually reads", ()
     settingAffectsProbe("jadx", "PATH", { JAVA_HOME: "/opt/java" }, "linux"),
   ).toBe(false);
   expect(settingAffectsProbe("jadx", "PATH", {}, "linux")).toBe(true);
-  // Only Windows refuses an existing Ghidra project.
+  // Every host validates project syntax; Windows also refuses existing projects.
   expect(
     settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "darwin"),
-  ).toBe(false);
+  ).toBe(true);
   expect(
     settingAffectsProbe("ghidra", "REA_GHIDRA_PROJECT_PATH", {}, "win32"),
   ).toBe(true);
