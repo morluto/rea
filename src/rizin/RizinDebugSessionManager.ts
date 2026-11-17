@@ -759,7 +759,9 @@ export class RizinDebugSessionManager {
         primary = new AnalysisCapabilityUnavailableError(
           "rizin",
           "start_rizin_debug_session",
-          protocolFailure.reason,
+          stopped.status === "stopped_inferior_unknown"
+            ? `${protocolFailure.reason} ${RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION}`
+            : protocolFailure.reason,
           {
             cause: caught,
             capturedOutput,
@@ -1067,19 +1069,31 @@ export class RizinDebugSessionManager {
         );
       }
       if (session.protocolError !== undefined) {
+        const protocolFailure = session.protocolError;
+        // Stop first: cleanup may clear protocolError and decides the final
+        // cleanup outcome, which the saved partial Evidence must record.
+        const stopped = await this.#stopDebuggerOnly(session, true);
         const evidence = partialEvidence([
-          session.protocolError.reason,
+          protocolFailure.reason,
           "The Rizin protocol failed; retained command output is partial and completion is unknown.",
+          ...(stopped.status === "incomplete"
+            ? [
+                `The owned debugger session remains retained because cleanup could not be verified: ${stopped.reason}`,
+              ]
+            : stopped.status === "stopped_inferior_unknown"
+              ? [RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION]
+              : []),
           "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
         ]);
         return err(
           await this.#stopAfterProtocolFailure(
             session,
-            session.protocolError,
+            protocolFailure,
             cause,
             {
               commandTurnHeld: true,
               signal,
+              stopped,
               ...(evidence === undefined
                 ? {}
                 : { partialObservation: evidence }),
@@ -1119,6 +1133,9 @@ export class RizinDebugSessionManager {
       }
       if (interruption?.kind === "exited") {
         const result = commandResult(interruption.capture, "unknown");
+        // Stop first: the saved Evidence must record the final cleanup
+        // outcome, not only that Rizin exited mid-command.
+        const stopped = await this.#stopDebuggerOnly(session, true);
         const evidence = createRizinCommandEvidence({
           sessionId,
           command,
@@ -1128,10 +1145,16 @@ export class RizinDebugSessionManager {
           launchTarget: session.launchTarget,
           limitations: [
             "Rizin exited before the command-completion marker; retained frame output is partial and command completion is unknown.",
+            ...(stopped.status === "incomplete"
+              ? [
+                  `The owned debugger session remains retained because cleanup could not be verified: ${stopped.reason}`,
+                ]
+              : stopped.status === "stopped_inferior_unknown"
+                ? [RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION]
+                : []),
             "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
           ],
         });
-        const stopped = await this.#stopDebuggerOnly(session, true);
         return this.#finalizeCommandObservation(
           session,
           { result, evidence },
@@ -1139,20 +1162,30 @@ export class RizinDebugSessionManager {
           signal,
         );
       }
+      const protocolFailureReason =
+        "Rizin did not return the current command-completion marker; the session was stopped to prevent late output from being attributed to a later command.";
       session.protocolError = {
         code: "output-correlation-failure",
-        reason:
-          "Rizin did not return the current command-completion marker; the session was stopped to prevent late output from being attributed to a later command.",
+        reason: protocolFailureReason,
       };
+      // Stop first: cleanup may clear protocolError, and the saved partial
+      // Evidence must record the final cleanup outcome.
+      const stopped = await this.#stopDebuggerOnly(session, true);
       const evidence = partialEvidence([
-        session.protocolError.reason,
+        protocolFailureReason,
+        ...(stopped.status === "incomplete"
+          ? [
+              `The owned debugger session remains retained because cleanup could not be verified: ${stopped.reason}`,
+            ]
+          : stopped.status === "stopped_inferior_unknown"
+            ? [RIZIN_TERMINATED_WITHOUT_VERIFIED_DETACH_LIMITATION]
+            : []),
         "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
       ]);
       const errorOptions = {
         cause,
         ...(evidence === undefined ? {} : { partialObservation: evidence }),
       };
-      const stopped = await this.#stopDebuggerOnly(session, true);
       const primary = new AnalysisTimeoutError(
         "rizin_debug_command",
         this.#frameTimeoutMs,
@@ -1476,7 +1509,21 @@ export class RizinDebugSessionManager {
     session.commandTail = new Promise<void>((resolve) => (release = resolve));
     await previous;
     try {
-      return await this.#detachInferiorUnlocked(session);
+      const result = await this.#detachInferiorUnlocked(session);
+      if (
+        result.status === "unavailable" &&
+        session.closing &&
+        !this.#sessions.stopping(session)
+      ) {
+        // The stop that started this detach already timed out against the
+        // detach race and cleared its attempt, so nothing will act on the
+        // recorded declaration. A fresh stop shares the completed detach
+        // attempt and terminates the owned process. It must stay
+        // fire-and-forget: awaiting it here would wait on this same detach
+        // attempt, which only resolves when this method returns.
+        void this.#stopDebuggerOnly(session);
+      }
+      return result;
     } finally {
       release();
     }
@@ -1806,12 +1853,12 @@ export class RizinDebugSessionManager {
       readonly commandTurnHeld?: boolean;
       readonly partialObservation?: Evidence;
       readonly signal?: AbortSignal | undefined;
+      readonly stopped?: Awaited<ReturnType<typeof stopOwnedDebuggerProcess>>;
     } = {},
   ): Promise<AnalysisError> {
-    const stopped = await this.#stopDebuggerOnly(
-      session,
-      options.commandTurnHeld,
-    );
+    const stopped =
+      options.stopped ??
+      (await this.#stopDebuggerOnly(session, options.commandTurnHeld));
     const errorOptions = {
       cause,
       ...(options.partialObservation === undefined
