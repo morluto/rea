@@ -549,6 +549,71 @@ it("refuses XML that is not a Maven project", () => {
   );
 });
 
+it("refuses a POM with two top-level dependencies blocks", () => {
+  expectFailure(
+    `<project>
+  <artifactId>demo</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>first</artifactId>
+      <version>1.0.0</version>
+    </dependency>
+  </dependencies>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>second</artifactId>
+      <version>2.0.0</version>
+    </dependency>
+  </dependencies>
+</project>`,
+    "malformed",
+  );
+});
+
+it("refuses a POM with two dependencies blocks inside dependencyManagement", () => {
+  expectFailure(
+    `<project>
+  <artifactId>demo</artifactId>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.example</groupId>
+        <artifactId>first</artifactId>
+        <version>1.0.0</version>
+      </dependency>
+    </dependencies>
+    <dependencies>
+      <dependency>
+        <groupId>com.example</groupId>
+        <artifactId>second</artifactId>
+        <version>2.0.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>`,
+    "malformed",
+  );
+});
+
+it("refuses a POM dependency with two version children", () => {
+  expectFailure(
+    `<project>
+  <artifactId>demo</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>com.example</groupId>
+      <artifactId>lib</artifactId>
+      <version>1.0.0</version>
+      <version>2.0.0</version>
+    </dependency>
+  </dependencies>
+</project>`,
+    "malformed",
+  );
+});
+
 it("refuses malformed Gradle JSON", () => {
   expectFailure("{", "malformed");
 });

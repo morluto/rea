@@ -42,8 +42,14 @@ const childElements = (element: Element): Element[] => {
 const childrenNamed = (element: Element, local: string): Element[] =>
   childElements(element).filter((child) => child.localName === local);
 
-const firstNamed = (element: Element, local: string): Element | undefined =>
-  childrenNamed(element, local)[0];
+const soleNamed = (element: Element, local: string): Element | undefined => {
+  const matches = childrenNamed(element, local);
+  if (matches.length <= 1) return matches[0];
+  throw malformedInput(
+    MAVEN_GRADLE_METADATA_FORMAT,
+    `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
+  );
+};
 
 const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
 
@@ -95,7 +101,7 @@ const elementText = (element: Element | undefined): string | null => {
 };
 
 const childText = (element: Element, local: string): string | null =>
-  elementText(firstNamed(element, local));
+  elementText(soleNamed(element, local));
 
 const textOf = (value: unknown): string | null =>
   typeof value === "string" ? nonempty(value) : null;
@@ -278,7 +284,7 @@ const parseMavenDependency = (
   const type = childText(element, "type");
   const scope = childText(element, "scope");
   const bom_import = type === "pom" && scope === "import";
-  const exclusionsContainer = firstNamed(element, "exclusions");
+  const exclusionsContainer = soleNamed(element, "exclusions");
   const exclusions =
     exclusionsContainer === undefined
       ? []
@@ -353,7 +359,7 @@ const parsePom = (
       "Selected XML document is not a Maven project POM.",
     );
   const unresolved: MavenGradleUnresolved[] = [];
-  const parentElement = firstNamed(root, "parent");
+  const parentElement = soleNamed(root, "parent");
   const parent =
     parentElement === undefined
       ? null
@@ -364,7 +370,7 @@ const parsePom = (
           packaging: null,
           relative_path: childText(parentElement, "relativePath"),
           relative_path_declared:
-            firstNamed(parentElement, "relativePath") !== undefined,
+            soleNamed(parentElement, "relativePath") !== undefined,
         };
   if (parent !== null)
     recordCoordinateGaps(unresolved, parent, "parent", null, false);
@@ -387,7 +393,7 @@ const parsePom = (
     "project",
     null,
   );
-  const propertiesElement = firstNamed(root, "properties");
+  const propertiesElement = soleNamed(root, "properties");
   const properties =
     propertiesElement === undefined
       ? []
@@ -401,15 +407,15 @@ const parsePom = (
           } = redactTransportCredentials(elementText(property));
           return [{ name, value, value_credentials_redacted }];
         });
-  const dependencyManagementElement = firstNamed(root, "dependencyManagement");
+  const dependencyManagementElement = soleNamed(root, "dependencyManagement");
   const managedContainer = dependencyManagementElement
-    ? firstNamed(dependencyManagementElement, "dependencies")
+    ? soleNamed(dependencyManagementElement, "dependencies")
     : undefined;
   const managedElements =
     managedContainer === undefined
       ? []
       : childrenNamed(managedContainer, "dependency");
-  const dependenciesContainer = firstNamed(root, "dependencies");
+  const dependenciesContainer = soleNamed(root, "dependencies");
   const dependencyElements =
     dependenciesContainer === undefined
       ? []
@@ -425,11 +431,11 @@ const parsePom = (
     limitations.push(
       "Parent coordinates are recorded as spelled; the parent POM was not read and inheritance was not applied.",
     );
-  if (firstNamed(root, "repositories") !== undefined)
+  if (soleNamed(root, "repositories") !== undefined)
     limitations.push(
       "Declared repositories are recorded as unread; they were not contacted.",
     );
-  if (firstNamed(root, "profiles") !== undefined)
+  if (soleNamed(root, "profiles") !== undefined)
     limitations.push(
       "POM profiles are present and were not activated; profile-scoped declarations remain unread.",
     );
