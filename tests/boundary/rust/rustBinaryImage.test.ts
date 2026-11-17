@@ -224,6 +224,16 @@ it.each([
     },
   ],
   [
+    "a custom name length cut off by the final section",
+    Buffer.concat([WASM_MODULE_HEADER, wasmSection(0, Buffer.from([0x80]))]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name length",
+    },
+  ],
+  [
     "a section size over 32 bits",
     Buffer.concat([
       WASM_MODULE_HEADER,

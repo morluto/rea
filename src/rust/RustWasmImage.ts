@@ -75,7 +75,10 @@ export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
         { offset: cursor },
       );
     const id = bytes[cursor]!;
-    const size = readU32(bytes, cursor + 1, bytes.length, "section size");
+    const size = readU32(bytes, cursor + 1, bytes.length, {
+      label: "section size",
+      boundary: "file",
+    });
     const end = size.end + size.value;
     if (end > bytes.length)
       throw truncatedInput(
@@ -111,7 +114,10 @@ const customSection = (
   start: number,
   end: number,
 ): { readonly name: Buffer; readonly payload: number } => {
-  const length = readU32(bytes, start, end, "custom section name length");
+  const length = readU32(bytes, start, end, {
+    label: "custom section name length",
+    boundary: "section",
+  });
   if (length.value > end - length.end)
     throw malformedInput(
       WASM_FORMAT,
@@ -131,18 +137,22 @@ const customSection = (
 
 /**
  * Decode one unsigned LEB128 u32 that must end before `end`. An integer the
- * file cuts off is truncated; one its enclosing section cuts off is malformed.
+ * file cuts off is truncated; one its enclosing section cuts off is malformed,
+ * wherever that section lies in the file.
  */
 const readU32 = (
   bytes: Buffer,
   offset: number,
   end: number,
-  label: string,
+  {
+    label,
+    boundary,
+  }: { readonly label: string; readonly boundary: "file" | "section" },
 ): { readonly value: number; readonly end: number } => {
   const read = readLeb128(bytes, offset, end, ULEB32);
   if ("value" in read) return { value: Number(read.value), end: read.next };
   const site = { offset, field: label };
-  if (read.failure === "truncated" && end === bytes.length)
+  if (read.failure === "truncated" && boundary === "file")
     throw truncatedInput(
       WASM_FORMAT,
       `WebAssembly ${label} extends past the end of the file`,
