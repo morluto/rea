@@ -1,20 +1,18 @@
 import { desktopPathConventions } from "../domain/nativeConvention.js";
 import { basename, isAbsolute } from "node:path";
 import {
+  ArtifactReaderFailure,
+  artifactFileCompletion,
+  ArtifactResourceScope,
+  type ArtifactResourceOwner,
+  abortIfNeeded,
   DirectoryArtifactReader,
   DirectoryArtifactRootFailure,
   DirectoryArtifactTraversalLimit,
   type DirectoryArtifactEntry,
-} from "./DirectoryArtifactReader.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
-import { artifactFileCompletion } from "./ArtifactFileOperation.js";
-import {
-  ArtifactResourceScope,
-  type ArtifactResourceOwner,
-} from "./ArtifactResourceScope.js";
-import { abortIfNeeded } from "./ArtifactHash.js";
+  translateArtifactFailure,
+} from "../resources/index.js";
 import { declaredArtifactEntries } from "./ArtifactTraversalObservation.js";
-import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import {
   inspectDesktopFile,
   RETAINED_FACT_BYTES,
@@ -22,8 +20,8 @@ import {
   retainedTextBytes,
   type DesktopReadBudget,
 } from "./DesktopFileInspection.js";
-import type { DesktopApplicationPort } from "../application/artifacts/DesktopApplicationPort.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { DesktopApplicationPort } from "../ports/artifacts/DesktopApplicationPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   DesktopApplication,
   DesktopFact,
@@ -175,7 +173,7 @@ export class DesktopApplicationReader implements DesktopApplicationPort {
           cleanup: cause.cleanup,
           cleanupLeases: cause.cleanupLeases,
           partialObservation: partial,
-          ...(cause.boundary === undefined ? {} : { boundary: cause.boundary }),
+          ...cause.primaryFacts(),
         },
         cause.details,
       );

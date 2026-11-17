@@ -5,30 +5,28 @@ import {
   type NtfsJournalCache,
   type NtfsAcquisition,
 } from "./NtfsJournalCache.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import {
   readStableArtifact,
   assertStableArtifactState,
-} from "../../artifacts/readStableArtifact.js";
-import {
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+  readerIntegrityFailure,
+} from "../../resources/index.js";
 import {
   primaryAnalysisError,
   type AnalysisError,
 } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -76,13 +74,12 @@ const readFailure = (
   const { cause } = artifactFilePrimaryFacts(failure);
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(operation, path, cause.message, {
-        cause,
-      });
+      return readerIntegrityFailure(operation, path, cause);
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,

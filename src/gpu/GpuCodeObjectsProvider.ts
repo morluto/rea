@@ -1,11 +1,22 @@
+import {
+  readerIntegrityFailure,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  withArtifactRegularFile,
+  bindArtifactFileCleanup,
+  artifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  artifactFileCompletion,
+  selectedFileTargetError,
+} from "../resources/index.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
-import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
+import type { GpuCodeObjectsPort } from "../ports/gpu/GpuCodeObjectsPort.js";
 import {
   createGpuCodeObjectsEvidence,
   createGpuCodeObjectsPartialEvidence,
 } from "../domain/gpu/gpuCodeObjectsEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   GpuCodeObjects,
   GpuCodeObjectsInput,
@@ -18,23 +29,15 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  withArtifactRegularFile,
-  bindArtifactFileCleanup,
-  artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { BinaryResourceFailure } from "../native/metadata/BinaryContainer.js";
+import { BinaryResourceFailure } from "../domain/binaryContainer.js";
 import {
   GpuFileSource,
   gpuCount,
@@ -43,11 +46,11 @@ import {
 } from "./GpuSource.js";
 import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_gpu_code_objects";
 
@@ -135,20 +138,18 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
-        error = new AnalysisCancelledError(OPERATION, {
-          cause: artifactFileCancellationCause(primary),
-        });
+        error = cancelledBy(
+          OPERATION,
+          carriedReason(artifactFileCancellationCause(primary)),
+        );
       else if (
         origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
-        error = new AnalysisArtifactChangedError(
-          OPERATION,
-          input.path,
-          primary.message,
-          { cause },
-        );
+        error = readerIntegrityFailure(OPERATION, input.path, primary, {
+          cause,
+        });
       else if (
         primary instanceof Error &&
         "code" in primary &&
@@ -184,8 +185,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           cause,
           diagnostics: {
             path: input.path,
-            reason:
-              primary instanceof Error ? primary.message : String(primary),
+            reason: errorMessage(primary),
           },
         });
       if (
@@ -276,7 +276,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           throw new ArtifactReaderFailure(
             "integrity",
             "Selected GPU path changed during inspection",
-            { cause },
+            { cause, integrityCheck: "container-identity" },
           );
         throw cause;
       },
@@ -285,6 +285,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       throw new ArtifactReaderFailure(
         "integrity",
         "GPU source changed during inspection",
+        { integrityCheck: "container-identity" },
       );
     const leaves = inventory.objects.filter(
       (row) =>

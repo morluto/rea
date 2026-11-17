@@ -1,10 +1,14 @@
 import type { JsonValue } from "../domain/jsonValue.js";
 import { utf8TailExcerpt } from "../domain/utf8Excerpt.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import {
+  redactExplicitOutput,
+  redactExplicitText,
+} from "../domain/explicitSensitiveValues.js";
 import type {
   ProviderProcessOutputSince,
   ProviderProcessSnapshot,
 } from "../process/ProviderProcess.js";
+import { runtimeExhaustion } from "../process/RuntimeExhaustion.js";
 import type { GhidraLaunch } from "./GhidraLauncher.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
 
@@ -17,9 +21,6 @@ export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
  */
 export const GHIDRA_DIAGNOSTIC_EXCERPT_BYTES = 64 * 1024;
 const LAUNCHER_LINE_CHARACTERS = 4096;
-
-/** JVM error class located in all launcher output, beyond the retention budget. */
-export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
 
 /** A rejected caller input owns request output, not the launcher's history. */
 export type GhidraDiagnosticsScope = "session" | "request";
@@ -143,20 +144,19 @@ export const ghidraFailureOutput = (
   complete: scoped.complete && !drainIncomplete,
   launcher_failures: observedLauncherFailures(scoped, token),
   observed_oome: (scoped.markers ?? []).map((marker) => {
-    const bytes = Buffer.byteLength(marker.line, "utf8");
+    // The supervisor's runtime owns which memory area the line names.
+    const { area } = runtimeExhaustion("jvm", marker.stream, marker);
     return {
       stream: marker.stream,
       offset: marker.offset,
-      line: redactCapturedTransportCredential(
+      ...(area === undefined ? {} : { area }),
+      // A cut line may end in a partial credential.
+      line: redactExplicitText(
+        marker.line,
+        token === undefined ? [] : [token],
         {
-          text: marker.line,
-          bytes,
-          // A cut line may end in a partial credential.
-          observedBytes:
-            marker.trailingContextIncomplete === true ? bytes + 1 : bytes,
+          cutOff: marker.trailingContextIncomplete === true,
         },
-        token,
-        "[REDACTED]",
       ),
       line_complete: marker.trailingContextIncomplete !== true,
       ...(marker.truncated ? { truncated: true } : {}),
@@ -239,10 +239,9 @@ const observedLauncherFailures = (
   const failures: GhidraLauncherFailure[] = [];
   let truncated = false;
   for (const stream of ["stdout", "stderr"] as const) {
-    const text = redactCapturedTransportCredential(
+    const text = redactExplicitOutput(
       scoped.snapshot[stream],
-      token,
-      "[REDACTED]",
+      token === undefined ? [] : [token],
     );
     for (const line of text.split(/\r?\n/u)) {
       const failure = ghidraLauncherFailure(stream, line);
@@ -266,7 +265,7 @@ export const ghidraDiagnosticStream = (
 ): JsonValue => {
   // Redact the whole retained text first, so the cut cannot expose part of a token.
   const excerpt = utf8TailExcerpt(
-    redactCapturedTransportCredential(stream, token, "[REDACTED]"),
+    redactExplicitOutput(stream, token === undefined ? [] : [token]),
     GHIDRA_DIAGNOSTIC_EXCERPT_BYTES,
   );
   return {

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
@@ -18,6 +17,7 @@ import {
 } from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const client = process.argv[2];
 const mode = process.argv[3] ?? "call";
@@ -31,7 +31,9 @@ const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command =
   process.env[`REA_VERIFY_${client.toUpperCase()}_COMMAND`] ?? client;
-const lab = await mkdtemp(join(tmpdir(), `rea-${client}-client-`));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: `rea-${client}-client-`,
+});
 const account = join(lab, "account");
 const profile = join(lab, "selected profile");
 const stickyHermes =

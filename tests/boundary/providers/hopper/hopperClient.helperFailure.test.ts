@@ -1,3 +1,8 @@
+import {
+  transportReplyContracts,
+  type TransportHopperClient,
+  HopperFixtureLauncher,
+} from "./hopperClient.fixture.js";
 import { spawn } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,18 +20,18 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
-import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
-import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
+import { acquireHopperTargetLease } from "../../../../src/hopper/HopperLease.js";
 
 // Failure assertions keep the external document unknown. Teardown then publishes
 // this run's authenticated bridge so normal cleanup can release its runtime/lease.
 const trackFailedHelperClient = (
   launcher: BridgeLauncher,
   startupTimeoutMs = 10_000,
-): HopperClient => {
+): TransportHopperClient => {
   let session: BridgeSession | undefined;
   let external = false;
   const client = new HopperClient({
+    replyContracts: transportReplyContracts,
     launcher: {
       async launch(input, options) {
         session = input;
@@ -151,6 +156,7 @@ it.skipIf(process.platform !== "darwin")(
     const retry = new HopperFixtureLauncher();
     let session: BridgeSession | undefined;
     const client = new HopperClient({
+      replyContracts: transportReplyContracts,
       launcher: {
         async launch(input, options) {
           if (session !== undefined) return retry.launch(input);
@@ -224,7 +230,11 @@ it("classifies a pre-handoff Apple Events denial as not retryable from the same 
       );
     },
   };
-  const client = new HopperClient({ launcher, startupTimeoutMs: 10_000 });
+  const client = new HopperClient({
+    replyContracts: transportReplyContracts,
+    launcher,
+    startupTimeoutMs: 10_000,
+  });
   onTestFinished(async () => {
     const closed = await client.close();
     if (!closed.ok) throw closed.error;

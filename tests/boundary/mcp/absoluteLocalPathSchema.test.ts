@@ -1,3 +1,4 @@
+import { canonicalInputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { resolve } from "node:path";
@@ -7,6 +8,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface PathInputCase {
   readonly name: string;
@@ -16,10 +18,7 @@ interface PathInputCase {
   readonly issuePath: readonly string[];
 }
 
-const createMcp = async (
-  firmwareCalls: string[],
-  profile?: "full" | "compact",
-) => {
+const createMcp = async (firmwareCalls: string[], profile?: "compact") => {
   const session = createTestBinarySession(() => {
     throw new Error("Invalid path input must not acquire a binary provider");
   });
@@ -37,7 +36,10 @@ const createMcp = async (
       },
     },
   );
-  const client = new Client({ name: "absolute-path-schema", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-schema", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 
@@ -246,7 +248,7 @@ const inputCases = (
 
 it("advertises full host-absolute path constraints after SDK schema conversion", async () => {
   const firmwareCalls: string[] = [];
-  const { client, close } = await createMcp(firmwareCalls, "full");
+  const { client, close } = await createMcp(firmwareCalls, "compact");
   try {
     const listed = await client.listTools();
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
@@ -284,12 +286,10 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
     ];
     const checked: string[] = [];
     for (const { name, field, valid, invalid } of schemaCases) {
-      const schema = listed.tools.find(
-        (tool) => tool.name === name,
-      )?.inputSchema;
-      if (schema === undefined)
+      if (!listed.tools.some((tool) => tool.name === name))
         throw new Error(`Missing advertised tool ${name}`);
-      const validate = ajv.compile(schema);
+      // Path rules belong to the canonical input contract.
+      const validate = ajv.compile(canonicalInputSchema(name));
       expect(validate(invalid), `${name}.${field}`).toBe(false);
       expect(
         validate(valid),

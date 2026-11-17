@@ -1,7 +1,7 @@
 import {
   BinaryFormatFailure,
   mappedFileOffset,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 import {
   isMapped,
@@ -113,6 +113,7 @@ function* nameAddresses(
         "native-index-capacity",
         `module-name trie exceeds its ${TOTAL_NAME_OCCURRENCES}-node workspace`,
         TOTAL_NAME_OCCURRENCES,
+        "entries",
       );
     let node = root;
     const bytes = Buffer.from(name, "utf8");
@@ -125,6 +126,7 @@ function* nameAddresses(
             "native-index-capacity",
             `module-name trie exceeds its ${TOTAL_NAME_OCCURRENCES}-node workspace`,
             TOTAL_NAME_OCCURRENCES,
+            "entries",
           );
         next = { next: new Map(), owners: [] };
         node.next.set(bytes[at]!, next);
@@ -165,6 +167,7 @@ function* nameAddresses(
               "native-index-capacity",
               `native name-address index exceeds ${TOTAL_NAME_OCCURRENCES} entries`,
               TOTAL_NAME_OCCURRENCES,
+              "entries",
             );
           found.set(address, node.owners);
         }
@@ -535,6 +538,7 @@ function* findModuleArrayByCode(
             "native-index-capacity",
             `module-array index exceeds ${MODULE_ARRAY_CANDIDATES} entries`,
             MODULE_ARRAY_CANDIDATES,
+            "entries",
           );
       }
     }

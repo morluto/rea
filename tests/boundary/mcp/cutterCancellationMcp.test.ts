@@ -1,7 +1,6 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
@@ -14,20 +13,16 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
 import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { registerCutterTools } from "../../../src/server/registerCutterTools.js";
-import { createToolResultDelivery } from "../../../src/server/toolResult.js";
-import { silentLogger } from "../../../src/logger.js";
+import { cutterMcpServer } from "../../fixtures/debuggerMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 // CutterBridgeClient's per-probe request deadline.
 const CUTTER_REQUEST_DEADLINE_MS = 25_000;
 
 it("propagates MCP cancellation into an active Cutter command", async () => {
-  let markDispatched: (() => void) | undefined;
   let observedAbort = false;
-  const dispatched = new Promise<void>((resolve) => {
-    markDispatched = resolve;
-  });
+  const dispatch = phaseArrival();
   const service = new CutterBridgeService({
     listSessions: async () => ({
       sessions: [],
@@ -36,7 +31,7 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
       bridge_directory_security: "private_verified",
     }),
     execute: async ({ signal }) => {
-      markDispatched?.();
+      dispatch.arrive();
       await new Promise<void>((resolve) => {
         signal?.addEventListener(
           "abort",
@@ -61,14 +56,11 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
       };
     },
   });
-  const server = new McpServer({ name: "cutter-cancellation", version: "1" });
-  registerCutterTools(
-    server,
-    service,
-    silentLogger,
-    createToolResultDelivery(undefined),
+  const server = cutterMcpServer("cutter-cancellation", service);
+  const client = new Client(
+    { name: "cutter-cancellation", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  const client = new Client({ name: "cutter-cancellation", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const controller = new AbortController();
@@ -87,7 +79,7 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
       },
       { signal: controller.signal },
     );
-    await dispatched;
+    await dispatch.reached(request, "Cutter command dispatch");
     controller.abort();
     await expect(request).rejects.toThrow(/abort/iu);
     await expect.poll(() => observedAbort).toBe(true);
@@ -97,14 +89,8 @@ it("propagates MCP cancellation into an active Cutter command", async () => {
 });
 
 it("shares one cleanup proof across concurrent Cutter MCP commands without BinarySession", async () => {
-  let releaseProof!: () => void;
-  let enterProof!: () => void;
-  const proof = new Promise<void>((resolve) => {
-    releaseProof = resolve;
-  });
-  const entered = new Promise<void>((resolve) => {
-    enterProof = resolve;
-  });
+  // Later confirmations wait on the same held proof without arriving first.
+  const cleanupProof = phaseGate();
   let confirmations = 0;
   let dispatches = 0;
   const service = new CutterBridgeService({
@@ -117,12 +103,11 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
     confirmCommandCompletion: async () => {
       confirmations += 1;
       if (confirmations > 1) {
-        await proof;
+        await cleanupProof.hold();
         await new Promise<void>((resolve) => setImmediate(resolve));
         return { ok: true, value: false };
       }
-      enterProof();
-      await proof;
+      await cleanupProof.hold();
       return { ok: true, value: true };
     },
     execute: async ({ command }) => {
@@ -141,14 +126,11 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
       };
     },
   });
-  const server = new McpServer({ name: "cutter-cleanup-race", version: "1" });
-  registerCutterTools(
-    server,
-    service,
-    silentLogger,
-    createToolResultDelivery(undefined),
+  const server = cutterMcpServer("cutter-cleanup-race", service);
+  const client = new Client(
+    { name: "cutter-cleanup-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  const client = new Client({ name: "cutter-cleanup-race", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const call = (command: string) =>
@@ -168,19 +150,18 @@ it("shares one cleanup proof across concurrent Cutter MCP commands without Binar
     const first = call("first queued command");
     const second = call("second queued command");
     pending = [first, second];
-    await awaitAcknowledgement(
-      entered,
+    await cleanupProof.reached(
       Promise.race([first, second]),
       "Cutter cleanup verification",
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
-    releaseProof();
+    cleanupProof.release();
     const results = await Promise.all([first, second]);
     for (const result of results) expect(result.isError).not.toBe(true);
     expect(confirmations).toBe(1);
     expect(dispatches).toBe(3);
   } finally {
-    releaseProof();
+    cleanupProof.release();
     await Promise.allSettled(pending);
     await Promise.allSettled([client.close(), server.close()]);
   }
@@ -191,16 +172,13 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
   if (process.platform !== "win32") await chmod(root, 0o700);
   const sockets = new Set<Socket>();
   let connections = 0;
-  let ready!: () => void;
-  const connected = new Promise<void>((resolve) => {
-    ready = resolve;
-  });
+  const probesConnected = phaseArrival();
   const peer = createServer((socket) => {
     sockets.add(socket);
     connections++;
     socket.on("close", () => sockets.delete(socket));
     socket.resume();
-    if (connections === 8) ready();
+    if (connections === 8) probesConnected.arrive();
   });
   await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
   const address = peer.address();
@@ -239,17 +217,11 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       settled = true;
     }
   };
-  const server = new McpServer({
-    name: "cutter-discovery-cancel",
-    version: "1",
-  });
-  registerCutterTools(
-    server,
-    service,
-    silentLogger,
-    createToolResultDelivery(undefined),
+  const server = cutterMcpServer("cutter-discovery-cancel", service);
+  const client = new Client(
+    { name: "cutter-discovery-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  const client = new Client({ name: "cutter-discovery-cancel", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const controller = new AbortController();
@@ -261,7 +233,7 @@ it("cancels active discovery sockets, stops queued probes and recovers on the sa
       { name: "list_cutter_sessions", arguments: {} },
       { signal: controller.signal },
     );
-    await awaitAcknowledgement(connected, request, "Cutter discovery");
+    await probesConnected.reached(request, "Cutter discovery");
     controller.abort(new Error("selected discovery cancellation"));
     await expect(request).rejects.toThrow("selected discovery cancellation");
     await expect.poll(() => settled).toBe(true);
@@ -356,20 +328,14 @@ it.skipIf(process.platform === "win32")(
     const service = new CutterBridgeService(
       new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: directory }),
     );
-    const server = new McpServer({
-      name: "cutter-generation-proof",
-      version: "1",
-    });
-    registerCutterTools(
-      server,
-      service,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = cutterMcpServer("cutter-generation-proof", service);
+    const client = new Client(
+      {
+        name: "cutter-generation-proof",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({
-      name: "cutter-generation-proof",
-      version: "1",
-    });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(st);

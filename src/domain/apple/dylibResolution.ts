@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { machoArchitectureFamily } from "./machoCpuIdentity.js";
-import { AnalysisCancelledError } from "../analysisErrorCore.js";
+import { cancelledBy } from "../analysisErrorCore.js";
 
 import {
   compatibleSlice,
@@ -229,7 +230,7 @@ export const dylibResolutionResultSchema = z.strictObject({
   edges: z.array(edgeSchema),
   findings: z.array(findingSchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     unparsed_images: z.array(z.string()),
     roots_without_architecture: z.array(z.string()),
   }),
@@ -631,10 +632,7 @@ const traceProcess = async (
     { image: context.root, chain: [context.root], conditional: false },
   ];
   while (pending.length > 0) {
-    if (signal?.aborted)
-      throw new AnalysisCancelledError("trace_dylib_resolution", {
-        cause: signal.reason,
-      });
+    if (signal?.aborted) throw cancelledBy("trace_dylib_resolution", signal);
     const next = pending.pop();
     if (next === undefined || expanded.has(next.image)) continue;
     const loader = next.image;

@@ -4,7 +4,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { access, realpath, stat } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
@@ -15,17 +15,17 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import {
   hashStableFile,
   observeStableFile,
   stableFileHashCause,
 } from "../filesystem/StableFileHash.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   RegularFileCleanupFailure,
   RegularFileCancelled,
@@ -42,6 +42,7 @@ import type {
   ProviderProcessSnapshot,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { admitKunaCommand } from "./KunaAdmission.js";
 import {
   readKunaConfiguration,
   type KunaConfiguration,
@@ -52,6 +53,7 @@ import {
   KUNA_VERIFIED_VERSION,
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** `kuna --version` exits before loading specs or an input; it needs no budget beyond this. */
 const VERSION_PROBE_TIMEOUT_MS = 10_000;
@@ -129,7 +131,8 @@ export interface KunaReadinessFailure {
 }
 
 export interface KunaInstallationOptions {
-  readonly platform?: NodeJS.Platform;
+  /** The host Kuna runs on; it decides launcher and path rules. */
+  readonly platform: NodeJS.Platform;
   readonly signal?: AbortSignal;
   /** Probe deadline; tests shorten it. */
   readonly probeTimeoutMs?: number;
@@ -174,7 +177,7 @@ export const kunaInstallationCancellation = (
 };
 
 /** One installation inspection's retained owners and originating errors. */
-interface KunaResourceScope {
+export interface KunaResourceScope {
   readonly owner: RetainedResourceScope;
   readonly cleanupResources: readonly string[] | undefined;
   readonly hasPending: boolean;
@@ -279,9 +282,6 @@ const failure = (
   diagnostics: Readonly<Record<string, JsonValue>>,
 ): Result<never, KunaReadinessFailure> => err({ code, reason, diagnostics });
 
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 interface InstallationFileObservation {
   readonly phase: "fingerprint" | "identity";
   readonly completedHash?: { readonly sha256: string; readonly bytes: number };
@@ -384,36 +384,28 @@ export const inspectKunaInstallation = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   options: KunaInstallationOptions,
 ): Promise<Result<KunaInstallation, KunaReadinessFailure>> => {
-  const configuration = readKunaConfiguration(environment, options.platform);
-  if (!configuration.ok)
-    return err({
-      code: configuration.error.code,
-      reason: configuration.error.reason,
-      remediation: configuration.error.remediation,
-      diagnostics: {
-        configured: configuration.error.code !== "not_configured",
-        ...(configuration.error.setting === null
-          ? {}
-          : { setting: configuration.error.setting }),
-      },
-    });
-  const { command } = configuration.value;
+  // An already-cancelled caller keeps its cancellation, not a lookup result.
   assertRegularFileActive(options.signal);
+  const admission = admitKunaCommand(environment, options.platform);
+  if (!admission.ok) {
+    const { code, reason, remediation, diagnostics } = admission.error;
+    return err(
+      code === "executable_missing"
+        ? { code, reason, diagnostics }
+        : { code, reason, remediation, diagnostics },
+    );
+  }
+  const configuration = admission;
+  const { command } = configuration.value;
 
+  // Admission established an executable regular file; resolve its identity.
   let executable: string;
   try {
     executable = await realpath(command);
-    await access(executable, constants.X_OK);
-    if (!(await stat(executable)).isFile())
-      return failure(
-        "executable_missing",
-        `REA_KUNA_COMMAND is not a regular file: ${command}. ${KUNA_COMMAND_REMEDIATION}`,
-        { command },
-      );
   } catch (cause: unknown) {
     return failure(
       "executable_missing",
-      `Cannot execute REA_KUNA_COMMAND ${command}: ${message(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
+      `Cannot execute REA_KUNA_COMMAND ${command}: ${errorMessage(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
       { command },
     );
   }
@@ -451,7 +443,7 @@ export const inspectKunaInstallation = async (
       throw cause;
     return failure(
       "executable_missing",
-      `Cannot fingerprint ${executable}: ${message(stableFileHashCause(cause))}`,
+      `Cannot fingerprint ${executable}: ${errorMessage(stableFileHashCause(cause))}`,
       { command, executable },
     );
   }
@@ -524,7 +516,7 @@ export const inspectKunaInstallation = async (
     }
     return failure(
       "version_unresolved",
-      `${executable} --version failed: ${message(cause)}. ${KUNA_VERSION_PROBE_REMEDIATION}`,
+      `${executable} --version failed: ${errorMessage(cause)}. ${KUNA_VERSION_PROBE_REMEDIATION}`,
       {
         command,
         executable,
@@ -613,14 +605,14 @@ export const inspectKunaInstallation = async (
     }
     return failure(
       "executable_missing",
-      `Cannot observe ${executable} after its --version probe: ${message(stableFileHashCause(cause))}`,
+      `Cannot observe ${executable} after its --version probe: ${errorMessage(stableFileHashCause(cause))}`,
       {
         command,
         executable,
         version,
         verified: version === KUNA_VERIFIED_VERSION,
         identity_observation_phase: "post_probe",
-        identity_observation_failure: message(stableFileHashCause(cause)),
+        identity_observation_failure: errorMessage(stableFileHashCause(cause)),
         before_probe_sha256: beforeProbeFingerprint.sha256,
         before_probe_bytes: beforeProbeFingerprint.bytes,
         deadline_ms: deadline,

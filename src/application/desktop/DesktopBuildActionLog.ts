@@ -1,3 +1,4 @@
+import { boundedList } from "../../domain/boundedList.js";
 import type { ComputerAction } from "../../domain/desktop/computerActions.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { utf8HeadExcerpt } from "../../domain/utf8HeadExcerpt.js";
@@ -42,12 +43,11 @@ const bounded = (
     return { value: text, cut: truncated };
   }
   if (Array.isArray(value)) {
-    const items = value
-      .slice(0, LOGGED_LIST_ITEMS)
-      .map((item) => bounded(item, redact));
+    const kept = boundedList(value, LOGGED_LIST_ITEMS);
+    const items = kept.items.map((item) => bounded(item, redact));
     return {
       value: items.map((item) => item.value),
-      cut: value.length > items.length || items.some((item) => item.cut),
+      cut: kept.omitted > 0 || items.some((item) => item.cut),
     };
   }
   if (value === null || typeof value !== "object") return { value, cut: false };

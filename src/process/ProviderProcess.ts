@@ -1,4 +1,7 @@
 import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import type { AnalysisCleanupReleaseClaim } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
 import {
   processInspectionCleanupFailures,
@@ -30,6 +33,14 @@ import {
 } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import { mergeEnvironmentOverrides } from "./snapshotEnvironment.js";
+import {
+  RUNTIME_EXHAUSTION_TOKENS,
+  runtimeExhaustion,
+  type ManagedRuntime,
+  type RuntimeExhaustion,
+} from "./RuntimeExhaustion.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -69,6 +80,19 @@ export interface SpawnedOwnedProviderProcess {
   readonly process: ProviderProcessHandle;
   readonly ownership: OwnedProcessGroup;
   readonly cleanup?: () => Promise<ProcessCleanupResult>;
+  /** See the owned `ProviderProcessLaunch.requestStop`. */
+  readonly requestStop?: (signal: NodeJS.Signals) => boolean;
+}
+
+/**
+ * A command's own stop request before owned cleanup: `signal` goes to the
+ * launched process group, and cleanup waits up to `graceMs` for the leader to
+ * exit before it kills what remains. For a command that rolls back work it
+ * started when asked to stop, such as `hdiutil attach` on SIGTERM.
+ */
+export interface ProcessTerminationPolicy {
+  readonly signal: NodeJS.Signals;
+  readonly graceMs: number;
 }
 
 /** Process events and streams required by provider lifecycle supervision. */
@@ -104,6 +128,13 @@ export type ProviderProcessLaunch =
       readonly ownsProcessLifetime: true;
       readonly ownership?: OwnedProcessGroup;
       readonly cleanup?: () => Promise<ProcessCleanupResult>;
+      /**
+       * Signal the launched process group while its leader is unreaped, so the
+       * leader's PID still names the group this launch created. False when
+       * nothing was signaled, such as after the leader exited or on a host
+       * without process groups.
+       */
+      readonly requestStop?: (signal: NodeJS.Signals) => boolean;
     };
 
 /**
@@ -147,6 +178,11 @@ export interface ProviderProcessSnapshot {
   readonly stopRequested?: true;
   /** Present when a provider stream was destroyed before all bytes were observed. */
   readonly outputIncomplete?: true;
+  /**
+   * The latest memory exhaustion report of the supervised runtime, observed
+   * from every drained byte regardless of the retention budget.
+   */
+  readonly runtimeExhaustion?: RuntimeExhaustion;
 }
 
 declare const processOutputCheckpointBrand: unique symbol;
@@ -219,19 +255,35 @@ export interface ProviderProcessSupervisorOptions {
    * stream's latest, where a failing command's last words are.
    */
   readonly diagnosticRetention?: "head" | "tail";
-  /**
-   * Single-line token ending at a non-ASCII-word byte or EOF, located before retention
-   * applies, so its latest occurrence survives an exhausted budget.
-   */
-  readonly outputToken?: string;
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
 }
+
+/** One output token located before retention applies, so it survives an exhausted budget. */
+export type ProviderProcessOutputTokenOptions =
+  | {
+      /**
+       * Single-line token ending at a non-ASCII-word byte or EOF; its latest
+       * occurrence is reported as a marker.
+       */
+      readonly outputToken?: string;
+      readonly runtime?: never;
+    }
+  | {
+      /**
+       * The managed runtime this process hosts. Its memory exhaustion report is
+       * the scanned token and is surfaced as `runtimeExhaustion`.
+       */
+      readonly runtime: ManagedRuntime;
+      readonly outputToken?: never;
+    };
 
 /** Optional result of provider-specific cleanup performed before stop. */
 export interface ProviderProcessStopOptions {
   readonly cleanupResult?: ProcessCleanupResult;
   readonly terminationGraceMs?: number;
   readonly killGraceMs?: number;
+  /** The command's own stop request before owned group cleanup. */
+  readonly termination?: ProcessTerminationPolicy;
 }
 
 /** Non-JSON snapshot of the exact inspection facts retained by a stop attempt. */
@@ -281,7 +333,7 @@ export const spawnOwnedProviderProcess = async (
   assertProcessOwnershipInspectionActive(options.signal);
   await prepareProcessOwnershipInspection(options.signal);
   assertProcessOwnershipInspectionActive(options.signal);
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const sweepTokenOwnedProcesses =
     options.sweepTokenOwnedProcesses === true && platform !== "win32";
   let captureBaseline: ProcessOwnershipBaseline | undefined;
@@ -305,7 +357,7 @@ export const spawnOwnedProviderProcess = async (
     { REA_PROCESS_RUN_ID: options.runId },
     platform,
   );
-  if (platform === "win32" && process.platform === "win32") {
+  if (platform === "win32" && HOST_PLATFORM.platform === "win32") {
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,
@@ -366,7 +418,29 @@ export const spawnOwnedProviderProcess = async (
       ? {}
       : { expectedCommand: options.expectedCommand ?? options.command }),
   };
-  return { process: child, ownership };
+  return {
+    process: child,
+    ownership,
+    requestStop: (signal) => signalUnreapedGroup(child, pid, signal),
+  };
+};
+
+/**
+ * Node sets exitCode or signalCode in the callback that reaps the leader, so
+ * until then the leader's PID still names the group the launch created.
+ */
+const signalUnreapedGroup = (
+  child: ChildProcess,
+  processGroupId: number,
+  signal: NodeJS.Signals,
+): boolean => {
+  if (child.exitCode !== null || child.signalCode !== null) return false;
+  try {
+    process.kill(-processGroupId, signal);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -377,7 +451,8 @@ export const spawnOwnedProviderProcess = async (
  * bounded TERM-to-KILL escalation for a directly owned child.
  */
 export class ProviderProcessSupervisor {
-  readonly #options: ProviderProcessSupervisorOptions;
+  readonly #options: ProviderProcessSupervisorOptions &
+    ProviderProcessOutputTokenOptions;
   readonly #stdout = new ProcessOutputCapture();
   readonly #stderr = new ProcessOutputCapture();
   readonly #exit = deferred<ProviderProcessExitObservation>();
@@ -436,6 +511,7 @@ export class ProviderProcessSupervisor {
   #exitObservation: ProviderProcessExitObservation | undefined;
   #stopPromise: Promise<ProviderProcessStopResult> | undefined;
   #stopRequested = false;
+  readonly #release = new AnalysisCleanupRelease();
   #disposed = false;
   #maxAggregateDiagnosticBytes: number | undefined;
   readonly #maxStreamDiagnosticBytes:
@@ -453,7 +529,8 @@ export class ProviderProcessSupervisor {
 
   constructor(
     readonly launch: ProviderProcessLaunch,
-    options: ProviderProcessSupervisorOptions = {},
+    options: ProviderProcessSupervisorOptions &
+      ProviderProcessOutputTokenOptions = {},
   ) {
     this.#options = options;
     const budget = options.maxDiagnosticBytes;
@@ -506,6 +583,7 @@ export class ProviderProcessSupervisor {
         : {}),
       ...(this.#stopRequested ? { stopRequested: true } : {}),
       ...(outputIncomplete ? { outputIncomplete: true } : {}),
+      ...this.#runtimeExhaustionWithin({ stdout: 0, stderr: 0 }),
     };
   }
 
@@ -569,6 +647,7 @@ export class ProviderProcessSupervisor {
           ? { memoryLimitReached: true }
           : {}),
         ...(incomplete ? { outputIncomplete: true } : {}),
+        ...this.#runtimeExhaustionWithin(position),
       },
       complete: !incomplete,
       ...this.#markersWithin(position),
@@ -598,8 +677,36 @@ export class ProviderProcessSupervisor {
     return markers.length === 0 ? {} : { markers };
   }
 
+  /** The runtime's exhaustion report after a position; stderr is preferred. */
+  #runtimeExhaustionWithin(position: {
+    readonly stdout: number;
+    readonly stderr: number;
+  }): Pick<ProviderProcessSnapshot, "runtimeExhaustion"> {
+    const runtime = this.#options.runtime;
+    if (runtime === undefined) return {};
+    const stderr = this.#stderrMarker?.latestWithin(
+      position.stderr,
+      this.#stderrObservedBytes,
+    );
+    if (stderr !== undefined)
+      return {
+        runtimeExhaustion: runtimeExhaustion(runtime, "stderr", stderr),
+      };
+    const stdout = this.#stdoutMarker?.latestWithin(
+      position.stdout,
+      this.#stdoutObservedBytes,
+    );
+    return stdout === undefined
+      ? {}
+      : { runtimeExhaustion: runtimeExhaustion(runtime, "stdout", stdout) };
+  }
+
   #resetMarkers(): void {
-    const marker = this.#options.outputToken;
+    const runtime = this.#options.runtime;
+    const marker =
+      runtime === undefined
+        ? this.#options.outputToken
+        : RUNTIME_EXHAUSTION_TOKENS[runtime];
     this.#stdoutMarker =
       marker === undefined ? undefined : new ProcessOutputTokenScanner(marker);
     this.#stderrMarker =
@@ -734,6 +841,14 @@ export class ProviderProcessSupervisor {
     };
   }
 
+  /**
+   * Confirmed once a stop proves this process ended; errors reporting the
+   * process read it instead of being told.
+   */
+  get cleanupRelease(): AnalysisCleanupReleaseClaim {
+    return this.#release;
+  }
+
   /** Share each stop attempt; incomplete cleanup retains ownership and permits retry. */
   stop(
     options: ProviderProcessStopOptions = {},
@@ -742,6 +857,7 @@ export class ProviderProcessSupervisor {
       this.#stopRequested = true;
     this.#stopPromise ??= this.#stop(options).then((result) => {
       if (result.status === "incomplete") this.#stopPromise = undefined;
+      else if (result.status !== "not-owned") this.#release.confirm();
       return result;
     });
     return this.#stopPromise;
@@ -818,12 +934,19 @@ export class ProviderProcessSupervisor {
       if (this.#inspectionCleanup.size > 0)
         return this.#inspectionStopFailure(
           [...this.#inspectionCleanup.values()]
-            .map(({ cause }) =>
-              cause instanceof Error ? cause.message : String(cause),
-            )
+            .map(({ cause }) => errorMessage(cause))
             .join("; "),
         );
       if (this.launch.cleanup !== undefined) {
+        // The command's own stop request comes first; owned cleanup then
+        // kills whatever remains, so the grace period only delays it.
+        if (
+          options.termination !== undefined &&
+          options.cleanupResult === undefined &&
+          this.#exitObservation === undefined &&
+          this.launch.requestStop?.(options.termination.signal) === true
+        )
+          await this.waitForExit(options.termination.graceMs);
         const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
         const exitObservedBeforeCleanup = this.#exitObservation !== undefined;
         const cleanup = await this.#ownedCleanup(options.cleanupResult);
@@ -988,6 +1111,7 @@ export class ProviderProcessSupervisor {
 
 class ProcessOutputCapture {
   readonly #chunks: Buffer[] = [];
+  // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
   #bytes = 0;
   /** Observed bytes before the first retained one, which tail retention dropped. */
   #start = 0;
@@ -1085,12 +1209,7 @@ class ProcessOutputCapture {
     observedBytes: number,
   ): ProviderProcessSnapshot["stdout"] {
     const text = buffer.toString("utf8");
-    let invalidUtf8 = false;
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    } catch {
-      invalidUtf8 = true;
-    }
+    const invalidUtf8 = !isStrictUtf8(buffer);
     return {
       text,
       bytes: buffer.byteLength,

@@ -1,20 +1,20 @@
 import type { StableRegularFileDescriptor } from "../../../filesystem/RegularFile.js";
-import type { PlaywrightTracePort } from "../../../application/playwrightTrace/PlaywrightTracePort.js";
-import { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../../../artifacts/ZipArtifactReader.js";
+import type { PlaywrightTracePort } from "../../../ports/playwrightTrace/PlaywrightTracePort.js";
 import {
+  ArtifactResourceScope,
+  type ArtifactEntry,
   artifactFilePrimaryFacts,
   assertArtifactReadActive,
   withArtifactRegularFile,
-} from "../../../artifacts/ArtifactFileOperation.js";
-import { projectStableArtifactFailure } from "../../../artifacts/StableArtifactFailure.js";
-import { assertArtifactFileSelectedSource } from "../../../artifacts/ArtifactFileSource.js";
-import { hashStableRootArtifactHandle } from "../../../artifacts/inventory/hashStableRootArtifact.js";
+  projectStableArtifactFailure,
+  hashStableRootArtifactHandle,
+  assertArtifactFileSelectedSource,
+  ZipArtifactReader,
+} from "../../../resources/index.js";
 import {
   AnalysisResourceConstraintError,
-  AnalysisCancelledError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../../domain/fixedAllowanceRemediation.js";
 import { err, ok } from "../../../domain/result.js";
@@ -209,8 +209,7 @@ class TraceArchiveRead {
       reader,
     });
     if (outcome.kind === "completed" && this.signal?.aborted) {
-      const cancellation = new AnalysisCancelledError(operation, {
-        cause: this.signal.reason,
+      const cancellation = cancelledBy(operation, this.signal, {
         partialObservation: this.complete ?? this.identity,
       });
       this.primary = cancellation;
@@ -232,10 +231,7 @@ export class PlaywrightTraceDecoder implements PlaywrightTracePort {
   #running = false;
   constructor(readonly resources: ArtifactResourceScope) {}
   async inspect(path: string, signal?: AbortSignal) {
-    if (signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted) return err(cancelledBy(operation, signal));
     if (this.#running)
       return err(
         new AnalysisResourceConstraintError(

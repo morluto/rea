@@ -3,8 +3,10 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { dirname } from "node:path";
 import { resolveWindowsPathJava } from "./GhidraJavaPathResolution.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   jvmEnvironmentArguments,
   prepareJdkJavaOptions,

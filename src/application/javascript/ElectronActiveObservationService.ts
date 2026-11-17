@@ -1,19 +1,20 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { dirname } from "node:path";
 import { constants, type Stats } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type {
   CanonicalElectronActiveObservationInput,
   ElectronActiveObservationPort,
-} from "./ElectronActiveObservationPort.js";
+} from "../../ports/javascript/ElectronActiveObservationPort.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   type AnalysisInputIssue,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -25,6 +26,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { createElectronActiveEvidence } from "./ElectronActiveEvidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "capture_electron_scenario" as const;
 const PROVIDER_ID = "rea-playwright-electron-active";
@@ -90,7 +92,7 @@ const resolveInputPath = async (
         issue: {
           path: [field],
           reason: "invalid_value",
-          message: `Cannot resolve ${field} ${selected}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          message: `Cannot resolve ${field} ${selected}: ${errorMessage(cause)}`,
         },
         cause,
       },
@@ -118,7 +120,7 @@ const resolveExecutablePath = async (
   }
   if (!metadata.isFile())
     return err(notExecutable(selected, new Error("not a regular file")));
-  if (process.platform !== "win32")
+  if (HOST_PLATFORM.platform !== "win32")
     try {
       await access(resolved.value, constants.X_OK);
     } catch (cause: unknown) {
@@ -135,7 +137,7 @@ const notExecutable = (
   issue: {
     path: ["executable_path"],
     reason: "invalid_value",
-    message: `executable_path ${selected} is not an executable file: ${cause instanceof Error ? cause.message : String(cause)}`,
+    message: `executable_path ${selected} is not an executable file: ${errorMessage(cause)}`,
   },
   cause,
 });
@@ -194,15 +196,11 @@ export const captureElectronScenario = async (
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   const canonical = await canonicalizeInput(input);
   if (!canonical.ok) return canonical;
   if (options.signal?.aborted)
-    return err(
-      new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-    );
+    return err(cancelledBy(OPERATION, options.signal));
   if (provider === undefined)
     return err(
       new AnalysisCapabilityUnavailableError(
