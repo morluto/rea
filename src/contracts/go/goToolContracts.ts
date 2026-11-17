@@ -3,7 +3,7 @@ import {
   inspectGoBinaryInputSchema,
 } from "../../domain/go/goBinary.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { analysisDetailOutputSchemaOf } from "../analysisDetail.js";
 import { goBinarySummaryViewResultSchema } from "../../domain/analysisView/analysisViewResult.js";
 
@@ -12,7 +12,8 @@ export const GO_TOOL_CONTRACTS = [
   {
     name: "inspect_go_binary",
     availability: "standalone",
-    ...toolContractMetadata("inspect_go_binary"),
+    cli: true,
+    ...toolContractMetadata("inspect_go_binary", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

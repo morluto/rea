@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DISCOVER_TOOLS } from "../../src/catalogDiscovery.js";
+import { DISCOVER_TOOLS } from "../../src/contracts/catalog/catalogDiscovery.js";
 import { TOOL_CONTRACTS } from "../../src/contracts/toolContracts.js";
 import {
   advertisedInputJsonSchema,

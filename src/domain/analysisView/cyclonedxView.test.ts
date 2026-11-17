@@ -5,6 +5,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
+import { unknownTarget } from "../targetIdentity.js";
 import {
   goBinarySchema,
   type GoBinary,
@@ -606,17 +607,20 @@ it("refuses a CycloneDX document past the fixed byte allowance", () => {
     ),
   );
   expect(error.message).toContain("export_evidence_bundle");
-  expect(error.reportedLimits).toMatchObject({
+  expect(error.diagnostics).toMatchObject({
     document_bytes_bound: "exact",
-    limit_bytes: CYCLONEDX_DOCUMENT_BYTE_LIMIT,
   });
-  expect(error.reportedLimits?.document_bytes).toBeGreaterThan(
+  expect(error.diagnostics?.document_bytes).toBeGreaterThan(
     CYCLONEDX_DOCUMENT_BYTE_LIMIT,
   );
   expect(error.fixedAllowance).toEqual({
     name: "The CycloneDX document allowance",
     kind: "bytes",
+    limit: CYCLONEDX_DOCUMENT_BYTE_LIMIT,
+    unit: "bytes",
+    narrowing: "Export the parent Evidence with export_evidence_bundle.",
   });
+  expect(error.reportedLimits).toBeNull();
   expect(error.retryable).toBe(false);
 });
 
@@ -630,7 +634,7 @@ it.each([
     "inspect_rust_binary",
     rustMetadata([cratesIoPackage(name)], [], [], null),
   );
-  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+  expect(error.diagnostics).toMatchObject(LOWER_BOUND);
 });
 
 it.each([
@@ -641,7 +645,7 @@ it.each([
     "inspect_rust_binary",
     rustMetadata([{ ...cratesIoPackage(name), source: "local" }], [], [], null),
   );
-  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+  expect(error.diagnostics).toMatchObject(LOWER_BOUND);
 });
 
 it("refuses Go identity before a Package URL, counting replaced modules", () => {
@@ -650,13 +654,13 @@ it("refuses Go identity before a Package URL, counting replaced modules", () => 
     refusedAllowance(
       "inspect_go_binary",
       goModuleList([goModule(`example.com/${large}`, "v1.0.0")]),
-    ).reportedLimits,
+    ).diagnostics,
   ).toMatchObject(LOWER_BOUND);
   expect(
     refusedAllowance(
       "inspect_go_binary",
       goModuleList([goModule(`./${large}`, "v1.0.0")]),
-    ).reportedLimits,
+    ).diagnostics,
   ).toMatchObject(LOWER_BOUND);
   expect(
     refusedAllowance(
@@ -668,7 +672,7 @@ it("refuses Go identity before a Package URL, counting replaced modules", () => 
           sum: null,
         }),
       ]),
-    ).reportedLimits,
+    ).diagnostics,
   ).toMatchObject(LOWER_BOUND);
 });
 
@@ -681,7 +685,7 @@ it("refuses many small components before building any of them", () => {
       ),
     ),
   );
-  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+  expect(error.diagnostics).toMatchObject(LOWER_BOUND);
 });
 
 it("never refuses early for a document inside the allowance", () => {
@@ -697,7 +701,7 @@ it("never refuses early for a document inside the allowance", () => {
     "inspect_rust_binary",
     rustMetadata([cratesIoPackage("n".repeat(215_000))], [], [], null),
   );
-  expect(refused.reportedLimits).toMatchObject({
+  expect(refused.diagnostics).toMatchObject({
     document_bytes_bound: "exact",
   });
 });
@@ -723,7 +727,7 @@ it("refuses a dense Rust graph before expanding its edges", () => {
       count - 1,
     ),
   );
-  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+  expect(error.diagnostics).toMatchObject(LOWER_BOUND);
   expect(error.message).toContain("export_evidence_bundle");
 });
 
@@ -746,7 +750,7 @@ it("counts an original Go Package URL before building its property", () => {
       complete: true,
     }),
   );
-  expect(error.reportedLimits).toMatchObject(LOWER_BOUND);
+  expect(error.diagnostics).toMatchObject(LOWER_BOUND);
 });
 
 it("projects Rust edges, build scope and duplicate Package URLs", () => {
@@ -905,7 +909,7 @@ it("keeps missing Rust metadata unknown instead of an empty inventory", () => {
 
 it("refuses a CycloneDX view of a parent that is neither Go nor Rust", () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "layout", name: "Layout", version: "1" },
     {
       operation: "inspect_binary_layout",
@@ -1227,7 +1231,7 @@ it("keeps a Go dependency whose Package URL matches the main module", () => {
 
 it("names the parent input path when CycloneDX has no artifact path", () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "layout", name: "Layout", version: "1" },
     {
       operation: "inspect_binary_layout",
@@ -1261,7 +1265,10 @@ it("refuses a Go parent whose subject does not match the report", () => {
   const result = projectAnalysisView(
     {
       ...parent,
-      subject: { ...parent.subject, digest: { sha256: "b".repeat(64) } },
+      subject: {
+        ...parent.subject,
+        identity: { ...parent.subject.identity, sha256: "b".repeat(64) },
+      },
     },
     VIEW,
   );

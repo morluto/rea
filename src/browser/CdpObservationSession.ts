@@ -1,4 +1,4 @@
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type { ProgressReporter } from "../ports/ProgressReporter.js";
 import type {
   ObserveWebSessionInput,
   WebObservationSession,
@@ -278,6 +278,8 @@ class TimelineCapture {
         return;
       case "Inspector.targetCrashed":
         this.targetTerminated();
+        return;
+      default:
         return;
     }
   }

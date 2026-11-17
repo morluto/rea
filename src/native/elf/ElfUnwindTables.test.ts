@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   elfUnwindRangesSchema,
   inspectElfUnwindRangesInputSchema,
@@ -85,7 +85,7 @@ it("rejects an overflowing ULEB pointer instead of wrapping it to a fabricated f
     }),
   );
   expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("rejects a padded negative SLEB range instead of publishing a huge positive size", () => {
@@ -151,7 +151,7 @@ it.each(
       }),
     );
     expect(report.ranges.map((r) => r.start)).toEqual([address(UNWIND_FN_B)]);
-    expect(report.coverage.status).toBe("incomplete");
+    expect(report.coverage.status).toBe("partial");
   },
 );
 
@@ -324,7 +324,7 @@ it("reads a version 3 return-address register and a dynsym name", () => {
 it("keeps earlier FDEs when a later record is truncated", () => {
   const report = parse(elfUnwindFixture({ truncate: true }));
   expect(report.eh_frame.status).toBe("incomplete");
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_A),
   ]);
@@ -340,7 +340,7 @@ it("reports trailing bytes after the terminator as incomplete coverage", () => {
     elfUnwindFixture({ trailingByte: true, header: "match" }),
   );
   expect(report.ranges).toHaveLength(2);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "Non-zero bytes follow the .eh_frame terminator.",
   );
@@ -417,7 +417,7 @@ it("stops a header-located .eh_frame without a search table at its first undecod
     address(UNWIND_FN_A),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     examined_records: 3,
   });
@@ -447,7 +447,7 @@ it("reports .eh_frame as unknown when the header cannot locate it", () => {
   expect(report.eh_frame_hdr.status).toBe("incomplete");
   expect(report.ranges).toEqual([]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 0,
     total_cies: 0,
     eh_frame_hdr_agreement: "unavailable",
@@ -584,7 +584,7 @@ it.each(["compressed-symbols", "compressed-names", "non-string-names"])(
     ]);
     expect(report.ranges.map(({ symbol }) => symbol)).toEqual([null, null]);
     expect(report.coverage).toMatchObject({
-      status: "incomplete",
+      status: "partial",
       ranges_with_symbols: 0,
       eh_frame_hdr_agreement: "agree",
     });
@@ -605,7 +605,7 @@ it("keeps .eh_frame ranges when .debug_frame is SHT_NOBITS", () => {
     address(UNWIND_FN_B),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "agree",
   });
   expect(report.limitations).toContain(
@@ -622,7 +622,7 @@ it("reports a .debug_frame past the end of file without a file range", () => {
   );
   expect(report.debug_frame).toEqual({ status: "incomplete", location: null });
   expect(report.ranges).toHaveLength(2);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
 });
 
 it("decodes the in-file prefix of an .eh_frame that runs past the end of file", () => {
@@ -639,7 +639,7 @@ it("decodes the in-file prefix of an .eh_frame that runs past the end of file", 
   });
   expect(report.ranges).toHaveLength(2);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 2,
     eh_frame_hdr_agreement: "agree",
   });
@@ -658,7 +658,7 @@ it.each([
   const table = section === ".eh_frame" ? report.eh_frame : report.eh_frame_hdr;
   expect(table.status).toBe("incomplete");
   expect(table.location).toBeNull();
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(text);
   if (section === ".eh_frame_hdr") expect(report.ranges).toHaveLength(2);
 });
@@ -689,7 +689,7 @@ it("does not use a non-allocated GOT section as the data-relative base", () => {
   bytes.writeBigUInt64LE(1n, headerOffset + 8);
   bytes.writeBigUInt64LE(0x500000n, headerOffset + 16);
   const report = parse(bytes);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.ranges.map((range) => range.start)).not.toContain("0x4fc100");
 });
 
@@ -699,7 +699,7 @@ it("leaves .eh_frame datarel pointers unresolved when no GOT is declared", () =>
     address(UNWIND_FN_B),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     eh_frame_hdr_agreement: "disagree",
   });
@@ -712,7 +712,7 @@ it("caps symbol lookup across .symtab and .dynsym together", () => {
   const report = parse(elfUnwindFixture({ header: "match", symbolCap: true }));
   expect(report.ranges).toHaveLength(2);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     ranges_with_symbols: 0,
   });
   expect(report.limitations).toContain(
@@ -726,7 +726,7 @@ it("keeps the symbol scan allowance for later tables when an earlier table has n
   bytes.writeUInt32LE(0, section.headerOffset + 40);
   const report = parse(bytes);
   expect(report.ranges[0]?.symbol?.text).toBe("alpha");
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).not.toContain(
     "Symbol tables were capped at 65536 combined entries.",
   );
@@ -737,7 +737,7 @@ it.each([".eh_frame", ".eh_frame_hdr"] as const)(
   (duplicate) => {
     const report = parse(elfUnwindFixture({ header: "match", duplicate }));
     expect(report.ranges).toHaveLength(2);
-    expect(report.coverage.status).toBe("incomplete");
+    expect(report.coverage.status).toBe("partial");
     expect(report.limitations).toContain(
       `Multiple ${duplicate} sections were declared; only the first was decoded.`,
     );
@@ -848,7 +848,7 @@ it.each([
     expect(report.ranges.map((range) => range.start)).not.toContain(
       address(UNWIND_FN_A),
     );
-    expect(report.coverage.status).toBe("incomplete");
+    expect(report.coverage.status).toBe("partial");
     expect(report.limitations).toContain(GOT_UNKNOWN);
   },
 );
@@ -864,7 +864,7 @@ it("keeps the GOT unknown when repeated allocated .got.plt sections disagree", (
   expect(report.ranges.map((range) => range.start)).not.toContain(
     address(UNWIND_FN_A),
   );
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(GOT_UNKNOWN);
 });
 
@@ -878,7 +878,7 @@ it("keeps the GOT unknown when compressed dynamic storage resembles decoded entr
   expect(report.ranges.map((range) => range.start)).not.toContain(
     address(UNWIND_FN_A),
   );
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "A DW_EH_PE_datarel .eh_frame value needs a GOT base that could not be determined; that value is unresolved.",
   );
@@ -895,7 +895,7 @@ it("caps .eh_frame_hdr rows at the max_ranges budget and marks the comparison in
     table_entries: 2,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -1054,7 +1054,7 @@ it("does not decode FDEs against a CIE with an unrecognized augmentation letter"
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_B),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toEqual(
     expect.arrayContaining([
       "A CIE augmentation has an unrecognized letter, so its pointer encodings cannot be trusted; that CIE was not decoded.",
@@ -1120,7 +1120,7 @@ it("skips an FDE whose initial location is indirect instead of reporting the poi
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_B),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toEqual(
     expect.arrayContaining([
       "1 FDE has an indirect initial location that was not dereferenced; its function start is unknown and it was skipped.",
@@ -1139,7 +1139,7 @@ it("does not locate .eh_frame through an indirect .eh_frame_hdr eh_frame_ptr", (
     status: "incomplete",
     eh_frame_pointer: null,
   });
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "The .eh_frame_hdr eh_frame_ptr is indirect and was not dereferenced, so it does not locate .eh_frame.",
   );
@@ -1156,7 +1156,7 @@ it("stops a header-located .eh_frame without a search table at a CIE with an unr
     address(UNWIND_FN_A),
   ]);
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     total_ranges: 1,
     examined_records: 3,
   });
@@ -1175,7 +1175,7 @@ it("reports coverage incomplete when a duplicate PT_GNU_EH_FRAME is ignored", ()
   expect(report.ranges.map((range) => range.start)).toEqual([
     address(UNWIND_FN_A),
   ]);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "Multiple PT_GNU_EH_FRAME program headers were declared; only the first was decoded.",
   );
@@ -1228,7 +1228,7 @@ it("does not compare or bound by an .eh_frame_hdr search table with an indirect 
     fde_count: 2,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -1240,7 +1240,7 @@ it("does not compare or bound by an .eh_frame_hdr search table with an indirect 
   });
   sectionless[Number(sectionless.readBigUInt64LE(64 + 56 + 8)) + 3] = 0xbb;
   const unbounded = parse(sectionless);
-  expect(unbounded.coverage.status).toBe("incomplete");
+  expect(unbounded.coverage.status).toBe("partial");
   expect(unbounded.limitations).not.toContain(
     "The .eh_frame located only through the .eh_frame_hdr eh_frame_ptr has no section bounds and no terminator after the last FDE its search table names; bytes after that FDE were not decoded.",
   );
@@ -1257,7 +1257,7 @@ it("leaves a non-zero indirect .eh_frame_hdr FDE count unresolved", () => {
     table_entries: 0,
   });
   expect(report.coverage).toMatchObject({
-    status: "incomplete",
+    status: "partial",
     eh_frame_hdr_agreement: "unavailable",
   });
   expect(report.limitations).toContain(
@@ -1301,7 +1301,7 @@ it("excludes load mappings whose file size exceeds memory size", () => {
   const phoff = Number(bytes.readBigUInt64LE(32));
   bytes.writeBigUInt64LE(0n, phoff + 40);
   const report = parse(bytes);
-  expect(report.coverage.status).toBe("incomplete");
+  expect(report.coverage.status).toBe("partial");
   expect(report.limitations).toContain(
     "An invalid PT_LOAD mapping was excluded from unwind address resolution.",
   );

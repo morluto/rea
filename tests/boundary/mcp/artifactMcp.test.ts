@@ -1,4 +1,8 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_CAPTURE_RECONSTRUCTION,
   PROCESS_COMPARISON_EVIDENCE,
@@ -180,14 +184,13 @@ it.for([
               .digest("hex"),
             unpacked,
             integrity_check: "declared-digest",
+            related_parameters: ["integrity_policy"],
           },
           retryable: false,
           remediation: { action: projected.error.message },
         },
       });
-      expect(projected.error.message).toContain(
-        "--integrity-policy record-and-continue",
-      );
+      expect(projected.error.message).not.toContain("--integrity-policy");
       if (unpacked)
         expect(projected.error.message).toMatch(
           /unpacked entry main\.js.*companion file/iu,
@@ -645,7 +648,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     if (evidence === undefined) throw new Error("missing inventory Evidence");
     expect(evidence).toMatchObject({
       provider: { id: "rea-artifact-graph" },
-      subject: { format: "ipa" },
+      subject: { identity: { format: "ipa" } },
     });
     const inventoryInspection = z
       .object({
@@ -917,12 +920,11 @@ const withForeignMetadataAndNestedZipMember = (
     graphSha256,
   );
   const subject = evidence.subject;
-  if (subject === null) throw new Error("missing inventory subject");
   return createEvidence(
     {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      path: fileSubjectDisplay(subject).local_path,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     evidence.provider,
     {

@@ -6,7 +6,7 @@ import {
   rustBinaryPageViewResultSchema,
 } from "../../domain/analysisView/analysisViewResult.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Static Rust dependency metadata is independent of active native-analysis providers. */
@@ -14,7 +14,8 @@ export const RUST_TOOL_CONTRACTS = [
   {
     name: "inspect_rust_binary",
     availability: "standalone",
-    ...toolContractMetadata("inspect_rust_binary"),
+    cli: true,
+    ...toolContractMetadata("inspect_rust_binary", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

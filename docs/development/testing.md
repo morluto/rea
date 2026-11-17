@@ -48,6 +48,20 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
 | `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
 
+`typecheck` also checks the JavaScript verification scripts listed in
+`tsconfig.scripts.json` (`checkJs`, with the main compiler options). Those
+scripts import built modules through the package-private `#dist/*` alias, which
+Node resolves to `./dist/*` at run time and the check resolves to `./src/*`, so a
+domain signature change that breaks a listed script fails `check:fast` without a
+build. To add a script, switch its `../dist/` imports and those of the local
+modules it loads to `#dist/`, add it to the list, and fix what the check
+reports with JSDoc types. Name tool results with the
+`scripts/lib/mcp-verifier-results.mjs` typedefs (`ToolName`,
+`VerifierOperationResult<N>`) so a result reads with its named contract's
+type. `tests/support/analysis-efficiency/android-mapping-retention.mjs` stays
+outside the check: it imports `dist` modules by path from a caller-selected
+checkout at run time, so no import in this tree names their types.
+
 The general source suite above runs on Linux in CI, and Windows CI runs a
 curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).
 A Windows source checkout can fail source tests for reasons unrelated to the
@@ -530,9 +544,14 @@ relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
 
-Pull-request scans are cancelled when superseded. Active scans on `main` finish
-so frequent pushes cannot prevent a complete baseline from being uploaded.
-Cancelled runs skip the SARIF artifact upload when no report was produced.
+Pull-request scans are cancelled when superseded, skip pure test/prose diffs via
+`paths-ignore`, and select only the CodeQL languages (`javascript-typescript`,
+`python`, `actions`) whose production inputs changed (failing closed to all
+three languages on shared CodeQL configuration or unclassified paths). Active
+scans on `main`, weekly schedules, and manual dispatches always analyze all
+three languages so frequent pushes cannot prevent a complete baseline from being
+uploaded. Cancelled runs skip the SARIF artifact upload when no report was
+produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
@@ -594,6 +613,14 @@ affected consumer.
   integration boundary; a scripted sequence tests that sequence, not an agent's
   ability to discover it. Run the matching real-provider and agent lanes when
   their respective claims require them.
+
+Every provider capability that `src/composition/capabilityDeclarations.ts`
+binds to a provider needs an entry in
+`tests/conformance/providerCapabilityCases.ts`. The entry is either a
+CLI, MCP or acceptance test that names one of the capability's operations, or an
+exemption that states why no such case exists.
+`tests/conformance/providerCapabilityConformance.test.ts` iterates the
+declarations, so a new capability fails the suite until it has one.
 
 For prerequisite recovery, include a case where only the wrong alternative is
 configured: Unblob cannot enable Binwalk inspection, and Binwalk cannot enable
@@ -777,11 +804,14 @@ should assert canonical failure categories and provider-call controls where
 rejection before provider work matters. Do not make today's omission of a
 constraint a compact-profile invariant.
 
-When a file repeatedly validates the same MCP schemas, use
-`createMcpSchemaValidation` for file-owned preparation and clear it in
-`afterAll`. Its content keys include the complete schema, and the SDK provider
-keeps dialect and format validation. Keep sessions and connections scoped to
-each test; share immutable schema preparation through the fixture's validator
+Give every MCP SDK test client the validator from
+`createMcpSchemaValidation` (or use `mcpTest`); the architecture guards count
+clients that keep the SDK default. Compiled validators are shared across the
+worker in a bounded cache keyed by the complete schema, and the SDK provider
+keeps dialect and format validation. A fixture created inline for one client
+is released with that client. When a file holds one fixture for several
+clients, clear it in `afterAll`. Keep sessions and connections scoped to each
+test; share immutable schema preparation through the fixture's validator
 dependency.
 
 Artifact verification uses `artifactMcpCall` for both lifecycle and analysis
@@ -864,9 +894,16 @@ Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
 owned cleanup seams while preserving real cleanup where feasible.
 `tests/support/lifecycleHarness.ts` provides the shared controls: `phaseGate`
-holds a late handshake or in-flight work at a boundary, `cancelDuringCleanup`
+holds a late handshake or in-flight work at a boundary and releases it with a
+value or a rejection, `phaseArrival` marks a boundary whose work waits on
+something else (an abort, another owner), `cancelDuringCleanup`
 cancels from inside final cleanup, and `controlledCleanup` gives children
-refused or confirmed outcomes with counted retries. Check server
+refused or confirmed outcomes with counted retries.
+`tests/support/providerLifecycleCoverage.ts` maps every registered provider id
+to its launch, handshake, operation, cancellation, cleanup and retry
+regressions, a not-applicable reason, or an explicit gap. Name the test file
+and literal title when a change adds or moves a provider lifecycle regression;
+the shrink-only gap list closes as stages gain coverage. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
@@ -1136,7 +1173,7 @@ or qualify the release revision for mutation coverage.
 
 Fast CI starts the source-only projects after classification, independently of
 build and static checks, and runs twelve built-dependent shards after the build.
-Those thirteen test jobs still select every portable test. Full qualification keeps six
+Those thirteen test jobs still select every portable test. Full qualification keeps twelve
 complete Vitest shards with coverage. Neither tier retries tests. Canonical
 project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled
@@ -1217,11 +1254,13 @@ separate and grows when more shard jobs compete for runners. The npm download
 cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
 Hosted CI jobs use four workers; other hosts stay at two
-because they are shared with other checks. Full qualification keeps six covered
+because they are shared with other checks. Full qualification keeps twelve covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs
-hourly or on manual dispatch. It uploads `ci-job-timings-batch` with raw API pages and
+every six hours or on manual dispatch, and snapshots pull-request CI health across
+the preceding twelve hours using full ISO 8601 timestamps within a ten-page
+(1,000-run) API budget. It uploads `ci-job-timings-batch` with raw API pages and
 a normalized point-in-time report for each collected workflow attempt, plus a
 batch manifest describing examined coverage, failures, and limits. Overlapping
 lookback windows may collect an attempt again; identify records by run ID and
@@ -1251,9 +1290,18 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
-the same workflow's Turbo cache for portable compiled JavaScript, skills, and
-catalogs. The key parser retains the validated `test:prepare` task identities in
+POSIX native package jobs, documentation checks, Go binary verification, and the
+Apple artifact lane reuse the same workflow's portable Turbo cache
+(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+(`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
+than Linux's accelerated `tsrs` checker, so they restore and publish a separate
+Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to
+two generations by `cache-retention.mjs`). `windows-native-build` caches
+cross-compiled MinGW outputs keyed by source/fixture hashes, runner
+`ImageOS`/`ImageVersion`, and UTC date (bounding lifetime to 24 hours so
+upstream toolchain updates refresh daily) while running
+`npm run verify:windows-native:artifact` unconditionally on every cache hit. The
+key parser retains the validated `test:prepare` task identities in
 `.cache/ci-build-plan.json`; staging reads this plan without starting another
 Turbo run that could evict cache entries. The producer stages matching archives,
 metadata, and available manifests into `.cache/ci-build-cache/`.
@@ -1297,6 +1345,70 @@ before workspace removal. Incomplete process cleanup retains the exact owner
 and workspace rather than reporting successful removal. The controlled
 `packageUpdateRegistryFailure` regression needs built process modules, uses no
 public registry, and checks both the primary failure and live descendant absence.
+
+## Pull-request test selection
+
+CI on a pull request runs static checks, the build and the portable tests the
+change affects. The complete portable suite runs on every push to `main`, on
+the scheduled and manual qualification runs, in release qualification, and on a
+PR labelled `ci:full`. Those complete runs catch a consumer that selection
+missed, after it has merged. Add `ci:full` to a PR when its effect reaches
+further than its imports show, such as runtime registration, generated files,
+subprocesses or bridges. Adding the label starts full qualification at once,
+and later pushes stay on the full tier while the label remains.
+
+`scripts/ci/test-selection.mjs` owns the selection. It reads the checked-out
+revision and selects:
+
+- changed test files;
+- tests that import a changed module, directly or through test-only helpers
+  (non-test modules under `tests/` and `src/**/*.fixture*.ts`). Selection never
+  follows production importers transitively;
+- tests beside a changed module that share its stem, or that scan their
+  directory with `readdir`;
+- the boundary tests of a changed leaf adapter (the owner table in the same
+  file), which reach their sources through the built CLI, the MCP server or a
+  fake provider process;
+- tests whose text names a changed path.
+
+Verifier scripts (`scripts/verify-*.mjs`, `scripts/verify/**/*.mjs`) and shared
+script libraries (`scripts/lib/*`, when no untraced consumer imports or names
+them) are traced like source modules. Changed Markdown, non-code `docs/` assets,
+issue templates, `LICENSE`, and `licenses/` inventories outside `src/` and
+`tests/` select only the tests that name them. Declarations, guard and layer
+baselines (`scripts/verify/baselines/*.json`,
+`scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
+analysis-efficiency test scripts, and advertised-schema summaries select no
+portable Vitest tests unless named by path, because static, Python, and build
+jobs check them. Non-module CLI parity fixtures with a single known test suite
+are bound in `EXPLICIT_FIXTURE_OWNERS` and fail closed if their owner is missing.
+
+The PR falls back to the complete fast suite when it cannot decide:
+
+- a shared production boundary (`src/process/`, `src/filesystem/`,
+  `src/contracts/tool*`, `src/server/createServer*`, `src/cli.ts`,
+  `scripts/ci/`) changed;
+- any other changed input is not traced, such as workflows, package metadata,
+  build and test-runner scripts, untraced `scripts/lib/` consumers, or unmapped
+  fixtures and data;
+- no test is selected;
+- more than 400 test files are selected;
+- a selected file has no single owning test project.
+
+A selection runs as one `Test shard (k/n)` job per group of up to 50 files, at
+most eight jobs, using exact file identity (`scripts/ci/test-group.mjs selected`).
+The separate `Source tests` job does not run, because the groups include the
+selected source tests. The `Classify changes` summary gives the mode and its
+reason.
+
+The required checks still report on every PR and fail closed:
+
+- `Portable tests` checks that the merged report contains exactly the selected
+  files: none missing, none unplanned, no duplicates.
+- `CI required` accepts a selected plan only for a fast `pull_request` run with
+  code changes, and then requires `build` and every selected test group.
+- A missing or malformed plan fails classification, the test group and the gate.
+- A selected run never publishes timing history.
 
 ## Real-toolchain verification lanes
 

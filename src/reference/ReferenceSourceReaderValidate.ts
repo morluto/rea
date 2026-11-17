@@ -7,13 +7,13 @@ import {
   cancelled,
   failure,
   filesystemFailureDetail,
-  rootFilesystemFailure,
 } from "./ReferenceSourceReaderErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import type {
   ReferenceSourceFailureCode,
   ReferenceSourceResult,
 } from "./ReferenceSourceReaderTypes.js";
+import { rootFilesystemFailure } from "./ReferenceSourceFailureBuilders.js";
 
 export const bigLstat = (path: string): Promise<BigIntStats> =>
   lstat(path, { bigint: true });
@@ -31,20 +31,22 @@ export const isAborted = (signal?: AbortSignal): boolean =>
 export const noFollowOpenSupported = (): boolean =>
   Number.isSafeInteger(constants.O_NOFOLLOW) && constants.O_NOFOLLOW !== 0;
 
-export const validateDirectory = async (
-  root: string,
-  rootIdentity: BigIntStats,
-  path: string,
-  signal?: AbortSignal,
-): Promise<
+/** A directory's identity admission: its metadata, or why it was refused. */
+export type DirectoryValidation =
   | { readonly ok: true; readonly stats: BigIntStats }
   | {
       readonly ok: false;
       readonly code: ReferenceSourceFailureCode;
       readonly message: string;
       readonly localDiagnostic?: string;
-    }
-> => {
+    };
+
+export const validateDirectory = async (
+  root: string,
+  rootIdentity: BigIntStats,
+  path: string,
+  signal?: AbortSignal,
+): Promise<DirectoryValidation> => {
   if (isAborted(signal))
     return {
       ok: false,

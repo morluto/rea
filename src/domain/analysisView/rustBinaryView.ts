@@ -1,8 +1,10 @@
+import { completeOrUnknownCoverageSchema } from "../coverage.js";
 import { z } from "zod";
 import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
+  rustcCommitOmissionSchema,
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
@@ -76,11 +78,12 @@ export const rustBinarySummarySchema = z.strictObject({
     .omit({ hashes: true })
     .extend({ hashes_count: count })
     .nullable(),
+  rustc_commit_omission: rustcCommitOmissionSchema.exactOptional(),
 });
 export const rustBinaryViewContextSchema = z.strictObject({
   source_coverage: z.strictObject({
     auditable_metadata_available: z.boolean(),
-    embedded_records: z.enum(["complete", "unknown"]),
+    embedded_records: completeOrUnknownCoverageSchema,
     runtime_dependencies: z.literal("unknown"),
   }),
 });
@@ -130,6 +133,9 @@ const summarize = (
     bytes: artifact.bytes,
     auditable_metadata: section,
     rustc_commit: compilerSummary,
+    ...(report.rustc_commit_omission === undefined
+      ? {}
+      : { rustc_commit_omission: report.rustc_commit_omission }),
   };
 };
 

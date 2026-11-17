@@ -3,6 +3,7 @@ import {
   type MachoTargetSelection,
 } from "../apple/machoTargetSelection.js";
 import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
+import { evidenceFileTarget } from "../evidence.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { err, ok, type Result } from "../result.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
@@ -22,10 +23,10 @@ export const requireMetadataReportSubject = (
   },
   message: string,
 ): Result<void, AnalysisError> => {
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
+    subject.sha256 !== report.artifact.sha256 ||
     subject.format !== metadataReportSubjectFormat(report) ||
     subject.architecture !==
       (binaryMetadataArchitecture(report.architecture) ?? null)

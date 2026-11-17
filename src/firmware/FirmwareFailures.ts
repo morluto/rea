@@ -1,9 +1,8 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import type { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
-  ArtifactFileCleanupFailure,
+  type AnalysisCleanupLease,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import type {
   AnalysisCapturedOutput,
   AnalysisError,
@@ -17,7 +16,7 @@ import {
   isAborted,
   type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
@@ -25,6 +24,7 @@ import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { firmwareDeadlineElapsed } from "./FirmwareDeadline.js";
 import { z } from "zod";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Fixed firmware allowance. analysis_timeout_ms does not raise it. */
 export const firmwareLimitRecovery = (allowance: string): string =>
@@ -213,23 +213,14 @@ export const firmwareFailureDialect = (
       if (read.cleanupLeases === undefined)
         treeCleanupLease?.bindCleanupError(cleanup);
       if (primary === undefined) return cleanup;
-      // A file operation's own outcome shares its cleanup; a cancelled read's does not.
-      return analysisErrorWithCleanupFailure(
-        primary,
-        cleanup,
-        operation,
-      ).bindCleanupDependencies(
-        read instanceof ArtifactFileCleanupFailure
-          ? [primary, cleanup]
-          : [cleanup],
-      );
+      return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
     },
     unclassified: (cause, details) =>
       new ProviderAdapterError(engine, operation, {
         ...details,
         cause,
         diagnostics: {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         },
       }),
   };

@@ -7,9 +7,10 @@ import {
   withArtifactFileHandle,
   assertArtifactReadActive,
   mapArtifactFileFailure,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import {
   NonRegularFileReadError,
   sameRegularFileState,
@@ -20,7 +21,6 @@ import {
   AnalysisArtifactChangedError,
   AnalysisAccessDeniedError,
 } from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   WindowsSnapshotCancelledError,
   windowsPrivateRuntime,

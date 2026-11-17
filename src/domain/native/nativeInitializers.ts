@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import { machoSliceArchitectureSchema } from "../apple/machoTargetSelection.js";
 import {
@@ -116,7 +117,13 @@ const entrySchema = z.strictObject({
 export type NativeInitializerEntry = z.infer<typeof entrySchema>;
 
 const coverageSchema = z.strictObject({
-  status: z.enum(["complete", "incomplete"]),
+  /**
+   * `partial` when declared slots or names were examined but not reported
+   * (budgets, unreadable arrays, withheld names); `unknown` when whether the
+   * listed facts are complete cannot be determined (relocation, fixup, symbol
+   * or mapping coverage, an unterminated dynamic table).
+   */
+  status: coverageStatusSchema,
   examined_entries: z.number().int().min(0).max(MAX_NATIVE_INITIALIZER_ENTRIES),
   total_entries: z
     .number()

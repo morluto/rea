@@ -3,8 +3,8 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it } from "vitest";
-import { ZipArtifactReader } from "../../../../src/artifacts/ZipArtifactReader.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { ZipArtifactReader } from "../../../../src/resources/index.js";
 
 it("cancels a ZIP read while its consumer is applying backpressure", async () => {
   const root = await createTestTempDirectory("rea-zip-backpressure-");

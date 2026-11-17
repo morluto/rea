@@ -63,8 +63,9 @@ limitations are also document properties named `rea:unknown` and
 them.
 The document does not page. A document larger than 1,048,576 bytes is refused.
 Recorded fields are counted before any Package URL or document is built, so
-`document_bytes` in a refusal is exact or a lower bound, as
-`document_bytes_bound` states. The refusal names `export_evidence_bundle`.
+the refusal diagnostics record `document_bytes` as exact or a lower bound, as
+`document_bytes_bound` states. The fixed allowance records its byte ceiling,
+and the recovery names `export_evidence_bundle`.
 
 One parent produces one document. Several parents are not merged, and SPDX is
 not produced.

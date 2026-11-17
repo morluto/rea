@@ -1,11 +1,18 @@
 import { z } from "zod";
 
-import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
-import { analysisSettingLimitSchema } from "./analysisSettingDefinitions.js";
+import {
+  webBundleAnalysisSchema,
+  webBundleCallSiteSchema,
+} from "./webBundleAnalysis.js";
+import {
+  analysisParameterLimitSchema,
+  analysisResultLimitSchema,
+} from "./analysisSettingDefinitions.js";
 import { javaScriptRouteSourceFactsSchema } from "./javascript/javascriptRouteFacts.js";
 import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
 import type { AnalysisError } from "./analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
+import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
 
 const observationsSchema = z.strictObject({
   edges: webBundleAnalysisSchema.shape.observations.shape.chunks.shape.edges,
@@ -13,6 +20,8 @@ const observationsSchema = z.strictObject({
   endpoints: webBundleAnalysisSchema.shape.observations.shape.endpoints,
   webmcp_declarations:
     webBundleAnalysisSchema.shape.observations.shape.webmcp_declarations,
+  /** Browser requests whose URL argument is not a string literal. */
+  unresolved_endpoints: z.array(webBundleCallSiteSchema),
 });
 
 /**
@@ -25,6 +34,12 @@ const refusedScriptFactsSchema = z.strictObject({
   inferences: webBundleAnalysisSchema.shape.inferences,
 });
 
+const semanticLimitSchema = z.strictObject({
+  reason: z.string(),
+  limit: analysisParameterLimitSchema,
+});
+export type WebBundleSemanticLimit = z.infer<typeof semanticLimitSchema>;
+
 /** Serializable result for one captured script, suitable for worker transport. */
 export const webBundleScriptAnalysisSchema = z
   .discriminatedUnion("status", [
@@ -34,6 +49,7 @@ export const webBundleScriptAnalysisSchema = z
       parse_status: z.enum(["parsed", "recovered", "failed"]),
       visited_ast_nodes: z.number().int().min(0),
       widened_return_references: z.boolean(),
+      semantic_limits: z.array(semanticLimitSchema).exactOptional(),
       route_facts: javaScriptRouteSourceFactsSchema.nullable().optional(),
       observations: observationsSchema,
       inferences: webBundleAnalysisSchema.shape.inferences,
@@ -49,8 +65,8 @@ export const webBundleScriptAnalysisSchema = z
         "not_started",
       ]),
       detail: z.string().optional(),
-      /** The setting that bounded this script, when a setting refused it. */
-      limit: analysisSettingLimitSchema.exactOptional(),
+      /** The setting or request parameter that bounded this script. */
+      limit: analysisResultLimitSchema.exactOptional(),
       remediation: z.string().exactOptional(),
       /** Facts gathered before a work allowance refused a later phase. */
       partial: refusedScriptFactsSchema.exactOptional(),
@@ -111,7 +127,11 @@ export const webBundleScriptAnalysisSchema = z
         "script_key",
       ]);
     });
-    for (const collection of ["routes", "endpoints"] as const)
+    for (const collection of [
+      "routes",
+      "endpoints",
+      "unresolved_endpoints",
+    ] as const)
       result.observations[collection].forEach((finding, index) =>
         checkScriptKey(finding.location.script_key, [
           "observations",
@@ -134,9 +154,12 @@ export const webBundleScriptAnalysisSchema = z
 
     if (result.parse_status === "failed") {
       const hasFindings =
+        (result.semantic_limits !== undefined &&
+          result.semantic_limits.length > 0) ||
         result.observations.edges.length > 0 ||
         result.observations.routes.length > 0 ||
         result.observations.endpoints.length > 0 ||
+        result.observations.unresolved_endpoints.length > 0 ||
         result.observations.webmcp_declarations.length > 0 ||
         result.inferences.length > 0;
       if (
@@ -163,25 +186,41 @@ type UnavailableWebScriptAnalysis = Extract<
 >;
 
 /**
+ * The control a script result can record: a registered setting, or a request
+ * parameter named by its contract field. An environment control is not a
+ * result-side reference, so its error keeps only the detail.
+ */
+const recordedLimit = (
+  limit: AnalysisError["limit"],
+): UnavailableWebScriptAnalysis["limit"] =>
+  limit === undefined
+    ? undefined
+    : "setting" in limit
+      ? limit
+      : limit.control_kind === "parameter"
+        ? limit
+        : undefined;
+
+/**
  * The detail and structured recovery an unavailable script states for the
- * error that stopped its analysis. Only a registered setting's limit is kept.
+ * error that stopped its analysis, such as a resource refusal or a per-script
+ * deadline.
  */
 export const unavailableWebScriptRecovery = (
   error: AnalysisError,
-): Pick<UnavailableWebScriptAnalysis, "detail" | "limit" | "remediation"> => ({
-  detail:
-    error instanceof AnalysisResourceConstraintError &&
-    error.reportedLimits !== null
-      ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
-      : (error.userMessage ?? error.message),
-  ...(error instanceof AnalysisResourceConstraintError &&
-  error.limit !== undefined &&
-  "setting" in error.limit
-    ? {
-        limit: error.limit,
-        ...(error.remediationAction === undefined
-          ? {}
-          : { remediation: error.remediationAction }),
-      }
-    : {}),
-});
+): Pick<UnavailableWebScriptAnalysis, "detail" | "limit" | "remediation"> => {
+  const limit = recordedLimit(error.limit);
+  return {
+    detail:
+      error instanceof AnalysisResourceConstraintError &&
+      error.reportedLimits !== null
+        ? `${error.userMessage ?? error.reason} Reported limits: ${JSON.stringify(error.reportedLimits)}`
+        : (error.userMessage ?? error.message),
+    ...(limit === undefined
+      ? {}
+      : {
+          limit,
+          remediation: analysisErrorRemediationAction(error),
+        }),
+  };
+};

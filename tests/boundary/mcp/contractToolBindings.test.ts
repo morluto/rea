@@ -1,10 +1,11 @@
 import { expect } from "vitest";
+import { z } from "zod";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import {
   registerContractTools,
@@ -21,6 +22,92 @@ const evidenceServer = () =>
     {},
     undefined,
     createToolResultDelivery(undefined),
+  );
+
+mcpTest(
+  "application summary admission preserves nested caller omissions",
+  async ({ mcp }) => {
+    const received: unknown[] = [];
+    const contract = {
+      ...toolContract("inspect_elf_dependencies"),
+      name: "inspect_nested_fixture",
+      inputSchema: z.strictObject({
+        path: z.string(),
+        policy: z.strictObject({
+          count: z.int().default(12),
+          mode: z.string().default("full"),
+        }),
+        detail: z.enum(["complete", "summary"]).default("complete"),
+      }),
+    };
+    const server = evidenceServer();
+    registerContractTools(
+      server,
+      {
+        inspect_nested_fixture: {
+          admission: "application",
+          summary: (input: unknown) => {
+            received.push(input);
+            return Promise.resolve(
+              err(new AnalysisInputError("inspect_nested_fixture")),
+            );
+          },
+        },
+      } as ContractToolBindings,
+      { logger: silentLogger },
+      [contract],
+    );
+    const client = await mcp.connect(server);
+    const request = { path: "/fixture", policy: { count: 2 } };
+    const reply = await client.callTool({
+      name: contract.name,
+      arguments: request,
+    });
+    expect(reply.isError).toBe(true);
+    expect(received).toEqual([request]);
+  },
+);
+
+for (const admission of ["sdk", "application"] as const)
+  mcpTest(
+    `${admission} summary admission preserves its input-default ownership`,
+    async ({ mcp }) => {
+      const received: unknown[] = [];
+      const inspect = (input: unknown) => {
+        received.push(input);
+        return Promise.resolve(
+          err(new AnalysisInputError("inspect_elf_dependencies")),
+        );
+      };
+      const server = evidenceServer();
+      registerContractTools(
+        server,
+        { inspect_elf_dependencies: { admission, summary: inspect } },
+        { logger: silentLogger },
+        [toolContract("inspect_elf_dependencies")],
+      );
+      const client = await mcp.connect(server);
+      for (const selected of [undefined, 1024, 2]) {
+        const request = {
+          path: "/fixture",
+          ...(selected === undefined ? {} : { max_needed: selected }),
+        };
+        const reply = await client.callTool({
+          name: "inspect_elf_dependencies",
+          arguments: { ...request, detail: "complete" },
+        });
+        expect(reply.isError).toBe(true);
+        const source = received.at(-1);
+        if (admission === "application") expect(source).toEqual(request);
+        else
+          expect(source).toMatchObject({
+            path: request.path,
+            max_needed: selected ?? 1024,
+            max_file_bytes: 67108864,
+          });
+        expect(source).not.toHaveProperty("detail");
+      }
+    },
   );
 
 mcpTest(
@@ -94,6 +181,103 @@ mcpTest(
   },
 );
 
+mcpTest(
+  "runs a value binding under analysis admission only when it declares it",
+  async ({ mcp }) => {
+    const ran: string[] = [];
+    const admitted: string[] = [];
+    const refusal = (operation: string) =>
+      new AnalysisInputError(operation, undefined, [
+        { path: [], reason: "invalid_value", message: `${operation} refusal` },
+      ]);
+    const value = (operation: string) => () => {
+      ran.push(operation);
+      return Promise.resolve(err(refusal(operation)));
+    };
+    const server = evidenceServer();
+    registerContractTools(
+      server,
+      {
+        evaluate_reconstruction_coverage: {
+          admission: "application",
+          admitted: true,
+          value: value("evaluate_reconstruction_coverage"),
+        },
+        search_guidance: {
+          admission: "application",
+          value: value("search_guidance"),
+        },
+      },
+      {
+        logger: silentLogger,
+        withAdmittedAnalysis: async (operationName) => {
+          admitted.push(operationName);
+          return err(refusal("admission"));
+        },
+      },
+    );
+    const client = await mcp.connect(server);
+    const call = async (name: string) =>
+      parseMcpToolError(await client.callTool({ name, arguments: {} }));
+
+    expect(await call("evaluate_reconstruction_coverage")).toMatchObject({
+      error: { details: { operation: "admission" } },
+    });
+    expect(await call("search_guidance")).toMatchObject({
+      error: { details: { operation: "search_guidance" } },
+    });
+    expect(admitted).toEqual(["evaluate_reconstruction_coverage"]);
+    expect(ran).toEqual(["search_guidance"]);
+  },
+);
+
+mcpTest(
+  "reads the analysis a query's admission grants, and refuses a query on a server that admits none",
+  async ({ mcp }) => {
+    const analysis = { kind: "fixture-analysis" } as never;
+    const received: unknown[] = [];
+    const bindings: ContractToolBindings = {
+      get_navigation_context: {
+        admission: "sdk",
+        query: async (_input, granted) => {
+          received.push(granted);
+          return ok({
+            document: "fixture",
+            address: "0x1000",
+            procedure: null,
+          });
+        },
+      },
+    };
+    expect(() =>
+      registerContractTools(evidenceServer(), bindings, {
+        logger: silentLogger,
+      }),
+    ).toThrow(/get_navigation_context/);
+
+    const admitted: string[] = [];
+    const server = evidenceServer();
+    registerContractTools(server, bindings, {
+      logger: silentLogger,
+      withAdmittedAnalysis: async (operationName, _signal, operation) => {
+        admitted.push(operationName);
+        return ok(await operation(analysis));
+      },
+    });
+    const client = await mcp.connect(server);
+    const reply = await client.callTool({
+      name: "get_navigation_context",
+      arguments: {},
+    });
+    expect(reply.isError ?? false, JSON.stringify(reply)).toBe(false);
+    expect(reply.structuredContent).toEqual({
+      result: { document: "fixture", address: "0x1000", procedure: null },
+    });
+    expect(admitted).toEqual(["get_navigation_context"]);
+    expect(received).toEqual([analysis]);
+  },
+);
+
 type Operation = () => Promise<never>;
 type DevicetreeBinding = NonNullable<
   ContractToolBindings["inspect_devicetree"]
@@ -124,8 +308,50 @@ mcpTest(
     } extends PeImportsBinding
       ? false
       : true = true;
-    expect([summaryAccepted, bothRefused, summaryWithoutDetailRefused]).toEqual(
-      [true, true, true],
-    );
+    // A session-derived workflow is its own handler kind, never combined
+    // with a run or value handler.
+    const deriveWithRunRefused: {
+      readonly admission: "sdk";
+      readonly session: never;
+      readonly derive: () => never;
+      readonly run: Operation;
+    } extends PeImportsBinding
+      ? false
+      : true = true;
+    expect([
+      summaryAccepted,
+      bothRefused,
+      summaryWithoutDetailRefused,
+      deriveWithRunRefused,
+    ]).toEqual([true, true, true, true]);
+  },
+);
+
+mcpTest(
+  "binds a provider operation only to the contract of the same name",
+  () => {
+    const mismatched: ContractToolBindings = {
+      xrefs: {
+        admission: "sdk",
+        // @ts-expect-error A provider binding runs only its own operation.
+        provider: { operation: "extract_artifact", activeTarget: undefined },
+      },
+    };
+    const notProvider: ContractToolBindings = {
+      inspect_pe_imports: {
+        admission: "sdk",
+        // @ts-expect-error A tool that is no provider operation binds no provider.
+        provider: { operation: "xrefs", activeTarget: undefined },
+      },
+    };
+    expect(() =>
+      registerContractTools(evidenceServer(), mismatched, {
+        logger: silentLogger,
+        withAdmittedAnalysis: async () => {
+          throw new Error("not called");
+        },
+      }),
+    ).toThrow("MCP tool xrefs binds provider operation extract_artifact");
+    expect(notProvider).toBeDefined();
   },
 );

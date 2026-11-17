@@ -2,10 +2,9 @@ import { win32 } from "node:path";
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import {
-  AnalysisResourceConstraintError,
+  fixedCeilingConstraint,
   AnalysisUnsupportedTargetError,
 } from "../analysisErrorCore.js";
-import { fixedAllowanceOptions } from "../fixedAllowanceRemediation.js";
 import type { GoModule } from "../go/goBinary.js";
 import { goBinarySchema } from "../go/goBinary.js";
 import {
@@ -323,16 +322,18 @@ const documentAllowanceExceeded = (
   bound: "exact" | "lower_bound",
 ) =>
   err(
-    new AnalysisResourceConstraintError(
+    fixedCeilingConstraint(
       INSPECT_ANALYSIS_VIEW_OPERATION,
       "transport",
       `The CycloneDX document is ${bound === "lower_bound" ? "at least " : ""}${String(bytes)} bytes and exceeds the ${String(CYCLONEDX_DOCUMENT_BYTE_LIMIT)}-byte CycloneDX document allowance. This view does not page. Export the parent Evidence with export_evidence_bundle.`,
       {
-        document_bytes: bytes,
-        document_bytes_bound: bound,
-        limit_bytes: CYCLONEDX_DOCUMENT_BYTE_LIMIT,
+        name: "The CycloneDX document allowance",
+        kind: "bytes",
+        limit: CYCLONEDX_DOCUMENT_BYTE_LIMIT,
+        unit: "bytes",
+        narrowing: "Export the parent Evidence with export_evidence_bundle.",
       },
-      fixedAllowanceOptions("The CycloneDX document allowance", "bytes"),
+      { diagnostics: { document_bytes: bytes, document_bytes_bound: bound } },
     ),
   );
 

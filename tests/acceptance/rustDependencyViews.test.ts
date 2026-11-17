@@ -1,3 +1,4 @@
+import { fileSubjectArchitecture } from "../fixtures/evidenceSubject.js";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -34,13 +35,24 @@ cliTest(
           output,
           "--max-rustc-hashes",
           String(maxHashes),
+          "--full-output",
           "--json",
         ],
       });
       expect(delivered.exitCode, delivered.stderr).toBe(0);
+      const envelope = delivered.json as {
+        data: { summary: { normalized_result: unknown } };
+        meta: { cli_controls?: unknown };
+      };
+      // The summary wraps the view; the CLI still names the option for the
+      // control the complete Evidence records.
+      expect(envelope.meta.cli_controls).toEqual(
+        maxHashes === 64
+          ? { max_rustc_hashes: "--max-rustc-hashes" }
+          : undefined,
+      );
       const summary = analysisViewResultSchema.parse(
-        (delivered.json as { summary: { normalized_result: unknown } }).summary
-          .normalized_result,
+        envelope.data.summary.normalized_result,
       );
       if (
         summary.kind !== "summary" ||
@@ -56,6 +68,10 @@ cliTest(
                 status: "partial",
                 reason: "max_rustc_hashes",
                 effective_limit: 64,
+                limit: expect.objectContaining({
+                  parameter: "max_rustc_hashes",
+                  effective_value: 64,
+                }),
               },
             }
           : {}),
@@ -327,16 +343,12 @@ cliTest(
       await expectCycloneDxView(call, cli, { exported, format, root });
       const malformed = structuredClone(report);
       malformed.auditable_metadata!.dependency_edges[0]!.to_index = 999;
-      if (full.subject == null)
-        throw new Error("Missing complete Rust subject");
       const invalid = createEvidence(
         {
           path,
           sha256: report.artifact.sha256,
           format: format === "macho" ? "mach-o" : format,
-          ...(full.subject.architecture === null
-            ? {}
-            : { architecture: full.subject.architecture }),
+          ...fileSubjectArchitecture(full.subject),
         },
         full.provider,
         {
@@ -378,16 +390,12 @@ cliTest(
     const report = rustBinarySchema.parse(full.normalized_result);
     const metadata = report.auditable_metadata;
     if (metadata === null) throw new Error("Expected Rust dependency metadata");
-    if (full.subject == null)
-      throw new Error("Expected Rust artifact identity");
     const historical = createEvidence(
       {
         path,
         sha256: report.artifact.sha256,
         format: "elf",
-        ...(full.subject.architecture === null
-          ? {}
-          : { architecture: full.subject.architecture }),
+        ...fileSubjectArchitecture(full.subject),
       },
       full.provider,
       {

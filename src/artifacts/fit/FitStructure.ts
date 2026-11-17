@@ -16,11 +16,11 @@ import {
   type Devicetree,
 } from "../../domain/firmware/devicetree.js";
 import {
-  DevicetreeLimitFailure,
+  devicetreeLimitOf,
   parseDevicetree,
-} from "../../firmware/devicetree/DevicetreeParser.js";
-import { BinaryFormatFailure } from "../../native/metadata/BinaryContainer.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+} from "../../domain/firmware/devicetreeParser.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 // Fixed resource bounds; configurable ceilings are tracked in #6176.
@@ -569,12 +569,13 @@ const parseFit = (fdt: Buffer, path: string): Devicetree => {
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure)
       throw formatFailure(cause.message);
-    if (cause instanceof DevicetreeLimitFailure)
+    const limit = devicetreeLimitOf(cause);
+    if (limit !== undefined)
       throw new ArtifactReaderFailure(
         "limit",
-        `FIT devicetree exceeds the fixed ${cause.limit} allowance`,
+        `FIT devicetree exceeds the fixed ${limit.limit} allowance`,
         {
-          boundary: cause.limit === "decoded_bytes" ? "memory" : "capacity",
+          boundary: limit.limit === "decoded_bytes" ? "memory" : "capacity",
           cause,
         },
       );

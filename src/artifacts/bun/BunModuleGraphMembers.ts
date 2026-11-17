@@ -3,7 +3,7 @@ import {
   type BunReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
 import { setImmediate } from "node:timers/promises";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import {
   BUN_RECORD_BYTES_1_3_3,
   BUN_RECORD_BYTES_1_3_9,

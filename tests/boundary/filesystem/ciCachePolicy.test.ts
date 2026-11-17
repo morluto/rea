@@ -64,9 +64,7 @@ const assertRetentionPolicy = (expression: string): void => {
             repositoryName === currentRepository &&
             branch === defaultBranch &&
             ["push", "schedule", "workflow_dispatch"].includes(event) &&
-            ["success", "failure", "timed_out", "cancelled"].includes(
-              conclusion,
-            );
+            ["success", "failure", "timed_out"].includes(conclusion);
           expect(
             evaluatePolicy(expression, {
               github: {
@@ -556,6 +554,7 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
         workflow_run: z.object({
           workflows: z.array(z.literal("CI")),
           types: z.array(z.literal("completed")),
+          branches: z.array(z.literal("main")),
         }),
         workflow_call: z.unknown().optional(),
         pull_request: z.unknown().optional(),
@@ -605,7 +604,6 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
     "persist-credentials": false,
   });
   expect(checkouts).toHaveLength(2);
-  expect(steps.some((step) => step.run === "npm ci")).toBe(false);
   const setupNode = steps.find(
     (step) =>
       step.uses ===
@@ -634,6 +632,9 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   );
   expect(retentionEnv.CACHE_PORTABLE_PREFIX).toBe(
     "rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-",
+  );
+  expect(retentionEnv.CACHE_WINDOWS_BUILD_PREFIX).toBe(
+    "rea-windows-build-v1-Windows-X64-",
   );
   expect(retentionEnv.DEDUPE_NPM_DOWNLOADS).toBe("true");
   expect(retentionEnv.GH_TOKEN).toBe("${{ github.token }}");
@@ -667,6 +668,14 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.CACHE_KNIP_PREFIX).toBe(knipPrefix);
   expect(retentionEnv.CACHE_KNIP_KEEP_KEY).toBe(targetSourceKey("knip-cache"));
   expect(publishedKey("knip-cache").startsWith(knipPrefix)).toBe(true);
+  const windowsNativeSteps =
+    ci?.workflow.jobs?.["windows-native-build"]?.steps ?? [];
+  const windowsNativeKey = windowsNativeSteps.find(
+    (step) => step.id === "windows-native-key",
+  );
+  expect(String(windowsNativeKey?.run)).toContain("ImageOS");
+  expect(String(windowsNativeKey?.run)).toContain("ImageVersion");
+  expect(String(windowsNativeKey?.run)).toContain("date -u +%Y-%m-%d");
 });
 
 it("publishes each hosted npm download cache from one writer", async () => {

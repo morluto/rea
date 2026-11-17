@@ -21,7 +21,7 @@ import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js"
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisViewResult.js";
 import { SERVER_START_FAILED } from "../../../src/main/messages.js";
-import { HOT_TOOL_NAMES } from "../../../src/catalogDiscovery.js";
+import { HOT_TOOL_NAMES } from "../../../src/contracts/catalog/catalogDiscovery.js";
 import { DatabaseSync } from "node:sqlite";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchemaObject } from "ajv";
