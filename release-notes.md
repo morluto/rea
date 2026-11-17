@@ -2,7 +2,7 @@
 ---
 
 
-## [6.10.0](https://github.com/morluto/rea/compare/rea-agents-6.9.0...rea-agents-6.10.0) (2026-11-16)
+## [6.10.0](https://github.com/morluto/rea/compare/rea-agents-6.9.0...rea-agents-6.10.0) (2026-11-17)
 
 
 ### ⚠ BREAKING CHANGES
@@ -487,6 +487,7 @@
 * **desktop:** pass the desktop capture's observers, session runner and store through a port ([#11676](https://github.com/morluto/rea/issues/11676)) ([7af53a1](https://github.com/morluto/rea/commit/7af53a1b4278055ad9484a85cffb3030580ed1be)), closes [#11583](https://github.com/morluto/rea/issues/11583)
 * **desktop:** release retained screen-judge cleanup through its lease ([#10809](https://github.com/morluto/rea/issues/10809)) ([af5c89a](https://github.com/morluto/rea/commit/af5c89a85713e4438159caf355ec2c525ff45430))
 * **doctor:** compose system diagnostics from one host platform ([#11096](https://github.com/morluto/rea/issues/11096)) ([4c375b8](https://github.com/morluto/rea/commit/4c375b82c819bc61d690e6721a9cb7e882853faf))
+* **domain,providers:** remove remaining CLI option text and local completeness enum baselines ([1e9df09](https://github.com/morluto/rea/commit/1e9df09f6814c6194b83791620161b1951257042))
 * **domain:** bound a first batch of constant-maximum slices with boundedList ([#11296](https://github.com/morluto/rea/issues/11296)) ([673050f](https://github.com/morluto/rea/commit/673050f7bce4334420fa5fc79d258aed355f4722))
 * **domain:** charge remaining fixed allowances through Budget ([#11319](https://github.com/morluto/rea/issues/11319)) ([64c119d](https://github.com/morluto/rea/commit/64c119df477bd583f227c41b4e2021c4d7fa1225))
 * **domain:** charge resource allowances through one Budget owner ([#11293](https://github.com/morluto/rea/issues/11293)) ([3d67404](https://github.com/morluto/rea/commit/3d674041327490c36cdc2bba5e0f30de06bb4d93))
@@ -516,6 +517,7 @@
 * **domain:** one owner each for non-empty text schemas and UTF-8 head excerpts ([#10569](https://github.com/morluto/rea/issues/10569)) ([eead7a5](https://github.com/morluto/rea/commit/eead7a5815fc67c40586a6b8204efffa595c43e7))
 * **domain:** one owner for the non-array record predicate ([#10588](https://github.com/morluto/rea/issues/10588)) ([5bf66f7](https://github.com/morluto/rea/commit/5bf66f75008a6ffa1353779442703e6de45c9143))
 * **domain:** redact declared sensitive values and transport credentials through one owner ([#11327](https://github.com/morluto/rea/issues/11327)) ([a97a5b8](https://github.com/morluto/rea/commit/a97a5b823d70a410543fbfcb19703a6dc8dc58df))
+* **domain:** remove remaining CLI option text and local completeness enum baselines ([#11788](https://github.com/morluto/rea/issues/11788)) ([1e9df09](https://github.com/morluto/rea/commit/1e9df09f6814c6194b83791620161b1951257042))
 * **domain:** type UTF-8 excerpts apart from identity strings ([#11272](https://github.com/morluto/rea/issues/11272)) ([b6659b7](https://github.com/morluto/rea/commit/b6659b70a3e55f6bc0d1e71cee21a87acd6131b9))
 * **errors:** derive parse-limit resource_constraint refusals from LimitRef ([#11775](https://github.com/morluto/rea/issues/11775)) ([ddd0d6d](https://github.com/morluto/rea/commit/ddd0d6d4a4e7a4c967977d6f35e59e81f958b997))
 * **errors:** give caller aborts a typed reason at the adapters ([#10633](https://github.com/morluto/rea/issues/10633)) ([b655645](https://github.com/morluto/rea/commit/b655645608aeb68cf17a8632927e646b2e52a221))
