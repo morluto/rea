@@ -599,6 +599,29 @@ it("refuses Gradle metadata with a repeated field instead of keeping the last", 
   expectFailure(root, "malformed");
 });
 
+it("keeps a repeated Gradle field name out of the failure message", () => {
+  const source = `{"formatVersion":"1.1","https://user:secret@repo.example/x":1,"https://user:secret@repo.example/x":2,"component":{"group":"com.example","module":"demo","version":"1.0.0"},"variants":[]}`;
+  const bytes = Buffer.from(source, "utf8");
+  let failure: unknown;
+  try {
+    parseMavenGradleMetadata(bytes, {
+      path: "/artifacts/demo.module",
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({ failure: { kind: "malformed" } });
+  const { message } = failure as ParseFailureError;
+  expect(message).toBe(
+    "Gradle module metadata declares a field more than once in one object (offset 62).",
+  );
+  expect(message).not.toContain("user:secret");
+  expect(message).not.toContain("repo.example");
+});
+
 it("refuses JSON that is not Gradle module metadata", () => {
   expectFailure('{"name":"demo"}', "unsupported");
 });

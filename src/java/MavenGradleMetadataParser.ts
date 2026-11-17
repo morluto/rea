@@ -520,12 +520,14 @@ const parseGradle = (
   }
   // JSON.parse keeps the last of a repeated field, which could hide a
   // declaration (for example a second empty `dependencies`) while coverage
-  // still read as complete. Refuse the ambiguous document instead.
+  // still read as complete. Refuse the ambiguous document instead. Report
+  // only the offset: the member name is source text and may hold URL
+  // credentials.
   const duplicate = findDuplicateJsonMember(source);
   if (duplicate !== undefined)
     throw malformedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
-      `Gradle module metadata declares field ${JSON.stringify(duplicate.name)} more than once in one object (offset ${String(duplicate.offset)}).`,
+      `Gradle module metadata declares a field more than once in one object (offset ${String(duplicate.offset)}).`,
     );
   if (!isRecord(parsed))
     throw unsupportedInput(
