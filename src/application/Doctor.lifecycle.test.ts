@@ -7,6 +7,7 @@ import {
   settledCause,
 } from "../../tests/support/lifecycleHarness.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { cancelledBy } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { createDoctorHostFixture } from "./Doctor.fixture.js";
 import { runDoctorOwned, systemDoctorHost } from "./Doctor.js";
@@ -109,4 +110,72 @@ it("preserves an inspection-authored physical failure when final cleanup also ob
     ),
   ).rejects.toBe(physical);
   expect(physical.cause).toBeUndefined();
+});
+
+it("joins concurrent sibling probes before closing and prefers physical failure over sibling cancellation", async () => {
+  const controller = new AbortController();
+  const siblingInFlight = phaseGate();
+  const refusedCleanup = controlledCleanup({ refused: true });
+  const physical = new ProviderAdapterError("jadx", "doctor", {
+    diagnostics: { reason: "concurrent provider fault" },
+  });
+  let closeStarted = false;
+  let siblingSettledBeforeClose = false;
+  const ownedSystem = systemDoctorHost({
+    signal: controller.signal,
+    platform: "darwin",
+    environment: {},
+    providerInspections: async (owner) => {
+      await siblingInFlight.hold();
+      siblingSettledBeforeClose = !closeStarted;
+      owner.retain(
+        { close: () => refusedCleanup.close() },
+        "sibling-prerequisite",
+      );
+      throw physical;
+    },
+  });
+  const ownedHost = {
+    ...ownedSystem,
+    macosVersion: async () => {
+      controller.abort({ request: "concurrent cancellation" });
+      throw cancelledBy("doctor", controller.signal);
+    },
+    close: async () => {
+      closeStarted = true;
+      return ownedSystem.close!();
+    },
+  };
+  const running = settledCause(runDoctorOwned(undefined, ownedHost));
+  await withVerifierCleanup(async () => {
+    await siblingInFlight.reached(running, "concurrent provider probe");
+    expect(closeStarted).toBe(false);
+    siblingInFlight.release();
+    const failure = await running;
+    expect(siblingSettledBeforeClose).toBe(true);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected attributed composite failure");
+    expect(failure.cleanupResources).toEqual(["sibling-prerequisite"]);
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.diagnostics).toMatchObject({
+      primary_error: {
+        details: {
+          provider_id: "jadx",
+          diagnostics: { reason: "concurrent provider fault" },
+        },
+      },
+    });
+    refusedCleanup.allow();
+    await ownedHost.close();
+    expect(failure.cleanupIncomplete).toBe(false);
+  }, [
+    () => {
+      refusedCleanup.allow();
+      siblingInFlight.release();
+    },
+    async () => {
+      await running;
+    },
+    () => ownedHost.close(),
+  ]);
 });
