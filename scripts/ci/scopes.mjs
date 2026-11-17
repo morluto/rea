@@ -813,4 +813,6 @@ export const MANUAL_VERIFIERS = [
   "scripts/verify-packaged-ghidra-windows.mjs",
   "scripts/verify-wasm-artifact.mjs",
   "scripts/verify-packaged-wasm-artifact.mjs",
+  "scripts/lib/ghidra-*-snapshot-e2e.mjs",
+  "scripts/lib/real-ghidra-snapshot-lifecycle.mjs",
 ];
