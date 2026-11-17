@@ -524,11 +524,32 @@ it("selects the tests a pull request affects and runs everything when it cannot 
       reason: "401 affected test files exceed the 400-file selection cap",
     },
   });
-  const capped = await change(directory, many.slice(0, 81), "// edited\n");
-  expect(await classify(directory, wide, capped)).toMatchObject({
-    testSelection: { mode: "selected" },
-    testShards: ["1/3", "2/3", "3/3"],
-  });
+  // Keep every changed file selected at the 50-file shard boundary and the
+  // 400-file selection cap. The 81-file case caught the obsolete 40-file
+  // expectation when the planner moved to 50 files per shard.
+  let parent = wide;
+  for (const [count, shards] of [
+    [50, ["1/1"]],
+    [51, ["1/2", "2/2"]],
+    [81, ["1/2", "2/2"]],
+    [400, ["1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8", "8/8"]],
+  ] as const) {
+    const files = many.slice(0, count);
+    const capped = await change(
+      directory,
+      files,
+      `// edited ${String(count)}\n`,
+    );
+    expect(await classify(directory, parent, capped)).toMatchObject({
+      testSelection: {
+        mode: "selected",
+        files: [...files].sort(),
+        shards: shards.length,
+      },
+      testShards: shards,
+    });
+    parent = capped;
+  }
 });
 
 it("routes license inventories to docs checks and keeps blame-ignore edits formatting-only", async () => {
