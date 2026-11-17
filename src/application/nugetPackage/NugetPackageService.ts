@@ -1,19 +1,17 @@
 import { isAbsolute } from "node:path";
 import {
   artifactFilePrimaryFacts,
+  ArtifactFileSource,
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
   bindArtifactFileCleanup,
-} from "../../resources/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { ArtifactFileSource } from "../../resources/ArtifactFileSource.js";
-import { hashReadableToCompletion } from "../../artifacts/ArtifactHash.js";
-import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { ZipArtifactReader } from "../../resources/ZipArtifactReader.js";
-import {
+  digestReadableToCompletion,
   projectStableArtifactFailure,
   stableArtifactInputRecovery,
-} from "../../resources/StableArtifactFailure.js";
+  ZipArtifactReader,
+} from "../../resources/index.js";
+import { readFileHandleChunks } from "../../filesystem/readFileHandleChunks.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -308,7 +306,7 @@ export const inspectNugetPackageEvidence = async (
             `Selected artifact exceeds ${String(input.max_file_bytes)} bytes: ${input.path}`,
             { boundary: "file-size" },
           );
-        const hashed = await hashReadableToCompletion(
+        const hashed = await digestReadableToCompletion(
           readFileHandleChunks(admittedFile.handle, {
             end: input.max_file_bytes,
             signal: options.signal,
