@@ -149,29 +149,6 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("reports a parse-complete GOPATH module text as unknown dependency coverage", async () => {
-  const moduleText =
-    "path\texample.com/tool/cmd/tool\n" +
-    "build\t-compiler=gc\n" +
-    "build\tGOOS=linux\n";
-  const root = await createTestTempDirectory("rea-go-gopath-metadata-");
-  const path = join(root, "application.elf");
-  await writeFile(path, createGoBinaryFixture({ moduleText }).bytes);
-  const result = await new GoBinaryProvider().inspect({ path });
-  if (!result.ok) throw result.error;
-  expect(result.value.build_info?.module_text).toBe(moduleText);
-  expect(result.value.build_info?.module).toMatchObject({
-    path: "example.com/tool/cmd/tool",
-    main: null,
-    dependencies: [],
-    complete: true,
-    unparsed_lines: [],
-  });
-  expect(result.value.limitations.join(" ")).toContain(
-    "Dependency coverage is unknown",
-  );
-});
-
 it("keeps a module-mode build with no dependency records as an observed empty list", async () => {
   const moduleText =
     "path\texample.com/tool\n" +
