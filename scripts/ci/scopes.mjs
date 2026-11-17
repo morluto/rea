@@ -247,6 +247,7 @@ const PATH_SCOPES = {
     "scripts/verify-package-*",
     "scripts/verify-packed-bridge.*",
     "scripts/verify-windows-*.mjs",
+    ".github/actions/windows-cross-compiler/action.yml",
     "scripts/build-windows-native.mjs",
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
