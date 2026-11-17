@@ -403,6 +403,8 @@ registration still reports availability as `unknown` and does not pass the JEB
 readiness scope or enter setup's ready-provider list. For a live service query,
 include `jeb` in the selected client's current tool-family selection and restart
 after any scope change, then call MCP `inspect_jeb_client` through that client.
+With a `hot-cold` catalog, first call `discover_tools` with
+`{"names":["inspect_jeb_client"]}` and refresh `tools/list`.
 Alternatively, use `rea inspect-jeb-client`
 from a terminal with the same JEB settings; the CLI does not read the client's
 saved registration. A later syntax-only doctor run

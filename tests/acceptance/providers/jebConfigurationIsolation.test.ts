@@ -408,15 +408,22 @@ test.for([
   },
 );
 
-test.for([undefined, "jeb", "artifact"])(
-  "preserves the selected JEB diagnostic tool-family scope in production stdio MCP (families: %s)",
-  async (families, { workspace }) => {
+test.for([
+  { families: undefined, profile: "full" },
+  { families: "jeb", profile: "full" },
+  { families: "artifact", profile: "full" },
+  { families: undefined, profile: "hot-cold" },
+  { families: "jeb", profile: "hot-cold" },
+])(
+  "preserves JEB diagnostics in production MCP (families: $families, profile: $profile)",
+  async ({ families, profile }, { workspace }) => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: workspace.root,
       env: {
         ...isolatedEnvironment(workspace),
+        REA_MCP_TOOL_CATALOG_PROFILE: profile,
         ...(families === undefined ? {} : { REA_MCP_TOOL_FAMILIES: families }),
       },
       stderr: "pipe",
@@ -432,7 +439,18 @@ test.for([undefined, "jeb", "artifact"])(
     await withVerifierCleanup(async () => {
       await client.connect(transport);
       await client.ping();
-      const tools = (await client.listTools()).tools;
+      let tools = (await client.listTools()).tools;
+      if (profile === "hot-cold") {
+        expect(tools.some(({ name }) => name === "inspect_jeb_client")).toBe(
+          false,
+        );
+        const discovery = await client.callTool({
+          name: "discover_tools",
+          arguments: { names: ["inspect_jeb_client"] },
+        });
+        expect(discovery.isError).not.toBe(true);
+        tools = (await client.listTools()).tools;
+      }
       if (families === "artifact") {
         expect(tools.some(({ name }) => name === "inspect_jeb_client")).toBe(
           false,

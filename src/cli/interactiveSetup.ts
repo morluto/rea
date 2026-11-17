@@ -311,7 +311,7 @@ export const describeReadyCapabilities = (
       ? [
           jebClient === undefined
             ? `│  JEB diagnostics: ${cli} ${cliCommandFor("inspect_jeb_client")} (using this terminal's JEB settings)`
-            : `│  JEB diagnostics: in ${jebClient}, include jeb in the current tool-family selection and restart after any scope change, then call MCP inspect_jeb_client using that client's saved JEB settings.`,
+            : `│  JEB diagnostics: in ${jebClient}, include jeb in the current tool-family selection and restart after any scope change. With a hot-cold catalog, first call discover_tools with names=["inspect_jeb_client"] and refresh tools/list; then call MCP inspect_jeb_client using that client's saved JEB settings.`,
         ]
       : []),
     ...(readyClients[0] === undefined

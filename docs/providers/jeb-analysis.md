@@ -25,6 +25,8 @@ URL after validating its syntax. That validation does not establish that the
 JEB service is reachable or that a project is open. For a read-only service
 query, include `jeb` in the selected client's current tool-family selection,
 restart after any scope change, then call MCP `inspect_jeb_client` through that client.
+With a `hot-cold` catalog, first call `discover_tools` with
+`{"names":["inspect_jeb_client"]}` and refresh `tools/list` to load the diagnostic.
 The terminal
 `inspect-jeb-client` command uses the invoking shell's settings, not a client's
 saved registration; use it only after selecting the same JEB settings there. A configured but
