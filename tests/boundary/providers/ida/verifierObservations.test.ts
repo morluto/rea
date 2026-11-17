@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { z } from "zod";
 import {
   jsonValueSchema,
@@ -14,6 +15,23 @@ import {
   runOwnedCommand,
 } from "../../../../src/process/OwnedCommand.js";
 import { createIdaTarget } from "../../../fixtures/idaMcp.js";
+
+let sharedTargetRoot = "";
+let sharedCompileCache = "";
+let sharedTarget: Awaited<ReturnType<typeof createIdaTarget>>["target"];
+
+beforeAll(async () => {
+  const created = await createIdaTarget();
+  sharedTargetRoot = created.root;
+  sharedTarget = created.target;
+  sharedCompileCache = join(sharedTargetRoot, "node-compile");
+});
+
+afterAll(async () => {
+  if (sharedTargetRoot !== "") {
+    await rm(sharedTargetRoot, { recursive: true, force: true });
+  }
+});
 
 const requestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -109,7 +127,8 @@ const observation = (
 };
 
 const fixture = async (empty: readonly string[], omitMore: boolean) => {
-  const { root, target } = await createIdaTarget();
+  const root = await mkdtemp(join(tmpdir(), "rea-ida-verifier-"));
+  const target = sharedTarget;
   const server = createServer(async (request, response) => {
     try {
       let body = "";
@@ -241,6 +260,10 @@ it.each([
           env: {
             REA_IDA_MCP_CONFIG: upstream.config,
             NODE_OPTIONS: "--max-old-space-size=1024",
+            ...(process.env.NODE_V8_COVERAGE === undefined &&
+            sharedCompileCache !== ""
+              ? { NODE_COMPILE_CACHE: sharedCompileCache }
+              : {}),
           },
         },
         { timeoutMs: 90000, diagnosticBytes: 16384, acceptNonZeroExit: true },
