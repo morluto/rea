@@ -37,7 +37,9 @@ it("sends configured, unprobed JEB setups to diagnostics instead of analyze", ()
   );
   expect(lines.some((line) => line.includes("Deep analysis:"))).toBe(false);
   expect(lines).toContain("│  CLI: rea capabilities");
-  expect(lines).toContain("│  JEB diagnostics: rea inspect-jeb-client");
+  expect(lines).toContain(
+    "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+  );
   expect(lines.some((line) => line.includes("analyze /path/to/app"))).toBe(
     false,
   );
@@ -54,7 +56,9 @@ it.each(["hopper", "kuna"])(
       "rea",
     );
     expect(lines).toContain("│  CLI: rea analyze /path/to/app");
-    expect(lines).toContain("│  JEB diagnostics: rea inspect-jeb-client");
+    expect(lines).toContain(
+      "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+    );
   },
 );
 
@@ -84,9 +88,38 @@ it("offers JEB diagnostics for invalid settings without claiming readiness", () 
     "rea",
   );
   expect(lines).toContain("│  CLI: rea capabilities");
-  expect(lines).toContain("│  JEB diagnostics: rea inspect-jeb-client");
+  expect(lines).toContain(
+    "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+  );
   expect(lines.some((line) => line.includes("Deep analysis: Jeb"))).toBe(false);
   expect(lines.some((line) => line.includes("analyze /path/to/app"))).toBe(
     false,
   );
 });
+
+it.each([true, false])(
+  "keeps JEB completion diagnostics in the selected client (ready: %s)",
+  (ready) => {
+    const result = resultWithProviders([], {
+      REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp",
+    });
+    const selected = {
+      ...result,
+      doctor: {
+        ...result.doctor,
+        scope: { ...result.doctor.scope, clients: ["codex"] },
+      },
+    };
+    const lines = describeReadyCapabilities(
+      selected,
+      ready ? ["codex"] : [],
+      "rea",
+    );
+    expect(lines).toContain(
+      "│  JEB diagnostics: in codex, call MCP binary_session using that client's saved JEB settings.",
+    );
+    expect(lines.some((line) => line.includes("inspect-jeb-client"))).toBe(
+      false,
+    );
+  },
+);

@@ -400,11 +400,13 @@ but the report remains audit-wide unless a scope option is also supplied.
 
 JEB's doctor inspection is syntax-only and makes no network request. A valid
 registration still reports availability as `unknown` and does not pass the JEB
-readiness scope or enter setup's ready-provider list. Use `rea inspect-jeb-client`
-or MCP `binary_session` for a live service query; a later syntax-only doctor run
+readiness scope or enter setup's ready-provider list. For a live service query,
+call MCP `binary_session` through the selected client, or use `rea inspect-jeb-client`
+from a terminal with the same JEB settings; the CLI does not read the client's
+saved registration. A later syntax-only doctor run
 does not inherit that probe's readiness result.
 
-With one selected client, Ghidra, IDA, JADX and Kuna provider checks use the
+With one selected client, JEB, Ghidra, IDA, JADX and Kuna provider checks use the
 client's recorded environment over the terminal it inherits. If that registration
 cannot be read or a setting a provider needs cannot be resolved, its available
 value is `null` and its check is `unknown`; its configured value is also `null`

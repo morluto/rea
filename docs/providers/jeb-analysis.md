@@ -22,8 +22,10 @@ Start a JEB client that serves MCP and point REA at it:
 For setup registration, set `REA_JEB_MCP_URL` in the REA process environment
 before running `rea setup`. The approved setup plan preserves the exact selected
 URL after validating its syntax. That validation does not establish that the
-JEB service is reachable or that a project is open; use the existing
-`inspect-jeb-client` command for a read-only service query. A configured but
+JEB service is reachable or that a project is open. For a read-only service
+query, call MCP `binary_session` through the selected client. The terminal
+`inspect-jeb-client` command uses the invoking shell's settings, not a client's
+saved registration; use it only after selecting the same JEB settings there. A configured but
 unprobed JEB endpoint is not included in setup's ready-provider list; setup can
 still save its validated registration and show dedicated diagnostic guidance.
 
