@@ -425,46 +425,54 @@ const signalInstaller = (child, signal) => {
 };
 
 /**
- * Observe signals and MCP stdin end/close during acquisition without consuming
- * buffered protocol bytes, matching processShutdown's startup cancel surface.
+ * Observe signals and MCP stdin during acquisition. A data listener keeps the
+ * stream flowing so end/close fire on disconnect (paused pipes alone do not),
+ * while retained chunks are unshifted back for the in-process runtime handoff —
+ * the same ownership pattern as StdioStartupInput / processShutdown.
  */
 const observeAcquisitionCancel = (onCancel) => {
   const signalExitCodes = SIGNAL_EXIT_CODES;
+  /** @type {Buffer[]} */
+  const chunks = [];
   let cancelled;
+  let released = false;
   const requestCancel = (signal) => {
     if (cancelled !== undefined) return;
     cancelled = { signal };
     onCancel(cancelled);
   };
   const onSignal = (signal) => requestCancel(signal);
-  const onInputEnd = () => {
-    requestCancel(undefined);
-    try {
-      process.stdin.destroy();
-    } catch {
-      // Stdin may already have closed.
-    }
+  const onInputEnd = () => requestCancel(undefined);
+  const onData = (chunk) => {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   };
   for (const signal of Object.keys(signalExitCodes))
     process.on(signal, onSignal);
+  process.stdin.on("data", onData);
   process.stdin.on("end", onInputEnd);
   process.stdin.on("close", onInputEnd);
+  if (process.stdin.readableEnded || process.stdin.destroyed)
+    queueMicrotask(onInputEnd);
   return {
     get cancelled() {
       return cancelled;
     },
     release() {
+      if (released) return;
+      released = true;
       for (const signal of Object.keys(signalExitCodes))
         process.off(signal, onSignal);
+      process.stdin.pause();
+      process.stdin.off("data", onData);
       process.stdin.off("end", onInputEnd);
       process.stdin.off("close", onInputEnd);
-      if (cancelled !== undefined) {
-        try {
-          process.stdin.destroy();
-        } catch {
-          // Stdin may already have closed.
-        }
+      // Preserve buffered protocol input for the runtime when acquisition
+      // succeeds; discard only when the client already disconnected.
+      if (cancelled === undefined) {
+        for (let index = chunks.length - 1; index >= 0; index -= 1)
+          process.stdin.unshift(chunks[index]);
       }
+      chunks.length = 0;
     },
   };
 };
@@ -580,13 +588,6 @@ const waitForReadyOrLock = async (prefix, lockPath) => {
       wakeWait = undefined;
     }
   } finally {
-    if (cancel.cancelled !== undefined) {
-      try {
-        process.stdin.destroy();
-      } catch {
-        // Stdin may already have closed.
-      }
-    }
     cancel.release();
   }
 };
