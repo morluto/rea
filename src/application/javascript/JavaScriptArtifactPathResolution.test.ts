@@ -8,7 +8,7 @@ import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
-import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const completeInventoryCoverage = {
   scope: "container-entries",
@@ -1467,7 +1467,7 @@ describe("contextual JavaScript artifact path resolution", () => {
     ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
   });
 
-  it("resolves inventoried paths longer than the former character ceiling", () => {
+  it("resolves an inventoried path of more than 5,000 characters", () => {
     const declaredPath = `./${"a".repeat(5_000)}.js`;
     const expectedPath = `app/${declaredPath.slice(2)}`;
     const files = fileMap([
@@ -1588,7 +1588,7 @@ describe("JavaScript file URL resolution", () => {
 });
 
 describe("contextual JavaScript package path resolution", () => {
-  it("follows package entrypoints beyond the former recursion ceiling", () => {
+  it("follows a long chain of package entrypoints", () => {
     const files = fileMap([
       file("app/consumer.js", "root"),
       file(
@@ -2012,6 +2012,30 @@ const packageExportPatternCases = [
     exports: { "./*": "./*.cjs" },
     request: "fixture/window",
     status: "unavailable",
+  },
+  {
+    name: "matching trailing slash",
+    exports: { "./*": "./*.cjs" },
+    request: "fixture/window/",
+    status: "unavailable",
+  },
+  {
+    name: "trailing slash ignores exact null before pattern",
+    exports: { "./*": "./*.cjs", "./window/": null },
+    request: "fixture/window/",
+    status: "unavailable",
+  },
+  {
+    name: "trailing slash exact key without pattern",
+    exports: { "./window/": "./window.cjs" },
+    request: "fixture/window/",
+    status: "external",
+  },
+  {
+    name: "trailing slash matching null",
+    exports: { "./*": null },
+    request: "fixture/window/",
+    status: "external",
   },
   {
     name: "nonmatching",

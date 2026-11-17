@@ -26,7 +26,7 @@ cliTest(
     expect(result.json).toMatchObject({
       code: "invalid_request",
       details: {
-        issues: [expect.objectContaining({ path: ["join_path"] })],
+        issues: [expect.objectContaining({ path: ["joinPath"] })],
         partial_observation: {
           artifact: {
             path,

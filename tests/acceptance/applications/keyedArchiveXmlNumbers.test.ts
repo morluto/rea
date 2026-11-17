@@ -8,7 +8,7 @@ import { expect } from "vitest";
 import { keyedArchiveResultSchema } from "../../../src/domain/apple/keyedArchive.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest.for([
   { name: "plain real", element: "<real>1.25</real>", expected: 1.25 },
@@ -74,7 +74,7 @@ cliTest.for([
     await writeFile(path, bytes);
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Missing file-scoped MCP session");
-    const output = await runFileCli(cli, {
+    const output = await cli.run({
       arguments: [
         "inspect-keyed-archive",
         path,
@@ -155,7 +155,7 @@ cliTest(
         }).replace("<string>__VALUE__</string>", element),
       );
       await writeFile(path, bytes);
-      const output = await runFileCli(cli, {
+      const output = await cli.run({
         arguments: ["inspect-keyed-archive", path, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });

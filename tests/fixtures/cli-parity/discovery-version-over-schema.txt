@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy --schema --version
+exit: 0
+--- stdout
+<version>
+<end>
+--- stderr
+<end>

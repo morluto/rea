@@ -187,15 +187,14 @@ address tokens, typed references and flow destinations. Mid-instruction, data,
 outside-memory and unlisted addresses have separate outcomes. For Ghidra,
 `not-in-listing` means the address is in memory without a listed instruction or
 defined data. REA does not attempt a decode there: the memory may be uninitialized
-or contain valid instructions. Older Evidence may report `undecodable` for this
-same ambiguous case; it does not establish that a decode failed. Effective
+or contain valid instructions. Effective
 memory base/index/displacement roles remain unavailable. Ghidra reports its program
 language variant in `mode`; other providers retain their own mode label. Ghidra
 MIPS results additionally expose `decoder_context`
 with the observed `ISA_MODE` register at the queried address and its provider
 source. A null value is unavailable, not mode zero; an empty array reports no
-available context register, and omission preserves older captures or providers
-that do not expose this facet. The context is an analysis observation, not proof
+available context register, and omission means the provider does not expose
+this facet for the program's architecture. The context is an analysis observation, not proof
 of a runtime processor state.
 
 `inspect_native_instruction` also returns `incoming_references` to the exact
@@ -229,8 +228,8 @@ profile produce a profile mismatch rather than replaying the former generic
 terminal result. The old snapshot's `evidence_bundle` remains valid retained
 Evidence: copy that object to a separate JSON file and use `rea evidence-import`
 to validate it. Run analysis without the old snapshot and save a fresh one
-under the current profile. Other providers and older captures may omit the
-classification evidence field.
+under the current profile. Other providers may omit the classification
+evidence field.
 
 Call resolution reports direct, resolved indirect, ambiguous, unresolved and
 non-call outcomes from static call references. It does not establish runtime
@@ -247,8 +246,10 @@ observation's own `limitations`, so a reason the provider reported for that
 entry, such as a Kuna export failure or a missing body, stays with the item.
 Null pseudocode is `capability_unavailable`; empty or non-text pseudocode is
 `unreadable_output`. Provider failures keep their typed error. Successful items
-do not repeat limitations; the batch Evidence aggregates every observation's
-limitations by provider and operation.
+also keep their own observation's limitations, so repeated selectors that the
+provider answered differently stay distinguishable, and an unavailable item
+keeps the provider's `pseudocode_absence` reason. The batch Evidence still
+aggregates every observation's limitations by provider and operation.
 Resolved entries also appear in the composed Evidence locations. New batch
 Evidence commits the revised workflow profile; retained historical Evidence
 remains valid. This tool
@@ -321,7 +322,12 @@ the others. A function that `procedure_info` classifies as external, such as an
 import, is counted as `external` and recorded with that status and the body
 fact as observed. It gets no file, no pseudocode is requested, and a resume
 skips it. A function whose classification is unknown is decompiled as usual;
-a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations. `--layout dwarf`
+a provider that returns null pseudocode for it is reported as `no_pseudocode`. Inventory rows without an address are counted in the limitations.
+The top-level `limitations` of the manifest and index count every retained
+non-external function record whose body is unavailable, including records an
+earlier run wrote, and repeat the reason when all of them share one. A resume
+that skips every file therefore keeps the caveat until a later attempt records
+a known body. `--layout dwarf`
 reports that compilation-unit paths are unavailable and still names files by
 address. Filters are a case-sensitive name substring, a case-sensitive name
 prefix, an inclusive address range (including uppercase hexadecimal input), and a positive safe-integer attempt limit. The limit does not allocate space in proportion to its value. Cancellation leaves
@@ -351,6 +357,21 @@ complete. These fields describe omissions from the response, independently of
 whether Ghidra recovered the original source layout.
 
 ### Hopper analysis behavior
+
+Hopper Evidence commits `analysis_profile.parameters.producer` as
+`{ rea_version, sources_sha256 }`. It replaces the former
+`function_dossier_coverage` marker. The source digest covers the packaged
+`bridge/hopper_bridge.py` that REA launches; changing that script or the REA
+release changes the profile digest and Evidence identity. A snapshot with the
+earlier profile is refused with `evidence_integrity_mismatch` before starting
+Hopper. Open the target without the old snapshot and save a fresh one; REA does
+not rewrite the old file. A matching profile does not enable Hopper snapshot
+replay: document observations remain live because Hopper has no revision token.
+
+Producer identity is computed once per REA process, so restart REA after editing
+packaged bridge files. Between releases, TypeScript-only edits within the same
+REA version do not change this identity. Regenerate observations after such
+development changes; the bridge digest does not fingerprint REA's TypeScript.
 
 Cursor navigation returns the observed object start when Hopper snaps an interior
 address; adjacent-object navigation rejects unmapped inputs and document ends.
@@ -591,8 +612,10 @@ truncation; a depth or candidate limit is reported only when no other path
 analyzes or queues that destination. `total_nodes` and `total_edges` count
 retained rows. `truncated` remains true for either kind of omission. Failed
 analyses and unresolved calls stay in `unknowns` and do not truncate the
-traversal. Each page reruns analysis; pages are not pinned to one snapshot
-across session edits.
+traversal. A provider-classified thunk whose target the trace did not reach
+by any path adds an unknown that names the target in `related_procedure`; the
+target is reported, not traversed. Each page reruns analysis; pages are not
+pinned to one snapshot across session edits.
 
 The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
@@ -697,12 +720,12 @@ bound. The XML estimate charges every element and every text, comment or CDATA
 node of the decoder's DOM at a measured upper bound, so a plist made of many
 small elements reaches it at a few MiB of source. JSON decode memory has not
 been measured and has no equivalent decode estimate. A refused input reports non-retryable `resource_constraint` with
-`reported_limits.maximum_input_bytes` or `maximum_decoded_bytes` as applicable.
+`reported_limits.maximum_input_bytes` for the input ceiling or `reported_limits: { boundary: "plist-decode-bytes", maximum: 67108864 }` for the decode budget (with `details.refusal.unit: "bytes"`).
 Ordinary direct-source decoding has a ceiling of 997 source nesting levels,
 derived from the existing 1000-level JSON result capacity. Three levels are
 reserved for typed scalar fields, the report value and its Evidence envelope.
 Deeper input reports `resource_constraint` with
-`reported_limits.maximum_nesting_depth: 997` and names the fixed nesting allowance.
+`reported_limits: { boundary: "plist-nesting-depth", maximum: 997 }` and `details.refusal` naming the fixed nesting allowance and its `unit` (`"levels"`).
 XML admission also requires native validation, which
 can refuse input below this decoding ceiling. Compatibility conversions can
 likewise encounter an earlier native utility refusal; both retain native
@@ -1128,7 +1151,9 @@ complete observation.
   offers direct metadata inspection or a `list_names` symbol inventory. The
   workflow tries direct metadata first and uses the symbol fallback only when
   that operation is unavailable; runtime failures remain failures rather than
-  being replaced by symbol-only results.
+  being replaced by symbol-only results. If the symbol fallback then fails or
+  returns an invalid inventory, the error also keeps the direct operation's
+  refusal under `details.diagnostics.binary_metadata_failure`.
 
 `get_objc_classes` keeps names from the provider inventory. It coalesces rows
 only when their exact selected-image pointer slots decode to the same class
@@ -1280,7 +1305,13 @@ cancellation Evidence, even if the target has already exited.
 - `selected_file_sha256` and LLDB module identity observations. These checks do
   not pin the executable against concurrent mutation; `loaded_image_sha256`
   remains unknown;
-- signal or exception stops;
+- signal or exception stops. LLDB can report a requested breakpoint's own trap
+  as an `EXC_BREAKPOINT` exception without running its callback; a trap at a
+  requested location is recorded as that breakpoint's event. Any other
+  breakpoint trap, and any signal or exception stop on a requested location,
+  stays in `other_stops`, is counted in
+  `coverage.unattributed_breakpoint_stops`, and makes coverage partial, because
+  it may be a hit REA could not record;
 - every breakpoint's resolved locations; a breakpoint that matched no loaded
   code makes coverage partial;
 - limitations.
@@ -1564,6 +1595,18 @@ because a JSON number cannot carry the sign of zero. `inspect_plist` and
 Builder node attributes use the same value. Positive zero and integer zero,
 including an `<integer>-0</integer>` literal, remain the number `0`.
 
+A dictionary that declares a key more than once keeps one value in the JSON
+result, the last one. When `inspect_plist` decodes binary, XML or OpenStep
+source directly, it reads each dictionary's keys before they collapse and adds
+a limitation with the count of affected dictionaries and replaced values and the
+first repeated key names. `inspect_keyed_archive`, Interface Builder analysis
+(per archive path) and the `codesign` entitlements in `inspect_signature` add the
+same limitation. Other plist readers may keep a different value. Opening an
+app bundle refuses an `Info.plist` that may declare `CFBundleExecutable` more
+than once, because which declaration names the program is ambiguous. JSON
+sources and plists decoded through a `plutil` conversion are not checked:
+those parsers keep one value per key before REA sees the result.
+
 Known non-finite reals are reported as
 `{ "$plist_type": "real", "value": "nan" | "+infinity" | "-infinity" }`.
 These are canonical numeric labels, not a claim about original source spelling.
@@ -1596,10 +1639,12 @@ returns ordered addresses with segments, source file offsets and containing
 procedures. The CLI equivalent is
 `rea search-bytes ./program '48 8B ?? ?? 89' --provider ghidra`.
 Use `start`/`end` to constrain the inclusive address window, and continue with
-`next_cursor` until `complete` is true. Inspect `searched` for page coverage and
-skipped uninitialized blocks. A missing match does not establish absence from
-uninitialized or excluded memory. See
-[Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
+`next_cursor` until `complete` is true. A cursor from another target, analysis
+profile or project, pattern, mask, bounds, or document is rejected without
+schema-repair guidance; the error does not claim which of those differs.
+Inspect `searched` for page coverage and skipped uninitialized blocks. A
+missing match does not establish absence from uninitialized or excluded memory.
+See [Ghidra byte search](../../providers/ghidra-provider.md#masked-byte-search) for mask and coverage
 semantics. This query never executes or modifies target bytes.
 
 Exact-name xref lookup reports distinct candidate addresses as an input ambiguity;

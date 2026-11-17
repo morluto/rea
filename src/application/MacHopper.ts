@@ -19,14 +19,14 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { HOPPER_PUBLISHER } from "../domain/hopperPublisher.js";
 import { macDeveloperIdRequirement } from "../process/MacCodeSignature.js";
-import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
+import { macHopperUserApplicationPath } from "../hopperPaths/MacHopperPaths.js";
 import {
   downloadHopperPackage,
-  isHopperRequestCancellation,
   HOPPER_METADATA_TIMEOUT_MS,
   type HopperDownload,
   type HopperRequestFailure,
 } from "./HopperDownload.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   HOPPER_RELEASES_URL,
   HOPPER_DOWNLOAD_PREFIX,
@@ -311,9 +311,7 @@ export const installMacHopper = async (
   } catch (cause: unknown) {
     result = {
       status: "failed",
-      reason: isHopperRequestCancellation(cause, options.signal)
-        ? "cancelled"
-        : installStage,
+      reason: isAbortOf(cause, options.signal) ? "cancelled" : installStage,
       diagnostic: failureMessage(cause),
     };
   }
@@ -523,7 +521,7 @@ export const systemMacHopperInstallHost = (
     async minimumSystemVersion(appPath) {
       const plist = posix.join(appPath, "Contents", "Info.plist");
       const declared = minimumSystemVersionSchema.safeParse(
-        decodeInfoPlistValue(await readFile(plist)),
+        decodeInfoPlistValue(await readFile(plist), ["LSMinimumSystemVersion"]),
       );
       if (!declared.success)
         throw new TypeError(

@@ -1,33 +1,54 @@
 import { posix, win32 } from "node:path";
 
-import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  absoluteClientRoot,
+  type ClientRootFailure,
+} from "./ClientConfigRoots.js";
 
-/** Cline CLI's settings selection, shared by setup and explicit MCP registration. */
+/**
+ * Cline CLI's settings selection, shared by setup and explicit MCP
+ * registration. Its override variables resolve against Cline's working
+ * directory, so a relative one is refused like the other client roots.
+ */
 export const resolveClineCliSettingsPath = (context: {
   readonly home: string;
   readonly platform: NodeJS.Platform;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
-}): Result<string, ConfigurationError> => {
+}): Result<string, ClientRootFailure> => {
   const { environment, home, platform } = context;
   const pathApi = platform === "win32" ? win32 : posix;
-  const explicitPath = environment.CLINE_MCP_SETTINGS_PATH?.trim();
-  if (explicitPath) return ok(explicitPath);
-  const explicitData = environment.CLINE_DATA_DIR?.trim();
+  const explicit = (variable: string) => {
+    const value = environment[variable]?.trim();
+    return value
+      ? absoluteClientRoot(value, variable, "Cline CLI", platform)
+      : undefined;
+  };
+  const explicitPath = explicit("CLINE_MCP_SETTINGS_PATH");
+  if (explicitPath) return explicitPath;
+  const explicitData = explicit("CLINE_DATA_DIR");
   if (explicitData)
-    return ok(
-      pathApi.join(explicitData, "settings", "cline_mcp_settings.json"),
-    );
-  const explicitDirectory = environment.CLINE_DIR?.trim();
+    return explicitData.ok
+      ? ok(
+          pathApi.join(
+            explicitData.value,
+            "settings",
+            "cline_mcp_settings.json",
+          ),
+        )
+      : explicitData;
+  const explicitDirectory = explicit("CLINE_DIR");
   if (explicitDirectory)
-    return ok(
-      pathApi.join(
-        explicitDirectory,
-        "data",
-        "settings",
-        "cline_mcp_settings.json",
-      ),
-    );
+    return explicitDirectory.ok
+      ? ok(
+          pathApi.join(
+            explicitDirectory.value,
+            "data",
+            "settings",
+            "cline_mcp_settings.json",
+          ),
+        )
+      : explicitDirectory;
   const envHome = environment.HOME?.trim();
   const profile = environment.USERPROFILE?.trim();
   const drive = environment.HOMEDRIVE?.trim();
@@ -56,11 +77,11 @@ export const resolveClineCliSettingsPath = (context: {
     (drive && path ? `${drive}${path}` : undefined) ||
     nativeHome;
   if (!clineHome)
-    return err(
-      new ConfigurationError(
+    return err({
+      path: "",
+      message:
         "Cannot determine Cline CLI's system home from the selected environment. Set CLINE_MCP_SETTINGS_PATH, CLINE_DATA_DIR, or CLINE_DIR to select its configuration location.",
-      ),
-    );
+    });
   return ok(
     pathApi.join(
       clineHome,

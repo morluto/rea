@@ -1,0 +1,15 @@
+$ rea inspect-byte-entropy --llms --version
+exit: 0
+--- stdout
+# rea
+
+Reverse engineer anything from your terminal or agent.
+
+| Command | Description |
+|---------|-------------|
+| `rea inspect-byte-entropy <path>` | Inspect file-wide and block byte entropy without executing the file |
+
+Run `rea --llms-full` for full manifest. Run `rea <command> --schema` for argument details.
+<end>
+--- stderr
+<end>

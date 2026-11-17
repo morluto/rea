@@ -1,8 +1,11 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
 import { holdsTagOnly, pairMembers } from "./memberPairing.js";
 import { memberLookup } from "./viewPointer.js";
 import { zipEntryAt, zipLeavesOut } from "./zipView.js";
+import { isRecord } from "../../kernel/isRecord.js";
+import { boundedList, type BoundedList } from "../boundedList.js";
 
 const MAX_LISTED = 100;
 
@@ -18,14 +21,6 @@ export interface DesktopStateDifference {
   /** False when either view was truncated, so absences may be outside the sample. */
   readonly complete: boolean;
 }
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const escapePointer = (segment: string) =>
-  segment.replaceAll("~", "~0").replaceAll("/", "~1");
 
 /** Longest JSON pointer listed; a longer one is only counted, so deep paths never fill the lists. */
 const MAX_LISTED_POINTER = 4096;
@@ -137,7 +132,7 @@ const walk = (
   } else if (into.changed !== undefined && ownEntry(from) !== ownEntry(other))
     note(into.changed, path);
   const visit = (key: string, item: JsonValue, counterpart?: JsonValue) => {
-    const segment = escapePointer(key);
+    const segment = escapeJsonPointerToken(key);
     path.segments.push(segment);
     path.length += segment.length + 1;
     walk(item, counterpart, path, into);
@@ -214,6 +209,27 @@ const compareTrees = (
   };
 };
 
+/** Each list bounded to `MAX_LISTED`, with how many it held in all. */
+const listed = (
+  added: readonly string[],
+  removed: readonly string[],
+  changed: readonly string[],
+) => {
+  const total = ({ items, omitted }: BoundedList<string>) =>
+    items.length + omitted;
+  const a = boundedList(added, MAX_LISTED);
+  const r = boundedList(removed, MAX_LISTED);
+  const c = boundedList(changed, MAX_LISTED);
+  return {
+    added: a.items,
+    removed: r.items,
+    changed: c.items,
+    added_count: total(a),
+    removed_count: total(r),
+    changed_count: total(c),
+  };
+};
+
 const compareMaps = (
   kind: DesktopStateDifference["kind"],
   before: ReadonlyMap<string, string>,
@@ -230,12 +246,7 @@ const compareMaps = (
   for (const key of before.keys()) if (!after.has(key)) removed.push(key);
   return {
     kind,
-    added: added.slice(0, MAX_LISTED),
-    removed: removed.slice(0, MAX_LISTED),
-    changed: changed.slice(0, MAX_LISTED),
-    added_count: added.length,
-    removed_count: removed.length,
-    changed_count: changed.length,
+    ...listed(added, removed, changed),
     complete: true,
   };
 };
@@ -262,12 +273,7 @@ const lineDifference = (
   }
   return {
     kind: "lines",
-    added: added.slice(0, MAX_LISTED),
-    removed: removed.slice(0, MAX_LISTED),
-    changed: [],
-    added_count: added.length,
-    removed_count: removed.length,
-    changed_count: 0,
+    ...listed(added, removed, []),
     complete: true,
   };
 };
@@ -283,7 +289,10 @@ const keyEntries = (view: JsonValue): Map<string, string> => {
   for (const [group, keys] of Object.entries(groups))
     if (isRecord(keys))
       for (const [key, value] of Object.entries(keys))
-        entries.set(`${group}/${escapePointer(key)}`, JSON.stringify(value));
+        entries.set(
+          `${group}/${escapeJsonPointerToken(key)}`,
+          JSON.stringify(value),
+        );
   return entries;
 };
 

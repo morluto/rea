@@ -9,6 +9,94 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { buildUnityFs } from "../../fixtures/unityfs.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+cliTest.for([
+  "fixed header",
+  "header padding",
+  "directory",
+  "payload",
+] as const)(
+  "rejects a UnityFS declaration excluding its %s",
+  async (boundary, { cli }) => {
+    const root = await createTestTempDirectory("rea-unity-extent-");
+    const path = join(root, "bundle");
+    const bytes = buildUnityFs([{ path: "payload.txt", data: "ORIGINAL" }], {
+      blockCompression: 0,
+      blocksInfoCompression: 0,
+    });
+    // The fixture's fixed tail starts at 32; its format-8 header is padded to 64.
+    const declaredSize = {
+      "fixed header": 16,
+      "header padding": 63,
+      directory: 64 + bytes.readUInt32BE(40) - 1,
+      payload: bytes.length - 1,
+    }[boundary]!;
+    bytes.writeBigUInt64BE(BigInt(declaredSize), 32);
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "artifact_operation_failed",
+      details: { reason: "format" },
+    });
+  },
+);
+
+cliTest.for([false, true])(
+  "keeps the declared UnityFS inventory and payload with an appended replacement directory (footer: %s)",
+  async (blocksInfoAtEnd, { cli }) => {
+    const root = await createTestTempDirectory("rea-unity-trailer-");
+    const path = join(root, "bundle");
+    const payload = Buffer.from("ORIGINAL");
+    const options = {
+      blocksInfoAtEnd,
+      blockCompression: 0,
+      blocksInfoCompression: 0,
+    };
+    const original = buildUnityFs(
+      [{ path: "payload.txt", data: payload }],
+      options,
+    );
+    const replacement = buildUnityFs([{ path: "outside.txt", data: payload }], {
+      ...options,
+      blocksInfoAtEnd: true,
+    });
+    const directory = replacement.subarray(
+      replacement.length - replacement.readUInt32BE(40),
+    );
+    await writeFile(path, Buffer.concat([original, directory]));
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stderr).toBe(0);
+    const inventory = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    ).substeps[0]!.evidence.normalized_result;
+    expect(inventory.occurrences.map((entry) => entry.logical_path)).toEqual([
+      ".",
+      "payload.txt",
+    ]);
+    expect(inventory.occurrences[0]!.format_metadata).toMatchObject({
+      declared_size: original.length,
+    });
+    const outputRoot = join(root, "extracted");
+    const extracted = await cli.run({
+      arguments: [
+        "extract-artifact",
+        path,
+        "--output-root",
+        outputRoot,
+        "--json",
+      ],
+    });
+    expect(extracted.exitCode, extracted.stderr).toBe(0);
+    expect(
+      (await readFile(join(outputRoot, "payload.txt"))).equals(payload),
+    ).toBe(true);
+  },
+);
+
 cliTest(
   "inspects and extracts UnityFS with virtual coordinates and retained unavailable members",
   async ({ cli, onTestFinished }) => {

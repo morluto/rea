@@ -1,7 +1,7 @@
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import type { GpuKernel } from "../domain/gpu/gpuCodeObjects.js";
 import { GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
 interface Token {
@@ -527,7 +527,7 @@ export function* readPtxKernels(
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
 
-export interface PtxTargetFacts {
+interface PtxTargetFacts {
   readonly recognized: boolean;
   readonly target: string | null;
   readonly limitation: string | null;

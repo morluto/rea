@@ -13,6 +13,7 @@ import {
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOriginCandidate } from "./javascriptSemanticRequireOrigin.js";
+import { bindingHasMemberWrites } from "./javascriptSemanticEffectLog.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   completeSemanticSteps,
@@ -269,7 +270,7 @@ export const immutableSemanticBindings = (
       mutable: binding.mutable,
       definitions: binding.definitions,
       value: evaluateSemanticBinding(binding, state),
-      ...(binding.memberWrites.length > 0 &&
+      ...(bindingHasMemberWrites(binding) &&
       binding.initializers.length === 1 &&
       binding.initializers[0]?.projection.length === 0
         ? {
