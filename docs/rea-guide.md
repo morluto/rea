@@ -37,7 +37,7 @@ Without the skill the tools exist but get used poorly.
 
 ## Setup
 
-Setup connects a local agent to the REA server and can install the workflow skill. It shows the planned file changes and waits for approval before writing configuration. Analysis engines are bring-your-own; setup does not install them.
+Setup connects a local agent to the REA server and can install the workflow skill. It shows the planned file changes and waits for approval before writing configuration. Ghidra and IDA are bring-your-own; setup can optionally install Hopper with separate approval.
 
 Requirements, supported agents, and engine configuration are in [Installation and setup](getting-started/installation.md). Windows analysis has its own boundary in [Windows Ghidra P0](providers/windows-ghidra-p0.md).
 
