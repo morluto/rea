@@ -2,6 +2,7 @@ import { RPM_PACKAGE_PROVIDER_IDENTITY } from "./RpmPackageProviderIdentity.js";
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  bindArtifactFileCleanup,
   completedStableArtifactObservation,
   projectArtifactCloseFailure,
   readStableArtifact,
@@ -10,6 +11,8 @@ import {
 import type { RpmPackagePort } from "../ports/rpm/RpmPackagePort.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { decodeLimit } from "../domain/parseFailure.js";
 import {
   parseFailureAnalysisError,
@@ -105,6 +108,26 @@ const failureDialect = (
     description: "RPM package",
     retainCompletedIdentity: true,
     fileSize: (limit, details) => budgetFailure(limit, input, details),
+  },
+  // A read whose descriptor cleanup failed reports that cleanup, which already
+  // names every nested owner's close failure, around the failure the read
+  // reported apart from it: a cancellation or the original physical failure.
+  readCleanup: (read, primary) => {
+    const cleanup = new ProviderCleanupError(
+      RPM_PACKAGE_PROVIDER_IDENTITY.id,
+      read.cleanup.resources,
+      { reason: read.cleanup.reason },
+      { operation: OPERATION, cause: read },
+    );
+    let reported = primary;
+    while (reported?.cleanupPrimary !== undefined)
+      reported = reported.cleanupPrimary;
+    const error =
+      reported === undefined
+        ? cleanup
+        : analysisErrorWithCleanupFailure(reported, cleanup, OPERATION);
+    bindArtifactFileCleanup(read, error);
+    return error;
   },
   unclassified: (cause, details) =>
     new ArtifactOperationError(
