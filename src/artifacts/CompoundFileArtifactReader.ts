@@ -9,19 +9,17 @@ import {
   type CompoundFileImage,
 } from "../domain/windows/compoundFile.js";
 import {
+  ArtifactFileSource,
   ArtifactReaderFailure,
+  ArtifactResourceScope,
+  artifactReadCancelledBy,
+  assertArtifactReadActive,
   copyArtifactEntry,
+  normalizeArtifactPath,
   type ArtifactEntry,
   type ArtifactReader,
   type ArtifactTraversalOptions,
-} from "../resources/ArtifactReader.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
-import { normalizeArtifactPath } from "../resources/ArtifactPaths.js";
-import {
-  assertArtifactReadActive,
-  artifactReadCancelledBy,
-} from "../resources/ArtifactFileOperation.js";
-import { ArtifactFileSource } from "../resources/ArtifactFileSource.js";
+} from "../resources/index.js";
 import {
   FileReadCancelled,
   readFileHandleChunks,

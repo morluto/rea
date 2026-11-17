@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,
@@ -236,9 +237,9 @@ const entryTypeOf = (raw: number): CompoundFileEntryType | null => {
 /** A directory name is UTF-16LE, terminated, and at most 31 characters. */
 const nameOf = (
   entry: Uint8Array,
-  view: DataView,
+  view: BinaryReader,
 ): { readonly name: string | null; readonly problem: string | null } => {
-  const nameLength = view.getUint16(ENTRY.nameLength, true);
+  const nameLength = view.u16(ENTRY.nameLength);
   if (nameLength === 0) return { name: null, problem: null };
   if (nameLength > ENTRY_NAME_BYTES || nameLength % 2 !== 0)
     return {
@@ -292,8 +293,8 @@ export const parseCompoundFile = (
     return err(failure("file does not begin with the compound file signature"));
 
   const limitations: string[] = [];
-  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const byteOrder = header.getUint16(HEADER.byteOrder, true);
+  const header = new BinaryReader(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), true, "compound-file");
+  const byteOrder = header.u16(HEADER.byteOrder);
   if (byteOrder !== CFB_BYTE_ORDER_MARK)
     return err(
       failure(
@@ -301,7 +302,7 @@ export const parseCompoundFile = (
       ),
     );
 
-  const majorVersion = header.getUint16(HEADER.majorVersion, true);
+  const majorVersion = header.u16(HEADER.majorVersion);
   if (majorVersion !== 3 && majorVersion !== 4)
     return err(
       failure(
@@ -309,7 +310,7 @@ export const parseCompoundFile = (
       ),
     );
 
-  const sectorShift = header.getUint16(HEADER.sectorShift, true);
+  const sectorShift = header.u16(HEADER.sectorShift);
   const expectedShift = majorVersion === 3 ? 9 : 12;
   if (sectorShift !== expectedShift)
     return err(
@@ -318,7 +319,7 @@ export const parseCompoundFile = (
       ),
     );
   const sectorBytes = 1 << sectorShift;
-  const miniSectorShift = header.getUint16(HEADER.miniSectorShift, true);
+  const miniSectorShift = header.u16(HEADER.miniSectorShift);
   if (miniSectorShift !== 6) {
     limitations.push(
       `header declares a mini sector shift of ${String(miniSectorShift)} rather than 6, so mini stream offsets are not 64 bytes and are not resolved`,
@@ -333,13 +334,10 @@ export const parseCompoundFile = (
       ? Math.pow(2, miniSectorShift)
       : 0;
 
-  const declaredFatSectors = header.getUint32(HEADER.fatSectorCount, true);
-  const declaredDifatSectors = header.getUint32(HEADER.difatSectorCount, true);
-  const firstDirectorySector = header.getUint32(
-    HEADER.firstDirectorySector,
-    true,
-  );
-  const miniStreamCutoff = header.getUint32(HEADER.miniStreamCutoff, true);
+  const declaredFatSectors = header.u32(HEADER.fatSectorCount);
+  const declaredDifatSectors = header.u32(HEADER.difatSectorCount);
+  const firstDirectorySector = header.u32(HEADER.firstDirectorySector);
+  const miniStreamCutoff = header.u32(HEADER.miniStreamCutoff);
   // CFB fixes this field at 4096. A declared value below it would classify
   // small streams as FAT-backed, so their mini-sector indexes could be read as
   // ordinary sector numbers and resolve to unrelated bytes.
@@ -348,16 +346,10 @@ export const parseCompoundFile = (
     limitations.push(
       `header declares a mini stream cutoff of ${String(miniStreamCutoff)} rather than the fixed 4096; stream allocation is left unresolved`,
     );
-  const firstMiniFatSector = header.getUint32(HEADER.firstMiniFatSector, true);
-  const declaredMiniFatSectors = header.getUint32(
-    HEADER.miniFatSectorCount,
-    true,
-  );
-  const firstDifatSector = header.getUint32(HEADER.firstDifatSector, true);
-  const directorySectorCount = header.getUint32(
-    HEADER.directorySectorCount,
-    true,
-  );
+  const firstMiniFatSector = header.u32(HEADER.firstMiniFatSector);
+  const declaredMiniFatSectors = header.u32(HEADER.miniFatSectorCount);
+  const firstDifatSector = header.u32(HEADER.firstDifatSector);
+  const directorySectorCount = header.u32(HEADER.directorySectorCount);
   if (majorVersion === 3 && directorySectorCount !== 0)
     limitations.push(
       `header declares ${String(directorySectorCount)} directory sectors, a field version 3 does not define; it was ignored`,
@@ -378,7 +370,7 @@ export const parseCompoundFile = (
   // Collect FAT sector ids: 109 inline, then the DIFAT chain.
   const fatSectorIds: number[] = [];
   for (let index = 0; index < DIFAT_ENTRIES_IN_HEADER; index += 1) {
-    const sector = header.getUint32(HEADER.difatEntries + index * 4, true);
+    const sector = header.u32(HEADER.difatEntries + index * 4);
     if (sector !== CFB_FREE_SECTOR) fatSectorIds.push(sector);
   }
   const difatSectors: number[] = [];
@@ -400,14 +392,14 @@ export const parseCompoundFile = (
     seenDifat.add(difatSector);
     difatSectors.push(difatSector);
     const offset = sectorOf(difatSector, sectorBytes);
-    const difat = new DataView(
-      bytes.buffer,
-      bytes.byteOffset + offset,
-      sectorBytes,
+    const difat = new BinaryReader(
+      Buffer.from(bytes.buffer, bytes.byteOffset + offset, sectorBytes),
+      true,
+      "compound-file",
     );
     const perSector = sectorBytes / 4 - 1;
     for (let index = 0; index < perSector; index += 1) {
-      const sector = difat.getUint32(index * 4, true);
+      const sector = difat.u32(index * 4);
       // A malformed chain can name far more FAT sectors than the file holds.
       // Bound the collection while it grows rather than after the whole chain:
       // a near-ceiling v3 file would otherwise retain tens of millions of ids
@@ -422,7 +414,7 @@ export const parseCompoundFile = (
           );
       }
     }
-    difatSector = difat.getUint32(perSector * 4, true);
+    difatSector = difat.u32(perSector * 4);
   }
   if (!difatCutShort && difatSectors.length !== declaredDifatSectors)
     limitations.push(
@@ -467,13 +459,13 @@ export const parseCompoundFile = (
       seenFatSectors.add(sector);
       if (fatCells < fat.length) {
         const offset = sectorOf(sector, sectorBytes);
-        const sectorView = new DataView(
-          bytes.buffer,
-          bytes.byteOffset + offset,
-          sectorBytes,
+        const sectorView = new BinaryReader(
+          Buffer.from(bytes.buffer, bytes.byteOffset + offset, sectorBytes),
+          true,
+          "compound-file",
         );
         for (let index = 0; index < entriesPerSector; index += 1) {
-          fat[fatCells + index] = sectorView.getUint32(index * 4, true);
+          fat[fatCells + index] = sectorView.u32(index * 4);
         }
       }
     } else {
@@ -586,10 +578,10 @@ export const parseCompoundFile = (
     );
   });
 
-  const directory = new DataView(
-    directoryBytes.buffer,
-    directoryBytes.byteOffset,
-    directoryBytes.byteLength,
+  const directory = new BinaryReader(
+    Buffer.from(directoryBytes.buffer, directoryBytes.byteOffset, directoryBytes.byteLength),
+    true,
+    "compound-file",
   );
   const entryCount = Math.floor(directoryBytes.length / DIRECTORY_ENTRY_BYTES);
   // The chain's sectors, the image copy and one RawEntry per 128 bytes are
@@ -913,20 +905,20 @@ interface RawEntry {
 
 const readEntry = (
   directoryBytes: Uint8Array,
-  directory: DataView,
+  directory: BinaryReader,
   index: number,
   majorVersion: number,
 ): RawEntry => {
   const base = index * DIRECTORY_ENTRY_BYTES;
   const entry = directoryBytes.subarray(base, base + DIRECTORY_ENTRY_BYTES);
-  const view = new DataView(entry.buffer, entry.byteOffset, entry.byteLength);
+  const view = new BinaryReader(Buffer.from(entry.buffer, entry.byteOffset, entry.byteLength), true, "compound-file");
   const { name, problem } = nameOf(entry, view);
-  const rawType = directory.getUint8(base + ENTRY.objectType);
+  const rawType = directory.bytes[base + ENTRY.objectType]!;
   const type = entryTypeOf(rawType);
   // Version 3 entries only carry the low 32 bits of the stream size; the high
   // 32 bits are reserved and may be stale. Version 4 uses the whole 64-bit
   // field, so masking it there would turn 0x1_00000001 into a one-byte stream.
-  const rawSize = view.getBigUint64(ENTRY.streamSize, true);
+  const rawSize = view.word(ENTRY.streamSize, 64);
   const declaredSize = majorVersion === 3 ? rawSize & 0xffff_ffffn : rawSize;
   const streamSizeUnrepresentable =
     declaredSize > BigInt(Number.MAX_SAFE_INTEGER);
@@ -934,7 +926,7 @@ const readEntry = (
     ? Number.MAX_SAFE_INTEGER
     : Number(declaredSize);
   const linkOf = (offset: number): number | null => {
-    const value = view.getUint32(offset, true);
+    const value = view.u32(offset);
     return value === CFB_FREE_SECTOR ? null : value;
   };
   return {
@@ -946,7 +938,7 @@ const readEntry = (
     leftSibling: linkOf(ENTRY.leftSibling),
     rightSibling: linkOf(ENTRY.rightSibling),
     child: linkOf(ENTRY.child),
-    startingSector: view.getUint32(ENTRY.startingSector, true),
+    startingSector: view.u32(ENTRY.startingSector),
     streamSize,
     streamSizeUnrepresentable,
   };
