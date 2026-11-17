@@ -23,7 +23,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { environmentManifestHar } from "../../../tests/fixtures/historicalHar.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
 import { writeJsonOutput } from "../../cli/jsonOutput.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisViewRequestSchema } from "../../domain/analysisView/analysisViewRequest.js";
@@ -330,6 +330,19 @@ describe("buildEnvironment naming and refusals", () => {
     await expect(readdir(join(root, "built"))).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("does not create parents when the selected build root ends with dot-dot", async () => {
+    const root = await createTestTempDirectory(
+      "rea-environment-build-invalid-destination-",
+    );
+    const parent = join(root, "untouched");
+    const directory = `${join(parent, "a", "b", "c")}/..`;
+    const result = await buildEnvironment(
+      await buildInput(root, undefined, { directory }),
+    );
+    expect(result.ok).toBe(false);
+    await expect(readdir(parent)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses an occupied directory and leaves it as it was", async () => {

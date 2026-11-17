@@ -252,6 +252,12 @@ restricts only child processes can still pass doctor and fail at startup with
 the message above.
 The startup-output match is limited to the English `Access is denied` text.
 
+Windows cannot open an existing Ghidra project. When the client's registration
+sets `REA_GHIDRA_PROJECT_PATH`, `rea doctor` reports a failed
+`existing_project` check and the Ghidra provider as unavailable, the same
+refusal REA returns at runtime. Unset the setting to import targets into an
+ephemeral project.
+
 Process creation assigns a suspended child atomically to an owned Job Object.
 Membership and kill-on-owner-close policy are verified before resume.
 Breakaway is disabled. Only the child's default file owner is normalized;

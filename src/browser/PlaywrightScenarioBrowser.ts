@@ -1,14 +1,15 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY } from "./providerIdentities.js";
 import {
   chromiumLaunchRemediation,
   chromiumSandboxEnabled,
 } from "./ChromiumSandbox.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   AnalysisCleanupLeaseGroup,
   AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/index.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { access, chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
@@ -19,7 +20,6 @@ import { basename, dirname, posix, win32 } from "node:path";
 import type {
   Browser,
   BrowserContext,
-  CDPSession,
   ConnectOverCDPOptions,
   Page,
   chromium,
@@ -51,6 +51,12 @@ import {
   settleScenarioCommand,
   withScenarioCommandDeadline,
 } from "./ScenarioCommandDeadline.js";
+import {
+  newPlaywrightCdpSession,
+  type PlaywrightCdpSession,
+} from "./PlaywrightCdpSession.js";
+import { CdpMalformedReply } from "./protocol/CdpCommands.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "capture_browser_scenario" as const;
 
@@ -151,7 +157,7 @@ export class PlaywrightScenarioBrowserCleanupOwner {
       const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
         cause,
         cleanup: {
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
           resources: this.cleanupResources,
         },
       });
@@ -426,6 +432,7 @@ const withAndroidHostTempDirectory = <Value>(
 
 const allowedBrowserEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
 ): Record<string, string | undefined> => {
   const allowed = [
     "DBUS_SESSION_BUS_ADDRESS",
@@ -449,7 +456,7 @@ const allowedBrowserEnvironment = (
         (entry): entry is readonly [string, string] => entry[1] !== undefined,
       ),
   );
-  if (process.platform !== "android") return selected;
+  if (platform !== "android") return selected;
 
   // Android rejects execve() for binaries below Termux's application data
   // directory. Termux supplies an exec interceptor that rewrites those calls
@@ -492,10 +499,10 @@ const findConnectedPage = async (
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
-      let session: CDPSession;
+      let session: PlaywrightCdpSession;
       try {
         session = await withScenarioCommandDeadline(
-          () => context.newCDPSession(page),
+          () => newPlaywrightCdpSession(context, page, OPERATION),
           commandTimeoutMs,
           "command",
           "Target.attachToTarget",
@@ -539,7 +546,7 @@ class AttachedScenarioEnvironmentOwner {
 
   private constructor(
     private readonly page: Page,
-    private readonly session: CDPSession,
+    private readonly session: PlaywrightCdpSession,
     private readonly commandTimeoutMs: number,
   ) {}
 
@@ -549,10 +556,10 @@ class AttachedScenarioEnvironmentOwner {
     commandTimeoutMs: number,
     retainCleanup: ((lease: AnalysisCleanupLease) => void) | undefined,
   ): Promise<AttachedScenarioEnvironmentOwner> {
-    let session: CDPSession;
+    let session: PlaywrightCdpSession;
     try {
       session = await withScenarioCommandDeadline(
-        () => context.newCDPSession(page),
+        () => newPlaywrightCdpSession(context, page, OPERATION),
         commandTimeoutMs,
         "command",
         "Target.attachToTarget",
@@ -601,6 +608,18 @@ class AttachedScenarioEnvironmentOwner {
     );
   }
 
+  /**
+   * Record a restore obligation once the browser answered the override. A
+   * success whose result fails its schema was still applied by the browser,
+   * so it keeps the obligation; only a rejected or unanswered command does not.
+   */
+  #override(command: Promise<unknown>, applied: () => void): Promise<void> {
+    return command.then(applied, (cause: unknown) => {
+      if (cause instanceof CdpMalformedReply) applied();
+      throw cause;
+    });
+  }
+
   async #applyEnvironment(
     environment: BrowserScenario["environment"],
     signal: AbortSignal | undefined,
@@ -621,41 +640,44 @@ class AttachedScenarioEnvironmentOwner {
     // setViewportSize also resizes the external browser window. CDP metrics
     // provide the scenario viewport without changing that caller-owned window.
     await this.#command(
-      this.session
-        .send("Emulation.setDeviceMetricsOverride", {
+      this.#override(
+        this.session.send("Emulation.setDeviceMetricsOverride", {
           width: environment.viewport.width,
           height: environment.viewport.height,
           deviceScaleFactor: environment.viewport.device_scale_factor,
           mobile: false,
           dontSetVisibleSize: true,
-        })
-        .then(() => {
-          this.#deviceMetricsOverride = true;
         }),
+        () => {
+          this.#deviceMetricsOverride = true;
+        },
+      ),
       "Emulation.setDeviceMetricsOverride",
     );
     throwIfScenarioCancelled(signal);
 
     await this.#command(
-      this.session
-        .send("Emulation.setLocaleOverride", {
+      this.#override(
+        this.session.send("Emulation.setLocaleOverride", {
           locale: environment.locale,
-        })
-        .then(() => {
-          this.#localeOverride = true;
         }),
+        () => {
+          this.#localeOverride = true;
+        },
+      ),
       "Emulation.setLocaleOverride",
     );
     throwIfScenarioCancelled(signal);
 
     await this.#command(
-      this.session
-        .send("Emulation.setTimezoneOverride", {
+      this.#override(
+        this.session.send("Emulation.setTimezoneOverride", {
           timezoneId: environment.timezone,
-        })
-        .then(() => {
-          this.#timezoneOverride = true;
         }),
+        () => {
+          this.#timezoneOverride = true;
+        },
+      ),
       "Emulation.setTimezoneOverride",
     );
     throwIfScenarioCancelled(signal);
@@ -663,11 +685,14 @@ class AttachedScenarioEnvironmentOwner {
     // Keep scenario actions usable in the selected background page without
     // Playwright's connection-wide focus override on unrelated pages.
     await this.#command(
-      this.session
-        .send("Emulation.setFocusEmulationEnabled", { enabled: true })
-        .then(() => {
-          this.#focusOverride = true;
+      this.#override(
+        this.session.send("Emulation.setFocusEmulationEnabled", {
+          enabled: true,
         }),
+        () => {
+          this.#focusOverride = true;
+        },
+      ),
       "Emulation.setFocusEmulationEnabled",
     );
     throwIfScenarioCancelled(signal);
@@ -767,16 +792,12 @@ export const failBrowserScenarioOperation = async (
     const failure = new BrowserObservationError(OPERATION, "cleanup_failed", {
       cause,
       cleanup: {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         resources: cleanup.cleanupResources ?? [],
       },
     });
     new AnalysisCleanupLeaseGroup(failure, [cleanup]);
-    throw analysisErrorWithCleanupFailure(
-      primary,
-      failure,
-      OPERATION,
-    ).bindCleanupDependencies([primary, failure]);
+    throw analysisErrorWithCleanupDependencies(primary, failure, OPERATION);
   }
   throw primaryFailure;
 };
@@ -942,9 +963,12 @@ export const openPlaywrightScenarioBrowser = async (
     readonly launcher?: ScenarioBrowserLauncher;
     readonly signal?: AbortSignal | undefined;
     readonly retainCleanup?: (lease: AnalysisCleanupLease) => void;
+    /** The host Chromium launches on; defaults to the running host. */
+    readonly platform?: NodeJS.Platform;
   } = {},
 ): Promise<OpenedScenarioBrowser> => {
   throwIfScenarioCancelled(options.signal);
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   if (scenario.browser.mode === "launch")
     await publishAndroidPlaywrightBrowsersPath(
       androidScenarioTempDirectory(environment),
@@ -978,7 +1002,7 @@ export const openPlaywrightScenarioBrowser = async (
     environment,
   );
   const headless = scenario.browser.headless;
-  const chromiumSandbox = chromiumSandboxEnabled(environment);
+  const chromiumSandbox = chromiumSandboxEnabled(environment, platform);
   const launchArgs = await androidChromiumLaunchArgs(executablePath);
   let launchStarted = false;
   try {
@@ -1003,7 +1027,7 @@ export const openPlaywrightScenarioBrowser = async (
             colorScheme: scenario.environment.color_scheme,
             reducedMotion: scenario.environment.reduced_motion,
             serviceWorkers: scenario.environment.service_workers,
-            env: allowedBrowserEnvironment(environment),
+            env: allowedBrowserEnvironment(environment, platform),
             handleSIGHUP: false,
             handleSIGINT: false,
             handleSIGTERM: false,
@@ -1041,8 +1065,7 @@ export const openPlaywrightScenarioBrowser = async (
               remediationAction: chromiumLaunchRemediation(chromiumSandbox),
               diagnostics: {
                 executable_path: executablePath,
-                startup_error:
-                  cause instanceof Error ? cause.message : String(cause),
+                startup_error: errorMessage(cause),
               },
             },
           )

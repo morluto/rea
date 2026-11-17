@@ -118,10 +118,17 @@ describe("parseDemangledSymbols", () => {
     ]);
   });
 
-  it("throws TypeError when output count does not match input count", () => {
+  it("reports an output count that does not match the input as malformed output", () => {
     expect(() =>
       parseDemangledSymbols(["sym1", "sym2"], "demangled1\n"),
-    ).toThrow(TypeError);
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "malformed",
+          format: "swift-demangle-output",
+        }),
+      }),
+    );
     expect(() =>
       parseDemangledSymbols(["sym1"], "demangled1\ndemangled2\n"),
     ).toThrow("swift-demangle output count does not match input");

@@ -1,10 +1,11 @@
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { decodeElfSectionNameTable } from "../../domain/native/elfSectionNameTable.js";
+import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
 import {
   androidIdentNote,
   compressedElfNoteFixture,
@@ -21,10 +22,7 @@ import {
   gnuBuildIdNote,
   gnuPropertyNote,
 } from "./ElfNotes.fixture.js";
-import {
-  ElfNoteSectionNameBudgetFailure,
-  parseElfNotes,
-} from "./ElfNoteParser.js";
+import { elfNoteSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
 
 const defaults = inspectElfNotesInputSchema.parse({
   path: "/artifacts/app",
@@ -266,10 +264,9 @@ it.each([1, 2])(
     } catch (cause) {
       failure = cause;
     }
-    expect(failure).toBeInstanceOf(ElfNoteSectionNameBudgetFailure);
-    expect(failure).toMatchObject({
-      minimumMaxFileBytes: BigInt(minimumMaxFileBytes),
-      selectedMaxFileBytes: bytes.length + 1,
+    expect(elfNoteSectionNameBudget(failure)).toMatchObject({
+      required: BigInt(minimumMaxFileBytes),
+      selected: bytes.length + 1,
     });
 
     const admitted = parse(
@@ -532,8 +529,14 @@ it("bounds repeated scans of an unterminated section name", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  expect(failure).toMatchObject({ reason: "limit", boundary: "memory" });
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
+  });
   expect(failure).toHaveProperty(
     "message",
     expect.stringMatching(/byte budget/u),
@@ -549,7 +552,7 @@ it("rejects note text that repeats beyond the shared byte budget", () => {
     max_file_bytes: 200,
   });
   expect(parse(once, input).entries).toHaveLength(1);
-  expect(() => parse(twice, input)).toThrow(ArtifactReaderFailure);
+  expect(() => parse(twice, input)).toThrow(ParseFailureError);
   expect(() => parse(twice, input)).toThrow(/byte budget/u);
 });
 
@@ -658,7 +661,7 @@ it("fails when the entry budget is exhausted", () => {
       },
       inspectElfNotesInputSchema.parse({ path: defaults.path, max_entries: 1 }),
     ),
-  ).toThrow(ArtifactReaderFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("keeps unsafe table offsets ahead of unsupported extended numbering", () => {
@@ -1176,7 +1179,12 @@ it("does not spend text budget on malformed or discarded NT_FILE paths", () => {
     },
   ]);
   expect(() => parse(bytes.subarray(0, bytes.length - 1))).toThrow(
-    expect.objectContaining({ reason: "limit", boundary: "memory" }),
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({ name: "note_text_bytes" }),
+      }),
+    }),
   );
 });
 
@@ -1369,10 +1377,13 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
   } catch (cause) {
     retainedFailure = cause;
   }
-  expect(retainedFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(retainedFailure).toBeInstanceOf(ParseFailureError);
   expect(retainedFailure).toMatchObject({
-    reason: "limit",
-    boundary: "memory",
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
     message: expect.stringMatching(/byte budget/u),
   });
 
@@ -1435,10 +1446,13 @@ it("charges TextBudget for scanned and retained Android ident strings", () => {
   } catch (cause) {
     scanFailure = cause;
   }
-  expect(scanFailure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(scanFailure).toBeInstanceOf(ParseFailureError);
   expect(scanFailure).toMatchObject({
-    reason: "limit",
-    boundary: "memory",
+    failure: {
+      kind: "limit",
+      format: "elf-notes",
+      limit: { name: "note_text_bytes" },
+    },
     message: expect.stringMatching(/259-byte budget/u),
   });
 });

@@ -2,7 +2,12 @@ import { IL2CPP_METADATA_PROVIDER_IDENTITY } from "./Il2CppMetadataProviderIdent
 import {
   Il2cppBinaryFormatFailure,
   IL2CPP_BINARY_BYTES,
+  IL2CPP_BINARY_FORMAT,
 } from "./Il2cppBinaryFormat.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { Il2cppMetadataFormatFailure } from "./Il2cppMetadataFormat.js";
 import { inspectIl2cppMetadataV108 } from "./Il2cppMetadataV108.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
@@ -11,37 +16,35 @@ import { setImmediate } from "node:timers/promises";
 import {
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
-  stableArtifactInputRecovery,
-} from "../artifacts/StableArtifactFailure.js";
-import {
+  stableArtifactInputFailure,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCompletion,
   bindArtifactFileCleanup,
-  artifactFileCancellationCause,
   assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
-import type { Il2cppMetadataPort } from "../application/il2cpp/Il2cppMetadataPort.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
+import type { Il2cppMetadataPort } from "../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createIl2cppMetadataAdmission } from "./Il2cppMetadataAdmission.js";
-import { hexAddress as hex } from "./Il2cppBinaryImage.js";
+import {
+  hexAddress as hex,
+  requireIl2cppBinaryImage,
+} from "./Il2cppBinaryImage.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import {
-  AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import {
   il2cppMetadataSchema,
@@ -61,6 +64,7 @@ import {
   linkIl2cppBinarySteps,
   type Il2cppBinaryLink,
 } from "./Il2cppBinaryFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
 const INPUT_BYTES = 256 * 1024 * 1024;
@@ -81,19 +85,22 @@ const failureForPrimary = (
   const { cause, origin } = facts;
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
-  if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "capacity")
-    return new AnalysisResourceConstraintError(
+  if (
+    cause instanceof Il2cppBinaryFormatFailure &&
+    isParseLimit(cause, IL2CPP_BINARY_FORMAT)
+  )
+    return parseLimitConstraint(
       OPERATION,
       cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
-      cause.message,
-      {},
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The IL2CPP native-link allowance",
-          cause.reason === "native-type-text-capacity" ? "parser" : "count",
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(
+        "The IL2CPP native-link allowance",
+        cause.reason === "native-type-text-capacity" ? "parser" : "count",
+        {
+          limit: cause.failure.limit.maximum,
+          ...(cause.unit === undefined ? {} : { unit: cause.unit }),
+        },
+      ),
     );
   if (
     cause instanceof Il2cppBinaryFormatFailure ||
@@ -117,22 +124,12 @@ const failureForPrimary = (
           },
         ]);
   }
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {
-      cause,
-    });
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return new AnalysisCancelledError(OPERATION, {
-      cause: artifactFileCancellationCause(cause),
-    });
+  const identityFailure = projectOwnedArtifactIdentityFailure(
+    facts,
+    OPERATION,
+    path,
+  );
+  if (identityFailure !== undefined) return identityFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -145,15 +142,18 @@ const failureForPrimary = (
         { maximum_input_bytes: maximum },
         {
           cause,
-          ...fixedAllowanceOptions("the fixed IL2CPP input allowance", "input"),
+          ...fixedAllowanceOptions(
+            "the fixed IL2CPP input allowance",
+            "input",
+            {
+              limit: maximum,
+              unit: "bytes",
+            },
+          ),
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(
-        OPERATION,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [{ path: [field], reason: "invalid_format", message: cause.message }],
-      );
+      return stableArtifactInputFailure(cause, OPERATION, field);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,
@@ -170,7 +170,7 @@ const failureForPrimary = (
       cause,
       diagnostics: {
         path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );
@@ -411,9 +411,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
     options?: ExecutionOptions,
   ): Promise<Result<Il2cppMetadata, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     if (this.#admissionStopped)
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -525,6 +523,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
         const decoded = "metadata" in value ? value.metadata : value;
         const link = "metadata" in value ? value.link : undefined;
         const binaryPath = input.binary_path;
+        let sliceLimitations: readonly string[] = [];
         let linked: Pick<
           Il2cppMetadata,
           | "binary"
@@ -557,11 +556,17 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               },
             );
             assertArtifactReadActive(options?.signal);
-            const linking = linkIl2cppBinarySteps(
+            const selected = requireIl2cppBinaryImage(
+              OPERATION,
+              binaryPath,
               binary.bytes,
+              input.binary_architecture,
+            );
+            sliceLimitations = selected.limitations;
+            const linking = linkIl2cppBinarySteps(
+              selected.bytes,
               decoded,
               link,
-              input.binary_architecture,
               {
                 ...admission,
                 genericInstances: input.generic_instances === true,
@@ -604,6 +609,11 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
             binaryPath === undefined
               ? "Native code addresses and IL2CPP binary registration are not recovered without binary_path."
               : `Method addresses come from the binary's code-generation module methodPointers, matched by module name, method count and metadata token; ${input.generic_instances === true ? "" : "generic method instances (see generic_instances), "}adjustor thunks and invokers are not linked, no-body means an observed zero slot, and unknown means no module claimed the method or its slot has an unresolved relocation.`,
+            ...(linked.binary?.format === "elf"
+              ? [
+                  "ELF symbolic pointers use the selected file's defined symbols to derive link-image addresses; runtime symbol interposition, external definitions, TLS addresses and IFUNC results are not established.",
+                ]
+              : []),
             ...(binaryPath !== undefined && input.generic_instances === true
               ? [
                   "Generic method instances come from genericMethodTable, methodSpecs, genericInsts and genericMethodPointers, with names following Il2CppDumper's GetMethodSpecName (namespace on the declaring type, nested types joined with '.', arity cut, IntPtr/UIntPtr, no byref mark). The CodeRegistration layout is the only one of the known 27.0 to 31 layouts whose counts bound every genericMethodTable row; metadata versions 24 and 39 and builds without a static CodeRegistration are refused. A generic row is no-body for an observed zero pointer slot and unknown, with no address, exactly when an issue names its row: a contradicting method spec (its name is then null), a shared method spec, an unmapped or non-executable pointer, or an unresolved relocation.",
@@ -630,6 +640,7 @@ export class Il2cppMetadataProvider implements Il2cppMetadataPort {
               : [
                   "The binary/metadata pair is caller-selected. Module name/count/token agreement is structural evidence, not a cryptographic proof that both files come from the same build.",
                 ]),
+            ...sliceLimitations,
             "declaring_type for types is derived from the nestedTypes section, and member and parameter owners from the owners' index ranges; row positions are the metadata indices.",
           ],
         };

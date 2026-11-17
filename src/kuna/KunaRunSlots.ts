@@ -1,5 +1,7 @@
 import { availableParallelism } from "node:os";
 
+import { Budget } from "../domain/budget.js";
+
 /** Releases one admitted run's slot; later calls do nothing. */
 export type KunaRunRelease = () => void;
 
@@ -13,12 +15,11 @@ export type KunaRunRelease = () => void;
  * keeps its slot while it cannot prove that the process stopped.
  */
 export class KunaRunSlots {
-  readonly #capacity: number;
-  #active = 0;
+  readonly #slots: Budget;
   readonly #waiting: (() => void)[] = [];
 
   constructor(capacity: number) {
-    this.#capacity = Math.max(1, capacity);
+    this.#slots = new Budget(Math.max(1, capacity));
   }
 
   /** Slots for the cores an export with `jobs` workers leaves on this host. */
@@ -29,14 +30,10 @@ export class KunaRunSlots {
   /** Wait for a slot; undefined when the signal aborts first. */
   acquire(signal: AbortSignal): Promise<KunaRunRelease | undefined> {
     if (signal.aborted) return Promise.resolve(undefined);
-    if (this.#active < this.#capacity) {
-      this.#active += 1;
-      return Promise.resolve(this.#release());
-    }
+    if (this.#slots.tryCharge(1)) return Promise.resolve(this.#release());
     return new Promise((resolve) => {
       const grant = () => {
         signal.removeEventListener("abort", onAbort);
-        this.#active += 1;
         resolve(this.#release());
       };
       const onAbort = () => {
@@ -54,8 +51,10 @@ export class KunaRunSlots {
     return () => {
       if (released) return;
       released = true;
-      this.#active -= 1;
-      this.#waiting.shift()?.();
+      // A waiter takes the released slot over; otherwise it is returned.
+      const next = this.#waiting.shift();
+      if (next === undefined) this.#slots.refund(1);
+      else next();
     };
   }
 }

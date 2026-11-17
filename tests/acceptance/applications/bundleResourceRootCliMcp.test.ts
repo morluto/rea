@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { evidenceBundleSchema } from "../../../src/domain/evidenceBundle.js";
 import { build } from "plist";
 import { lstat, mkdir, writeFile } from "node:fs/promises";
@@ -327,7 +328,11 @@ const expectResourceEvidence = (
   );
   expect(evidence).toMatchObject({
     operation,
-    subject: null,
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
     normalized_result: {
       resource_root: {
         caller_path: bundle,

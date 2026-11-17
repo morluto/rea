@@ -1,9 +1,51 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { readLinuxCgroupMemoryState } from "./LinuxCgroupMemory.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+
+it("retains a failed kernel file close for the caller to retry", async () => {
+  const directory = await createTestTempDirectory("rea-cgroup-retained-");
+  const path = join(directory, "cgroup");
+  await writeFile(path, "0::/jobs/rea\n");
+  const failure = new Error("close denied");
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockRejectedValueOnce(failure);
+  let retained: OwnedFileHandle | undefined;
+  try {
+    await expect(
+      readLinuxCgroupMemoryState({
+        platform: "linux",
+        procCgroupPath: path,
+        retainFailedClose: (_path, owner) => {
+          retained = owner;
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(retained).toBeDefined();
+    await retained?.close();
+    close.mockRejectedValueOnce(failure);
+    let unretained: unknown;
+    try {
+      await readLinuxCgroupMemoryState({
+        platform: "linux",
+        procCgroupPath: path,
+      });
+    } catch (cause: unknown) {
+      unretained = cause;
+    }
+    expect(unretained).toBeInstanceOf(RegularFileCleanupFailure);
+    if (unretained instanceof RegularFileCleanupFailure)
+      await unretained.owner.close();
+  } finally {
+    close.mockRestore();
+    await retained?.close();
+  }
+});
 
 const events = (oomKill: number) =>
   `low 0\nhigh 0\nmax 772\noom 3\noom_kill ${String(oomKill)}\noom_group_kill 0\n`;

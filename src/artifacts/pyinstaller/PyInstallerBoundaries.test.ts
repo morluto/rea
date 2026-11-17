@@ -11,15 +11,15 @@ import { expect, it, vi } from "vitest";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { hashReadable } from "../ArtifactHash.js";
-import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { translateArtifactFailure } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { marshalCode } from "../../python/PythonPyc.fixture.js";
-import * as artifactPaths from "../ArtifactPaths.js";
+import * as artifactPaths from "../../resources/ArtifactPaths.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import {
   cArchiveExecutable,
   pyzArchive,
@@ -279,6 +279,27 @@ it("binds materialization to the inventoried digest and checks cached carrier fr
     await writeFile(path, archive(Buffer.from("other")));
     await expect(reader.prepareContainer(hash(bytes))).rejects.toMatchObject({
       reason: "integrity",
+    });
+  });
+});
+
+it("names whether an opened PyInstaller entry is foreign or differs from inventory", async () => {
+  const bytes = archive(Buffer.from("first"));
+  await withPyInstallerReader(bytes, async (reader) => {
+    await reader.prepareContainer(hash(bytes));
+    const [entry] = await members(reader);
+    if (entry === undefined) throw new Error("Missing member");
+    await expect(
+      reader.open({ ...entry, adapterKey: "not-inventoried" }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "foreign-entry",
+    });
+    await expect(
+      reader.open({ ...entry, declaredSize: (entry.declaredSize ?? 0) + 1 }),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "entry-metadata",
     });
   });
 });

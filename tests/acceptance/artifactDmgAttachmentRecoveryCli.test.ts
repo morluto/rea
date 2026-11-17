@@ -8,6 +8,9 @@ import { parseNativeDmgInfo } from "../../src/artifacts/NativeDmgOwnership.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
+// Each command verifies the whole image before attaching; hosted macOS runners
+// take about three times as long as a local host. The project deadline bounds a
+// hang, so no step here hard-codes host speed.
 cliTest.skipIf(process.platform !== "darwin")(
   "DMG recovery preserves the caller's real attachment and succeeds after its owner releases it",
   async ({ cli, processes }) => {
@@ -16,23 +19,19 @@ cliTest.skipIf(process.platform !== "darwin")(
     await mkdir(source);
     await writeFile(join(source, "fixture.txt"), "caller-owned image\n");
     const image = join(root, "fixture.dmg");
-    const created = await processes.run(
-      "/usr/bin/hdiutil",
-      [
-        "create",
-        "-quiet",
-        "-srcfolder",
-        source,
-        "-volname",
-        "ReaRecoveryFixture",
-        "-size",
-        "20m",
-        "-format",
-        "UDZO",
-        image,
-      ],
-      { timeoutMs: 30_000 },
-    );
+    const created = await processes.run("/usr/bin/hdiutil", [
+      "create",
+      "-quiet",
+      "-srcfolder",
+      source,
+      "-volname",
+      "ReaRecoveryFixture",
+      "-size",
+      "20m",
+      "-format",
+      "UDZO",
+      image,
+    ]);
     expect(created.exitCode, created.stderr).toBe(0);
     const digest = createHash("sha256")
       .update(await readFile(image))
@@ -41,9 +40,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     const owner = new NativeDmgArtifactReader(image, process.env);
     let mountRoot: string | undefined;
     const attachedImages = async () => {
-      const info = await processes.run("/usr/bin/hdiutil", ["info", "-plist"], {
-        timeoutMs: 10_000,
-      });
+      const info = await processes.run("/usr/bin/hdiutil", ["info", "-plist"]);
       expect(info.exitCode, info.stderr).toBe(0);
       return parseNativeDmgInfo(info.stdout).images;
     };
@@ -80,8 +77,9 @@ cliTest.skipIf(process.platform !== "darwin")(
       expect(before.length).toBeGreaterThan(0);
       expect(await attachedImagePaths()).toContain(resolvedImage);
       const busy = await cli.run({
+        // Each command must release its own attachment when its process ends.
+        freshProcess: true,
         arguments: ["inspect-artifact", image, "--json"],
-        timeoutMs: 30_000,
       });
       expect(busy.exitCode, busy.stdout).toBe(1);
       expect(busy.json).toMatchObject({
@@ -119,8 +117,8 @@ cliTest.skipIf(process.platform !== "darwin")(
     }
     expect(await mountedDevices()).toEqual([]);
     const control = await cli.run({
+      freshProcess: true,
       arguments: ["inspect-artifact", image, "--json"],
-      timeoutMs: 30_000,
     });
     expect(control.exitCode, control.stdout).toBe(0);
     expect(control.json).toMatchObject({
@@ -140,5 +138,4 @@ cliTest.skipIf(process.platform !== "darwin")(
     });
     expect(await attachedImagePaths()).not.toContain(resolvedImage);
   },
-  60_000,
 );

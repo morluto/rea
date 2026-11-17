@@ -18,11 +18,9 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
-/** Pinned upstream tools that navigate an active IDA GUI as a side effect. */
-const GUI_NAVIGATING_TOOLS: ReadonlySet<string> = new Set([
-  "disassemble_function",
-  "decompile_function",
-]);
+/** Native GUI decompilation changes the active view; headless tools never do. */
+const guiNavigatingTool = (mode: "attached" | "headless", name: string) =>
+  mode === "attached" && name === "decompile";
 
 const parametersFor = (
   operation: string,
@@ -63,6 +61,7 @@ describe.each(["attached", "headless"] as const)(
             args: [],
             env: {},
             mode,
+            protocol: mode === "attached" ? "native" : "modern",
             workspaceRoot: root,
             timeoutMs: 1000,
           },
@@ -74,14 +73,14 @@ describe.each(["attached", "headless"] as const)(
           const execution = await client.execute(operation, parameters);
           const descriptor = idaCapabilities(
             IDA_COMPATIBILITY_PROFILES[
-              mode === "attached" ? "legacy" : "modern"
+              mode === "attached" ? "native" : "modern"
             ],
             true,
           ).find((capability) => capability.operation === operation);
           expect(descriptor?.effects.mayShowUi).toBe(
-            producer.calls.some(({ name }) => GUI_NAVIGATING_TOOLS.has(name)),
+            producer.calls.some(({ name }) => guiNavigatingTool(mode, name)),
           );
-          if (mode === "headless" && operation === "procedure_callers") {
+          if (operation === "procedure_callers") {
             expect(execution.ok).toBe(false);
             if (!execution.ok)
               expect(execution.error._tag).toBe(

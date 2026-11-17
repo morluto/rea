@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
 
 const rawOffset = (rva: number) => 0x200 + (rva - 0x2000);
