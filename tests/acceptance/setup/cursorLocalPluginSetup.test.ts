@@ -145,5 +145,4 @@ await writeFile(${JSON.stringify(downloads)}, JSON.stringify(count + 1));
     ])
       await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
   },
-  120_000,
 );

@@ -155,5 +155,4 @@ for (const [id, command] of [
       ])
         await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
     },
-    120_000,
   );
