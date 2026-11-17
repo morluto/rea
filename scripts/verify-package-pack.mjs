@@ -3,6 +3,7 @@ import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DEFAULT_CATALOG_IDENTITY } from "../dist/contracts/catalog/catalogIdentity.js";
+import { MCP_STARTUP_POLICY } from "../dist/config/mcpStartupPolicy.js";
 
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
 import { runSettledConcurrent } from "./lib/verify-package-core.mjs";
@@ -260,7 +261,8 @@ export async function verifyPackagePack({ root, workspace, commands }) {
         ? manifest.skills !== ".cursor-plugin/skills" ||
           manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
           serverConfig.mcpServers?.rea?.command !== "node" ||
-          serverConfig.mcpServers?.rea?.startup_timeout_sec !== 300 ||
+          serverConfig.mcpServers?.rea?.startup_timeout_sec !==
+            MCP_STARTUP_POLICY.pluginColdStartTimeoutSeconds ||
           JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
             JSON.stringify(expectedCodexArgs)
         : manifest.skills !== "./skills" ||
@@ -326,6 +328,16 @@ export async function verifyPackagePack({ root, workspace, commands }) {
   )
     throw new Error(
       "Packaged plugin skill recovery is not pinned to the shipped runtime",
+    );
+  const cursorSkillText = await readPackedText(cursorSkill);
+  if (
+    cursorSkillText.includes(`${packedManifest.name}@latest`) ||
+    !cursorSkillText.includes(
+      `${packedManifest.name}@${packedManifest.version}`,
+    )
+  )
+    throw new Error(
+      "Packaged Codex/Cursor plugin skill CLI fallback is not pinned to the shipped runtime",
     );
   await verifyPackedBridge({ tarball, packedFiles, commands });
   return { tarball };

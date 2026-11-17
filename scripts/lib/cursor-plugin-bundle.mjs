@@ -138,11 +138,27 @@ export const syncCursorPluginSkill = async ({ root, check }) => {
       "cursor_plugin_skill_inventory",
       `Authored skill is missing: ${AUTHORED_SKILL_DIRECTORY}`,
     );
+  // Codex and the Claude marketplace commit this tree; pin CLI fallback to the
+  // same release the plugin MCP server launches (not whatever @latest resolves).
+  const packageVersion = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  ).version;
+  if (typeof packageVersion !== "string" || packageVersion.length === 0)
+    throw failure(
+      "cursor_plugin_skill_inventory",
+      "package.json is missing a release version for the Cursor plugin skill pin",
+    );
+  const latestSpecifier = `rea-agents@latest`;
+  const pinnedSpecifier = `rea-agents@${packageVersion}`;
   if (!check) await rm(outputRoot, { recursive: true, force: true });
   for (const relativePath of sourcePaths) {
-    const source = (
+    const authored = (
       await readFile(join(sourceRoot, relativePath), "utf8")
     ).replaceAll("\r\n", "\n");
+    const source =
+      relativePath === "SKILL.md"
+        ? authored.replaceAll(latestSpecifier, pinnedSpecifier)
+        : authored;
     if (!check)
       await mkdir(dirname(join(outputRoot, relativePath)), { recursive: true });
     try {
