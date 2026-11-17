@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
 import { phaseArrival } from "../../support/lifecycleHarness.js";
+import { waitFor } from "../../support/testWait.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -759,6 +760,61 @@ setInterval(() => {}, 1000);
     const closed = await manager.close(sessionId);
     expect(closed.ok).toBe(true);
     expect(manager.status(sessionId)).toBeUndefined();
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "terminates the owned Rizin process when close starts shortly before a command deadline",
+  async () => {
+    directory = await mkdtemp(
+      join(tmpdir(), "rea-rizin-close-before-timeout-"),
+    );
+    const provider = join(directory, "fake-rizin-close-before-timeout.mjs");
+    const pidPath = join(directory, "pid");
+    await writeFile(
+      provider,
+      `#!/usr/bin/env node
+import { writeFile } from "node:fs/promises";
+await writeFile(${JSON.stringify(pidPath)}, String(process.pid));
+process.stdout.write("\\0");
+let input = "";
+let blocked = false;
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  if (blocked) return;
+  input += chunk;
+  for (;;) {
+    const boundary = input.indexOf("\\n");
+    if (boundary < 0) break;
+    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
+    if (line === "dc") blocked = true;
+  }
+});
+setInterval(() => {}, 1000);
+`,
+    );
+    await chmod(provider, 0o700);
+    const { manager, sessionId } = await startRizinWithOwnedStop(provider, {
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "2000",
+    });
+
+    // Close starts while the command is still running and shortly before
+    // its deadline, so the timed-out command shares close's in-flight stop.
+    // That stop times out against the detach race and returns incomplete;
+    // only the late unavailable declaration may still terminate Rizin.
+    const executed = manager.execute(sessionId, "dc");
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 1500));
+    const closed = await manager.close(sessionId);
+    const result = await executed;
+
+    expect(closed.ok).toBe(false);
+    expect(result.ok).toBe(false);
+    const pidText = await readFile(pidPath, "utf8");
+    await waitFor(() => {
+      expect(() => process.kill(Number(pidText), 0)).toThrow();
+    });
+    // The session stays retained for retry even though Rizin is gone.
+    expect(manager.status(sessionId)).toBeDefined();
   },
 );
 

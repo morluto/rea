@@ -25,6 +25,7 @@ import {
 } from "./RizinTestInferiorTty.js";
 import { createInjectedProcess } from "./RizinDebugSessionCoverage.fixtures.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
+import { waitFor } from "../../support/testWait.js";
 
 let terminal: ReturnType<typeof spawn> | undefined;
 let manager: RizinDebugSessionManager | undefined;
@@ -404,19 +405,9 @@ it.skipIf(process.platform !== "linux")(
     );
     expect(manager!.status(sessionId)?.state).toBe("closed");
     expect(providerPid).toBeDefined();
-    await expect
-      .poll(
-        () => {
-          try {
-            process.kill(providerPid!, 0);
-            return "alive";
-          } catch {
-            return "exited";
-          }
-        },
-        { timeout: 2_000 },
-      )
-      .toBe("exited");
+    await waitFor(() => {
+      expect(() => process.kill(providerPid!, 0)).toThrow();
+    });
     // The target was never signalled: it keeps running after owned cleanup.
     expect(inferiorPid).toBeDefined();
     expect(() => process.kill(inferiorPid!, 0)).not.toThrow();

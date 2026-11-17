@@ -7,6 +7,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
@@ -161,6 +162,76 @@ it.skipIf(process.platform === "win32")(
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error.message).toContain("Rizin stdin stream failed");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "records the final cleanup outcome in saved partial evidence after a protocol failure",
+  async () => {
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        if (!text.startsWith("dr\n")) return;
+        control.output("partial-output\0");
+        // The stdin failure lands after the partial frame, so the command
+        // fails with partial output and a protocol error already set.
+        setImmediate(() => control.stdinError());
+      },
+    });
+    const { manager, started } = await startInjected(injected.spawnProcess, {
+      // The real stop must run: the fake no-inferior stop never detaches,
+      // so it can never declare detach unavailable.
+      stopProcess: stopOwnedDebuggerProcess,
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const result = await manager.execute(started.value.session_id, "dr");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.partialObservation).toMatchObject({
+        normalized_result: {
+          output: expect.stringContaining("partial-output"),
+        },
+      });
+      const partialEvidence = evidenceSchema.parse(
+        result.error.partialObservation,
+      );
+      // Cleanup cannot resynchronize (stdin failed), so the owned process
+      // is terminated without a verified detach. The saved Evidence must
+      // say so; before the fix it was built before cleanup and omitted this.
+      expect(partialEvidence.limitations.join(" ")).toMatch(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      );
+    }
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "surfaces the unknown target state when startup fails with an unavailable detach",
+  async () => {
+    const injected = createInjectedProcess({
+      startup: (control) => {
+        control.output(Buffer.from([0]));
+        // The stdin failure lands after the startup frame, so startup
+        // fails with a protocol error already set.
+        setImmediate(() => control.stdinError());
+      },
+    });
+    const { manager, started } = await startInjected(injected.spawnProcess, {
+      // The real stop must run: the fake no-inferior stop never detaches,
+      // so it can never declare detach unavailable.
+      stopProcess: stopOwnedDebuggerProcess,
+    });
+
+    expect(started.ok).toBe(false);
+    if (!started.ok)
+      // The session is removed after the stop, so the caller only learns
+      // the target may still be running from this message.
+      expect(started.error.message).toMatch(
+        /terminated without a verified inferior detach.*resynchroniz/iu,
+      );
   },
 );
 
