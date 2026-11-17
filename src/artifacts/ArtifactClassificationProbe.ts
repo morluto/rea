@@ -298,7 +298,11 @@ export const createArtifactClassificationProbe = (
             prefix,
             Number.MAX_SAFE_INTEGER,
           );
-          if (windowsHeader.state === "signature-needed") {
+          if (
+            windowsHeader.state === "signature-needed" ||
+            (windowsHeader.state === "declared" &&
+              windowsHeader.signature === "PE")
+          ) {
             mzWindowsHeaderOffset = windowsHeader.offset;
             if (windowsHeader.offset < prefix.length) {
               const inline = prefix.subarray(
