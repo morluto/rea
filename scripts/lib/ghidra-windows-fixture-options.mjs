@@ -7,6 +7,7 @@ export const WINDOWS_GHIDRA_FIXTURE_ARCHITECTURES = Object.freeze([
   "arm64",
 ]);
 
+/** @type {readonly string[]} */
 export const WINDOWS_GHIDRA_FIXTURE_FLAGS = Object.freeze([
   "--x86",
   "--arm",
