@@ -51,7 +51,7 @@ try {
   const marker = join(workspace, "network-guard-loads.txt");
   await writeFile(
     guard,
-    'require("node:fs").appendFileSync(process.env.REA_VERIFICATION_MARKER, `${process.pid}\\n`);\n' +
+    'require("node:fs").appendFileSync(process.env.REA_VERIFICATION_MARKER, `${process.pid} ${process.argv[1] ?? ""}\\n`);\n' +
       'require("node:net").Socket.prototype.connect = function () { throw new Error("Portable verification forbids Node network connections"); };\n',
     "utf8",
   );
@@ -97,9 +97,9 @@ try {
   nodeSocketConnectionsDenied = true;
   const guardLoadsAfterControl = (await readFile(marker, "utf8"))
     .trim()
-    .split("\n").length;
+    .split("\n");
   assert.equal(
-    guardLoadsAfterControl,
+    guardLoadsAfterControl.length,
     1,
     "The network guard must load in exactly the direct control child",
   );
@@ -231,10 +231,18 @@ try {
   assert.equal(cli.operation, "analyze_javascript_application");
   const guardLoadsAfterAnalysis = (await readFile(marker, "utf8"))
     .trim()
-    .split("\n").length;
+    .split("\n");
+  assert.equal(
+    guardLoadsAfterAnalysis.length,
+    2,
+    `The analysis must start exactly the CLI process and its JavaScript worker (${String(guardLoadsAfterAnalysis.length)} guard load(s))`,
+  );
+  const [cliLoad, workerLoad] = guardLoadsAfterAnalysis;
   assert.ok(
-    guardLoadsAfterAnalysis >= 2,
-    `The JavaScript analysis worker must load the verification guard (${String(guardLoadsAfterAnalysis)} load(s))`,
+    cliLoad !== undefined &&
+      workerLoad !== undefined &&
+      cliLoad.split(" ")[0] !== workerLoad.split(" ")[0],
+    "The verification guard must load in two distinct Node processes",
   );
   workerPreloadVerified = true;
   const sessionHarness = join(workspace, "powershell-session.ps1");

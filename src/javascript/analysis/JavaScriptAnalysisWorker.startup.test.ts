@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
-import { JavaScriptAnalysisWorker } from "./JavaScriptAnalysisWorker.js";
+import {
+  JavaScriptAnalysisWorker,
+  javascriptWorkerEnvironment,
+} from "./JavaScriptAnalysisWorker.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   AnalysisOutputError,
@@ -99,4 +105,32 @@ it("times out a worker whose ready frame never arrives and stops it", async () =
   // The refusal itself stops the child; close() is only teardown.
   expect(fixture.pids).toHaveLength(1);
   expect(fixture.pids.filter(alive)).toEqual([]);
+});
+
+it("strips an ambient NODE_OPTIONS and honors only a valid verification preload", () => {
+  const ambient: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_OPTIONS: "--require /hostile/user-preload.cjs",
+    UV_THREADPOOL_SIZE: "8",
+  };
+  const stripped = javascriptWorkerEnvironment(ambient, undefined);
+  expect(stripped.NODE_OPTIONS).toBeUndefined();
+  expect(stripped.UV_THREADPOOL_SIZE).toBe("1");
+
+  const root = mkdtempSync(join(tmpdir(), "rea-worker-preload-"));
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+  const preload = join(root, "guard.cjs");
+  writeFileSync(preload, "");
+  expect(javascriptWorkerEnvironment(ambient, preload).NODE_OPTIONS).toBe(
+    `--require ${JSON.stringify(preload)}`,
+  );
+  for (const invalid of [
+    "relative-guard.cjs",
+    join(root, "missing.cjs"),
+    join(root, "guard.js"),
+  ]) {
+    expect(
+      javascriptWorkerEnvironment(ambient, invalid).NODE_OPTIONS,
+    ).toBeUndefined();
+  }
 });
