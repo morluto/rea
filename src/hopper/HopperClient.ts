@@ -22,7 +22,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import {
-  hopperBridgeReplyContracts,
+  hopperReplySchemas,
   parseHopperReply,
   type HopperBridgeReplyContracts,
   type ValueKeepingContracts,
@@ -282,7 +282,7 @@ export class HopperClient<
     // typed refusal per method (see #typedReply), never a throw.
     this.#contracts =
       options.replyContracts ??
-      (hopperBridgeReplyContracts as unknown as Contracts &
+      (hopperReplySchemas as unknown as Contracts &
         ValueKeepingContracts<Contracts>);
     this.#options = {
       ...options,

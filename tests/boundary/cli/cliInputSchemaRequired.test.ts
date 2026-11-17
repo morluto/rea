@@ -1,5 +1,10 @@
+import {
+  cliCommand,
+  registerCliCommand,
+  cliCommands,
+} from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Cli } from "incur";
 import { z } from "zod";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -19,10 +24,8 @@ import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js"
 import { dataTypeSelectorGuidance } from "../../../src/cli/analysisSelector.js";
 
 type CliInstance = ReturnType<typeof createCli>;
-type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
 
 const INPUT_GROUPS = ["args", "options"] as const;
-const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
 
 const advertisedGroupSchema = z
   .object({
@@ -64,7 +67,7 @@ const parserSchema = (
   command: string,
   group: (typeof INPUT_GROUPS)[number],
 ): z.ZodObject | undefined => {
-  const entry = registeredCommands.get(cli)?.get(command);
+  const entry = cliCommand(cli, command)?.definition;
   if (entry === undefined || !(group in entry)) return undefined;
   const schema: unknown = Reflect.get(entry, group);
   return schema instanceof z.ZodObject ? schema : undefined;
@@ -87,7 +90,7 @@ const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
     const mismatches: string[] = [];
-    const primary = createCliInventory(cli).primary;
+    const primary = createCliInventory(cliCommands(cli)).primary;
     expect(primary).toEqual(
       expect.arrayContaining(["inspect-pcap-client", "inspect-pcap-capture"]),
     );
@@ -249,18 +252,18 @@ describe("CLI advertised input schemas", () => {
     );
   });
 
-  it("advertises defaults as omittable on a mounted group root", async () => {
-    const group = Cli.create("group", {
+  it("advertises defaulted command inputs as omittable", async () => {
+    const cli = createCommandCli();
+    registerCliCommand(cli, "fixture", {
       args: z.object({ scope: z.enum(["all", "selected"]).default("all") }),
       run: () => ({ ok: true }),
-    }).command("child", { run: () => ({ ok: true }) });
-    const cli = Cli.create("group-root-test", { sync: false }).command(group);
+    });
 
     presentOmittableDefaults(cli as unknown as CliInstance);
 
     const advertised = await advertisedSchema(
       cli as unknown as CliInstance,
-      "group",
+      "fixture",
     );
     expect(advertised.args?.properties.scope).toBeDefined();
     expect(advertised.args?.required ?? []).not.toContain("scope");
@@ -382,8 +385,8 @@ describe("ADB selector input schemas", () => {
       ["S".repeat(257), false],
     ] as const;
     let checked = 0;
-    for (const command of createCliInventory(cli).primary.filter((name) =>
-      name.includes("-adb-"),
+    for (const command of createCliInventory(cliCommands(cli)).primary.filter(
+      (name) => name.includes("-adb-"),
     )) {
       const parser = parserSchema(cli, command, "args");
       const field = parser?.shape.serial as z.ZodType | undefined;
@@ -536,7 +539,7 @@ describe("ADB selector input schemas: package and activity", () => {
 
 describe("ADB selector input schemas: dispatch", () => {
   it("rejects malformed CLI selectors before an inert provider is called", async () => {
-    const cli = Cli.create("rea-adb-selector-test", { sync: false });
+    const cli = createCommandCli();
     const provider = {
       inspectAvailability: vi.fn(async (): Promise<never> => {
         throw new Error("unexpected availability probe");
@@ -615,7 +618,7 @@ describe("ADB selector input schemas: dispatch", () => {
   });
 
   it("preserves optional activity mapping and colon-containing extra values", async () => {
-    const cli = Cli.create("rea-adb-selector-valid-test", { sync: false });
+    const cli = createCommandCli();
     const provider = {
       inspectAvailability: vi.fn(async (): Promise<never> => {
         throw new Error("unexpected availability probe");

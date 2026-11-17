@@ -5,6 +5,7 @@ import {
   artifactFixedLimitFailure,
 } from "../../resources/index.js";
 import { walkDenoVirtualFs, type DenoVfsWalk } from "./DenoVirtualFs.js";
+import { parseJsonWithDuplicatePolicy } from "../../domain/jsonDuplicateMember.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Opening and closing marker of a Deno compile data section. */
@@ -402,11 +403,15 @@ const decodeStrict = (
 const decodeJson = (bytes: Buffer, scope: string): unknown => {
   const text = decodeStrict(bytes, jsonDecoder);
   if (text === undefined) throw denoFormatFailure(`${scope} is invalid`);
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
+  const parsed = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!parsed.ok) {
+    if (parsed.duplicate !== undefined)
+      throw denoFormatFailure(
+        `${scope} declares member ${JSON.stringify(parsed.duplicate.name)} more than once`,
+      );
     throw denoFormatFailure(`${scope} is invalid`);
   }
+  return parsed.value;
 };
 
 const observeMetadata = (value: unknown): DenoObservedMetadata => {

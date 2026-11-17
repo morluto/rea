@@ -331,8 +331,10 @@ const ntfsRecordHeaderSchema = z.strictObject({
   nextAttributeId: offset,
   fileNames: z.array(ntfsFileNameSchema).exactOptional(),
   attributes: z.array(ntfsAttributeSchema).exactOptional(),
+  // domain-vocabulary: whether the physical MFT record's attribute stream reached its 0xffffffff end marker without a malformed attribute.
   attributeCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
   attributeIssue: ntfsAttributeIssueSchema.nullable().exactOptional(),
+  // domain-vocabulary: whether resident FILE_NAME attributes come from a complete local attribute stream with no $ATTRIBUTE_LIST.
   fileNameCoverage: z.enum(["complete", "incomplete"]).exactOptional(),
   attributeListResolution: ntfsAttributeListResolutionSchema.exactOptional(),
   fixups: z.strictObject({

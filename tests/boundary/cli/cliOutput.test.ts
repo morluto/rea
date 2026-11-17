@@ -7,10 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import {
-  adaptCliOutputArgumentsForIncur,
-  parseCliGlobalArguments,
-} from "../../../src/cliBuiltinArguments.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
   renderCliDocument,
@@ -76,26 +73,6 @@ describe("CLI output argument boundary", () => {
         "--token-count",
       ]).validation,
     ).toMatchObject({ ok: false, code: "UNSUPPORTED_OUTPUT_COMBINATION" });
-  });
-
-  it("adapts REA-owned delimited options only at the Incur boundary", () => {
-    expect(
-      adaptCliOutputArgumentsForIncur([
-        "inspect-analysis-view",
-        "--format",
-        "csv",
-        "--columns",
-        "name,version",
-        "--filter-output",
-        "normalized_result.items",
-      ]),
-    ).toEqual([
-      "inspect-analysis-view",
-      "--format",
-      "json",
-      "--filter-output",
-      "normalized_result.items",
-    ]);
   });
 
   it("uses the shared Markdown table formatter for standalone reports", () => {
@@ -179,12 +156,12 @@ it("formats arrays of empty objects without column keys as JSON in Markdown", ()
 
 it("preserves flag-shaped values consumed by valued output options", () => {
   expect(
-    adaptCliOutputArgumentsForIncur([
+    parseCliGlobalArguments([
       "--filter-output",
       "--columns",
       "providers",
       "--json",
-    ]),
+    ]).arguments,
   ).toEqual(["--filter-output", "--columns", "providers", "--json"]);
 });
 

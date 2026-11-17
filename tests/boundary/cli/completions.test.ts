@@ -1,9 +1,10 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { resolve } from "node:path";
-import { Cli } from "incur";
 import { z } from "zod";
 import { expect, it } from "vitest";
 
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCliShell } from "../../../src/cli/cliShell.js";
 import { createCliCompletions } from "../../../src/cli/completions.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
@@ -12,7 +13,7 @@ type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 const registry = () => {
-  const cli = Cli.create("rea", { sync: false }) as unknown as CliInstance;
+  const cli = createCommandCli() as unknown as CliInstance;
   registerCliCommand(cli, "instructions", {
     options: z.object({
       procedure: z.string().optional(),
@@ -134,7 +135,34 @@ it("shares Bash registration across ordinary and protocol routes while retaining
   expect(direct).toContain("type compopt");
   expect(direct).toContain("||\n    complete -o default -o bashdefault");
   expect(ordinary(["completions", "bash", "--help"], {})).toBe(false);
-  expect(ordinary(["completions", "bash", "--schema"], {})).toBe(false);
+  for (const flag of ["--schema", "--version"]) {
+    let script = "";
+    expect(
+      ordinary(["completions", "bash", flag], {
+        stdout: (text) => {
+          script += text;
+        },
+      }),
+    ).toBe(true);
+    expect(script).toBe(direct);
+  }
+});
+
+it("refuses a second shell without writing a completion script", async () => {
+  const cli = createCliShell({ selectedEnvironment: {}, registrations: [] });
+  let output = "";
+  let exitCode: number | undefined;
+  await cli.serve(["completions", "bash", "fish"], {
+    stdout: (text) => {
+      output += text;
+    },
+    exit: (code) => {
+      exitCode = code;
+    },
+  });
+  expect(exitCode).toBe(1);
+  expect(output).toContain("completions expects exactly one shell");
+  expect(output).not.toContain("_incur_complete_rea");
 });
 
 workspaceCliTest(
