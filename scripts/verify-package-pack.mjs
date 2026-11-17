@@ -148,6 +148,7 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     "package/.codex-plugin/plugin.json",
     "package/.codex-plugin/mcp.json",
     "package/.cursor-plugin/plugin.json",
+    "package/.cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
     "package/mcp.json",
   ].filter((archivePath) => packedFileSet.has(archivePath));
   if (metadataCandidates.length > 0) {
