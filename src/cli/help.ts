@@ -78,12 +78,15 @@ const typeName = (field: z.ZodType): string => {
 
 /** A shown default; empty arrays and a `false` boolean default are not shown. */
 const shownDefault = (field: z.ZodType, type: string): unknown => {
+  const metadata = field.meta();
   const value =
-    field instanceof z.ZodDefault
-      ? (field.def.defaultValue as unknown)
-      : field instanceof z.ZodOptional
-        ? shownDefault(field.unwrap() as z.ZodType, type)
-        : undefined;
+    metadata !== undefined && Object.hasOwn(metadata, "default")
+      ? metadata.default
+      : field instanceof z.ZodDefault
+        ? (field.def.defaultValue as unknown)
+        : field instanceof z.ZodOptional
+          ? shownDefault(field.unwrap() as z.ZodType, type)
+          : undefined;
   if (Array.isArray(value) && value.length === 0) return undefined;
   if (type === "boolean" && value === false) return undefined;
   return value;
