@@ -16,11 +16,13 @@ executing anything in it or contacting a NuGet feed.
   `.nuspec`. Missing, ambiguous or malformed manifests succeed with the ZIP
   inventory, `identity: null` and an explicit limitation.
 - Report `identity`, `license`, `repository` and `dependency_groups` as spelled
-  in the `.nuspec`. Ungrouped dependencies form a group with
-  `target_framework: null`. Version ranges stay text; restore results are
-  unknown.
+  in the `.nuspec`. Without any `<group>`, ungrouped dependencies form a group
+  with `target_framework: null`. Beside groups, in any `<dependencies>` element,
+  they are omitted with a limitation that counts them, as NuGet's restore-time
+  reader ignores them. Version ranges stay text; restore results are unknown.
 - List file ZIP members with sizes, an `encrypted` flag and a path-derived
-  NuGet folder `role`. Omit directory markers.
+  NuGet folder `role`. `[Content_Types].xml`, `.rels` parts, and members under
+  `_rels/` or `package/` are OPC packaging parts. Omit directory markers.
 - Bound the file size, ZIP entry count and `.nuspec` bytes with named
   allowances. Enforce the entry allowance while enumerating the ZIP. Refuse a
   file that is not a valid ZIP without a partial inventory.

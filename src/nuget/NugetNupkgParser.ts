@@ -44,6 +44,8 @@ export const NUPKG_LIMITATIONS = {
   ambiguousRootNuspec:
     "Multiple root .nuspec members are present; identity was not decoded.",
   malformedNuspec: "The selected .nuspec is not well-formed XML.",
+  ungroupedBesideGroups: (count: number): string =>
+    `${String(count)} ungrouped <dependency> element(s) beside <group> elements were omitted: NuGet's restore-time NuspecReader reads only the groups when any group is present, and nuget pack refuses this mix.`,
 } as const;
 
 const BASE_LIMITATIONS = [
@@ -280,11 +282,17 @@ const parseBooleanAttribute = (value: string | null): boolean | null => {
 
 const parseDependencies = (
   metadata: Element,
+  limitations: string[],
 ): NugetNupkg["dependency_groups"] => {
-  const container = firstNamed(metadata, "dependencies");
-  if (container === undefined) return [];
-  const groups = childrenNamed(container, "group");
-  const ungrouped = childrenNamed(container, "dependency");
+  // NuspecReader walks every <dependencies> element, with one decision about
+  // groups across all of them.
+  const containers = childrenNamed(metadata, "dependencies");
+  const groups = containers.flatMap((container) =>
+    childrenNamed(container, "group"),
+  );
+  const ungrouped = containers.flatMap((container) =>
+    childrenNamed(container, "dependency"),
+  );
   const readDependency = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number]["dependencies"][number] => ({
@@ -302,18 +310,15 @@ const parseDependencies = (
     target_framework: attribute(element, "targetFramework"),
     dependencies: childrenNamed(element, "dependency").map(readDependency),
   });
-  if (groups.length > 0)
-    return [
-      ...groups.map(fromGroup),
-      ...(ungrouped.length === 0
-        ? []
-        : [
-            {
-              target_framework: null,
-              dependencies: ungrouped.map(readDependency),
-            },
-          ]),
-    ];
+  // NuGet's NuspecReader reads ungrouped dependencies only when no group is
+  // present, so those beside groups never reach restore.
+  if (groups.length > 0) {
+    if (ungrouped.length > 0)
+      limitations.push(
+        NUPKG_LIMITATIONS.ungroupedBesideGroups(ungrouped.length),
+      );
+    return groups.map(fromGroup);
+  }
   if (ungrouped.length === 0) return [];
   return [
     { target_framework: null, dependencies: ungrouped.map(readDependency) },
@@ -391,7 +396,7 @@ const parseNuspecDocument = (
             commit: attribute(repositoryElement, "commit"),
             branch: attribute(repositoryElement, "branch"),
           },
-    dependency_groups: parseDependencies(metadata),
+    dependency_groups: parseDependencies(metadata, limitations),
   };
 };
 
