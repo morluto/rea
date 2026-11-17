@@ -646,16 +646,62 @@ const bigIntUnaryChain = (
 };
 
 /**
+ * How a literal port argument fails, when it can only fail. `"throws"` means the
+ * expression itself throws while the call's arguments are evaluated, so nothing
+ * can rescue it (`+0n` is a TypeError). `"bad"` means Node rejects the value as a
+ * port. Anything else is a valid port, a string path or a value read at run time.
+ *
+ * A string is a Unix socket path, so only `""` is decided: a path with no length,
+ * which Node also rejects. `typeof` yields a nonempty IPC path.
+ */
+const literalPortRejection = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): "throws" | "bad" | undefined => {
+  if (t.isStringLiteral(value))
+    return value.value.length === 0 ? "bad" : undefined;
+  if (
+    t.isNullLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value)
+  )
+    return "bad";
+  const outOfRange = (number: number): boolean =>
+    !Number.isInteger(number) || number < 0 || number > 65535;
+  if (t.isNumericLiteral(value))
+    return outOfRange(value.value) ? "bad" : undefined;
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return "bad";
+  // Numeric unary operators are judged by their result: `-0` is port zero, and
+  // `~(-1.5)` is zero too.
+  if (t.isUnaryExpression(value)) {
+    if (value.operator === "!" || value.operator === "delete") return "bad";
+    // `+0n` throws a TypeError while the arguments are evaluated, before the
+    // call. `-0n` and `~0n` are BigInts that Node rejects as a port.
+    const bigInt = bigIntUnaryChain(value, 0);
+    if (bigInt !== undefined) return bigInt.plus ? "throws" : "bad";
+    const number = unaryOperandNumber(value, context, 0);
+    return number !== undefined && outOfRange(number) ? "bad" : undefined;
+  }
+  return undefined;
+};
+
+/**
  * `net` and `tls` validate a numeric port before creating a socket, so a
  * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
  * or `null` first argument throws synchronously and no socket exists. A string
  * is a Unix socket path and an object may carry a path, so only an exactly
- * readable non-port literal is decided. `""` is a path with no length, which
- * Node also rejects.
+ * readable non-port literal is decided (`literalPortRejection`).
  *
  * `tls` is the exception: it merges the options object from argument 1 or 2 over
  * the port argument first, so a bad first argument still yields a socket when
- * that object carries a `port` (`tlsPortMayBeReplaced`). `net` does not merge.
+ * that object carries a usable port, a `socket` or a `path`
+ * (`tlsPortMayBeReplaced`). `net` does not merge.
  *
  * `net` also rejects an omitted or undefined port, before it returns a socket.
  * TLS merges later options, so an undefined first argument alone cannot decide
@@ -670,54 +716,20 @@ const rejectsSocketLiteralArguments = (
   if (port === undefined) return specifier === "net";
   if (t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
-  // The first argument is a bad port. `tls` may still connect when later
-  // options supply one; `net` never merges.
-  const badPort = (): boolean =>
-    specifier !== "tls" || !tlsPortMayBeReplaced(node, context.state);
   if (
     specifier === "net" &&
     (t.isUnaryExpression(value, { operator: "void" }) ||
       isUnmodifiedGlobalReference(value, context.state, "undefined"))
   )
     return true;
-  if (t.isStringLiteral(value)) return value.value.length === 0 && badPort();
-  if (
-    t.isNullLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value)
-  )
-    return badPort();
-  if (t.isNumericLiteral(value))
-    return (
-      (!Number.isInteger(value.value) ||
-        value.value < 0 ||
-        value.value > 65535) &&
-      badPort()
-    );
-  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
-  if (
-    t.isIdentifier(value) &&
-    (value.name === "NaN" || value.name === "Infinity") &&
-    isUnmodifiedGlobalReference(value, context.state, value.name)
-  )
-    return badPort();
-  // Numeric unary operators are judged by their result: `-0` is port zero,
-  // and `~(-1.5)` is zero too. `typeof` instead yields a nonempty IPC path.
-  if (t.isUnaryExpression(value)) {
-    if (value.operator === "!" || value.operator === "delete") return badPort();
-    // `+0n` throws a TypeError while the arguments are evaluated, before the
-    // call, so no later argument can rescue it. `-0n` and `~0n` are BigInts
-    // that Node rejects as a port, which `tls` may replace like any other.
-    const bigInt = bigIntUnaryChain(value, 0);
-    if (bigInt !== undefined) return bigInt.plus || badPort();
-    const number = unaryOperandNumber(value, context, 0);
-    return (
-      number !== undefined &&
-      (!Number.isInteger(number) || number < 0 || number > 65535) &&
-      badPort()
-    );
-  }
-  return false;
+  const rejection = literalPortRejection(value, context);
+  if (rejection === "throws") return true;
+  // The first argument is a bad port. `tls` may still connect when later
+  // options replace it; `net` never merges.
+  return (
+    rejection === "bad" &&
+    (specifier !== "tls" || !tlsPortMayBeReplaced(node, context))
+  );
 };
 
 /**
@@ -880,14 +892,42 @@ const socketOptionReader = (
  * argument. Measured on Node 24.22.1, `(-0n, { port })`, `(-0n, undefined, { port })`,
  * `(-0n, "host", { port })` and `(-0n, () => {}, { port })` connect, while `(-0n, {})`,
  * `(-0n, [])`, `(-0n, {}, { port })` and `(-0n, undefined, undefined, { port })` throw.
- * An unknown merge, a spread or an accessor leaves the call kept.
+ *
+ * The merged port is then validated as a port again, so a replacement that is
+ * itself bad does not help: `(65536, { port: 65536 })`, `(0, { port: null })`,
+ * `(0, { port: 1.5 })` and `(-0n, { port: undefined })` all throw. A truthy
+ * `socket` or `path` skips port validation altogether, and a bad port beside one
+ * still connects: `(-0n, { socket })`, `(-0n, { path: "/x" })` and
+ * `(65536, { socket, port: 65536 })` create a socket, while a falsy one does not
+ * (`(-0n, { socket: null, port: 65536 })`, `(-0n, { path: "", port: 65536 })`).
+ * An unknown merge, a spread, an accessor or a port read at run time leaves the
+ * call kept.
  */
 const tlsPortMayBeReplaced = (
   node: t.CallExpression | t.OptionalCallExpression,
-  state: JavaScriptSemanticAnalysisState,
+  context: DataEffectTraversalContext,
 ): boolean => {
+  const { state } = context;
   const read = socketOptionReader(node, "tls", state, true);
-  return read === undefined || read("port") !== undefined;
+  if (read === undefined) return true;
+  for (const member of ["socket", "path"] as const) {
+    const value = read(member);
+    if (value === "unknown") return true;
+    if (
+      value !== undefined &&
+      !isNullishPlaceholder(value, state) &&
+      staticJavaScriptTruthiness(value) !== false
+    )
+      return true;
+  }
+  const port = read("port");
+  if (port === undefined) return false;
+  if (port === "unknown") return true;
+  const replacement = unwrapJavaScriptExpression(port).node;
+  return (
+    !isNullishPlaceholder(replacement, state) &&
+    literalPortRejection(replacement, context) === undefined
+  );
 };
 
 /**
