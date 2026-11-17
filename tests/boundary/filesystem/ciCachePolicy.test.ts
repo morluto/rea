@@ -634,6 +634,9 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.CACHE_PORTABLE_PREFIX).toBe(
     "rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-",
   );
+  expect(retentionEnv.CACHE_WINDOWS_BUILD_PREFIX).toBe(
+    "rea-windows-build-v1-Windows-X64-",
+  );
   expect(retentionEnv.DEDUPE_NPM_DOWNLOADS).toBe("true");
   expect(retentionEnv.GH_TOKEN).toBe("${{ github.token }}");
 

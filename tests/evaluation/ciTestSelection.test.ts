@@ -293,7 +293,7 @@ it("parses only well-formed plans and derives the selected shard count", () => {
   ).toEqual(["1/2", "2/2"]);
   const full = { version: 3, mode: "full", reason: "Shared" };
   expect(testShards("fast", parseTestSelection(full))).toHaveLength(12);
-  expect(testShards("full", parseTestSelection(full))).toHaveLength(6);
+  expect(testShards("full", parseTestSelection(full))).toHaveLength(12);
   for (const value of [
     "",
     "null",

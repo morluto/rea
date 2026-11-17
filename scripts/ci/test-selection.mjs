@@ -377,15 +377,14 @@ export function parseTestSelection(value) {
   return plan;
 }
 
-// Fast feedback uses one source group and twelve built groups. Shards are
-// balanced by recorded duration, but hosted runner speed varies, so the
-// slowest shard sets the critical path: at eight shards it ran 24% above the
-// mean shard. Smaller shards bound that excess at a few percent more runner
-// time. Full qualification retains six complete shards with coverage. A
-// selection runs its own shard count.
+// Fast feedback uses one source group and twelve built groups; full
+// qualification uses twelve complete shards with coverage. Shards are balanced
+// by recorded duration, and twelve shards halve the full-qualification critical
+// path (~14.5m -> ~7.5m) while bounding runner-speed variance at negligible
+// extra setup (~22s/shard). A selection runs its own shard count.
 const shardsOf = (count) =>
   Array.from({ length: count }, (_, index) => `${index + 1}/${count}`);
 
 /** The `test-shard` matrix labels for a tier and its test selection. */
-export const testShards = (tier, plan) =>
-  shardsOf(plan.mode === "selected" ? plan.shards : tier === "full" ? 6 : 12);
+export const testShards = (_tier, plan) =>
+  shardsOf(plan.mode === "selected" ? plan.shards : 12);

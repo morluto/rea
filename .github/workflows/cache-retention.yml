@@ -61,5 +61,6 @@ jobs:
           CACHE_KNIP_PREFIX: knip-meta-v1-${{ runner.os }}-
           CACHE_KNIP_KEEP_KEY: knip-meta-v1-${{ runner.os }}-${{ hashFiles('triggering-source/knip.json', 'triggering-source/tsconfig.json', 'triggering-source/package.json', 'triggering-source/package-lock.json') }}-${{ github.event.workflow_run.head_sha }}
           CACHE_PORTABLE_PREFIX: rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-
+          CACHE_WINDOWS_BUILD_PREFIX: rea-windows-build-v1-Windows-X64-
           DEDUPE_NPM_DOWNLOADS: "true"
         run: node trusted-retention/scripts/ci/cache-retention.mjs
