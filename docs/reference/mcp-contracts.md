@@ -1042,7 +1042,12 @@ command names its session,
 `{ "kind": "session", "session_kind": …, "id": …, "target": … }`, where `id`
 is the session ID REA minted and `target` is the launch file hashed when the
 session started (validated like a file subject), or an `unknown` target when
-REA did not observe one (always for GDB, whose session launches no file);
+REA did not observe one. `start_gdb_session` accepts an optional absolute
+`executable` path: REA hashes the initial file, disables automatic loading, and
+loads it without running an inferior. Omission leaves the target unknown. A
+physical hash failure also leaves it unknown and records the reason; a failed
+descriptor close or cancellation fails startup and retains cleanup ownership.
+GDB Evidence records the original and absolute paths in `parameters.launch_provenance`;
 later debugger commands do not rebind it. Every
 record has a subject: one whose target REA did not identify names
 `{ "kind": "unknown", "reason": … }`, where the reason is

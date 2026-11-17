@@ -23,7 +23,7 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  DevicetreeLimitFailure,
+  devicetreeLimitOf,
   parseDevicetree,
 } from "../../domain/firmware/devicetreeParser.js";
 
@@ -80,15 +80,15 @@ const devicetreeFailurePrimary = (
   input: InspectDevicetreeInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof DevicetreeLimitFailure)
+  const limit = devicetreeLimitOf(cause);
+  if (limit !== undefined && cause instanceof Error)
     return new AnalysisResourceConstraintError(
       OPERATION,
-      cause.limit === "decoded_bytes" ? "memory" : "capacity",
+      limit.limit === "decoded_bytes" ? "memory" : "capacity",
       cause.message,
       {
-        limit: cause.limit,
-        selected:
-          cause.limit === "decoded_bytes" ? 33554432 : input[cause.limit],
+        limit: limit.limit,
+        selected: limit.maximum,
       },
       { cause, retryable: false, remediationAction: cause.message },
     );

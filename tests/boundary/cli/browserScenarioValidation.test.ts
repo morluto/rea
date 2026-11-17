@@ -1,7 +1,7 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it, vi } from "vitest";
 
@@ -30,7 +30,7 @@ const serveJson = async (
 
 /** Register only the scenario commands, with a provider that must never run. */
 const registerValidatingCli = () => {
-  const cli = Cli.create("rea-scenario-validation-test", { sync: false });
+  const cli = createCommandCli();
   const createProvider = vi.fn((): never => {
     throw new Error("validation must not construct a browser provider");
   });
