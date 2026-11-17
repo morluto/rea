@@ -4,6 +4,8 @@ import type { Result } from "../../domain/result.js";
 import type {
   ObjdumpSelection,
   ProviderVersionProbe,
+  Radare2Input,
+  Radiff2Input,
   RizinInput,
 } from "../../domain/reverseEngineering.js";
 
@@ -59,4 +61,6 @@ export type ReverseEngineeringCommandSelection = Result<
 export interface ReverseEngineeringCommandPort {
   objdump(input: ObjdumpSelection): ReverseEngineeringCommandSelection;
   rizin(input: RizinInput): ReverseEngineeringCommandSelection;
+  radare2(input: Radare2Input): ReverseEngineeringCommandSelection;
+  radiff2(input: Radiff2Input): ReverseEngineeringCommandSelection;
 }
