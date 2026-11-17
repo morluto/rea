@@ -1261,13 +1261,15 @@ it("names the parent input path when CycloneDX has no artifact path", () => {
 it("refuses a Go parent whose subject does not match the report", () => {
   const report = goReport(null);
   const parent = parentFor("inspect_go_binary", report);
-  if (parent.subject == null) throw new Error("Expected a subject");
+  const identity = parent.subject?.identity;
+  if (identity?.kind !== "file") throw new Error("Expected a file subject");
   const result = projectAnalysisView(
     {
       ...parent,
       subject: {
-        ...parent.subject,
-        identity: { ...parent.subject.identity, sha256: "b".repeat(64) },
+        name: "program",
+        local_path: "/artifacts/program",
+        identity: { ...identity, sha256: "b".repeat(64) },
       },
     },
     VIEW,
