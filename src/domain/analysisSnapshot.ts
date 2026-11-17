@@ -92,6 +92,7 @@ const formatSchema = z.enum([
   "source-map",
   "uimage",
   "android-boot-image",
+  "android-ota-payload",
 ]);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
 type SnapshotFormat = z.infer<typeof formatSchema>;
