@@ -319,6 +319,34 @@ it("traces shared script modules to their tests and falls back for other consume
   });
 });
 
+it("traces JavaScript fixture modules transitively through JS and TS helpers", () => {
+  const sources = {
+    "tests/fixtures/fakeHopperReplies.mjs":
+      "export const fakeHopperReply = () => ({});",
+    "tests/fixtures/fakeHopper.mjs":
+      'import { fakeHopperReply } from "./fakeHopperReplies.mjs"; export { fakeHopperReply };',
+    "tests/boundary/providers/hopper/hopperClient.fixture.ts":
+      'export const bridge = new URL("../../../fixtures/fakeHopper.mjs", import.meta.url);',
+    "tests/boundary/providers/hopper/fakeHopperReplyContracts.test.ts":
+      'import { fakeHopperReply } from "../../../fixtures/fakeHopperReplies.mjs"; void fakeHopperReply;',
+    "tests/boundary/providers/hopper/hopperSocket.test.ts":
+      'import { bridge } from "./hopperClient.fixture.js"; void bridge;',
+    "tests/acceptance/providers/hopperStartupRecovery.test.ts":
+      'const path = "tests/fixtures/fakeHopper.mjs"; void path;',
+    "src/unrelated.test.ts": "",
+  };
+  expect(plan(["tests/fixtures/fakeHopperReplies.mjs"], sources)).toMatchObject(
+    {
+      mode: "selected",
+      files: [
+        "tests/acceptance/providers/hopperStartupRecovery.test.ts",
+        "tests/boundary/providers/hopper/fakeHopperReplyContracts.test.ts",
+        "tests/boundary/providers/hopper/hopperSocket.test.ts",
+      ],
+    },
+  );
+});
+
 it("parses only well-formed plans and derives the selected shard count", () => {
   const selected = {
     version: 3,

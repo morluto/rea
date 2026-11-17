@@ -680,6 +680,28 @@ export interface SystemDoctorHostOptions {
   ) => Promise<DesktopBuildFacts>;
 }
 
+const runInChildResourceScope = <T>(
+  parent: ArtifactResourceScope,
+  label: string,
+  operation: (child: ArtifactResourceScope) => Promise<T>,
+): Promise<T> =>
+  parent.track(async () => {
+    const child = new ArtifactResourceScope();
+    try {
+      return await operation(child);
+    } finally {
+      if (child.hasPending) {
+        parent.retain({
+          kind: "lease",
+          resource: label,
+          lease: AnalysisCleanupLease.forCloseOwner(child, label),
+        });
+      } else {
+        await child.close();
+      }
+    }
+  });
+
 /** Create diagnostics backed by the current process and host commands. */
 export const systemDoctorHost = (
   options: SystemDoctorHostOptions = {},
@@ -701,7 +723,7 @@ export const systemDoctorHost = (
   // ILSpy probe's ten-second allowance and bound each captured stream to 64 KiB.
   // Baseline diagnostics must work without provider ownership prerequisites.
   const hostExecFileOutput: typeof execFileOutput = (command, args, input) =>
-    resources.run(async () => {
+    resources.track(async () => {
       try {
         const output = await execute(command, args, {
           ...input,
@@ -746,7 +768,7 @@ export const systemDoctorHost = (
         resource,
         lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
       }),
-    run: (operation) => resources.run(operation),
+    run: (operation) => resources.track(operation),
   };
   const resolveProviderRequestBudget =
     options.resolveProviderRequestBudget === undefined
@@ -869,7 +891,7 @@ export const systemDoctorHost = (
       ? {}
       : {
           providerInspections: (clients) =>
-            resources.run(() =>
+            resources.track(() =>
               options.providerInspections!(
                 resourceScope,
                 inspectionSignal,
@@ -916,12 +938,14 @@ export const systemDoctorHost = (
       }
     },
     installedSkillIdentity: (clientIds) =>
-      readInstalledSkillIdentity(
-        homeDirectory,
-        clientIds,
-        environment,
-        platform,
-        resources,
+      runInChildResourceScope(resources, "skill-identity", (child) =>
+        readInstalledSkillIdentity(
+          homeDirectory,
+          clientIds,
+          environment,
+          platform,
+          child,
+        ),
       ),
     close: async () => {
       controller.abort(OwnerCancellation.startupOwnerClosed);
@@ -949,29 +973,33 @@ export const systemDoctorHost = (
       ownedProviderSetting,
       observeProviderSetting,
     ) =>
-      readClientRegistrationStatuses(homeDirectory, undefined, {
-        platform,
-        environment,
-        resources,
-        ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
-        ...(ownedProviderSetting === undefined ? {} : { ownedProviderSetting }),
-        ...(observeProviderSetting === undefined
-          ? {}
-          : { observeProviderSetting }),
-        ...(providerSettings === undefined
-          ? {}
-          : {
-              providerSettings: registrationSpelledSettings(
-                providerSettings,
-                environment,
-              ),
-            }),
-        ...(resolveProviderRequestBudget === undefined
-          ? {}
-          : {
-              resolveProviderRequestBudget,
-            }),
-      }),
+      runInChildResourceScope(resources, "client-registrations", (child) =>
+        readClientRegistrationStatuses(homeDirectory, undefined, {
+          platform,
+          environment,
+          resources: child,
+          ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+          ...(ownedProviderSetting === undefined
+            ? {}
+            : { ownedProviderSetting }),
+          ...(observeProviderSetting === undefined
+            ? {}
+            : { observeProviderSetting }),
+          ...(providerSettings === undefined
+            ? {}
+            : {
+                providerSettings: registrationSpelledSettings(
+                  providerSettings,
+                  environment,
+                ),
+              }),
+          ...(resolveProviderRequestBudget === undefined
+            ? {}
+            : {
+                resolveProviderRequestBudget,
+              }),
+        }),
+      ),
   };
   const readFacts = options.desktopBuildFacts;
   return readFacts === undefined
@@ -979,12 +1007,12 @@ export const systemDoctorHost = (
     : {
         ...host,
         desktopBuildFacts: (clientIds) =>
-          resources.run(() =>
+          runInChildResourceScope(resources, "desktop-build-facts", (child) =>
             readFacts({
               environment,
               platform,
               signal: inspectionSignal,
-              resources,
+              resources: child,
               run: hostExecFileOutput,
               clientIds,
               registrations: host.clientRegistrations!,

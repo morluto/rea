@@ -27,7 +27,11 @@ import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayP
 import { ok } from "./domain/result.js";
 import { cancelledBy, carriedReason } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
-import { AnalysisCleanupLeaseGroup } from "./resources/index.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  ArtifactResourceScope,
+} from "./resources/index.js";
 import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
@@ -292,6 +296,30 @@ const unresolvedProvider = (
   };
 };
 
+const withProbeResourceScope = <T>(
+  parent: RetainedResourceScope,
+  label: string,
+  operation: (scope: RetainedResourceScope) => Promise<T>,
+): Promise<T> =>
+  parent.run(async () => {
+    const child = new ArtifactResourceScope();
+    const scope: RetainedResourceScope = {
+      retain: (owner, resource) =>
+        child.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+      run: (work) => child.run(work),
+    };
+    try {
+      return await operation(scope);
+    } finally {
+      if (child.hasPending) parent.retain(child, label);
+      else await child.close();
+    }
+  });
+
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
@@ -316,10 +344,12 @@ export const createSystemDoctorHost = (
     }
     let registration = byPath.get(path);
     if (registration === undefined) {
-      registration = readIdaConfiguration(path, {
-        resourceScope,
-        signal: inspectionSignal,
-      });
+      registration = withProbeResourceScope(resourceScope, path, (probeScope) =>
+        readIdaConfiguration(path, {
+          resourceScope: probeScope,
+          signal: inspectionSignal,
+        }),
+      );
       byPath.set(path, registration);
     }
     return registration;
@@ -355,12 +385,17 @@ export const createSystemDoctorHost = (
       inspectionSignal: AbortSignal,
       clients: readonly string[],
     ) => {
-      const selected = await selectedRegistrationEnvironment(
-        clients,
-        environment,
+      const selected = await withProbeResourceScope(
         resourceScope,
-        inspectionSignal,
-        platform,
+        "selected-registration",
+        (probeScope) =>
+          selectedRegistrationEnvironment(
+            clients,
+            environment,
+            probeScope,
+            inspectionSignal,
+            platform,
+          ),
       );
       const inspectionEnvironment = selectedProviderSettings(
         selected,
@@ -394,47 +429,63 @@ export const createSystemDoctorHost = (
       return await settleConcurrent([
         ghidraUnresolved !== undefined
           ? Promise.resolve(ghidraUnresolved)
-          : inspectSystemGhidraProvider(
-              inspectionEnvironment,
+          : withProbeResourceScope(
               resourceScope,
-              inspectionSignal,
+              "ghidra-doctor",
+              (probeScope) =>
+                inspectSystemGhidraProvider(
+                  inspectionEnvironment,
+                  probeScope,
+                  inspectionSignal,
+                ),
             ),
         idaUnresolved !== undefined
           ? Promise.resolve(idaUnresolved)
-          : inspectIdaRegistration(
-              inspectionEnvironment.REA_IDA_MCP_CONFIG,
-              resourceScope,
-              inspectionSignal,
-              inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
-                ? undefined
-                : readRegistration(
-                    inspectionEnvironment.REA_IDA_MCP_CONFIG,
-                    resourceScope,
-                    inspectionSignal,
-                  ),
+          : withProbeResourceScope(resourceScope, "ida-doctor", (probeScope) =>
+              inspectIdaRegistration(
+                inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                probeScope,
+                inspectionSignal,
+                inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
+                  ? undefined
+                  : readRegistration(
+                      inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                      resourceScope,
+                      inspectionSignal,
+                    ),
+              ),
             ),
         jadxUnresolved !== undefined
           ? Promise.resolve(jadxUnresolved)
-          : inspectJadxProvider(
-              inspectionEnvironment,
-              resourceScope,
-              host,
-              inspectionSignal,
+          : withProbeResourceScope(resourceScope, "jadx-doctor", (probeScope) =>
+              inspectJadxProvider(
+                inspectionEnvironment,
+                probeScope,
+                host,
+                inspectionSignal,
+              ),
             ),
         kunaUnresolved !== undefined
           ? Promise.resolve(kunaUnresolved)
-          : inspectKunaProvider(inspectionEnvironment, platform, {
-              resourceScope,
-              signal: inspectionSignal,
-            }),
+          : withProbeResourceScope(resourceScope, "kuna-doctor", (probeScope) =>
+              inspectKunaProvider(inspectionEnvironment, platform, {
+                resourceScope: probeScope,
+                signal: inspectionSignal,
+              }),
+            ),
       ]);
     },
     desktopBuildFacts: readDesktopBuildFacts,
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
-      inspectLinuxHopperDemoRuntime(
-        environment,
+      withProbeResourceScope(
         resourceScope,
-        inspectionSignal,
+        "hopper-demo-runtime",
+        (probeScope) =>
+          inspectLinuxHopperDemoRuntime(
+            environment,
+            probeScope,
+            inspectionSignal,
+          ),
       ),
   });
 };
