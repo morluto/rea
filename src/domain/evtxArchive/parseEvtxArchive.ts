@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { BinaryReader } from "../binaryContainer.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { ok, type Result } from "../result.js";
 import {
   EVTX_ARCHIVE_CHUNK_BYTES,
@@ -30,16 +31,19 @@ interface DecodeState {
 }
 
 const digest = (prefix: string, ...parts: (string | number)[]) =>
-  `${prefix}_${createHash("sha256").update(parts.join("\u0000")).digest("hex")}`;
+  `${prefix}_${sha256Hex(parts.join("\u0000"))}`;
 
 /** Reads a 64-bit little-endian value as a number, or null past 2^53. */
+const reader = (bytes: Buffer): BinaryReader =>
+  new BinaryReader(bytes, true, "evtx");
+
 const readCount = (bytes: Buffer, offset: number): number | null => {
-  const value = bytes.readBigUInt64LE(offset);
+  const value = reader(bytes).word(offset, 64);
   return value > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(value);
 };
 
 const timestampMs = (bytes: Buffer, offset: number): number | null => {
-  const ticks = bytes.readBigUInt64LE(offset);
+  const ticks = reader(bytes).word(offset, 64);
   if (ticks === 0n) return null;
   return Number(ticks / 10_000n) - WINDOWS_EPOCH_OFFSET_MS;
 };
@@ -64,7 +68,7 @@ const chunkChecksumMatches = (chunk: Buffer): boolean => {
     chunk.subarray(0, 0x78),
     chunk.subarray(0x80, CHUNK_HEADER_BYTES),
   ]);
-  return crc32(signed) >>> 0 === chunk.readUInt32LE(0x7c);
+  return crc32(signed) >>> 0 === reader(chunk).u32(0x7c);
 };
 
 const diagnose = (
@@ -117,7 +121,7 @@ const readChunk = (
   // unused. A wrapped log discards records without zeroing them, so stale
   // bytes that still parse as a record header would otherwise be inventoried
   // as live events. An invalid offset cannot establish which bytes are live.
-  const freeSpaceOffset = chunk.readUInt32LE(0x30);
+  const freeSpaceOffset = reader(chunk).u32(0x30);
   const validOffset =
     freeSpaceOffset >= CHUNK_HEADER_BYTES && freeSpaceOffset <= chunk.length;
   if (!validOffset)
@@ -129,7 +133,7 @@ const readChunk = (
       `Invalid free-space offset ${freeSpaceOffset}; the record region is unknown.`,
     );
   const recordLimit = validOffset ? freeSpaceOffset : CHUNK_HEADER_BYTES;
-  const lastRecordOffset = chunk.readUInt32LE(0x2c);
+  const lastRecordOffset = reader(chunk).u32(0x2c);
   const empty =
     lastRecordOffset === 0 &&
     chunk.subarray(CHUNK_HEADER_BYTES, recordLimit).every((byte) => byte === 0);
@@ -147,7 +151,7 @@ const readChunk = (
   while (validLast && cursor <= lastRecordOffset) {
     if (
       cursor + RECORD_HEADER_BYTES > recordLimit ||
-      chunk.readUInt32LE(cursor) !== RECORD_MAGIC
+      reader(chunk).u32(cursor) !== RECORD_MAGIC
     ) {
       diagnose(
         state,
@@ -158,7 +162,7 @@ const readChunk = (
       );
       break;
     }
-    const size = chunk.readUInt32LE(cursor + 4);
+    const size = reader(chunk).u32(cursor + 4);
     if (
       size < RECORD_HEADER_BYTES ||
       cursor + size > recordLimit ||
@@ -308,7 +312,7 @@ export const parseEvtxArchive = (
     );
     return ok(emptyArchive(artifact, state.diagnostics));
   }
-  const headerBlockBytes = bytes.readUInt16LE(0x28);
+  const headerBlockBytes = reader(bytes).u16(0x28);
   if (headerBlockBytes < FILE_HEADER_BYTES) {
     diagnose(
       state,
@@ -408,8 +412,8 @@ export const parseEvtxArchive = (
     file_version: {
       // `0x18` is the next-record identifier, not a version field; EVTX
       // stores the minor version at `0x24` and the major at `0x26`.
-      major: bytes.readUInt16LE(0x26),
-      minor: bytes.readUInt16LE(0x24),
+      major: reader(bytes).u16(0x26),
+      minor: reader(bytes).u16(0x24),
       header_block_bytes: headerBlockBytes,
       chunk_count: chunkCount,
     },

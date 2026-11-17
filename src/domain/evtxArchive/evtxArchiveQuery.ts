@@ -9,7 +9,7 @@ export const inspectEvtxArchiveInputSchema = z.strictObject({
   path: localPathStringSchema.describe(
     "Absolute path to one local Windows Event Log (.evtx) file",
   ),
-  format: z.literal("evtx").default("evtx"),
+  format: z.enum(["evtx"]).default("evtx"),
   max_file_bytes: z
     .int()
     .positive()

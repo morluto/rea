@@ -22,6 +22,7 @@
   "src/application/environment/environmentStateAnswer.ts": 1,
   "src/application/environment/environmentStateStore.ts": 2,
   "src/application/environment/environmentTools.ts": 1,
+  "src/application/evtxArchive/EvtxArchiveService.ts": 1,
   "src/application/investigation/InvestigationRetention.ts": 1,
   "src/application/native/NativeMatchingAdmission.ts": 1,
   "src/application/ntfs/NtfsJournalService.ts": 2,

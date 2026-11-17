@@ -8,6 +8,7 @@ import type { ToolContract } from "./toolContractTypes.js";
 export const EVTX_ARCHIVE_TOOL_CONTRACTS = [
   {
     name: "inspect_evtx_archive",
+    cli: true,
     ...toolContractMetadata("inspect_evtx_archive", evidenceEffects),
     kind: "application",
     description:
