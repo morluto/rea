@@ -90,6 +90,7 @@
 * **mcp:** retire the full schema profiles and declare schema facts as typed annotations ([#10693](https://github.com/morluto/rea/issues/10693)) ([5c53bca](https://github.com/morluto/rea/commit/5c53bcaed8e2d155454f0e968697950fc20e5c94))
 * name process capture, Rizin and gdb Evidence by their target identities ([#11568](https://github.com/morluto/rea/issues/11568)) ([48b4bcd](https://github.com/morluto/rea/commit/48b4bcd19a5e0dbed36cc9cb7d6af92ea28dda25))
 * **native:** carry the value of each fixed structural decoding allowance ([#11651](https://github.com/morluto/rea/issues/11651)) ([f060967](https://github.com/morluto/rea/commit/f060967789a032ac4f515195c3aa034db2d6b847))
+* **native:** inspect DWARF compile units offline ([637e4cb](https://github.com/morluto/rea/commit/637e4cb60c99b1b17026855297cb03e299c3ba89))
 * **native:** report which Mach-O slices a signature describes and their signing states ([#11620](https://github.com/morluto/rea/issues/11620)) ([34ec903](https://github.com/morluto/rea/commit/34ec90378605228ca935e739a8f01b4776c405b9))
 * **pcap:** carry the value of each fixed packet-tool allowance ([#11643](https://github.com/morluto/rea/issues/11643)) ([1256121](https://github.com/morluto/rea/commit/125612175aa4f58fce8adc63dbc46e3bb45072c9))
 * **pcap:** read tshark JSON packets through one envelope owner with an adjustable expansion bound ([#10788](https://github.com/morluto/rea/issues/10788)) ([c06a0b9](https://github.com/morluto/rea/commit/c06a0b9ee8ae379e361a4d65100ab0ed15f91857))
