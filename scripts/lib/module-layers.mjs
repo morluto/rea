@@ -77,6 +77,7 @@ export const UNIT_LAYERS = Object.freeze(
       "il2cpp",
       "inspector",
       "javascript",
+      "java",
       "jeb",
       "kuna",
       "model",
@@ -317,6 +318,10 @@ export const ENTRY_FILES = Object.freeze(
         "Il2cppMetadataProvider.ts",
       ],
       inspector: ["V8InspectorProvider.ts", "providerIdentity.ts"],
+      java: [
+        "MavenGradleMetadataProvider.ts",
+        "MavenGradleMetadataProviderIdentity.ts",
+      ],
       javascript: [
         "analysis/JavaScriptAnalysisTransfer.ts",
         "analysis/JavaScriptAnalysisWorkerServer.ts",

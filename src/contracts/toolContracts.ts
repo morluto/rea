@@ -15,6 +15,7 @@ import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "./nuget/nupkgToolContracts.js";
 import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
 import { V8_CODE_CACHE_TOOL_CONTRACTS } from "./v8/v8CodeCacheToolContracts.js";
+import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "./java/mavenGradleMetadataToolContracts.js";
 import { SQLITE_TOOL_CONTRACTS } from "./sqlite/sqliteToolContracts.js";
 import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "./analysisViewToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "./native/binaryDiagnosticsToolContracts.js";
@@ -74,6 +75,7 @@ const CATALOG_CONTRACT_GROUPS = {
   NUGET_NUPKG_TOOL_CONTRACTS,
   ERLANG_BEAM_TOOL_CONTRACTS,
   V8_CODE_CACHE_TOOL_CONTRACTS,
+  MAVEN_GRADLE_METADATA_TOOL_CONTRACTS,
   WASM_TOOL_CONTRACTS,
   APK_SIGNATURE_TOOL_CONTRACTS,
   SQLITE_TOOL_CONTRACTS,

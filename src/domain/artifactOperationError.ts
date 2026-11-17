@@ -91,6 +91,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_erlang_beam"
       | "inspect_nuget_nupkg"
       | "inspect_v8_code_cache"
+      | "inspect_maven_gradle_metadata"
       | "extract_artifact"
       | "decode_interface_builder"
       | "inspect_asset_catalog"

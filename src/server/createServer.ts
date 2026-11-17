@@ -203,6 +203,7 @@ export const createServer = (
     releaseExposure,
     nugetNupkg,
     pythonPyc,
+    mavenGradleMetadata,
     dwarfUnits,
     elfDependencies,
     webNetworkCapture,
@@ -447,6 +448,7 @@ export const createServer = (
           sqliteDatabase,
           packetCapture,
           signalRecording,
+          mavenGradleMetadata,
         },
         contractTools,
       );
