@@ -63,8 +63,8 @@ the structured `limit` that names `web.bundle_endpoint_literal_candidates` and
 its effective count. `REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES` seeds that
 setting from the launch environment (default 1024, maximum 4096);
 `update_analysis_settings` changes it for a later operation. `ceiling: "maximal"`
-means the count already reached the setting maximum, so only the byte fit can
-explain the omission. A candidate whose record does not fit the worker result
+means the count setting is already at its maximum and cannot be raised further.
+A candidate whose record does not fit the worker result
 budget is dropped after the count ceiling is applied, so
 `omitted_by_result_budget` counts are not a statement about the script's literal
 inventory, and `omitted_by_count_exact: false` means repeated and deduplicated
