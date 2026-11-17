@@ -157,7 +157,7 @@ export interface UtmpRecord {
   readonly timestampMicroseconds: number;
   /** `ut_addr_v6` as four signed 32-bit words, in the record's own encoding. */
   readonly addressV6: readonly number[];
-  /** Fixed-width fields that carried no terminator or were not well-formed UTF-8. */
+  /** Fixed-width fields whose bytes were not well-formed UTF-8. */
   readonly undecodedFields: readonly string[];
 }
 
@@ -177,6 +177,11 @@ export type UtmpIssue =
       readonly type: number;
     }
   | {
+      readonly kind: "record_budget_exceeded";
+      readonly limit: number;
+      readonly omitted: number;
+    }
+  | {
       readonly kind: "undecoded_field";
       readonly fileOffset: number;
       readonly field: string;
@@ -189,6 +194,10 @@ export interface UtmpParseResult {
   readonly records: readonly UtmpRecord[];
   readonly issues: readonly UtmpIssue[];
 }
+
+/** Default ceiling on retained records, so a large or hostile log cannot amplify
+ * the bytes already loaded into an unbounded object graph. */
+export const UTMP_RECORD_LIMIT = 10_000;
 
 export type UtmpSelection =
   | { readonly profile: UtmpFormatProfile }
@@ -245,7 +254,7 @@ export const utmpFieldLayout = (profile: UtmpFormatProfile): FieldLayout => {
 };
 
 /** Reinterpret an unsigned read as the signed field the record declares. */
-const signed = (value: number | bigint, bits: 32 | 64): number =>
+const signed = (value: number | bigint, bits: 16 | 32 | 64): number =>
   Number(BigInt.asIntN(bits, BigInt(value)));
 
 interface DecodedField {
@@ -261,54 +270,42 @@ const decodeFixedWidth = (
 ): DecodedField => {
   const raw = bytes.subarray(base + offset, base + offset + width);
   const end = raw.indexOf(0);
+  // glibc marks these members `__attribute_nonstring__`, so a field that fills
+  // its whole width is well formed without a terminator; only malformed UTF-8
+  // makes it unreadable.
   const used = end === -1 ? raw : raw.subarray(0, end);
-  // A field without a terminator still reads, but it is not a well-formed
-  // fixed-width string, so the record says so instead of hiding the shape.
-  if (!isStrictUtf8(used))
-    return { text: decodeStrictUtf8(used, "preserve"), decoded: false };
-  return { text: decodeStrictUtf8(used, "preserve"), decoded: end !== -1 };
+  if (isStrictUtf8(used))
+    return { text: decodeStrictUtf8(used, "preserve"), decoded: true };
+  // Malformed bytes: keep the longest valid prefix and mark the field, so one bad
+  // byte cannot abort the file or discard the records decoded before it.
+  let prefix = used.length;
+  while (prefix > 0 && !isStrictUtf8(used.subarray(0, prefix))) prefix -= 1;
+  return {
+    text:
+      prefix === 0
+        ? ""
+        : decodeStrictUtf8(used.subarray(0, prefix), "preserve"),
+    decoded: false,
+  };
 };
 
 /**
- * Parse one login-accounting file under a chosen layout.
+ * Decode `examined` records starting at the profile's first record.
  *
- * Records decode independently, so a truncated tail or an unknown type keeps the
- * records before it inspectable instead of failing the whole file.
+ * Kept separate from the file-level handling so a single record's field work does
+ * not bury the budget, tail and profile logic.
  */
-export const parseUtmpFile = (
-  input: Uint8Array,
-  options: {
-    readonly source: UtmpSource;
-    readonly profile?: UtmpFormatProfile;
-  },
-): Result<UtmpParseResult, readonly UtmpIssue[]> => {
-  const issues: UtmpIssue[] = [];
-  if (input.byteLength === 0)
-    return ok({
-      profile: options.profile ?? null,
-      source: options.source,
-      records: [],
-      issues,
-    });
-
-  const selection = selectUtmpProfile(input.byteLength, options.profile);
-  if ("ambiguous" in selection) {
-    issues.push({
-      kind: "ambiguous_format",
-      candidates: selection.ambiguous.map((candidate) => candidate.name),
-    });
-    return { ok: false, error: issues };
-  }
-
-  const profile = selection.profile;
-  const little = profile.byteOrder === "little";
-  const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
-  const reader = new BinaryReader(bytes, little, UTMP_FORMAT);
-  const layout = utmpFieldLayout(profile);
-  const whole = Math.floor(input.byteLength / profile.recordBytes);
+const decodeRecords = (
+  bytes: Buffer,
+  reader: BinaryReader,
+  profile: UtmpFormatProfile,
+  layout: FieldLayout,
+  examined: number,
+  issues: UtmpIssue[],
+): UtmpRecord[] => {
   const records: UtmpRecord[] = [];
 
-  for (let index = 0; index < whole; index += 1) {
+  for (let index = 0; index < examined; index += 1) {
     const base = index * profile.recordBytes;
     const line = decodeFixedWidth(bytes, base, LINE_OFFSET, LINE_BYTES);
     const id = decodeFixedWidth(bytes, base, ID_OFFSET, ID_BYTES);
@@ -324,7 +321,7 @@ export const parseUtmpFile = (
       if (decoded.decoded) continue;
       issues.push({ kind: "undecoded_field", fileOffset: base, field });
     }
-    const type = signed(reader.u16(base + TYPE_OFFSET), 32);
+    const type = signed(reader.u16(base + TYPE_OFFSET), 16);
     const typeName = UTMP_TYPE_NAMES.get(type) ?? null;
     if (typeName === null)
       issues.push({ kind: "unknown_type", fileOffset: base, type });
@@ -337,8 +334,8 @@ export const parseUtmpFile = (
       id: id.text,
       user: user.text,
       host: host.text,
-      exitTermination: signed(reader.u16(base + EXIT_TERMINATION_OFFSET), 32),
-      exitCode: signed(reader.u16(base + EXIT_CODE_OFFSET), 32),
+      exitTermination: signed(reader.u16(base + EXIT_TERMINATION_OFFSET), 16),
+      exitCode: signed(reader.u16(base + EXIT_CODE_OFFSET), 16),
       session: signed(
         reader.word(
           base + layout.sessionOffset,
@@ -346,11 +343,14 @@ export const parseUtmpFile = (
         ),
         profile.sessionBytes === 4 ? 32 : 64,
       ),
-      timestampSeconds: Number(
+      // `tv_sec` is a signed `time_t`, so a pre-epoch or clock-change value stays
+      // negative instead of becoming a large positive one.
+      timestampSeconds: signed(
         reader.word(
           base + layout.secondsOffset,
           profile.timeBytes === 4 ? 32 : 64,
         ),
+        profile.timeBytes === 4 ? 32 : 64,
       ),
       timestampMicroseconds: signed(
         reader.word(
@@ -368,6 +368,69 @@ export const parseUtmpFile = (
         .map(([field]) => field),
     });
   }
+
+  return records;
+};
+
+/**
+ * Parse one login-accounting file under a chosen layout.
+ *
+ * Records decode independently, so a truncated tail or an unknown type keeps the
+ * records before it inspectable instead of failing the whole file.
+ */
+export const parseUtmpFile = (
+  input: Uint8Array,
+  options: {
+    readonly source: UtmpSource;
+    readonly profile?: UtmpFormatProfile;
+    readonly maxRecords?: number;
+  },
+): Result<UtmpParseResult, readonly UtmpIssue[]> => {
+  const issues: UtmpIssue[] = [];
+  if (input.byteLength === 0)
+    return ok({
+      profile: options.profile ?? null,
+      source: options.source,
+      records: [],
+      issues,
+    });
+
+  // A truncated tail lets a larger record explain any shorter length, so the
+  // length never proves the ABI on its own. The caller states the profile; the
+  // candidates are reported only to help it choose.
+  if (options.profile === undefined) {
+    issues.push({
+      kind: "ambiguous_format",
+      candidates: utmpProfileCandidates(input.byteLength).map(
+        (candidate) => candidate.name,
+      ),
+    });
+    return { ok: false, error: issues };
+  }
+
+  const profile = options.profile;
+  const little = profile.byteOrder === "little";
+  const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+  const reader = new BinaryReader(bytes, little, UTMP_FORMAT);
+  const layout = utmpFieldLayout(profile);
+  const whole = Math.floor(input.byteLength / profile.recordBytes);
+  const limit = options.maxRecords ?? UTMP_RECORD_LIMIT;
+  const examined = Math.min(whole, limit);
+  const records = decodeRecords(
+    bytes,
+    reader,
+    profile,
+    layout,
+    examined,
+    issues,
+  );
+
+  if (whole > examined)
+    issues.push({
+      kind: "record_budget_exceeded",
+      limit,
+      omitted: whole - examined,
+    });
 
   const remainder = input.byteLength - whole * profile.recordBytes;
   if (remainder > 0)

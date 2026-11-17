@@ -38,8 +38,10 @@ Record sizes are arithmetic on those fields: the head, the tail and
 `utmp.test.ts` re-derives each published size from its own offsets, so a profile
 cannot advertise a length its fields do not fill.
 
-Selection is therefore explicit, and an ambiguous file is refused rather than
-decoded under a guess.
+Selection is therefore explicit. `parseUtmpFile` requires a profile: because a
+truncated tail lets a larger record explain any shorter length, the length never
+proves the ABI on its own, so an omitted profile is reported as `ambiguous_format`
+with the candidate names instead of being resolved from the length.
 
 ## Layouts
 
@@ -74,9 +76,16 @@ any ABI that keeps 32-bit session and time fields.
 
 A record keeps its file offset, the raw `ut_type` alongside the glibc name when
 one exists, the decoded fixed-width strings, exit status, session id, timestamp
-and the four `ut_addr_v6` words. A fixed-width field that carries no terminator,
-or whose bytes are not well-formed UTF-8, still decodes as far as it can and is
-named in `undecodedFields`.
+and the four `ut_addr_v6` words.
+
+Signed fields are sign-extended at their declared width: `ut_type` and the exit
+status at 16 bits, `ut_session` at its profile width, and `tv_sec` as a signed
+`time_t`, so a pre-epoch or clock-change timestamp stays negative.
+
+The fixed-width string members are `__attribute_nonstring__`, so a field that
+fills its whole width is well formed without a terminator. Only malformed UTF-8
+marks a field: the readable prefix is kept, the field is named in
+`undecodedFields`, and the remaining records still decode.
 
 | Issue                      | Cause                                                               |
 | -------------------------- | ------------------------------------------------------------------- |
@@ -84,6 +93,13 @@ named in `undecodedFields`.
 | `truncated_trailing_bytes` | The file ends mid-record; earlier records stay readable.            |
 | `unknown_type`             | `ut_type` has no glibc name; the numeric value is kept.             |
 | `undecoded_field`          | A fixed-width field had no terminator or was not well-formed UTF-8. |
+
+## Bounds
+
+Retention is bounded. `maxRecords` (default `UTMP_RECORD_LIMIT`, 10 000) caps how
+many records one call materializes, so a large or hostile log cannot amplify the
+bytes already loaded into an unbounded object graph. Exceeding it reports
+`record_budget_exceeded` with the number omitted rather than silently truncating.
 
 ## Out of scope
 

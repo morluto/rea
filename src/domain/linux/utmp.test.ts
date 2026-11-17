@@ -163,7 +163,7 @@ describe("utmp record decoding", () => {
   it("decodes a glibc 32-bit-time login record", () => {
     const result = parseUtmpFile(
       recordBytes(glibc32, login({ addressV6: [0x7f000001, 0, 0, 0] })),
-      { source: "wtmp" },
+      { source: "wtmp", profile: glibc32 },
     );
     if (!result.ok) throw new Error("expected a parsed record");
     expect(result.value.profile?.name).toBe("glibc-time32");
@@ -232,7 +232,9 @@ describe("utmp record decoding", () => {
     if (!result.ok) throw new Error("expected a parsed record");
     expect(result.value.records[0]?.addressV6[0]).toBe(0xffffffff);
   });
+});
 
+describe("utmp diagnostics and bounds", () => {
   it("keeps every record when one carries a truncated tail", () => {
     const whole = recordBytes(glibc32, login());
     const bytes = new Uint8Array(whole.byteLength * 2 + 17);
@@ -255,6 +257,7 @@ describe("utmp record decoding", () => {
   it("keeps an unknown record type inspectable", () => {
     const result = parseUtmpFile(recordBytes(glibc32, login({ type: 240 })), {
       source: "btmp",
+      profile: glibc32,
     });
     if (!result.ok) throw new Error("expected a parsed record");
     expect(result.value.records[0]).toMatchObject({
@@ -266,14 +269,119 @@ describe("utmp record decoding", () => {
     ]);
   });
 
-  it("reports a fixed-width field that carries no terminator", () => {
-    const bytes = recordBytes(glibc32, login({ user: "x".repeat(32) }));
-    const result = parseUtmpFile(bytes, { source: "utmp" });
+  it("accepts a full-width field, which glibc does not require to be terminated", () => {
+    // `ut_user` is `__attribute_nonstring__` and `ut_id` is four bytes wide, so a
+    // field that fills its width with valid UTF-8 is normal evidence.
+    const bytes = recordBytes(
+      glibc32,
+      login({ user: "x".repeat(32), id: "abcd" }),
+    );
+    const result = parseUtmpFile(bytes, { source: "utmp", profile: glibc32 });
     if (!result.ok) throw new Error("expected a parsed record");
     expect(result.value.records[0]?.user).toBe("x".repeat(32));
+    expect(result.value.records[0]?.id).toBe("abcd");
+    expect(result.value.issues).toEqual([]);
+  });
+
+  it("keeps the readable prefix of a malformed field instead of aborting", () => {
+    const bytes = recordBytes(
+      glibc32,
+      login({ user: "ok", user2: undefined } as never),
+    );
+    // Overwrite the user field with a valid prefix followed by invalid bytes.
+    bytes.set(new TextEncoder().encode("keep"), 44);
+    bytes[48] = 0xff;
+    bytes[49] = 0xfe;
+    bytes[50] = 0;
+    const result = parseUtmpFile(bytes, { source: "utmp", profile: glibc32 });
+    if (!result.ok)
+      throw new Error("expected a parsed record, not a throw or an error");
+    expect(result.value.records[0]?.user).toBe("keep");
+    expect(result.value.records[0]?.undecodedFields).toEqual(["user"]);
     expect(result.value.issues).toEqual([
       { kind: "undecoded_field", fileOffset: 0, field: "user" },
     ]);
+  });
+});
+
+describe("utmp field widths and byte order", () => {
+  it("keeps a negative timestamp negative", () => {
+    const bytes = recordBytes(glibc32, login({ seconds: -1 }));
+    const result = parseUtmpFile(bytes, { source: "wtmp", profile: glibc32 });
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.records[0]?.timestampSeconds).toBe(-1);
+  });
+
+  it("sign-extends a 16-bit field at its declared width", () => {
+    const result = parseUtmpFile(
+      recordBytes(glibc32, login({ type: 0xffff })),
+      {
+        source: "wtmp",
+        profile: glibc32,
+      },
+    );
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.records[0]?.type).toBe(-1);
+  });
+
+  it("bounds retained records and reports what it omitted", () => {
+    const one = recordBytes(glibc32, login());
+    const bytes = new Uint8Array(one.byteLength * 4);
+    for (let index = 0; index < 4; index += 1)
+      bytes.set(
+        recordBytes(glibc32, login({ pid: index })),
+        index * one.byteLength,
+      );
+    const result = parseUtmpFile(bytes, {
+      source: "wtmp",
+      profile: glibc32,
+      maxRecords: 2,
+    });
+    if (!result.ok) throw new Error("expected a parsed file");
+    expect(result.value.records).toHaveLength(2);
+    expect(result.value.issues).toContainEqual({
+      kind: "record_budget_exceeded",
+      limit: 2,
+      omitted: 2,
+    });
+  });
+
+  it("requires a stated profile because a truncated tail fits any length", () => {
+    // 384 bytes is exactly one x86 record, but it is also an aarch64 record
+    // truncated by 16 bytes, so the length cannot choose the layout.
+    const result = parseUtmpFile(recordBytes(glibc32, login()), {
+      source: "wtmp",
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toEqual([
+      {
+        kind: "ambiguous_format",
+        candidates: utmpProfileCandidates(384).map(({ name }) => name),
+      },
+    ]);
+  });
+
+  it("pins the published offsets without asking the layout helper", () => {
+    // Literal offsets, so a wrong derivation cannot make the fixture agree with it.
+    const bytes = new Uint8Array(384);
+    const view = new DataView(bytes.buffer);
+    view.setInt16(0, 7, true);
+    view.setInt32(4, 99, true);
+    bytes.set(new TextEncoder().encode("tty1"), 8);
+    view.setInt32(336, 34, true); // ut_session
+    view.setInt32(340, 1_234, true); // tv_sec
+    view.setInt32(344, 5, true); // tv_usec
+    const result = parseUtmpFile(bytes, { source: "utmp", profile: glibc32 });
+    if (!result.ok) throw new Error("expected a parsed record");
+    expect(result.value.records[0]).toMatchObject({
+      type: 7,
+      pid: 99,
+      line: "tty1",
+      session: 34,
+      timestampSeconds: 1_234,
+      timestampMicroseconds: 5,
+    });
   });
 
   it("returns an empty result for an empty file", () => {
