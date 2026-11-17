@@ -412,6 +412,7 @@
 
 * **ci:** cache npm downloads and portable builds in Ghidra, readiness, mutation, and recovery jobs ([f5285e6](https://github.com/morluto/rea/commit/f5285e6a54e846b9bbbbe5d79b5ddda295f835af))
 * **ci:** narrow PR test selection fallbacks, unify stray lanes, and cache Windows builds ([#11797](https://github.com/morluto/rea/issues/11797)) ([30d5ad2](https://github.com/morluto/rea/commit/30d5ad2a48fc8668ff0be961c7637fdbf638f65e))
+* **ci:** split lazy runtime chunks, cache Windows typecheck, and reuse test analysis workers ([#11827](https://github.com/morluto/rea/issues/11827)) ([5a2a08a](https://github.com/morluto/rea/commit/5a2a08a0481a37c94365cfc69175b278f0643e41))
 * **ci:** use blobless checkout and npm cache in release-proposal ([f3765a5](https://github.com/morluto/rea/commit/f3765a54c719a4d43fc2b764dc558f968161b137))
 * **ci:** use four Vitest workers on hosted runners ([#10399](https://github.com/morluto/rea/issues/10399)) ([3403338](https://github.com/morluto/rea/commit/3403338ea05d231fc1b8d45c80d74e026d266a3f))
 * **cli:** answer a standalone --version without loading the command registry ([#11312](https://github.com/morluto/rea/issues/11312)) ([6a51213](https://github.com/morluto/rea/commit/6a5121363c494c696ca30be65cba5559eef660c5))
