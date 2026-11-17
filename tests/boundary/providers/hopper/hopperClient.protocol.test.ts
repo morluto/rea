@@ -9,7 +9,7 @@ import { once } from "node:events";
 import { describe, expect, expectTypeOf, it, onTestFinished } from "vitest";
 import { z } from "zod";
 
-import { HopperProcessError } from "../../../../src/domain/hopperErrors.js";
+import { HopperProcessError } from "../../../../src/hopper/HopperErrors.js";
 import { HOPPER_OPERATIONS } from "../../../../src/hopper/HopperProviderMetadata.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperReplyContractError } from "../../../../src/hopper/HopperReplyContracts.js";

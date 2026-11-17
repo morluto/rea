@@ -34,7 +34,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   OwnedCommandFailure,
   ownedCommandResources,
@@ -52,7 +52,9 @@ import {
   AnalysisOutputError,
   cancelledBy,
   carriedReason,
+  type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
@@ -94,20 +96,16 @@ import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "inspect_evm_interface";
 
-/** The caller's own abort, keeping any read cleanup bound to the report. */
+/** The caller's cancellation, observed as `signal`'s own abort. */
 const abortedFailure = (
-  cause: unknown,
+  signal: AbortedSignal,
   retainedOutput: AnalysisCapturedOutput | undefined,
-): AnalysisCancelledError => {
-  const failure = cancelledBy(OPERATION, carriedReason(cause), {
-    ...(retainedOutput === undefined ? {} : { capturedOutput: retainedOutput }),
-    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-      ? { cleanup: cause.cleanup }
-      : {}),
-  });
-  bindArtifactFileCleanup(cause, failure);
-  return failure;
-};
+): AnalysisCancelledError =>
+  cancelledBy(
+    OPERATION,
+    signal,
+    retainedOutput === undefined ? {} : { capturedOutput: retainedOutput },
+  );
 const HOST_REQUIREMENT =
   "Initial real-verified offline EVM interface profile supports Linux x64 only.";
 
@@ -403,11 +401,7 @@ const evmReplyCompletionFailure = (
   bindArtifactFileCleanup(cause, cleanup);
   return cancellation === undefined
     ? cleanup
-    : analysisErrorWithCleanupFailure(
-        cancellation,
-        cleanup,
-        OPERATION,
-      ).bindCleanupDependencies([cancellation, cleanup]);
+    : analysisErrorWithCleanupDependencies(cancellation, cleanup, OPERATION);
 };
 
 /** Run unchanged EVMole/WASM in an owned worker; no target, chain or network execution. */
@@ -775,8 +769,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             phase,
             failure_kind: reply.reason,
             reason: reply.message,
-            stdout: execution.stdout.text,
-            stderr: execution.stderr.text,
+            stdout: capturedOutput.stdout,
+            stderr: capturedOutput.stderr,
             captured_output: { ...capturedOutput },
           },
         });
@@ -891,31 +885,31 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           };
         }
       }
-      let failure =
-        options?.signal?.aborted &&
-        (cause === options.signal.reason ||
-          (cause instanceof Error && cause.name === "AbortError"))
-          ? abortedFailure(cause, retainedOutput)
-          : // Owns the selected carrier's cleanup binding and snapshot identity.
-            classifyProviderFailure(
-              cause,
-              evmFailureDialect({
-                phase,
-                path: input.path,
-                workerLimits,
-                limiter,
-                fileFailure,
-                timeoutMs,
-                producerLimits,
-              }),
-            );
+      // Only this caller's own abort is a cancellation; an abort error with
+      // another reason is classified as the failure it is.
+      const signal = options?.signal;
+      let failure = isAbortOf(cause, signal)
+        ? abortedFailure(signal, retainedOutput)
+        : // Owns the selected carrier's cleanup binding and snapshot identity.
+          classifyProviderFailure(
+            cause,
+            evmFailureDialect({
+              phase,
+              path: input.path,
+              workerLimits,
+              limiter,
+              fileFailure,
+              timeoutMs,
+              producerLimits,
+            }),
+          );
       if (markerCleanupFailure !== undefined) {
         const cleanup = retainedCleanupFailure(markerCleanupFailure);
-        failure = analysisErrorWithCleanupFailure(
+        failure = analysisErrorWithCleanupDependencies(
           failure,
           cleanup,
           OPERATION,
-        ).bindCleanupDependencies([failure, cleanup]);
+        );
       }
       result = err(failure);
     }
@@ -928,11 +922,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       } else {
         result = err(
           replyFinalization.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
+            ? analysisErrorWithCleanupDependencies(
                 result.error,
                 replyFinalization,
                 OPERATION,
-              ).bindCleanupDependencies([result.error, replyFinalization])
+              )
             : result.error.retainSecondaryFailure(replyFinalization, {
                 reply_finalization_error:
                   projectAnalysisErrorWithoutCapturedOutput(replyFinalization),

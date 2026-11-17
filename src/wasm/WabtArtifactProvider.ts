@@ -37,6 +37,7 @@ import {
   cancelledBy,
   isAborted,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -517,12 +518,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       }).catch((cause: unknown) => {
         // Node rejects a write this signal aborted with an envelope that
         // carries the signal's own reason; any other failure stays itself.
-        if (
-          isAborted(signal) &&
-          cause instanceof Error &&
-          cause.cause === signal.reason
-        )
-          throw cancelledBy(OPERATION, signal);
+        if (isAbortOf(cause, signal)) throw cancelledBy(OPERATION, signal);
         throw cause;
       });
       snapshotHash = selected.sha256;
@@ -535,7 +531,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       )
         throw new WabtAdmissionError("incomplete_tool_profile");
       const validation = await execute(validate, validate.arguments, true);
-      if (validation.exitCode !== 0)
+      if (validation.exitCode !== 0) {
+        const validationOutput = capturedProviderOutput(validation);
         throw new AnalysisInputError(
           OPERATION,
           {
@@ -548,9 +545,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 result: {
                   ...acquiredFacts(),
                   validation: "rejected-by-selected-profile",
-                  exit_code: validation.exitCode ?? null,
-                  stdout: validation.stdout.text,
-                  stderr: validation.stderr.text,
+                  exit_code: validationOutput.exit_code ?? null,
+                  stdout: validationOutput.stdout,
+                  stderr: validationOutput.stderr,
                 },
                 confidence: "observed",
                 locations: [{ kind: "artifact-path", path: input.path }],
@@ -562,7 +559,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 ],
               },
             ),
-            capturedOutput: capturedProviderOutput(validation),
+            capturedOutput: validationOutput,
           },
           [
             {
@@ -573,6 +570,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             },
           ],
         );
+      }
       validationState = "valid";
       const customSectionWarnings: {
         tool: (typeof commands)[number]["tool"];

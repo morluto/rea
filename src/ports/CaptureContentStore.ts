@@ -2,6 +2,7 @@ import type { Buffer } from "node:buffer";
 
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 
 type Omission = DesktopApplicationCapture["state"]["omitted_content"][number];
 
@@ -44,4 +45,16 @@ export interface CaptureContentStore {
    * when the directory holds anything else or a removal fails.
    */
   discard(): Promise<void>;
+}
+
+/** The application capture's prepared content store, with the totals the capture records. */
+export interface DesktopCaptureStore extends CaptureContentStore {
+  /** Files retained so far. */
+  readonly files: number;
+  /** Bytes retained so far. */
+  readonly bytes: number;
+  /** Files whose bytes were left out, and why. */
+  readonly omissions: readonly Omission[];
+  /** The capture's cleanup owner for read handles whose close failed, and for failed inspection resources. */
+  readonly resourceScope: ArtifactResourceScope;
 }

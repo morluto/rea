@@ -2,7 +2,7 @@ import {
   admitOneShotOperation,
   type DirectAnalysisTool,
 } from "./oneShotOperationInput.js";
-import { admitCompletedAnalysis } from "./investigation/admitCompletedAnalysis.js";
+import { completedOperationEvidence } from "./binary/SessionEvidenceReuse.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
@@ -308,7 +308,8 @@ export const runManagedProviderExecution = async (
       async () => {
         const opened = await session.open(path, { signal: operationSignal });
         if (!opened.ok) return opened;
-        return recoveryParameters === undefined
+        return recoveryParameters === undefined ||
+          session.executeForDirectObservation === undefined
           ? await session.execute(admitted.value.name, admitted.value.input, {
               signal: operationSignal,
             })
@@ -794,27 +795,17 @@ const executeAnalysisTool = async (input: {
       );
   }
   if (!result.ok) return result;
-  const observation = {
-    ...result.value,
-    subject:
-      result.value.subject === undefined
-        ? input.openedTarget
-        : result.value.subject,
-  };
-  const admitted = admitCompletedAnalysis(
+  const evidence = completedOperationEvidence(
     tool,
     input.evidenceParameters,
-    observation,
-    session.admitRecoveryObservation.bind(session),
+    result.value,
+    {
+      target: input.openedTarget,
+      admitRecovery: session.admitRecoveryObservation.bind(session),
+      evidenceById: (id) => session.evidenceForAnalysis(id),
+    },
   );
-  if (!admitted.ok) return admitted;
-  const evidence = createAnalysisExecutionEvidence(
-    tool,
-    input.evidenceParameters,
-    observation,
-    "observed",
-  );
-  return ok({ evidence });
+  return evidence.ok ? ok({ evidence: evidence.value }) : evidence;
 };
 
 const withProcessCancellation = async <Value>(

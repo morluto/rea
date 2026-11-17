@@ -108,10 +108,14 @@ export const runPcapCommand = async (options: {
     snapshot: ProviderProcessSnapshot,
   ): AnalysisCapturedOutput =>
     projectDiagnostic(capturedProviderOutput(snapshot));
-  /** A version probe that fails names the tool; a capture read names the file. */
+  /**
+   * A version probe that fails names the tool; a capture read names the file
+   * when the tool says it is not a capture. `unrecognised` reports the rest.
+   */
   const pcapToolFailure = (
     diagnostic: string,
     details: AnalysisErrorOptions,
+    unrecognised: (reason: string) => AnalysisError,
   ): AnalysisError => {
     if (options.inputPath === undefined)
       return pcapToolUnavailable(
@@ -130,10 +134,7 @@ export const runPcapCommand = async (options: {
         diagnostic,
         details,
       );
-    return new AnalysisProtocolError(
-      `Packet capture tool ${command} failed: ${diagnostic}`,
-      details,
-    );
+    return unrecognised(`Packet capture tool ${command} failed: ${diagnostic}`);
   };
   if (signal?.aborted) throw cancelledBy(operation, signal);
   const hostEnvironment = {
@@ -199,18 +200,19 @@ export const runPcapCommand = async (options: {
         },
       },
     );
+    const unredacted = capturedProviderOutput(output);
     if (selectedLimiter !== undefined)
       await assertArtifactCommandPath(selectedLimiter, operation, {
         get capturedOutput() {
-          return captureDiagnostic(output);
+          return projectDiagnostic(unredacted);
         },
       });
     return {
       get capturedOutput() {
-        return captureDiagnostic(output);
+        return projectDiagnostic(unredacted);
       },
-      stdout: output.stdout.text,
-      stderr: output.stderr.text,
+      stdout: unredacted.stdout,
+      stderr: unredacted.stderr,
       invalidUtf8Streams: [
         ...(output.stdout.invalidUtf8 === true ? (["stdout"] as const) : []),
         ...(output.stderr.invalidUtf8 === true ? (["stderr"] as const) : []),
@@ -292,7 +294,11 @@ export const runPcapCommand = async (options: {
           `The packet command could not start; the failing stage is unknown: ${diagnostic}`,
           details,
         );
-      throw pcapToolFailure(diagnostic, details);
+      throw pcapToolFailure(
+        diagnostic,
+        details,
+        (reason) => new AnalysisProtocolError(reason, details),
+      );
     }
     throw classifyProviderOutcome(outcome, {
       providerId: "pcap",
@@ -343,15 +349,17 @@ export const runPcapCommand = async (options: {
           details,
         );
       },
-      dialect: (failure, details) => {
+      dialect: (failure, details, unclassified) => {
+        // The examined outcome carries the exit facts; `detail` names the stage.
+        const unrecognised = (reason: string) =>
+          unclassified({ diagnostics: { detail: reason } });
         const diagnostic =
           failure.output?.snapshot.stderr.text.trim() || failure.message;
         if (!commandAttempted) return preparationFailure(diagnostic, details);
         if (selectedLimiter !== undefined) {
           if (failure.kind !== "exited" || failure.output === undefined)
-            return new AnalysisProtocolError(
+            return unrecognised(
               `The bounded packet command failed before its exit was observed; whether the limiter or selected tool failed is unknown: ${diagnostic}`,
-              details,
             );
           const attributed = attributePcapLimitedExit(selectedLimiter, {
             exitCode: failure.exitCode,
@@ -381,7 +389,7 @@ export const runPcapCommand = async (options: {
             );
           // Otherwise prlimit started the tool; its exit and output are the tool's.
         }
-        return pcapToolFailure(diagnostic, details);
+        return pcapToolFailure(diagnostic, details, unrecognised);
       },
     });
   }

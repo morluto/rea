@@ -2,14 +2,14 @@ import { access, mkdtemp, rmdir } from "node:fs/promises";
 import { expect, it, onTestFinished } from "vitest";
 
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
-import { HopperStartError } from "../../../src/domain/hopperErrors.js";
+import { HopperStartError } from "../../../src/hopper/HopperErrors.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import type {
   BridgeLauncher,
   BridgeSession,
 } from "../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../src/hopper/HopperClient.js";
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { hopperFixturePath } from "../providers/hopper/hopperClient.fixture.js";

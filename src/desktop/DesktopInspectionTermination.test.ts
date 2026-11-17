@@ -24,11 +24,11 @@ vi.mock("./DesktopSessionObservations.js", async (original) => ({
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { ProcessOwnershipIdentityBatchFailure } from "../process/ProcessInspectionCancellation.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
+import { runDesktopSession } from "./DesktopApplicationSession.js";
 import {
-  runDesktopSession,
+  DesktopSessionCleanupError,
   type DesktopSessionOutcome,
-} from "./DesktopApplicationSession.js";
-import { DesktopSessionCleanupError } from "../ports/DesktopApplicationSession.js";
+} from "../ports/DesktopApplicationSession.js";
 import type { X11WindowObserver } from "./X11WindowObserver.js";
 
 const inspectionContext = (

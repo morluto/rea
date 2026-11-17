@@ -1,8 +1,8 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { Cli } from "incur";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { observeJavaScriptRuntime } from "../../src/application/javascript/JavaScriptRuntimeObservationService.js";
@@ -149,7 +149,7 @@ describe("JavaScript runtime observation CLI parity", () => {
     const previousExitCode = process.exitCode;
     process.exitCode = 0;
     try {
-      const cli = Cli.create("rea-runtime-cleanup-test", { sync: false });
+      const cli = createCommandCli();
       registerJavaScriptRuntimeObservationCommands(cli, silentLogger, {});
       let stdout = "";
       await cli.serve(

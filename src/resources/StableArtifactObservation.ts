@@ -7,7 +7,10 @@ import {
   completedStableArtifactIdentity,
 } from "./readStableArtifact.js";
 
-/** Completed file identity survives finalization; it does not establish decoded content. */
+/**
+ * Completed file identity survives finalization and later decoding failures;
+ * `completed` is the snapshot a provider already holds when its parser fails.
+ */
 export const completedStableArtifactObservation = (
   cause: unknown,
   path: string,

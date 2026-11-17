@@ -119,6 +119,7 @@ import { ElfUnwindRangesProvider } from "../../src/native/elf/ElfUnwindRangesPro
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
 import { KernelModuleProvider } from "../../src/native/elf/KernelModuleProvider.js";
 import { ElfDebugLinkProvider } from "../../src/native/elf/ElfDebugLinkProvider.js";
+import { ElfDependenciesProvider } from "../../src/native/elf/ElfDependenciesProvider.js";
 import { KernelBuildConfigProvider } from "../../src/native/elf/KernelBuildConfigProvider.js";
 import { PeCertificatesProvider } from "../../src/native/pe/PeCertificatesProvider.js";
 import { PeImportsProvider } from "../../src/native/pe/PeImportsProvider.js";
@@ -131,6 +132,7 @@ import { inspectElfUnwindRangesInputSchema } from "../../src/domain/native/elfUn
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../../src/domain/native/kernelModule.js";
 import { inspectElfDebugLinkInputSchema } from "../../src/domain/native/elfDebugLink.js";
+import { inspectElfDependenciesInputSchema } from "../../src/domain/native/elfDependencies.js";
 import { inspectKernelBuildConfigInputSchema } from "../../src/domain/native/kernelBuildConfig.js";
 import { inspectPeCertificatesInputSchema } from "../../src/domain/native/peCertificates.js";
 import { inspectPeImportsInputSchema } from "../../src/domain/native/peImports.js";
@@ -1020,6 +1022,7 @@ const stableArtifactProviders = [
   ["Apple IPS", () => new AppleIpsProvider()],
   ["kernel module", () => new KernelModuleProvider()],
   ["ELF debug link", () => new ElfDebugLinkProvider()],
+  ["ELF dependencies", () => new ElfDependenciesProvider()],
   ["kernel build config", () => new KernelBuildConfigProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
@@ -1075,6 +1078,11 @@ const inspectFileFailure = (
   if (provider instanceof ElfDebugLinkProvider)
     return provider.inspect(
       inspectElfDebugLinkInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof ElfDependenciesProvider)
+    return provider.inspect(
+      inspectElfDependenciesInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof KernelBuildConfigProvider)
@@ -1158,6 +1166,7 @@ it.each(
           provider instanceof ElfUnwindRangesProvider ||
           provider instanceof KernelModuleProvider ||
           provider instanceof ElfDebugLinkProvider ||
+          provider instanceof ElfDependenciesProvider ||
           provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
           provider instanceof PeResourcesProvider

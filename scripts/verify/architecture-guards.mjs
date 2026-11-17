@@ -9,7 +9,10 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
-import { incurZodImportCount } from "./incur-import-guard.mjs";
+import {
+  incurImportedNameCount,
+  incurZodImportCount,
+} from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
@@ -27,6 +30,7 @@ import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
+import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -214,23 +218,37 @@ check(
   ],
 );
 
+// A signal's own abort is the abort error carrying that signal's reason; a bare
+// ABORT_ERR code may come from another signal or a synthetic failure.
+check(
+  "ABORT_ERR code comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  files,
+  /(?:===|!==)\s*["']ABORT_ERR["']|["']ABORT_ERR["']\s*(?:===|!==)/u,
+  ["src/process/SignalAbort.ts"],
+);
+
+// Hopper's error types live with the Hopper adapter. Shared layers read the
+// provider-neutral facts every AnalysisError carries (ownPresentation,
+// providerWide, providerRequest) and never import a provider's error types.
+check(
+  "import of Hopper error types outside src/hopper (use the provider-neutral AnalysisError facts)",
+  files.filter((file) => !file.path.startsWith("src/hopper/")),
+  /from "\.{1,2}\/(?:[\w-]+\/)*HopperErrors\.js"/u,
+);
+
+// An unrecognised command outcome is reported only by the shared outcome
+// classifier, which attaches the outcome it examined; a provider reports it
+// through the dialect's `unclassified` callback.
+check(
+  "UnclassifiedProviderFailure construction outside classifyProviderOutcome (use the dialect's unclassified report)",
+  files,
+  /\bnew\s+UnclassifiedProviderFailure\b/u,
+  ["src/process/classifyProviderOutcome.ts"],
+);
+
 // "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
-// A local predicate with that body, under any name, is a copy. The listed files
-// still hold one and may only be removed from the list; a listed file that no
-// longer matches fails so the list shrinks with the code.
-const RECORD_PREDICATE_COPIES = [
-  // Exported under a module-specific name; importers still use that name.
-  "src/browser/history/CaptureRedaction.ts",
-  "src/contracts/compactJsonSchema.ts",
-  "src/domain/analysisView/environmentStateRules.ts",
-  // Owned by the advertised-schema workstream.
-  "src/contracts/inputSchemaPresentation.ts",
-  // Narrows a protocol-specific parameter type, not unknown.
-  "src/browser/execution/CdpRuntimeInitiator.ts",
-  // Named `object`, which also spells the typeof result in these files.
-  "src/pcap/PcapDnsWire.ts",
-  "src/pcap/PcapOutput.ts",
-];
+// A local predicate with that body, under any name, is a copy.
+const RECORD_PREDICATE_COPIES = [];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
   if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
@@ -432,6 +450,16 @@ checkCounted(
   files,
   /new AnalysisCancelledError\(/gu,
   ["src/domain/analysisErrorCore.ts"],
+);
+
+// Whether an abort error is a signal's own cancellation is decided by the
+// signal owner; a name comparison alone accepts another signal's abort.
+checkCounted(
+  "AbortError name comparison (use isAbortOf or isAbortWithReason from src/process/SignalAbort)",
+  "abort-error-name",
+  files,
+  /\.name\s*===\s*["']AbortError["']/gu,
+  ["src/process/SignalAbort.ts"],
 );
 
 // A refusal for a limit a parser stopped at is built from the failure's
@@ -921,6 +949,29 @@ checkCounted(
   [],
 );
 
+// Every CLI command is registered through src/cli/commandRegistry.ts, which
+// records it in REA's command table (name, inputs, contract operations and
+// their flags) before handing it to the dispatcher (#11654). A direct
+// `cli.command(...)` would be dispatched but missing from that table.
+checkCounted(
+  "CLI command registered outside REA's command table (use registerCliCommand)",
+  "cli-command-outside-registry",
+  files,
+  /\bcli\.command\(/gu,
+  ["src/cli/commandRegistry.ts"],
+);
+
+// REA is replacing incur with its own CLI owners (#11654). Each replacement
+// removes the names it superseded; this counted list only shrinks until incur
+// leaves package.json.
+checkCounted(
+  "name imported from incur (use REA's CLI owner in src/cli)",
+  "incur-import",
+  [...files, ...testFiles],
+  (_content, file) => incurImportedNameCount(file.source ?? file.content),
+  [],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
@@ -1013,6 +1064,15 @@ checkCounted(
     "tests/boundary/mcp/outputValidatorReuse.test.ts",
   ],
 );
+
+// Scripts covered by tsconfig.scripts.json declare and check their types in
+// JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
+// creates a second, unchecked type source that hides signature drift.
+const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
+if (siblingDeclarationFiles.length > 0)
+  failures.push(
+    `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
 
 for (const key of baselineTexts.keys())
   if (!checkedBaselineKeys.has(key))

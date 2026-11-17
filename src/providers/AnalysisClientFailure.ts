@@ -1,10 +1,5 @@
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
-  HopperRemoteError,
-  HopperTimeoutError,
-  HopperProcessError,
-} from "../domain/hopperErrors.js";
-import {
   AnalysisError,
   type AnalysisErrorOptions,
 } from "../domain/analysisErrorBase.js";
@@ -33,25 +28,7 @@ export const analysisClientFailureContext = (
   providerId: string,
   operation: string,
 ): AnalysisErrorOptions => {
-  const providerRequest =
-    cause instanceof HopperRemoteError ||
-    cause instanceof HopperTimeoutError ||
-    cause instanceof HopperProcessError
-      ? {
-          ...(cause.operation === undefined
-            ? {}
-            : { operation: cause.operation }),
-          ...(cause.requestId === undefined
-            ? {}
-            : { request_id: cause.requestId }),
-          ...(cause instanceof HopperRemoteError
-            ? {
-                provider_code: cause.code,
-                diagnostic_type: cause.diagnosticType,
-              }
-            : {}),
-        }
-      : undefined;
+  const providerRequest = cause.providerRequest()?.facts;
   const attribute = (
     recorded: Readonly<Record<string, JsonValue>> | undefined,
   ): Readonly<Record<string, JsonValue>> | undefined =>
@@ -69,6 +46,7 @@ export const analysisClientFailureContext = (
   return {
     cause,
     ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.related === undefined ? {} : { related: cause.related }),
     ...(cause.continuingCallerGuidance === undefined
       ? {}
       : { continuingCallerGuidance: cause.continuingCallerGuidance }),
@@ -120,10 +98,9 @@ export const analysisClientFailureForOperation = (
     bindArtifactFileCleanup(cause, failure);
     return failure;
   }
+  const providerRequest = cause.providerRequest();
   if (
-    !(cause instanceof HopperRemoteError) &&
-    !(cause instanceof HopperTimeoutError) &&
-    !(cause instanceof HopperProcessError) &&
+    providerRequest === undefined &&
     !(cause instanceof AnalysisCancelledError) &&
     !(cause instanceof ProviderAdapterError) &&
     !(cause instanceof AnalysisCapabilityUnavailableError) &&
@@ -148,37 +125,8 @@ export const analysisClientFailureForOperation = (
         }),
   };
   let result: AnalysisError;
-  if (cause instanceof HopperRemoteError)
-    result = new HopperRemoteError(cause.code, cause.safeMessage, {
-      ...context,
-      operation,
-      requestId: cause.requestId,
-      diagnosticType: cause.diagnosticType,
-    });
-  else if (cause instanceof HopperTimeoutError)
-    result = new HopperTimeoutError(
-      cause.timeoutMs,
-      operation,
-      cause.requestId,
-      cause.providerState,
-      cause.stage,
-      cause.launcherOutcome,
-      context,
-    );
-  else if (cause instanceof HopperProcessError)
-    result = new HopperProcessError(cause.exitCode, {
-      ...context,
-      operation,
-      requestId: cause.requestId,
-      providerState: cause.providerState,
-      stage: cause.stage,
-      ...(cause.diagnostic === undefined
-        ? {}
-        : { diagnostic: cause.diagnostic }),
-      ...(cause.launcherFailure === undefined
-        ? {}
-        : { launcherFailure: cause.launcherFailure }),
-    });
+  if (providerRequest !== undefined)
+    result = providerRequest.reattribute(operation, context);
   else if (cause instanceof ProviderCleanupError) {
     const { diagnostics, ...outcomeContext } = context;
     result = new ProviderCleanupError(
@@ -262,7 +210,7 @@ export const analysisClientFailureForOperation = (
     );
   else if (cause instanceof AnalysisResourceConstraintError)
     result = reattributedResourceConstraint(operation, cause, context);
-  else
+  else if (cause instanceof ProviderAdapterError)
     result = new ProviderAdapterError(providerId, operation, {
       ...context,
       ...(cause.userMessage === undefined
@@ -272,6 +220,7 @@ export const analysisClientFailureForOperation = (
         ? {}
         : { remediationAction: cause.remediationAction }),
     });
+  else return cause;
   for (const secondary of cause.secondaryFailures) {
     if (secondary instanceof AnalysisCancelledError)
       result = analysisErrorWithCancellation(result, secondary);

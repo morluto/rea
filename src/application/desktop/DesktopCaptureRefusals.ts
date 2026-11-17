@@ -21,8 +21,8 @@ import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
 } from "../../process/RegularFileRead.js";
-import { resolveProgram } from "../../desktop/ProgramLookup.js";
 import type {
+  DesktopCaptureProvider,
   LinuxApplicationRefusal,
   ObservedWindow,
 } from "../../ports/DesktopApplicationSession.js";
@@ -159,6 +159,7 @@ export const checkDesktopCaptureHost = async (
   host: {
     readonly platform: NodeJS.Platform;
     readonly environment: NodeJS.ProcessEnv;
+    readonly desktop: Pick<DesktopCaptureProvider, "resolveProgram">;
   },
 ) => {
   if (host.platform !== "linux")
@@ -176,7 +177,11 @@ export const checkDesktopCaptureHost = async (
     );
   const xprop = host.environment.REA_XPROP_COMMAND ?? "xprop";
   if (
-    (await resolveProgram(xprop, host.environment, process.cwd())) === undefined
+    (await host.desktop.resolveProgram(
+      xprop,
+      host.environment,
+      process.cwd(),
+    )) === undefined
   )
     throw unavailable(
       "executable_missing",

@@ -134,14 +134,14 @@ product pages. The VitePress documentation source is this `docs/` tree.
 
 ## Machine-owned documentation
 
-| Path                                      | Owner and update command                                                                  |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `public/product-catalog.json`             | Ignored contract projection; `npm run docs:generate`                                      |
-| `verification/managed-conformance-*.json` | Ignored managed conformance projections; `npm run evidence:generate`                      |
-| `error-contract.schema.json`              | Tracked schema from contracts; `npm run docs:error-schema`                                |
-| `user-visible-errors.csv`                 | Authored error classification inventory; preserve its schema                              |
-| `releases/<version>.contributions.json`   | Durable release contribution record; follow the [release guide](development/releasing.md) |
-| `assets/`                                 | Shared authored images referenced by guides                                               |
+| Path                                      | Owner and update command                                                                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `public/product-catalog.json`             | Ignored contract projection; `npm run docs:generate`                                                    |
+| `verification/managed-conformance-*.json` | Ignored managed conformance projections; `npm run evidence:generate`                                    |
+| `error-contract.schema.json`              | Tracked schema from contracts; `npm run docs:error-schema`                                              |
+| `user-visible-errors.csv`                 | Generated error code and category per domain and provider-owned error case; `npm run docs:error-schema` |
+| `releases/<version>.contributions.json`   | Durable release contribution record; follow the [release guide](development/releasing.md)               |
+| `assets/`                                 | Shared authored images referenced by guides                                                             |
 
 Do not edit generated catalogs or evidence to change product facts. Change their
 canonical contracts or producer and regenerate. Historical release records retain
@@ -178,6 +178,7 @@ the exact commit messages and references from the release they describe.
 - [Flattened devicetree inspection](devicetree.md)
 - [Electron fuse state](electron-fuses.md)
 - [ELF note tables](elf-notes.md)
+- [ELF dependency tables](elf-dependencies.md)
 - [Erlang BEAM files](erlang-beam.md)
 - [ESP images](esp-image.md)
 - [GameCube DOL analysis through Ghidra](ghidra-dol.md)
