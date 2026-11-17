@@ -2,7 +2,10 @@ import { isAbsolute } from "node:path";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { isHostLimitFailure } from "../../domain/parseFailure.js";
-import { isParseLimit, parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import { constants } from "node:buffer";
 import {
   ArtifactReaderFailure,
@@ -39,10 +42,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import {
-  OTLP_MAX_LOSSY_FIELDS,
-  scanOtlpNumbers,
-} from "./scanOtlpNumbers.js";
+import { OTLP_MAX_LOSSY_FIELDS, scanOtlpNumbers } from "./scanOtlpNumbers.js";
 
 /** The one accepted encoding, after the contract applies its default. */
 type InspectOtlpTraceInput = OtlpInput;
@@ -65,7 +65,6 @@ const inputFailure = (message: string, cause?: unknown) =>
     },
     [{ path: ["path"], reason: "invalid_format", message }],
   );
-
 
 /** Check the source number, not only its already-rounded JavaScript value. */
 const isExactIntegerNumber = (value: number, source: unknown): boolean => {

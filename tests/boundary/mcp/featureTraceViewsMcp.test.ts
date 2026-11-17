@@ -14,6 +14,10 @@ import { traceApplicationFeatureEvidence } from "../../../src/application/javasc
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { deliverApplicationExecution } from "../../../src/server/deliverApplicationExecution.js";
 import { settledExecution } from "../../../src/application/ApplicationToolExecutions.js";
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -114,99 +118,101 @@ const bytes = (value: unknown): number =>
 type Harness = Awaited<ReturnType<typeof connect>>;
 
 it("returns selected feature-trace facts and retains the complete trace", async () => {
-    const harness = await connect();
-    const { client, session, inputs, call } = harness;
-    // Select first: the view call alone must retain the complete parent.
-    const summary = await call("trace_application_feature", {
-      ...inputs,
-      view: { kind: "summary" },
-    });
-    const parentId = z
-      .object({ parent_evidence_id: z.string() })
-      .parse(summary.evidence.normalized_result).parent_evidence_id;
-    const retained = session.evidenceById(parentId);
-    const complete = await call("trace_application_feature", inputs);
-    const parent = complete.evidence;
-    expect(parent.evidence_id).toBe(parentId);
-    expect(retained).toEqual(parent);
-    const full = traced(parent);
-    const graph = full.graph!;
-    expect(full.paths.length).toBeGreaterThan(1);
-    expect(graph.edges.length).toBeGreaterThan(graph.nodes.length);
-    expect(summary.evidence.confidence).toBe(parent.confidence);
-    expect(summary.evidence.normalized_result).toMatchObject({
-      kind: "summary",
-      parent_operation: "trace_application_feature",
-      artifact:
-        parent.subject === null
-          ? null
-          : {
-              path: parent.subject.local_path,
-              sha256: fileIdentity(parent.subject).sha256,
-            },
-      summary: {
-        trace_id: full.trace_id,
-        source_evidence_id: full.source_evidence_id,
-        seed: full.seed,
-        summary: full.summary,
-        trace_coverage: full.coverage,
-        graph_coverage: graph.coverage,
-        evidence_links: full.evidence_links,
-      },
-      coverage: { status: "complete-within-view", exhausted: true },
-    });
-    expect(bytes(summary.result)).toBeLessThan(bytes(complete.result) / 10);
-
-    const { tools } = await client.listTools();
-    const ajv = schemaValidation.assertions;
-    const traceTool = tools.find(
-      ({ name }) => name === "trace_application_feature",
-    )!;
-    expect(ajv.validateSchema(traceTool.inputSchema)).toBe(true);
-    const outputSchema: Record<string, unknown> = traceTool.outputSchema!;
-    expect(ajv.validateSchema(outputSchema)).toBe(true);
-    const request = {
-      kind: "feature-trace",
-      collection: "paths",
-      where: { end_kinds: ["endpoint"] },
-      limit: 2,
-    };
-    expect(
-      ajv.validate(traceTool.inputSchema, { ...inputs, view: request }),
-    ).toBe(true);
-    const selected = await call("trace_application_feature", {
-      ...inputs,
-      view: request,
-    });
-    for (const evidence of [summary.evidence, selected.evidence])
-      expect(ajv.validate(outputSchema, evidence)).toBe(true);
-    const endpointPaths = full.paths.filter(
-      ({ end_kind }) => end_kind === "endpoint",
-    );
-    expect(endpointPaths.length).toBeGreaterThan(2);
-    expect(selected.evidence.normalized_result).toMatchObject({
-      kind: "feature-trace",
-      parent_evidence_id: parent.evidence_id,
+  const harness = await connect();
+  const { client, session, inputs, call } = harness;
+  // Select first: the view call alone must retain the complete parent.
+  const summary = await call("trace_application_feature", {
+    ...inputs,
+    view: { kind: "summary" },
+  });
+  const parentId = z
+    .object({ parent_evidence_id: z.string() })
+    .parse(summary.evidence.normalized_result).parent_evidence_id;
+  const retained = session.evidenceById(parentId);
+  const complete = await call("trace_application_feature", inputs);
+  const parent = complete.evidence;
+  expect(parent.evidence_id).toBe(parentId);
+  expect(retained).toEqual(parent);
+  const full = traced(parent);
+  const graph = full.graph!;
+  expect(full.paths.length).toBeGreaterThan(1);
+  expect(graph.edges.length).toBeGreaterThan(graph.nodes.length);
+  expect(summary.evidence.confidence).toBe(parent.confidence);
+  expect(summary.evidence.normalized_result).toMatchObject({
+    kind: "summary",
+    parent_operation: "trace_application_feature",
+    artifact:
+      parent.subject === null
+        ? null
+        : {
+            path: parent.subject.local_path,
+            sha256: fileIdentity(parent.subject).sha256,
+          },
+    summary: {
       trace_id: full.trace_id,
+      source_evidence_id: full.source_evidence_id,
+      seed: full.seed,
+      summary: full.summary,
       trace_coverage: full.coverage,
-      items: endpointPaths.slice(0, 2),
-      coverage: { total: endpointPaths.length, next_offset: 2 },
-    });
-    // The advertised page contract binds each collection to its own rows.
-    const mixed = {
-      ...jsonObjectSchema.parse(selected.evidence.normalized_result),
-      items: graph.edges.slice(0, 1),
-    };
-    expect(analysisViewResultSchema.safeParse(mixed).success).toBe(false);
-    expect(
-      ajv.validate(outputSchema, {
-        ...jsonObjectSchema.parse(selected.result.structuredContent),
-        normalized_result: mixed,
-      }),
-    ).toBe(false);
-    await assertRetainedTracePages(harness, parent.evidence_id, full);
-  },
-);
+      graph_coverage: graph.coverage,
+      evidence_links: full.evidence_links,
+    },
+    coverage: { status: "complete-within-view", exhausted: true },
+  });
+  expect(bytes(summary.result)).toBeLessThan(bytes(complete.result) / 10);
+
+  const { tools } = await client.listTools();
+  const ajv = schemaValidation.assertions;
+  const traceTool = tools.find(
+    ({ name }) => name === "trace_application_feature",
+  )!;
+  // `tools/list` omits output schemas unless a presentation is configured, so
+  // validate both sides against the contract's canonical schemas.
+  const inputSchema = canonicalInputSchema(traceTool.name);
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    traceTool.name,
+  );
+  expect(ajv.validateSchema(inputSchema)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  const request = {
+    kind: "feature-trace",
+    collection: "paths",
+    where: { end_kinds: ["endpoint"] },
+    limit: 2,
+  };
+  expect(ajv.validate(inputSchema, { ...inputs, view: request })).toBe(true);
+  const selected = await call("trace_application_feature", {
+    ...inputs,
+    view: request,
+  });
+  for (const evidence of [summary.evidence, selected.evidence])
+    expect(ajv.validate(outputSchema, evidence)).toBe(true);
+  const endpointPaths = full.paths.filter(
+    ({ end_kind }) => end_kind === "endpoint",
+  );
+  expect(endpointPaths.length).toBeGreaterThan(2);
+  expect(selected.evidence.normalized_result).toMatchObject({
+    kind: "feature-trace",
+    parent_evidence_id: parent.evidence_id,
+    trace_id: full.trace_id,
+    trace_coverage: full.coverage,
+    items: endpointPaths.slice(0, 2),
+    coverage: { total: endpointPaths.length, next_offset: 2 },
+  });
+  // The advertised page contract binds each collection to its own rows.
+  const mixed = {
+    ...jsonObjectSchema.parse(selected.evidence.normalized_result),
+    items: graph.edges.slice(0, 1),
+  };
+  expect(analysisViewResultSchema.safeParse(mixed).success).toBe(false);
+  expect(
+    ajv.validate(outputSchema, {
+      ...jsonObjectSchema.parse(selected.result.structuredContent),
+      normalized_result: mixed,
+    }),
+  ).toBe(false);
+  await assertRetainedTracePages(harness, parent.evidence_id, full);
+});
 
 /** Page the retained parent through inspect_analysis_view without re-running the trace. */
 const assertRetainedTracePages = async (
