@@ -179,3 +179,49 @@ it("joins concurrent sibling probes before closing and prefers physical failure 
     () => ownedHost.close(),
   ]);
 });
+
+it("does not deadlock when one concurrent probe retains failed cleanup while a peer enters another scoped read", async () => {
+  const betweenReads = phaseGate();
+  const refusedCleanup = controlledCleanup({ refused: true });
+  let secondReadCompleted = false;
+  const host = systemDoctorHost({
+    platform: "darwin",
+    environment: {},
+    providerInspections: async (owner) => {
+      const peerProbe = (async () => {
+        await owner.run(async () => undefined);
+        await betweenReads.hold();
+        await owner.run(async () => {
+          secondReadCompleted = true;
+        });
+      })();
+      await owner.run(async () => {
+        owner.retain(
+          { close: () => refusedCleanup.close() },
+          "ida-registration-handle",
+        );
+      });
+      betweenReads.release();
+      await peerProbe;
+      return [];
+    },
+  });
+  await withVerifierCleanup(async () => {
+    await expect(host.providerInspections!([])).resolves.toEqual([]);
+    expect(secondReadCompleted).toBe(true);
+    const failure = await settledCause(host.close!());
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected retained cleanup failure on close");
+    expect(failure.cleanupResources).toEqual(["ida-registration-handle"]);
+    expect(failure.cleanupIncomplete).toBe(true);
+    refusedCleanup.allow();
+    await host.close!();
+    expect(failure.cleanupIncomplete).toBe(false);
+  }, [
+    () => {
+      refusedCleanup.allow();
+      betweenReads.release();
+    },
+    () => host.close!(),
+  ]);
+});

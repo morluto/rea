@@ -15,6 +15,7 @@ import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
+import { createSharedMcpSession } from "../support/mcp/sharedMcpSession.js";
 
 /** Default to native tools while preserving explicit caller configuration. */
 export const localToolsMcpEnvironment = (
@@ -100,68 +101,20 @@ export async function connectLocalToolsMcp(
 
 /**
  * Lazy file-scoped production stdio MCP client. Connects on first use so
- * skipped files pay zero startup cost, and drains cleanups in LIFO order while
- * retaining any cleanup that fails.
+ * skipped files pay zero startup cost, sharing `createSharedMcpSession`'s
+ * retryable cleanup queue and handshake-failure attribution.
  */
 export const lazyLocalToolsMcp = (
   environment: Readonly<Record<string, string>> = {},
 ): (() => Promise<Awaited<ReturnType<typeof connectLocalToolsMcp>>>) => {
-  type ConnectedLocalToolsMcp = Awaited<
-    ReturnType<typeof connectLocalToolsMcp>
-  >;
-  let pending: Promise<ConnectedLocalToolsMcp> | undefined;
-  let closed = false;
-  const cleanups: Array<() => Promise<void>> = [];
-  const drain = async (): Promise<void> => {
-    const failures: unknown[] = [];
-    const retained: Array<() => Promise<void>> = [];
-    while (cleanups.length > 0) {
-      const cleanup = cleanups.pop();
-      if (cleanup === undefined) break;
-      try {
-        await cleanup();
-      } catch (error) {
-        failures.push(error);
-        retained.push(cleanup);
-      }
-    }
-    for (const cleanup of retained.reverse()) cleanups.push(cleanup);
-    if (failures.length > 1) {
-      throw new AggregateError(
-        failures,
-        "File-scoped MCP session cleanup failed",
-      );
-    }
-    if (failures.length === 1) throw failures[0];
-  };
-  afterAll(async () => {
-    closed = true;
-    if (pending !== undefined) await pending.catch(() => undefined);
-    await drain();
-  });
-  return () => {
-    if (closed) {
-      return Promise.reject(new Error("File-scoped MCP session is closed"));
-    }
-    pending ??= (async () => {
-      if (cleanups.length > 0) await drain();
-      if (closed) throw new Error("File-scoped MCP session is closed");
-      try {
-        const opened = await connectLocalToolsMcp(environment, (cleanup) => {
-          cleanups.push(cleanup);
-        });
-        if (closed) throw new Error("File-scoped MCP session is closed");
-        return opened;
-      } catch (error) {
-        if (!closed) {
-          pending = undefined;
-          await drain().catch(() => undefined);
-        }
-        throw error;
-      }
-    })();
-    return pending;
-  };
+  const { session, close } = createSharedMcpSession(
+    async (registerCleanup, isClosed) => {
+      if (isClosed()) throw new Error("Shared MCP session is closed");
+      return connectLocalToolsMcp(environment, registerCleanup);
+    },
+  );
+  afterAll(() => close());
+  return () => session.call();
 };
 
 /**

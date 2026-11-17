@@ -97,7 +97,8 @@ const isModule = (path) =>
 // Production importers never widen the selection transitively.
 const isHelper = (path) =>
   !isTest(path) &&
-  (/^tests\/.+\.m?ts$/u.test(path) ||
+  !isCheckerInput(path) &&
+  (/^tests\/.+\.(?:[cm]?[jt]s|d\.m?ts)$/u.test(path) ||
     /^src\/.+\.fixture[^/]*\.ts$/u.test(path) ||
     isVerifier(path) ||
     isScriptLibrary(path));
@@ -199,19 +200,25 @@ export function traceAffectedTests({ files, snapshot }) {
     }
   }
 
-  // A seed and every helper that imports it, directly or through another.
+  const isNamedTarget = (path) =>
+    path.startsWith("scripts/") || path.startsWith("tests/fixtures/");
+  // A seed and every helper that imports or names it, directly or through another.
   const throughHelpers = (seed) => {
     const reached = new Set(seed);
     for (let grew = true; grew;) {
       grew = false;
-      for (const helper of helpers)
+      const namedReached = [...reached].filter(isNamedTarget);
+      for (const helper of helpers) {
+        if (reached.has(helper)) continue;
+        const source = sources.get(helper) ?? "";
         if (
-          !reached.has(helper) &&
-          imports.get(helper).some((target) => reached.has(target))
+          imports.get(helper).some((target) => reached.has(target)) ||
+          namedReached.some((target) => source.includes(target))
         ) {
           reached.add(helper);
           grew = true;
         }
+      }
     }
     return reached;
   };
@@ -224,13 +231,10 @@ export function traceAffectedTests({ files, snapshot }) {
   for (const test of tests)
     if (imports.get(test).some((target) => affected.has(target)))
       select(test, "imports");
-  // Script paths a test can start or read by name: changed files, plus the
-  // verifiers and shared modules a change reaches.
+  // Script and fixture paths a test can start or read by name: changed files,
+  // plus the verifiers, shared modules and fixtures a change reaches.
   const named = (reached) => [
-    ...new Set([
-      ...files,
-      ...[...reached].filter((path) => path.startsWith("scripts/")),
-    ]),
+    ...new Set([...files, ...[...reached].filter(isNamedTarget)]),
   ];
   const names = (test, paths) =>
     paths.some((path) => (sources.get(test) ?? "").includes(path));
@@ -240,10 +244,7 @@ export function traceAffectedTests({ files, snapshot }) {
   // fails closed to the complete suite.
   for (const fixture of changedNonModuleFixtures) {
     const reached = throughHelpers([fixture]);
-    const paths = [
-      fixture,
-      ...[...reached].filter((path) => path.startsWith("scripts/")),
-    ];
+    const paths = [fixture, ...[...reached].filter(isNamedTarget)];
     if (
       !tests.some(
         (test) =>
