@@ -948,6 +948,28 @@ it("reads an entry whose PAX size record overrides its header size", () => {
   expect(report.control?.package).toBe("hello");
 });
 
+it("ignores the prefix region of GNU tar headers", () => {
+  // GNU headers use "ustar  \0" and store atime at 345, not a path prefix.
+  const gnu = (member: Buffer): Buffer => {
+    const header = member.subarray(0, 512);
+    header.write("ustar  \0", 257, "latin1");
+    header.write("15020342231\0", 345, "latin1");
+    header.write("        ", 148);
+    let sum = 0;
+    for (const byte of header) sum += byte;
+    header.write(`${sum.toString(8).padStart(6, "0")}\0 `, 148);
+    return member;
+  };
+  const tar = Buffer.concat([
+    gnu(tarMember({ name: "./control", content: DEFAULT_CONTROL_TEXT })),
+    Buffer.alloc(1024),
+  ]);
+  const report = parse(
+    debPackageFixture({ controlMemberBytes: gzipSync(tar) }),
+  );
+  expect(report.control?.package).toBe("hello");
+});
+
 it("compares md5sums lines whose names GNU md5sum escaped", () => {
   const report = parse(
     debPackageFixture({

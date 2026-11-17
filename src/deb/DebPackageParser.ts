@@ -139,6 +139,11 @@ const tarText = (
     : { text: strict, undecodable: false };
 };
 
+const POSIX_USTAR_MAGIC = new Uint8Array([0x75, 0x73, 0x74, 0x61, 0x72, 0x00]);
+
+const isPosixUstar = (header: Uint8Array): boolean =>
+  looksLike(header.subarray(257, 263), POSIX_USTAR_MAGIC);
+
 const decodeUtf8 = (bytes: Uint8Array): string | null => {
   try {
     return decodeStrictUtf8(bytes, "preserve");
@@ -570,7 +575,11 @@ const parseTar = (
         ),
       };
     const payload = bytes.subarray(dataStart, dataStart + size);
-    const prefix = tarText(header.subarray(345, 500));
+    // Only POSIX ustar headers carry a path prefix at 345. GNU headers
+    // ("ustar  \0") keep atime, ctime and sparse data there instead.
+    const prefix = isPosixUstar(header)
+      ? tarText(header.subarray(345, 500))
+      : { text: "", undecodable: false };
     const rawName = tarText(header.subarray(0, 100));
     const headerName =
       prefix.text.length > 0 ? `${prefix.text}/${rawName.text}` : rawName.text;
