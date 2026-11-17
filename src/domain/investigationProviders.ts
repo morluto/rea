@@ -67,6 +67,13 @@ export const CANONICALIZE_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free DWARF compile-unit inspection. */
+export const DWARF_UNITS_PROVIDER = Object.freeze({
+  id: "rea-dwarf-units",
+  name: "REA DWARF compile-unit parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF separate-debug linkage. */
 export const ELF_DEBUG_LINK_PROVIDER = Object.freeze({
   id: "rea-elf-debug-link",

@@ -564,6 +564,11 @@ export const documentationSections = [
         route: "/devicetree",
       },
       {
+        text: "DWARF compile units",
+        source: "guides/native/dwarf-units.md",
+        route: "/dwarf-units",
+      },
+      {
         text: "Electron fuse state",
         source: "electron-fuses.md",
         route: "/electron-fuses",
@@ -684,6 +689,11 @@ export const documentationSections = [
         text: "Rust binary dependency metadata",
         source: "rust-binaries.md",
         route: "/rust-binaries",
+      },
+      {
+        text: "CycloneDX dependencies",
+        source: "guides/native/cyclonedx-view.md",
+        route: "/cyclonedx-view",
       },
       {
         text: "U-Boot legacy uImage containers",

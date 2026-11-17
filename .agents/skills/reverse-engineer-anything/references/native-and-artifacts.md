@@ -89,7 +89,11 @@ unparsed module-text line. A missing record is an unknown, not proof of a
 non-Go binary; observed metadata does not authenticate its claims, and static
 `(ptr, len)` string recovery excludes compiler-inlined stack/immediate strings
 without proving runtime reachability. Function,
-source and type recovery remain a separate native-analysis question.
+source and type recovery remain a separate native-analysis question. For a
+scanner, project the retained parent with `inspect_analysis_view` kind
+`cyclonedx`. That document is CycloneDX 1.6, reads no target bytes, and states
+`compositions` as incomplete or unknown. See
+[CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
 
 ## Model files
 
@@ -130,7 +134,10 @@ Preserve artifact SHA-256, package order, dependency indices, and the section
 file range. A missing section is null metadata, not proof the binary has no
 dependencies. An omitted package kind stays null. A rustc commit hash is
 inferred from a read-only `/rustc/<40-hex>/` path and does not by itself
-identify the compiler. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+identify the compiler. Project the retained parent with `inspect_analysis_view`
+kind `cyclonedx` for one CycloneDX 1.6 document. Build-kind packages are
+`scope: excluded`. See [Rust binaries](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md)
+and [CycloneDX dependencies](https://github.com/morluto/rea/blob/main/docs/guides/native/cyclonedx-view.md).
 
 ## PE Authenticode certificate tables
 
@@ -208,6 +215,21 @@ descriptor hashes, and original owner spellings. A missing table is observed
 absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+
+## DWARF compile units
+
+Use `inspect_dwarf_units` for an explicit local ELF, Mach-O, or PE image when
+the question concerns compile-unit source file, compilation directory,
+producer, language, or split-DWARF `dwo_name`. No `open_binary` or target
+execution is required. The CLI equivalent is `inspect-dwarf-units PATH`. For a
+`.dSYM` bundle, pass the DWARF file inside the bundle; the bundle itself is
+not opened. Universal Mach-O requires `architecture`. Preserve artifact
+SHA-256, section file ranges, and per-unit issues. Absent `.debug_info`
+describes this file only and does not establish that a separate debug file is
+absent. Partial coverage includes a declared `.debug_info` that was not read,
+such as an undecodable section or a `.dwo` object. A present `.gnu_debuglink` is named and not decoded. Child DIEs,
+types, line tables, and location expressions are not read. See
+[DWARF compile units](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
 
 ## ELF debug files
 

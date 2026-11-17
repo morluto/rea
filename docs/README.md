@@ -15,12 +15,14 @@ product pages. The VitePress documentation source is this `docs/` tree.
 
 - [Native binary investigation](guides/native/native-investigation.md)
 - [Go binary build metadata](guides/native/go-binaries.md)
+- [DWARF compile units](guides/native/dwarf-units.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
 - [ELF separate debug files](guides/native/elf-debug-link.md)
 - [ELF and Mach-O initializer functions](guides/native/native-initializers.md)
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
+- [CycloneDX dependencies](guides/native/cyclonedx-view.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 - [Acquired NTFS metadata and change journals](guides/native/ntfs-metadata.md)
 
