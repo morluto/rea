@@ -67,8 +67,10 @@ if (!arguments_.has("--built")) {
         detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe"],
       });
-      let stdout = "";
-      let stderr = "";
+      /** @type {Buffer[]} */
+      const stdoutChunks = [];
+      /** @type {Buffer[]} */
+      const stderrChunks = [];
       let outputBytes = 0;
       let overflowed = false;
       /** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -90,8 +92,8 @@ if (!arguments_.has("--built")) {
       activeChildren.add(entry);
       if (cancelledSignal !== undefined) stop(cancelledSignal);
 
-      /** @param {"stdout" | "stderr"} kind @param {Buffer} chunk */
-      const collect = (kind, chunk) => {
+      /** @param {Buffer[]} chunks @param {Buffer} chunk */
+      const collect = (chunks, chunk) => {
         outputBytes += chunk.byteLength;
         if (outputBytes > MAX_OUTPUT_BYTES) {
           if (!overflowed) {
@@ -100,12 +102,10 @@ if (!arguments_.has("--built")) {
           }
           return;
         }
-        const text = chunk.toString("utf8");
-        if (kind === "stdout") stdout += text;
-        else stderr += text;
+        chunks.push(chunk);
       };
-      child.stdout.on("data", (chunk) => collect("stdout", chunk));
-      child.stderr.on("data", (chunk) => collect("stderr", chunk));
+      child.stdout.on("data", (chunk) => collect(stdoutChunks, chunk));
+      child.stderr.on("data", (chunk) => collect(stderrChunks, chunk));
       child.once("error", (error) => {
         if (escalationTimer !== undefined) clearTimeout(escalationTimer);
         activeChildren.delete(entry);
@@ -116,6 +116,8 @@ if (!arguments_.has("--built")) {
         if (escalationTimer !== undefined) clearTimeout(escalationTimer);
         activeChildren.delete(entry);
         markClosed();
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
         if (!overflowed && code === 0 && signal === null) {
           resolve({ stdout, stderr });
           return;
