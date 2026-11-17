@@ -867,6 +867,7 @@
 * **providers:** assert native timeout, plist allowance and Cutter limit facts by field ([#11104](https://github.com/morluto/rea/issues/11104)) ([2a640c1](https://github.com/morluto/rea/commit/2a640c198c1a54d042012c0aa1198b370cca7e8c))
 * prune redundant and obsolete coverage ([015f726](https://github.com/morluto/rea/commit/015f726a9ef9ef2cd18a513c30240c072c4ab5d8))
 * **python:** bound pyc parser work by counts instead of elapsed time ([#11608](https://github.com/morluto/rea/issues/11608)) ([a80a47f](https://github.com/morluto/rea/commit/a80a47f143c4119e647ee114620fe0e05be33a51)), closes [#10513](https://github.com/morluto/rea/issues/10513)
+* **python:** retire unused archived delivery checkers ([#11888](https://github.com/morluto/rea/issues/11888)) ([a9a0136](https://github.com/morluto/rea/commit/a9a0136623c30dab0b233b7995a36b4819ab66c2))
 * **reference:** give the MCP parity exclusion fixture its required entry kind ([#11247](https://github.com/morluto/rea/issues/11247)) ([6cdfb01](https://github.com/morluto/rea/commit/6cdfb0102393d9b0e576e0f66023612e48b997ee))
 * **release:** verify actual metadata version updates ([#11877](https://github.com/morluto/rea/issues/11877)) ([43ca4a9](https://github.com/morluto/rea/commit/43ca4a909d0b1a683c8416335694189c46deb06d))
 * remove fixed child-process deadlines from tests ([84990f9](https://github.com/morluto/rea/commit/84990f977700e99dc48a70006873a1671038b0e8))
