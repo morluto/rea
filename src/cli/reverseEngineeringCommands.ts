@@ -3,6 +3,8 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
+import { RADARE2_PROVIDER_IDENTITY } from "../radare2/Radare2Command.js";
+import { RADIFF2_PROVIDER_IDENTITY } from "../radare2/Radiff2Command.js";
 
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -51,18 +53,27 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { isRecord } from "../kernel/isRecord.js";
 
+const operationProviderIds = {
+  inspect_with_objdump: OBJDUMP_PROVIDER_IDENTITY.id,
+  execute_rizin_command: RIZIN_PROVIDER_IDENTITY.id,
+  execute_radare2_command: RADARE2_PROVIDER_IDENTITY.id,
+  compare_with_radiff2: RADIFF2_PROVIDER_IDENTITY.id,
+} as const;
+
 const executeWithCleanup = async (
   service: ReverseEngineeringService,
   signal: AbortSignal,
   execute: () => Promise<Result<Evidence, AnalysisError>>,
-  operation: "inspect_with_objdump" | "execute_rizin_command",
+  operation:
+    | "inspect_with_objdump"
+    | "execute_rizin_command"
+    | "execute_radare2_command"
+    | "compare_with_radiff2",
 ) =>
   finishAnalysisCommand(
     execute,
     service,
-    operation === "inspect_with_objdump"
-      ? OBJDUMP_PROVIDER_IDENTITY.id
-      : RIZIN_PROVIDER_IDENTITY.id,
+    operationProviderIds[operation],
     operation,
     signal,
     undefined,
@@ -230,6 +241,49 @@ export const registerReverseEngineeringCommands = (
           signal,
           () => service.executeRizinCommand(input, { signal }),
           "execute_rizin_command",
+        ),
+      ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(
+      REVERSE_ENGINEERING_TOOL_CONTRACTS,
+      "execute_radare2_command",
+    ),
+    {
+      description: "Execute one Radare2 command against a local artifact",
+      positionals: ["path", "command"],
+      fields: {
+        path: { description: "Path to the local artifact to analyze." },
+        command: { description: "One caller-selected Radare2 command." },
+      },
+    },
+    async (input, { signal }) =>
+      projectCliAnalysisResult(
+        await executeWithCleanup(
+          service,
+          signal,
+          () => service.executeRadare2Command(input, { signal }),
+          "execute_radare2_command",
+        ),
+      ),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contractNamed(REVERSE_ENGINEERING_TOOL_CONTRACTS, "compare_with_radiff2"),
+    {
+      description: "Compare two local artifacts with radiff2",
+      positionals: ["path_a", "path_b"],
+    },
+    async (input, { signal }) =>
+      projectCliAnalysisResult(
+        await executeWithCleanup(
+          service,
+          signal,
+          () => service.compareWithRadiff2(input, { signal }),
+          "compare_with_radiff2",
         ),
       ),
   );
