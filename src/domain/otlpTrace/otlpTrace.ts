@@ -45,7 +45,11 @@ export const otlpAttributeSchema = z.strictObject({
     "empty",
   ]),
   string_value: z.string().nullable(),
+  /** The recorded value when it is not a string the inventory can read. */
+  string_value_raw: jsonValueSchema.nullable(),
   bool_value: z.boolean().nullable(),
+  /** The recorded value when it is not a boolean the inventory can read. */
+  bool_value_raw: jsonValueSchema.nullable(),
   int_value: z.string().nullable(),
   /** The recorded value when it is not an int64 the inventory can read. */
   int_value_raw: jsonValueSchema.nullable(),
@@ -55,6 +59,8 @@ export const otlpAttributeSchema = z.strictObject({
   bytes_length: z.int().nonnegative().nullable(),
   /** The recorded base64 payload, kept so equal-length values stay distinct. */
   bytes_base64: z.string().nullable(),
+  /** The recorded value when it is not a base64 string the inventory can read. */
+  bytes_value_raw: jsonValueSchema.nullable(),
   element_count: z.int().nonnegative().nullable(),
 });
 

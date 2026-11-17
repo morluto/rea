@@ -164,13 +164,16 @@ const readAttribute = (
   const empty = {
     key,
     string_value: null,
+    string_value_raw: null,
     bool_value: null,
+    bool_value_raw: null,
     int_value: null,
     int_value_raw: null,
     double_value: null,
     double_value_raw: null,
     bytes_length: null,
     bytes_base64: null,
+    bytes_value_raw: null,
     element_count: null,
   } as const;
   if (!isRecord(rawValue)) return { ...empty, value_kind: "empty" };
@@ -182,12 +185,22 @@ const readAttribute = (
         ...empty,
         value_kind: "string",
         string_value: typeof value === "string" ? value : null,
+        // A non-string value is still what the export recorded; dropping it
+        // would make a damaged attribute read as an ordinary omission.
+        string_value_raw:
+          typeof value === "string"
+            ? null
+            : retainedRaw(value, capture, "attribute"),
       };
     case "boolValue":
       return {
         ...empty,
         value_kind: "bool",
         bool_value: typeof value === "boolean" ? value : null,
+        bool_value_raw:
+          typeof value === "boolean"
+            ? null
+            : retainedRaw(value, capture, "attribute"),
       };
     case "intValue": {
       if (capture.lossyNumber?.(rawValue, kind) === true) {
@@ -227,6 +240,10 @@ const readAttribute = (
             ? Buffer.from(value, "base64").length
             : null,
         bytes_base64: typeof value === "string" ? value : null,
+        bytes_value_raw:
+          typeof value === "string"
+            ? null
+            : retainedRaw(value, capture, "attribute"),
       };
     case "arrayValue":
       return {
@@ -311,6 +328,14 @@ const parseSpan = (
       ],
     };
   const problems: Problem[] = [];
+  // A numeric parentSpanId above 2^53 is rounded by JSON.parse, so the value in
+  // hand is no longer what the file recorded; timestamps get the same guard.
+  if (lossyNumber?.(record, "parentSpanId") === true)
+    return {
+      ok: false,
+      problems: [],
+      fatalProblem: `A numeric parentSpanId at ${pointer} cannot be verified exactly within the numeric limits; use the verified source file.`,
+    };
   const parentSpanId = readIdBytes(record.parentSpanId, 8);
   // An empty parentSpanId is the OTLP zero value, which declares no parent.
   const parentRecorded =

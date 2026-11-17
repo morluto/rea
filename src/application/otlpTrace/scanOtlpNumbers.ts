@@ -25,6 +25,7 @@ const attributes = (kind: "span" | "resource"): Plan => ({
 const span: Plan = {
   kind: "object",
   fields: {
+    parentSpanId: numeric,
     startTimeUnixNano: numeric,
     endTimeUnixNano: numeric,
     attributes: attributes("span"),

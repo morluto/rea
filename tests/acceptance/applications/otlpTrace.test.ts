@@ -400,3 +400,105 @@ cliTest(
     );
   },
 );
+
+cliTest(
+  "retains rejected scalar attribute values instead of dropping them",
+  async ({ cli }) => {
+    const input = JSON.stringify({
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "1".repeat(32),
+                  spanId: "2".repeat(16),
+                  attributes: [
+                    { key: "flag", value: { boolValue: "false" } },
+                    { key: "name", value: { stringValue: 7 } },
+                    { key: "payload", value: { bytesValue: 42 } },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const path = join(
+      await createTestTempDirectory("rea-otlp-rejected-scalar-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    const mcp = parseEvidence(
+      (await call("inspect_otlp_trace", { path })).structuredContent,
+    );
+    const report = otlpTraceSchema.parse(mcp.normalized_result);
+    expect(report.spans[0]?.attributes).toEqual([
+      expect.objectContaining({
+        key: "flag",
+        value_kind: "bool",
+        bool_value: null,
+        bool_value_raw: "false",
+      }),
+      expect.objectContaining({
+        key: "name",
+        value_kind: "string",
+        string_value: null,
+        string_value_raw: 7,
+      }),
+      expect.objectContaining({
+        key: "payload",
+        value_kind: "bytes",
+        bytes_base64: null,
+        bytes_value_raw: 42,
+      }),
+    ]);
+    const result = await cli.run({
+      arguments: ["inspect-otlp-trace", path, "--json"],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(parseEvidence(result.json).normalized_result).toEqual(
+      mcp.normalized_result,
+    );
+  },
+);
+
+cliTest(
+  "refuses a numeric parentSpanId that JSON.parse would round",
+  async ({ cli }) => {
+    const input =
+      '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","parentSpanId":9007199254740993}]}]}]}';
+    const path = join(
+      await createTestTempDirectory("rea-otlp-parent-rounding-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const partial = {
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+      bytes: Buffer.byteLength(input),
+    };
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    expect(
+      parseMcpToolError(await call("inspect_otlp_trace", { path })).error,
+    ).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: partial },
+    });
+    const result = await cli.run({
+      arguments: ["inspect-otlp-trace", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: partial },
+    });
+  },
+);

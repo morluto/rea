@@ -131,7 +131,7 @@ const decodeExport = (
     // Escaped keys must take the loss-aware path even when no literal matches.
     if (
       !text.includes("\\") &&
-      !/"(?:startTimeUnixNano|endTimeUnixNano|intValue)"\s*:\s*-?[0-9]/u.test(
+      !/"(?:parentSpanId|startTimeUnixNano|endTimeUnixNano|intValue)"\s*:\s*-?[0-9]/u.test(
         text,
       )
     )
