@@ -1,5 +1,5 @@
 import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 import { expect, it as test, vi } from "vitest";
 import { withVerifierCleanup } from "../scripts/lib/verifier-cleanup.mjs";
@@ -703,6 +703,42 @@ it.each([
     }
   },
 );
+
+test("refuses a selected client's relative IDA path without losing its valid JEB endpoint", async () => {
+  const home = await createTestTempDirectory("rea-doctor-relative-ida-");
+  const path = join(home, "ida.json");
+  const endpoint = "http://127.0.0.1:9999/mcp";
+  await writeFile(
+    path,
+    JSON.stringify({ command: "fixture", protocol: "native" }),
+  );
+  await opencodeRegistration(home, {
+    REA_IDA_MCP_CONFIG: relative(process.cwd(), path),
+    REA_JEB_MCP_URL: endpoint,
+  });
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "ida")).toMatchObject({
+      configured: true,
+      available: false,
+      registrationEnvironment: {},
+      checks: [
+        expect.objectContaining({
+          name: "registration",
+          code: "invalid_configuration",
+        }),
+      ],
+    });
+    expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+      configured: true,
+      available: null,
+      registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
+    });
+  } finally {
+    await host.close?.();
+  }
+});
 
 test("keeps reading this terminal when no client is selected", async () => {
   const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");

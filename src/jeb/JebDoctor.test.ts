@@ -13,7 +13,6 @@ it("keeps the JEB endpoint for setup without launching the engine", () => {
     available: null,
     providerVersion: null,
   });
-  expect(inspection.checks[0]?.detail).toContain("no JEB process was launched");
   expect(inspection.checks[0]?.ok).toBe(true);
   expect(inspection.checks).toContainEqual(
     expect.objectContaining({

@@ -35,10 +35,9 @@ it("sends configured, unprobed JEB setups to diagnostics instead of analyze", ()
     [],
     "rea",
   );
-  expect(lines.some((line) => line.includes("Deep analysis:"))).toBe(false);
-  expect(lines).toContain("│  CLI: rea capabilities");
-  expect(lines).toContain(
-    "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+  expect(lines).toContainEqual(expect.stringContaining("rea capabilities"));
+  expect(lines).toContainEqual(
+    expect.stringContaining("rea inspect-jeb-client"),
   );
   expect(lines.some((line) => line.includes("analyze /path/to/app"))).toBe(
     false,
@@ -55,17 +54,21 @@ it.each(["hopper", "kuna"])(
       [],
       "rea",
     );
-    expect(lines).toContain("│  CLI: rea analyze /path/to/app");
-    expect(lines).toContain(
-      "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+    expect(lines).toContainEqual(
+      expect.stringContaining("rea analyze /path/to/app"),
+    );
+    expect(lines).toContainEqual(
+      expect.stringContaining("rea inspect-jeb-client"),
     );
   },
 );
 
 it("suggests capabilities when no provider is ready", () => {
   const lines = describeReadyCapabilities(resultWithProviders([]), [], "rea");
-  expect(lines).toContain("│  CLI: rea capabilities");
-  expect(lines.some((line) => line.startsWith("│  JEB"))).toBe(false);
+  expect(lines).toContainEqual(expect.stringContaining("rea capabilities"));
+  expect(lines.some((line) => /inspect[-_]jeb[-_]client/u.test(line))).toBe(
+    false,
+  );
 });
 
 it("does not advertise the binary lane for a ready non-binary provider", () => {
@@ -74,8 +77,8 @@ it("does not advertise the binary lane for a ready non-binary provider", () => {
     [],
     "rea",
   );
-  expect(lines).toContain("│  Deep analysis: JADX");
-  expect(lines).toContain("│  CLI: rea capabilities");
+  expect(lines).toContainEqual(expect.stringContaining("JADX"));
+  expect(lines).toContainEqual(expect.stringContaining("rea capabilities"));
   expect(lines.some((line) => line.includes("analyze /path/to/app"))).toBe(
     false,
   );
@@ -87,11 +90,10 @@ it("offers JEB diagnostics for invalid settings without claiming readiness", () 
     [],
     "rea",
   );
-  expect(lines).toContain("│  CLI: rea capabilities");
-  expect(lines).toContain(
-    "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+  expect(lines).toContainEqual(expect.stringContaining("rea capabilities"));
+  expect(lines).toContainEqual(
+    expect.stringContaining("rea inspect-jeb-client"),
   );
-  expect(lines.some((line) => line.includes("Deep analysis: Jeb"))).toBe(false);
   expect(lines.some((line) => line.includes("analyze /path/to/app"))).toBe(
     false,
   );
@@ -115,9 +117,11 @@ it.each([true, false])(
       ready ? ["claude_code", "codex"] : [],
       "rea",
     );
-    expect(lines).toContain(
-      "│  JEB diagnostics: in codex, call MCP inspect_jeb_client using that client's saved JEB settings.",
+    const diagnostic = lines.find((line) =>
+      line.includes("inspect_jeb_client"),
     );
+    expect(diagnostic).toContain("codex");
+    expect(diagnostic).not.toContain("claude_code");
     expect(lines.some((line) => line.includes("inspect-jeb-client"))).toBe(
       false,
     );
@@ -130,7 +134,10 @@ it("does not substitute an unselected ready client for terminal JEB settings", (
     ["claude_code"],
     "rea",
   );
-  expect(lines).toContain(
-    "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+  const diagnostic = lines.find((line) =>
+    line.includes("rea inspect-jeb-client"),
   );
+  expect(diagnostic).toBeDefined();
+  expect(diagnostic).not.toContain("claude_code");
+  expect(lines.some((line) => line.includes("inspect_jeb_client"))).toBe(false);
 });

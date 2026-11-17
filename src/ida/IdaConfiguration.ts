@@ -24,6 +24,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { parseEnvironmentValues } from "../config/environment.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
@@ -164,6 +165,10 @@ export const readIdaConfiguration = (
   },
 ): Promise<Result<IdaConfiguration, ConfigurationError>> =>
   options.resourceScope.run(async () => {
+    // Diagnostic callers may carry invalid literal settings. Apply the runtime
+    // owner's path admission before either reading or sharing a parsed result.
+    const selected = parseEnvironmentValues({ REA_IDA_MCP_CONFIG: path });
+    if (!selected.ok) return selected;
     let closeLease: AnalysisCleanupLease | undefined;
     try {
       const text = await withOwnedRegularFile<string>(
