@@ -437,7 +437,11 @@ const endpointLiteralSite = (
   readAncestors: () => readonly t.Node[],
 ): EndpointLiteralSite | undefined => {
   if (t.isArrayExpression(parent)) return "array";
-  if (parent === null || !t.isVariableDeclarator(parent) || node !== parent.init)
+  if (
+    parent === null ||
+    !t.isVariableDeclarator(parent) ||
+    node !== parent.init
+  )
     return undefined;
   if (webBundleEndpointLiteral(node)?.detector !== "literal:url-shaped")
     return undefined;
