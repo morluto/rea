@@ -33,6 +33,7 @@ const plan: DesktopAppExportPlan = {
   syntheticSeed: false,
   seedFiles: [],
   textSeeds: [],
+  seedModes: {},
   unseededFiles: [],
   leftOutLocks: [],
   unownedFolders: [],
@@ -61,7 +62,9 @@ it("keeps an occupied selected alias as a built-in FileExistsError", async () =>
       ...plan,
       name,
       className: className(name),
-      stateAliases: [{ alias: "occupied", target: "destination" }],
+      stateAliases: [
+        { alias: "occupied", target: "destination", kind: "unknown" },
+      ],
     }),
   );
   await writeFile(
