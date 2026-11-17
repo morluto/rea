@@ -14,11 +14,14 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../../../src/process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../../../../src/process/ProviderProcess.js";
 import { createIdaTarget } from "../../../fixtures/idaMcp.js";
 
 let sharedTargetRoot = "";
 let sharedCompileCache = "";
 let sharedTarget: Awaited<ReturnType<typeof createIdaTarget>>["target"];
+const unresolvedCleanupOwners: ProviderProcessSupervisor[] = [];
+let unownedUnconfirmedCleanups = 0;
 
 beforeAll(async () => {
   const created = await createIdaTarget();
@@ -28,8 +31,26 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (sharedTargetRoot !== "") {
+  const remainingFailures: string[] = [];
+  for (const owner of unresolvedCleanupOwners.splice(0)) {
+    const result = await owner.stop();
+    if (result.status === "incomplete" || result.status === "not-owned") {
+      remainingFailures.push(result.status);
+    } else {
+      owner.dispose();
+    }
+  }
+  if (
+    sharedTargetRoot !== "" &&
+    unownedUnconfirmedCleanups === 0 &&
+    remainingFailures.length === 0
+  ) {
     await rm(sharedTargetRoot, { recursive: true, force: true });
+  }
+  if (remainingFailures.length > 0) {
+    throw new Error(
+      `Retained IDA verifier shared root (${sharedTargetRoot}); unresolved process cleanup: ${remainingFailures.join(", ")}`,
+    );
   }
 });
 
@@ -321,8 +342,17 @@ it.each([
         ]);
       else expect(report.unverified).toEqual([]);
     } catch (cause) {
-      if (cause instanceof OwnedCommandFailure && cause.cleanupFailure === null)
-        cleanupConfirmed = true;
+      if (cause instanceof OwnedCommandFailure) {
+        if (cause.cleanupFailure === null) {
+          cleanupConfirmed = true;
+        } else if (cause.cleanupOwner !== undefined) {
+          unresolvedCleanupOwners.push(cause.cleanupOwner);
+        } else {
+          unownedUnconfirmedCleanups += 1;
+        }
+      } else if (!cleanupConfirmed) {
+        unownedUnconfirmedCleanups += 1;
+      }
       throw cause;
     } finally {
       await upstream.close(cleanupConfirmed);

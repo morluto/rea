@@ -20,6 +20,7 @@ import type {
 } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   applicationGraphEvidenceLocationSchema,
+  applicationGraphEvidenceSchema,
   isCompatibleApplicationGraphEvidenceLocation,
   isValidApplicationGraphEvidenceContext,
 } from "./javascriptApplicationEvidenceSchemas.js";
@@ -123,6 +124,9 @@ const hasExactEvidenceKeys = (
   Object.keys(value).length === EVIDENCE_INPUT_KEYS.length &&
   EVIDENCE_INPUT_KEYS.every((key) => Object.hasOwn(value, key));
 
+const tryInternValidatedInputSymbol = Symbol("tryInternValidatedInput");
+const internValidatedEvidenceSymbol = Symbol("internValidatedEvidence");
+
 /** Graph-scoped owner for canonical provenance shared by semantic facts. */
 export class JavaScriptSemanticEvidenceContextRegistry {
   readonly #contexts = new Map<string, JavaScriptSemanticEvidenceContext>();
@@ -132,7 +136,7 @@ export class JavaScriptSemanticEvidenceContextRegistry {
   readonly #frozenEntries: FrozenInternedEvidenceEntry[] = [];
 
   /** Fast-path interning when shared context objects match an already-validated frozen entry. */
-  tryInternValidatedInput(
+  [tryInternValidatedInputSymbol](
     rawEvidence: unknown,
   ): JavaScriptSemanticEvidenceReference | undefined {
     if (!hasExactEvidenceKeys(rawEvidence)) return undefined;
@@ -159,12 +163,22 @@ export class JavaScriptSemanticEvidenceContextRegistry {
     return { context_id: match.contextId, location: parsedLocation.data };
   }
 
-  /** Intern normalized non-location provenance at fact construction. */
+  /** Validate and intern non-location provenance at fact construction. */
   intern(
+    evidence: ApplicationGraphEvidence,
+  ): JavaScriptSemanticEvidenceReference {
+    const fast = this[tryInternValidatedInputSymbol](evidence);
+    if (fast !== undefined) return fast;
+    const parsed = applicationGraphEvidenceSchema.parse(evidence);
+    return this[internValidatedEvidenceSymbol](parsed, evidence);
+  }
+
+  /** Intern provenance that has already passed applicationGraphEvidenceSchema. */
+  [internValidatedEvidenceSymbol](
     evidence: ApplicationGraphEvidence,
     originalInput?: ApplicationGraphEvidence,
   ): JavaScriptSemanticEvidenceReference {
-    const fast = this.tryInternValidatedInput(originalInput ?? evidence);
+    const fast = this[tryInternValidatedInputSymbol](originalInput ?? evidence);
     if (fast !== undefined) return fast;
     const normalized = normalizeEvidence(evidence);
     const { location, ...context } = normalized;
@@ -181,10 +195,11 @@ export class JavaScriptSemanticEvidenceContextRegistry {
         throw new TypeError(
           "JavaScript semantic evidence context digest collision",
         );
-      this.#contexts.set(
-        contextId,
-        sealSemanticEvidenceContext({ ...context, context_id: contextId }),
-      );
+      const parsedContext = javaScriptSemanticEvidenceContextSchema.parse({
+        ...context,
+        context_id: contextId,
+      });
+      this.#contexts.set(contextId, sealSemanticEvidenceContext(parsedContext));
       this.#idsByCanonicalContext.set(canonicalContext, contextId);
     }
     const candidate = originalInput ?? evidence;
@@ -439,7 +454,7 @@ const buildSemanticGraphNode = (
   evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
 ): JavaScriptSemanticGraphNode => {
   if (isRecord(input) && Object.hasOwn(input, "evidence")) {
-    const fastEvidence = evidenceContexts.tryInternValidatedInput(
+    const fastEvidence = evidenceContexts[tryInternValidatedInputSymbol](
       input.evidence,
     );
     if (fastEvidence !== undefined) {
@@ -468,7 +483,10 @@ const buildSemanticGraphNode = (
   const semantic = {
     ...parsed,
     application_node_ids: uniqueSorted(parsed.application_node_ids),
-    evidence: evidenceContexts.intern(parsed.evidence, rawEvidence),
+    evidence: evidenceContexts[internValidatedEvidenceSymbol](
+      parsed.evidence,
+      rawEvidence,
+    ),
   };
   return {
     ...semantic,
@@ -531,7 +549,7 @@ const buildSemanticGraphRelation = (
   evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
 ): JavaScriptSemanticGraphRelation => {
   if (isRecord(input) && Object.hasOwn(input, "evidence")) {
-    const fastEvidence = evidenceContexts.tryInternValidatedInput(
+    const fastEvidence = evidenceContexts[tryInternValidatedInputSymbol](
       input.evidence,
     );
     if (fastEvidence !== undefined) {
@@ -555,7 +573,10 @@ const buildSemanticGraphRelation = (
   const parsed = javaScriptSemanticRelationInputSchema.parse(input);
   const semantic = {
     ...parsed,
-    evidence: evidenceContexts.intern(parsed.evidence, rawEvidence),
+    evidence: evidenceContexts[internValidatedEvidenceSymbol](
+      parsed.evidence,
+      rawEvidence,
+    ),
   };
   return {
     ...semantic,
@@ -582,7 +603,7 @@ const buildSemanticGraphUnknown = (
   evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
 ): JavaScriptSemanticGraphUnknown => {
   if (isRecord(input) && Object.hasOwn(input, "evidence")) {
-    const fastEvidence = evidenceContexts.tryInternValidatedInput(
+    const fastEvidence = evidenceContexts[tryInternValidatedInputSymbol](
       input.evidence,
     );
     if (fastEvidence !== undefined) {
@@ -610,7 +631,10 @@ const buildSemanticGraphUnknown = (
     ...parsed,
     relation_kinds: uniqueSorted(parsed.relation_kinds),
     candidate_node_ids: uniqueSorted(parsed.candidate_node_ids),
-    evidence: evidenceContexts.intern(parsed.evidence, rawEvidence),
+    evidence: evidenceContexts[internValidatedEvidenceSymbol](
+      parsed.evidence,
+      rawEvidence,
+    ),
   };
   return {
     ...semantic,
@@ -637,7 +661,7 @@ const buildSemanticFingerprint = (
   evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
 ): JavaScriptSemanticFingerprint => {
   if (isRecord(input) && Object.hasOwn(input, "evidence")) {
-    const fastEvidence = evidenceContexts.tryInternValidatedInput(
+    const fastEvidence = evidenceContexts[tryInternValidatedInputSymbol](
       input.evidence,
     );
     if (fastEvidence !== undefined) {
@@ -689,7 +713,10 @@ const buildSemanticFingerprint = (
       effects: uniqueSorted(parsed.components.effects),
     },
     limitations: uniqueSorted(parsed.limitations),
-    evidence: evidenceContexts.intern(parsed.evidence, rawEvidence),
+    evidence: evidenceContexts[internValidatedEvidenceSymbol](
+      parsed.evidence,
+      rawEvidence,
+    ),
   };
   const fingerprintSha256 = digestCanonicalValue(
     semantic.components,

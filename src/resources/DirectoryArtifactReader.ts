@@ -259,25 +259,14 @@ export class DirectoryArtifactReader implements ArtifactReader {
       | { readonly kind: "failed"; readonly cause: unknown } = {
       kind: "complete",
     };
-    let verifiedAfterOpen = false;
-    let needsContainmentRecheck = false;
     try {
       for (;;) {
         abortIfNeeded(signal);
-        if (needsContainmentRecheck) {
-          await withDirectoryIoContext("inspect directory", directory, () =>
-            assertContainedDirectory(root, directory, admittedRoot.identity),
-          );
-          needsContainmentRecheck = false;
-        }
         const child = await handle.handle.read();
         if (child === null) break;
-        if (!verifiedAfterOpen) {
-          await withDirectoryIoContext("inspect directory", directory, () =>
-            assertContainedDirectory(root, directory, admittedRoot.identity),
-          );
-          verifiedAfterOpen = true;
-        }
+        await withDirectoryIoContext("inspect directory", directory, () =>
+          assertContainedDirectory(root, directory, admittedRoot.identity),
+        );
         examine();
         abortIfNeeded(signal);
         const decoded = decodeDirectoryEntryName(child.name);
@@ -298,7 +287,6 @@ export class DirectoryArtifactReader implements ArtifactReader {
           continue;
         }
         yield entry;
-        needsContainmentRecheck = true;
         if (entry.kind === "directory") {
           if (options?.descendInto?.(path) ?? true)
             childDirectories.push(absolute);

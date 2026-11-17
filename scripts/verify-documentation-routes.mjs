@@ -54,12 +54,19 @@ while (directories.length > 0) {
   }
 }
 htmlPages.sort();
-const htmlByPath = new Map(
-  await Promise.all(
-    htmlPages.map(
-      async (page) =>
-        /** @type {const} */ ([page, await readFile(page, "utf8")]),
-    ),
+const READ_CONCURRENCY = 32;
+/** @type {Map<string, string>} */
+const htmlByPath = new Map();
+let nextPageIndex = 0;
+await Promise.all(
+  Array.from(
+    { length: Math.min(READ_CONCURRENCY, htmlPages.length) },
+    async () => {
+      while (nextPageIndex < htmlPages.length) {
+        const page = htmlPages[nextPageIndex++];
+        htmlByPath.set(page, await readFile(page, "utf8"));
+      }
+    },
   ),
 );
 for (const page of htmlPages) {

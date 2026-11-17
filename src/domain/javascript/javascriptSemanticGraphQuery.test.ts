@@ -919,6 +919,18 @@ it("interns each distinct evidence context once under its content digest", () =>
   expect(registry.resolve(repeated)).toEqual(elsewhere);
 });
 
+it("rejects invalid provenance in direct registry.intern calls before sealing", () => {
+  const registry = new JavaScriptSemanticEvidenceContextRegistry();
+  const baseEvidence = semanticGraphTestEvidence();
+  expect(() =>
+    registry.intern({
+      ...baseEvidence,
+      extractor: { ...baseEvidence.extractor, name: "" },
+    }),
+  ).toThrow(z.ZodError);
+  expect(registry.ownedContexts).toEqual([]);
+});
+
 it("seals owned builder records while still rejecting tampered spread copies", () => {
   const registry = new JavaScriptSemanticEvidenceContextRegistry();
   const ownedModule = createOwnedJavaScriptSemanticGraphNode(
