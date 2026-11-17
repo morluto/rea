@@ -64,10 +64,58 @@ const boundedKey = (name: string): string =>
     ? JSON.stringify(name)
     : `${JSON.stringify(ellipsisExcerpt(name, MAX_SEGMENT_UNITS))} (${String(name.length)} units; sha256 ${sha256Hex(name)})`;
 
-/** True when any JSON integer literal exceeds JS safe-integer precision (2^53). */
+/**
+ * True when a JSON *number* token is an integer beyond JS safe-integer
+ * precision (2^53). Only number tokens count: a digit run inside a string
+ * literal is the artifact's exact text, which `JSON.parse` preserves losslessly,
+ * so a quoted numeric identifier like `"123456789012345678"` must not be
+ * reported as rounded. `text` already parsed as JSON before this runs, so every
+ * digit run outside a string literal is part of a number token. A fractional or
+ * exponential value is inherently approximate and is not an integer-literal
+ * concern, so only a plain integer token is checked.
+ */
 const hasUnsafeIntegerLiteral = (text: string): boolean => {
-  for (const match of text.matchAll(/-?\d{16,}/gu))
-    if (!Number.isSafeInteger(Number(match[0]))) return true;
+  const { length } = text;
+  let index = 0;
+  while (index < length) {
+    const code = text.charCodeAt(index);
+    if (code === 0x22 /* " */) {
+      // Skip a string literal, honoring backslash escapes, so digits inside it
+      // are never read as a number token.
+      index += 1;
+      while (index < length) {
+        const inner = text.charCodeAt(index);
+        index += 1;
+        if (inner === 0x5c /* \ */) index += 1;
+        else if (inner === 0x22) break;
+      }
+      continue;
+    }
+    if (code !== 0x2d /* - */ && (code < 0x30 || code > 0x39)) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    if (code === 0x2d) index += 1;
+    let digits = 0;
+    while (index < length) {
+      const digit = text.charCodeAt(index);
+      if (digit < 0x30 || digit > 0x39) break;
+      digits += 1;
+      index += 1;
+    }
+    const after = index < length ? text.charCodeAt(index) : -1;
+    const isPlainInteger =
+      after !== 0x2e /* . */ &&
+      after !== 0x65 /* e */ &&
+      after !== 0x45; /* E */
+    if (
+      isPlainInteger &&
+      digits >= 16 &&
+      !Number.isSafeInteger(Number(text.slice(start, index)))
+    )
+      return true;
+  }
   return false;
 };
 

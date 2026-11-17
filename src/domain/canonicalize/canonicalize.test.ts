@@ -259,6 +259,46 @@ describe("wasm-sections defensive bounds", () => {
     expect(reduction?.collapsed).toBeGreaterThanOrEqual(1);
     expect(facts.coverage.status).toBe("partial");
   });
+
+  it("marks a custom section with a non-UTF-8 name unverified, not padding", () => {
+    // The name-length field reads fine (1 byte), but the name byte is 0xff,
+    // which is not valid UTF-8. A lossy decode would invent a U+FFFD name and
+    // report full coverage; the section must instead be unverified so the
+    // unreadable identity is disclosed, never a padding exemplar.
+    const invalidName = wasmModule([
+      wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+      wasmSection(0, Buffer.concat([lebU32(1), Buffer.from([0xff, 0x00])])),
+    ]);
+    const facts = canonicalizeArtifactFacts(invalidName, "wasm", budget());
+    const unverified = facts.collapsed.find(
+      (fact) => fact.classification === "unverified",
+    );
+    expect(unverified?.collection).toBe("wasm-custom-section");
+    expect(unverified?.name).toBeNull();
+    expect(unverified?.detail).toMatch(/not valid UTF-8/iu);
+    expect(
+      facts.collapsed.some(
+        (fact) => fact.classification === "non-semantic-padding",
+      ),
+    ).toBe(false);
+    expect(facts.limitations.join(" ")).toMatch(/not valid UTF-8/iu);
+    expect(facts.coverage.status).toBe("partial");
+  });
+
+  it("still decodes a valid multibyte UTF-8 custom-section name", () => {
+    // A valid non-ASCII name must survive strict decoding unchanged and remain a
+    // classified custom section, not be mistaken for invalid bytes.
+    const facts = canonicalizeArtifactFacts(
+      wasmModule([
+        wasmSection(1, Buffer.from([0x01, 0x60, 0x00, 0x00])),
+        wasmCustomSection("naïve.café", Buffer.alloc(4, 0x42)),
+      ]),
+      "wasm",
+      budget(),
+    );
+    const named = facts.collapsed.find((fact) => fact.name === "naïve.café");
+    expect(named?.classification).toBe("non-semantic-padding");
+  });
 });
 
 // --- JSON -----------------------------------------------------------------
@@ -464,6 +504,19 @@ describe("json-structure source fidelity", () => {
     );
     expect(facts.coverage.status).toBe("partial");
     expect(facts.limitations.join(" ")).toMatch(/safe-integer precision/iu);
+  });
+
+  it("does not flag a quoted numeric string as precision loss", () => {
+    // The digits sit inside a JSON string, which JSON.parse preserves exactly,
+    // so no value was rounded; a precision warning here would be a false alarm
+    // that tells the user intact identifier data changed.
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"id":"9007199254740993","ok":true}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("complete");
+    expect(facts.limitations.join(" ")).not.toMatch(/safe-integer precision/iu);
   });
 
   it("bounds the duplicate scan on deeply nested input", () => {

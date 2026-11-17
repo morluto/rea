@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { isStrictUtf8, strictUtf8Decoder } from "../../strictUtf8.js";
 import type {
   CanonicalizeFact,
   CanonicalizeReduction,
@@ -79,14 +80,38 @@ const readU32Leb = (bytes: Buffer, offset: number): Leb | null => {
 };
 
 interface CustomName {
-  /** Bounded, decoded name prefix retained in the fact. */
+  /** Bounded, decoded name prefix retained in the fact; "" when unreadable. */
   readonly name: string;
   /** Full declared name length in bytes, even when only a prefix was decoded. */
   readonly nameBytes: number;
   /** True when the declared name exceeds the retained prefix. */
   readonly truncated: boolean;
+  /** False when the name bytes are not valid UTF-8; the name is then unverified. */
+  readonly readable: boolean;
   readonly contentStart: number;
 }
+
+/**
+ * Decode a bounded name prefix as strict UTF-8. A WASM section name is a raw
+ * byte vector, not guaranteed UTF-8, so a lossy decode would invent a plausible
+ * name (U+FFFD) for malformed bytes and hide the unreadable identity. When the
+ * full name fits the budget, any malformed byte makes the name unreadable. When
+ * the name is truncated at the byte budget, decode in stream mode so a multibyte
+ * sequence legitimately cut at the boundary is tolerated while genuinely
+ * malformed bytes still fail. Returns null when the bytes are not valid UTF-8.
+ */
+const decodeNamePrefix = (slice: Buffer, truncated: boolean): string | null => {
+  if (!truncated) return isStrictUtf8(slice) ? slice.toString("utf8") : null;
+  try {
+    // A truncated prefix may end mid-sequence; a stream decode tolerates only a
+    // trailing incomplete sequence while still failing on malformed bytes. This
+    // needs its own decoder instance, which strictUtf8Decoder returns per call.
+    // "preserve" keeps ignoreBOM, so a leading BOM in the name is not dropped.
+    return strictUtf8Decoder("preserve").decode(slice, { stream: true });
+  } catch {
+    return null;
+  }
+};
 
 /** Read a custom section's name (LEB-prefixed), decoding only a bounded prefix. */
 const readCustomName = (
@@ -98,11 +123,17 @@ const readCustomName = (
   if (header === null) return null;
   const nameEnd = header.next + header.value;
   if (nameEnd > payloadEnd) return null;
+  const truncated = header.value > MAX_CUSTOM_NAME_BYTES;
   const decodeEnd = Math.min(nameEnd, header.next + MAX_CUSTOM_NAME_BYTES);
+  const decoded = decodeNamePrefix(
+    bytes.subarray(header.next, decodeEnd),
+    truncated,
+  );
   return {
-    name: bytes.toString("utf8", header.next, decodeEnd),
+    name: decoded ?? "",
     nameBytes: header.value,
-    truncated: header.value > MAX_CUSTOM_NAME_BYTES,
+    truncated,
+    readable: decoded !== null,
     contentStart: nameEnd,
   };
 };
@@ -199,6 +230,23 @@ const malformedSectionFact = (
     "Custom section with an unreadable name-length field; its content is unverified.",
 });
 
+/** A custom section whose name bytes are not valid UTF-8; its identity is unverified. */
+const invalidNameSectionFact = (
+  payloadStart: number,
+  nameBytes: number,
+  size: number,
+  region: Buffer,
+): CanonicalizeFact => ({
+  collection: "wasm-custom-section",
+  name: null,
+  classification: "unverified",
+  bytes: size,
+  location: { offset: payloadStart, bytes: size },
+  sha256: canonicalizeDigest(region),
+  sample: null,
+  detail: `Custom section name (${String(nameBytes)} declared bytes) is not valid UTF-8; its identity is unverified.`,
+});
+
 /** A bounded group accumulator: retained count, overflow count, bytes and digest. */
 interface CustomGroup {
   retained: number;
@@ -252,6 +300,7 @@ const canonicalize = (
   const limitations: string[] = [];
   const coreSections = newGroup();
   const malformed = newGroup();
+  const invalidName = newGroup();
   const padding = newGroup();
   const link = newGroup();
   let sectionsExamined = 0;
@@ -333,6 +382,26 @@ const canonicalize = (
       offset = payloadEnd;
       continue;
     }
+    if (!parsed.readable) {
+      // The name-length field read, but the name bytes are not valid UTF-8. A
+      // lossy decode would invent a plausible name and hide the lost identity,
+      // so retain the section as unverified with partial coverage. Bound
+      // retention like the other groups so overflow keeps a group digest.
+      invalidName.examined += 1;
+      if (invalidName.retained < budget.maxFacts) {
+        invalidName.retained += 1;
+        collapsed.push(
+          invalidNameSectionFact(
+            payloadStart,
+            parsed.nameBytes,
+            size.value,
+            region,
+          ),
+        );
+      } else collapseIntoGroup(invalidName, size.value, region);
+      offset = payloadEnd;
+      continue;
+    }
     if (isLinkRelevant(parsed)) {
       link.examined += 1;
       if (link.retained < budget.maxFacts) {
@@ -411,11 +480,26 @@ const canonicalize = (
     );
   }
 
+  if (invalidName.examined > 0) {
+    if (invalidName.overflow > 0)
+      reductions.push(
+        groupReduction(
+          "wasm-custom-section",
+          invalidName,
+          "Custom sections with non-UTF-8 names beyond the exemplar budget were counted with a group digest and left unverified; raise max_facts to retain more.",
+        ),
+      );
+    limitations.push(
+      `${String(invalidName.examined)} custom sections had a name that is not valid UTF-8 and were left unverified.`,
+    );
+  }
+
   const omitted =
     coreSections.overflow > 0 ||
     padding.overflow > 0 ||
     link.overflow > 0 ||
-    malformed.overflow > 0;
+    malformed.overflow > 0 ||
+    invalidName.overflow > 0;
   return {
     detected_format: "wasm",
     normalizer: "wasm-sections",
@@ -424,7 +508,12 @@ const canonicalize = (
     reductions,
     coverage: {
       status:
-        truncated || omitted || malformed.examined > 0 ? "partial" : "complete",
+        truncated ||
+        omitted ||
+        malformed.examined > 0 ||
+        invalidName.examined > 0
+          ? "partial"
+          : "complete",
       examined: sectionsExamined,
       total: truncated ? null : sectionsExamined,
       truncated,
