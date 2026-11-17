@@ -52,6 +52,24 @@ mcpTest(
       );
       expect(evidence.normalized_result.units[0]?.name.value).toBe("main.c");
       expect(evidence.normalized_result.coverage.status).toBe("complete");
+      expect(evidence.parameters).toEqual({ path });
+      const parameters = {
+        path,
+        offset: 0,
+        limit: 32,
+        max_file_bytes: 67_108_864,
+      };
+      const explicit = await client.callTool({
+        name: "inspect_dwarf_units",
+        arguments: parameters,
+      });
+      expect(explicit.isError).not.toBe(true);
+      const selected = dwarfUnitsContract.outputSchema.parse(
+        explicit.structuredContent,
+      );
+      expect(selected.parameters).toEqual(parameters);
+      expect(selected.normalized_result).toEqual(evidence.normalized_result);
+      expect(selected.evidence_id).not.toBe(evidence.evidence_id);
     } finally {
       await session.close();
     }

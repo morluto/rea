@@ -1,12 +1,8 @@
 import { machoSliceFamily } from "../../domain/apple/machoTargetSelection.js";
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DwarfUnitsPort } from "../../ports/binaryDiagnostics/DwarfUnitsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { metadataReportSubjectFormat } from "../../domain/apple/machoTargetSelection.js";
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -18,7 +14,10 @@ import {
 } from "../../domain/native/dwarfUnits.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_dwarf_units";
 
@@ -41,16 +40,6 @@ export class DwarfUnitsService {
       options?.signal,
     );
     if (!input.ok) return input;
-    if (!isAbsolute(input.value.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = dwarfUnitsSchema.safeParse(result.value);
@@ -106,7 +95,7 @@ export class DwarfUnitsService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.value,
+          parameters: callerAnalysisParameters(rawInput)(input.value),
           result: value,
           confidence: "observed",
           limitations: value.limitations,

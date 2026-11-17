@@ -1,3 +1,4 @@
+import { parseEvidence } from "../../domain/evidence.js";
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
@@ -116,17 +117,34 @@ it("rejects a slice selection the caller did not request", async () => {
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
-  const controller = new AbortController();
-  const result = await new DwarfUnitsService({
-    identity,
-    inspect: () => {
-      controller.abort();
-      return Promise.resolve(ok(report));
+it("retains caller-selected parameters if cancellation arrives as the provider completes", async () => {
+  const evidenceIds = [];
+  for (const parameters of [
+    { path: report.artifact.path },
+    {
+      path: report.artifact.path,
+      offset: 0,
+      limit: 32,
+      max_file_bytes: 67_108_864,
     },
-  }).inspect({ path: report.artifact.path }, { signal: controller.signal });
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  ]) {
+    const controller = new AbortController();
+    const result = await new DwarfUnitsService({
+      identity,
+      inspect: () => {
+        controller.abort();
+        return Promise.resolve(ok(report));
+      },
+    }).inspect(parameters, { signal: controller.signal });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected late cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    const evidence = parseEvidence(result.error.partialObservation);
+    expect(evidence.parameters).toEqual(parameters);
+    expect(evidence.normalized_result).toEqual(report);
+    evidenceIds.push(evidence.evidence_id);
+  }
+  expect(evidenceIds[0]).not.toBe(evidenceIds[1]);
 });
 
 it("accepts an arm64e request answered by its arm64-family slice", async () => {

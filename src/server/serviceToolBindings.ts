@@ -857,7 +857,7 @@ const SERVICE_TOOL_BINDINGS = {
   })) satisfies Bind<JavaScriptRecoveryService>,
   dwarfUnits: ((service) => ({
     inspect_dwarf_units: {
-      admission: "sdk",
+      admission: "application",
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<DwarfUnitsService>,

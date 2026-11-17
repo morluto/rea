@@ -37,6 +37,7 @@ cliTest("reports a compile unit through the public CLI", async ({ cli }) => {
     value: "main.c",
   });
   expect(evidence.normalized_result.coverage.status).toBe("complete");
+  expect(evidence.parameters).toEqual({ path });
   expect(evidence.subject?.identity).toMatchObject({ format: "elf" });
 });
 

@@ -17,7 +17,7 @@ import {
 } from "../../domain/parseFailureAnalysisError.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { DWARF_UNITS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -28,7 +28,10 @@ import {
   type InspectDwarfUnitsInput,
 } from "../../domain/native/dwarfUnits.js";
 import { err, ok } from "../../domain/result.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  binaryResourceCeiling,
+  BinaryResourceFailure,
+} from "../../domain/binaryContainer.js";
 import { requireSelectedNativeImage } from "../../domain/apple/machoSliceSelection.js";
 import { parseDwarfCompileUnits } from "./DwarfUnitParser.js";
 import {
@@ -254,7 +257,10 @@ const dwarfUnitsFailurePrimary = (
       OPERATION,
       "memory",
       cause,
-      fixedAllowanceOptions(DWARF_DECOMPRESSED_SECTION_ALLOWANCE, "parser"),
+      fixedAllowanceOptions(DWARF_DECOMPRESSED_SECTION_ALLOWANCE, "parser", {
+        limit: cause.failure.limit.maximum,
+        unit: "bytes",
+      }),
     );
   if (cause instanceof BinaryResourceFailure)
     return parseLimitConstraint(
@@ -264,6 +270,7 @@ const dwarfUnitsFailurePrimary = (
       fixedAllowanceOptions(
         "The native structural decoding allowance",
         "parser",
+        binaryResourceCeiling(cause),
       ),
     );
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
@@ -279,16 +286,16 @@ const dwarfUnitsFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
+      return parseLimitConstraint(
         OPERATION,
-        cause.boundary ?? "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction: inputBudgetRemediation(input),
-        },
+        "file-size",
+        decodeLimit(
+          "dwarf",
+          cause.message,
+          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          { cause },
+        ),
+        { retryable: false, remediationAction: inputBudgetRemediation(input) },
       );
     if (cause.reason === "path" || cause.reason === "format")
       return stableArtifactInputFailure(cause, OPERATION);
