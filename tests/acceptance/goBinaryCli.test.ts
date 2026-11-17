@@ -634,6 +634,7 @@ cliTest(
     });
     expect(result.exitCode, result.stderr).toBe(0);
     const evidence = evidenceResultOf(goBinarySchema).parse(result.json);
+    expect(evidence.normalized_result.build_info?.module_text).toBe(moduleText);
     expect(evidence.normalized_result.build_info?.module).toMatchObject({
       path: "example.com/tool/cmd/tool",
       main: null,
