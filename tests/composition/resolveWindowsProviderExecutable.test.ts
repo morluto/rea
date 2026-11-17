@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { err, ok } from "../../src/domain/result.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../../src/rizin/RizinProviderIdentity.js";
-import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../../src/process/resolveWindowsProviderExecutable.js";
 import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {

@@ -86,6 +86,7 @@ export const UNIT_LAYERS = Object.freeze(
       "objdump",
       "pcap",
       "python",
+      "radare2",
       "reference",
       "rizin",
       "rust",
@@ -375,6 +376,12 @@ export const ENTRY_FILES = Object.freeze(
         "PcapProviderIdentity.ts",
       ],
       python: ["PythonPycProvider.ts", "PythonPycProviderIdentity.ts"],
+      radare2: [
+        "Radare2Command.ts",
+        "Radare2Doctor.ts",
+        "Radare2SessionManager.ts",
+        "Radiff2Command.ts",
+      ],
       reference: [
         // The reference-source import workflow (src/application/ReferenceSource*)
         // runs the reader and consumes its result and failure types. It reports

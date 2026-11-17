@@ -50,3 +50,19 @@ export const resolveWindowsProviderExecutable = (
     if ((lookup.isFile ?? isRegularFile)(path)) return ok(path);
   return err({ kind: "not_found" });
 };
+
+/**
+ * Resolve a caller-selected provider executable for the spawning platform.
+ * Windows requires an absolute executable path, so bare names are resolved
+ * against the environment the child will inherit; other platforms spawn the
+ * configured value unchanged and let the OS search `PATH`.
+ */
+export const resolveProviderExecutable = (
+  executable: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+): string => {
+  if (platform !== "win32") return executable;
+  const resolved = resolveWindowsProviderExecutable(executable, environment);
+  return resolved.ok ? resolved.value : executable;
+};
