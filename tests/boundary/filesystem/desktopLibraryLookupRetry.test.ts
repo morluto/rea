@@ -70,3 +70,70 @@ it.skipIf(process.platform === "win32")(
     expect(report.library_packages_reason).toBeDefined();
   },
 );
+
+it.skipIf(process.platform === "win32").each([
+  { direct: true, cancel: false, io: true },
+  { direct: true, cancel: true, io: true },
+  { direct: false, cancel: false, io: true },
+  { direct: false, cancel: true, io: true },
+  { direct: false, cancel: true, io: false },
+  { direct: false, cancel: false, io: false },
+])(
+  "preserves probe outcomes and cancellation across search paths: %j",
+  async ({ direct, cancel, io }) => {
+    const root = await createTestTempDirectory("rea-library-probe-outcome-");
+    const bin = join(root, "bin");
+    const dirs = [
+      join(root, "first"),
+      join(root, "second"),
+      join(root, "third"),
+    ];
+    await Promise.all([fs.mkdir(bin), ...dirs.map((path) => fs.mkdir(path))]);
+    const executable = join(bin, "app"),
+      first = join(dirs[0]!, "libmissing.so");
+    await fs.writeFile(
+      executable,
+      elfImage({
+        needed: [direct ? first : "libmissing.so"],
+        runpath: dirs.join(":"),
+      }),
+    );
+    const controller = new AbortController(),
+      reason = new Error("cancel probe");
+    const failure = Object.assign(new Error("physical stat failure"), {
+      code: "EIO",
+    });
+    const probes: string[] = [];
+    vi.mocked(fs.stat).mockImplementation(async (...args) => {
+      if (typeof args[0] === "string" && args[0].endsWith("/libmissing.so")) {
+        probes.push(args[0]);
+        if (args[0] === first) {
+          if (cancel) controller.abort(reason);
+          if (io) throw failure;
+        }
+      }
+      return actual.stat(...args);
+    });
+    const operation = inspectLibraryPackages(
+      executable,
+      "app",
+      async () => ({ stdout: "", exitCode: 0 }),
+      controller.signal,
+    );
+    if (io) await expect(operation).rejects.toBe(failure);
+    else if (cancel)
+      await expect(operation).rejects.toMatchObject({
+        reason: "cancelled",
+        cause: reason,
+      });
+    else
+      expect(await operation).toEqual({
+        library_packages: [],
+        missing_libraries: ["libmissing.so"],
+        unpackaged_libraries: [],
+      });
+    expect(probes).toEqual(
+      io || cancel ? [first] : dirs.map((path) => join(path, "libmissing.so")),
+    );
+  },
+);

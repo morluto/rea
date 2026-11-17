@@ -19,6 +19,7 @@ import {
   libraryPackageNames,
   parseLinkerCache,
   type LibraryLookupAlias,
+  type LibraryFileProbe,
 } from "../domain/desktop/libraryPackages.js";
 import {
   ownershipCandidates,
@@ -30,11 +31,7 @@ import { abortIfNeeded } from "../resources/index.js";
 import { compositeKey } from "../domain/unicodeCodePointOrder.js";
 import { withOwnedRegularFile } from "../filesystem/OwnedRegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import {
-  hostReadFailure,
-  isRefusedRead,
-  probeHostFile,
-} from "./HostFileRead.js";
+import { hostReadFailure, isRefusedRead } from "./HostFileRead.js";
 import { succeeded, type QueryRunner } from "./HostQuery.js";
 
 /** The library fields of a Debian package's inventory. */
@@ -71,6 +68,28 @@ const lookupRead = async <T>(
   const value = await read();
   abortIfNeeded(signal);
   return value;
+};
+
+/** Library lookup distinguishes expected refusals from a failed physical read. */
+const probeLibraryFile = async (
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<LibraryFileProbe> => {
+  try {
+    const facts = await lookupRead(signal, () => stat(path));
+    return { kind: "file", isFile: facts.isFile() };
+  } catch (cause: unknown) {
+    const code = (cause as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      abortIfNeeded(signal);
+      return { kind: "file", isFile: false };
+    }
+    if (isRefusedRead(cause)) {
+      abortIfNeeded(signal);
+      return { kind: "unknown", unreachable: code === "EACCES" };
+    }
+    throw hostReadFailure(cause);
+  }
 };
 
 /** Remove dot traversal only after the filesystem resolves every preceding link. */
@@ -341,7 +360,7 @@ export const inspectLibraryPackages = async (
         try {
           // Admit the full lookup before deriving its ownership leaf: splitting
           // a regular file's trailing slash or dot component would erase ENOTDIR.
-          const probe = await lookupRead(signal, () => probeHostFile(path));
+          const probe = await probeLibraryFile(path, signal);
           if (probe.kind !== "file" || !probe.isFile) return undefined;
           const resolvedPath = await lookupRead(signal, () => realpath(path));
           const directory = await lookupRead(signal, () =>
@@ -369,7 +388,7 @@ export const inspectLibraryPackages = async (
       },
       dependencies: (path, expected) =>
         elfDependencies(path, signal, policy, expected),
-      isFile: probeHostFile,
+      isFile: (path) => probeLibraryFile(path, signal),
     },
     policy.libraries,
   );
