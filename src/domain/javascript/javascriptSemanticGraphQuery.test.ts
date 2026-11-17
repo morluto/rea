@@ -25,6 +25,9 @@ import {
   createJavaScriptSemanticGraphNode,
   createJavaScriptSemanticGraphRelation,
   createJavaScriptSemanticGraphUnknown,
+  createOwnedJavaScriptSemanticFingerprint,
+  createOwnedJavaScriptSemanticGraphNode,
+  withJavaScriptSemanticNodeApplicationIds,
   sealTransferredJavaScriptSemanticGraphSteps,
   isValidatedImmutableJavaScriptSemanticGraph,
   JavaScriptSemanticEvidenceContextRegistry,
@@ -914,4 +917,163 @@ it("interns each distinct evidence context once under its content digest", () =>
     [first.context_id, inferred.context_id].toSorted(),
   );
   expect(registry.resolve(repeated)).toEqual(elsewhere);
+});
+
+it("rejects invalid provenance in direct registry.intern calls before sealing", () => {
+  const registry = new JavaScriptSemanticEvidenceContextRegistry();
+  const baseEvidence = semanticGraphTestEvidence();
+  expect(() =>
+    registry.intern({
+      ...baseEvidence,
+      extractor: { ...baseEvidence.extractor, name: "" },
+    }),
+  ).toThrow(z.ZodError);
+  expect(registry.ownedContexts).toEqual([]);
+});
+
+it("seals owned builder records while still rejecting tampered spread copies", () => {
+  const registry = new JavaScriptSemanticEvidenceContextRegistry();
+  const ownedModule = createOwnedJavaScriptSemanticGraphNode(
+    {
+      kind: "module",
+      identity: {
+        artifact_sha256: SHA,
+        module_path: "bundle.js",
+        source_range: {
+          start: { line: 1, column: 0 },
+          end: { line: 1, column: 20 },
+        },
+        role_key: "module",
+      },
+      function_node_id: null,
+      application_node_ids: [],
+      label: "bundle.js",
+      properties: {},
+      evidence: semanticGraphTestEvidence(),
+    },
+    registry,
+  );
+  const ownedCallable = withJavaScriptSemanticNodeApplicationIds(
+    createOwnedJavaScriptSemanticGraphNode(
+      {
+        kind: "function",
+        identity: {
+          artifact_sha256: SHA,
+          module_path: "bundle.js",
+          source_range: {
+            start: { line: 1, column: 2 },
+            end: { line: 1, column: 18 },
+          },
+          role_key: "fn",
+        },
+        function_node_id: null,
+        application_node_ids: [],
+        label: "fn",
+        properties: {},
+        evidence: semanticGraphTestEvidence(),
+      },
+      registry,
+    ),
+    [`jag_node_${"c".repeat(64)}`],
+  );
+  const ownedFingerprint = createOwnedJavaScriptSemanticFingerprint(
+    {
+      function_node_id: ownedCallable.node_id,
+      algorithm: "rea.javascript-semantic-function",
+      status: "complete",
+      components: {
+        parameter_arity: 0,
+        normalized_ast_sha256: "1".repeat(64),
+        control_flow_sha256: "2".repeat(64),
+        relation_shape_sha256: "3".repeat(64),
+        literal_set_sha256: "4".repeat(64),
+        effects: ["network"],
+      },
+      limitations: [],
+      evidence: semanticGraphTestEvidence("inferred"),
+    },
+    registry,
+  );
+  expect(Object.isFrozen(ownedModule)).toBe(true);
+  expect(Object.isFrozen(ownedCallable)).toBe(true);
+  expect(Object.isFrozen(ownedCallable.application_node_ids)).toBe(true);
+  expect(Object.isFrozen(ownedFingerprint)).toBe(true);
+  expect(Object.isFrozen(registry.ownedContexts[0])).toBe(true);
+
+  const ownedInput: JavaScriptSemanticGraphInput = {
+    schema: "JavaScriptSemanticRelationGraph",
+    root_artifact_sha256: SHA,
+    application_graph_id: `jag_${"b".repeat(64)}`,
+    root_node_ids: [ownedModule.node_id],
+    evidence_contexts: registry.ownedContexts,
+    nodes: [ownedModule, ownedCallable],
+    relations: [],
+    unknowns: [],
+    fingerprints: [ownedFingerprint],
+    coverage: {
+      status: "complete",
+      truncated: false,
+      omitted_nodes: 0,
+      omitted_relations: 0,
+      limits: [],
+      families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
+        family,
+        status: "complete",
+        retained_relations: 0,
+        omitted_relations: 0,
+        unknown_ids: [],
+      })),
+    },
+    limitations: [],
+  };
+  const direct = createJavaScriptSemanticGraph(ownedInput);
+  const transferred = complete(
+    sealTransferredJavaScriptSemanticGraphSteps(ownedInput),
+  );
+  const unsealed = createJavaScriptSemanticGraph(
+    JSON.parse(JSON.stringify(ownedInput)) as JavaScriptSemanticGraphInput,
+  );
+  expect(direct.graph_id).toBe(unsealed.graph_id);
+  expect(transferred).toEqual(direct);
+
+  for (const tampered of [
+    {
+      ...ownedInput,
+      nodes: [
+        ownedModule,
+        { ...ownedCallable, node_id: `jsrg_node_${"f".repeat(64)}` },
+      ],
+    },
+    {
+      ...ownedInput,
+      fingerprints: [
+        {
+          ...ownedFingerprint,
+          fingerprint_id: `jsrg_fp_${"f".repeat(64)}`,
+        },
+      ],
+    },
+    {
+      ...ownedInput,
+      nodes: [
+        {
+          ...ownedModule,
+          evidence: {
+            context_id: ownedModule.evidence.context_id,
+            location: {
+              available: false as const,
+              reason: "unresolved" as const,
+              detail: "Contradicts observed context.",
+            },
+          },
+        },
+        ownedCallable,
+      ],
+    },
+  ] satisfies JavaScriptSemanticGraphInput[]) {
+    expect(() => createJavaScriptSemanticGraph(tampered)).toThrow(z.ZodError);
+    expect(() =>
+      complete(sealTransferredJavaScriptSemanticGraphSteps(tampered)),
+    ).toThrow(z.ZodError);
+  }
 });

@@ -283,20 +283,24 @@ describe("Evidence request branches and source diagnostics", () => {
 
   it("retains the exact missing/incorrect identity and its source path", () => {
     const schema = z.strictObject({ source: evidenceInputSchema });
-    const missing = resolveEvidenceRequest(
-      "test",
-      { source: reference },
-      schema,
-      undefined,
-      { referenceScope: "retained-closure" },
-    );
-    if (missing.ok) throw new Error("missing reference was accepted");
-    expect(missing.error).toBeInstanceOf(EvidenceReferenceError);
-    expect(missing.error).toMatchObject({
-      reason: "missing",
-      referenceScope: "retained-closure",
-      diagnostics: { input_path: ["source"] },
-    });
+    for (const referenceScope of [undefined, "retained-closure"] as const) {
+      const missing = resolveEvidenceRequest(
+        "test",
+        { source: reference },
+        schema,
+        undefined,
+        referenceScope === undefined ? {} : { referenceScope },
+      );
+      if (missing.ok) throw new Error("missing reference was accepted");
+      expect(missing.error).toBeInstanceOf(EvidenceReferenceError);
+      expect(missing.error).toMatchObject({
+        evidenceId: reference.evidence_id,
+        reason: "missing",
+        actual: null,
+        referenceScope,
+        diagnostics: { input_path: ["source"] },
+      });
+    }
     const different = { ...reference, evidence_id: `ev_${"f".repeat(64)}` };
     const mismatched = resolveEvidenceRequest(
       "test",
@@ -305,7 +309,12 @@ describe("Evidence request branches and source diagnostics", () => {
       () => evidence,
     );
     if (mismatched.ok) throw new Error("mismatched record was accepted");
-    expect(mismatched.error).toMatchObject({ reason: "identity_mismatch" });
+    expect(mismatched.error).toMatchObject({
+      reason: "identity_mismatch",
+      expected: different.evidence_id,
+      actual: evidence.evidence_id,
+      diagnostics: { input_path: ["source"] },
+    });
   });
 });
 

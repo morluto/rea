@@ -11,11 +11,28 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import { createCliCommandSession } from "../../support/cli/cliCommandSession.js";
+import {
+  cliProcessEnvironment,
+  definedCliEnvironment,
+} from "../../support/cli/cliFixture.js";
 
 import {
   runProductionMcpDoctor,
@@ -43,7 +60,36 @@ import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSch
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
-afterAll(() => schemaValidation.clear());
+const cliSession = createCliCommandSession();
+let compileCacheRoot = "";
+let compileCache = "";
+beforeAll(async () => {
+  compileCacheRoot = (await createTestWorkspace("rea-mcp-doctor-compile-"))
+    .root;
+  compileCache = join(compileCacheRoot, "node-compile");
+});
+afterAll(async () => {
+  schemaValidation.clear();
+  await cliSession.close();
+  if (compileCacheRoot !== "") {
+    await removeTestWorkspace(compileCacheRoot);
+  }
+});
+
+const withCompileCache = <T extends NodeJS.ProcessEnv | Record<string, string>>(
+  environment: T,
+): T =>
+  compileCache === "" || environment.NODE_V8_COVERAGE !== undefined
+    ? environment
+    : ({ NODE_COMPILE_CACHE: compileCache, ...environment } as T);
+
+const runCachedMcpDoctor = (
+  options: Parameters<typeof runProductionMcpDoctor>[0],
+) =>
+  runProductionMcpDoctor({
+    ...options,
+    environment: withCompileCache(options.environment),
+  });
 
 const expectDoctorDeadline = (
   detail: string | undefined,
@@ -78,7 +124,7 @@ const captureProductionCli = async (
       [resolve("scripts/rea.mjs"), ...arguments_],
       {
         cwd: process.cwd(),
-        env: environment,
+        env: withCompileCache(environment),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -106,14 +152,20 @@ const assertCliCatalogIdentity = async (
   environment: NodeJS.ProcessEnv,
   identity: ReturnType<typeof createCatalogIdentity>,
 ) => {
+  const sessionEnvironment = definedCliEnvironment(
+    cliProcessEnvironment(
+      { ...environment, REA_LOG_LEVEL: "silent" },
+      compileCache,
+    ),
+  );
   for (const command of ["capabilities", "providers"]) {
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      [resolve("scripts/rea.mjs"), command, "--json"],
-      { env: environment, timeout: 15_000, maxBuffer: 1024 * 1024 },
-    );
-    const cliStatus: unknown = JSON.parse(stdout);
-    expect(cliStatus, command).toMatchObject({
+    const result = await cliSession.run({
+      arguments: [command, "--json"],
+      cwd: process.cwd(),
+      environment: sessionEnvironment,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json, command).toMatchObject({
       server_identity: {
         catalog: { counts: identity.counts, digests: identity.digests },
       },
@@ -171,7 +223,7 @@ const withoutOutputProfile = (
 };
 
 it("recognizes a hot/cold initial catalog and its inventory identity", async () => {
-  const result = await runProductionMcpDoctor({
+  const result = await runCachedMcpDoctor({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
     cwd: process.cwd(),
@@ -263,7 +315,7 @@ describe("production MCP doctor", () => {
   it.each(catalogProfiles)(
     "verifies the $name catalog through production stdio and status",
     async ({ environment, identity, cliParity }) => {
-      const result = await runProductionMcpDoctor({
+      const result = await runCachedMcpDoctor({
         command: process.execPath,
         args: [resolve("scripts/rea.mjs"), "mcp"],
         cwd: process.cwd(),
@@ -315,7 +367,7 @@ describe("production MCP doctor family scopes", () => {
         REA_MCP_TOOL_FAMILIES: families,
         REA_MCP_OUTPUT_SCHEMA_PROFILE: output,
       };
-      const result = await runProductionMcpDoctor({
+      const result = await runCachedMcpDoctor({
         command: process.execPath,
         args: [resolve("scripts/rea.mjs"), "mcp"],
         cwd: process.cwd(),
@@ -355,7 +407,7 @@ describe("production MCP doctor family scopes", () => {
   it.each(["browser", "native"])(
     "explains unobserved identity for a %s scope without session",
     async (families) => {
-      const result = await runProductionMcpDoctor({
+      const result = await runCachedMcpDoctor({
         command: process.execPath,
         args: [resolve("scripts/rea.mjs"), "mcp"],
         cwd: process.cwd(),
@@ -397,7 +449,7 @@ describe("production MCP doctor family scopes", () => {
   );
 
   it("fails startup instead of misreporting inventory for an invalid scope", async () => {
-    const result = await runProductionMcpDoctor({
+    const result = await runCachedMcpDoctor({
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
@@ -443,14 +495,10 @@ describe("production MCP doctor output", () => {
       TMPDIR: directories.temp,
     };
 
-    const json = await captureProductionCli(
-      ["mcp", "doctor", "--json"],
-      environment,
-    );
-    const jsonl = await captureProductionCli(
-      ["mcp", "doctor", "--format", "jsonl"],
-      environment,
-    );
+    const [json, jsonl] = await Promise.all([
+      captureProductionCli(["mcp", "doctor", "--json"], environment),
+      captureProductionCli(["mcp", "doctor", "--format", "jsonl"], environment),
+    ]);
 
     expect([json.exitCode, jsonl.exitCode]).toEqual([1, 1]);
     const parseable = [json.stdout, jsonl.stdout].map((output) => {
@@ -578,7 +626,7 @@ describe("production MCP doctor probe validation", () => {
         command: process.execPath,
         args: [resolve("scripts/rea.mjs"), "mcp"],
         cwd: process.cwd(),
-        env: environment,
+        env: withCompileCache(environment),
         stderr: "pipe",
       });
       let removedToolName = "";
@@ -619,7 +667,7 @@ describe("production MCP doctor probe validation", () => {
       }
       // Replay real production metadata through a synthetic stdio producer.
       for (const mode of ["valid", "invalid", "inventory"]) {
-        const result = await runProductionMcpDoctor({
+        const result = await runCachedMcpDoctor({
           command: process.execPath,
           args: [
             resolve("tests/fixtures/mcpDoctorReply.mjs"),
@@ -679,7 +727,7 @@ describe("production MCP doctor probe validation", () => {
 
 describe("production MCP doctor child lifecycle", () => {
   it("captures startup exit diagnostics", async () => {
-    const result = await runProductionMcpDoctor({
+    const result = await runCachedMcpDoctor({
       command: process.execPath,
       args: [resolve("tests/fixtures/mcpDoctorExit.mjs")],
       cwd: process.cwd(),
@@ -758,7 +806,7 @@ describe("production MCP doctor child lifecycle", () => {
     // Keep filesystem/process I/O real. Advance only the deadline timers,
     // after the fixture proves it started and published its PID.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const pending = runProductionMcpDoctor({
+    const pending = runCachedMcpDoctor({
       command: process.execPath,
       args: [resolve("tests/fixtures/mcpDoctorHang.mjs")],
       cwd: process.cwd(),
@@ -787,7 +835,7 @@ describe("production MCP doctor child ownership", () => {
   it("does not hand an ambient target variable to the diagnostic child", async () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-target-free-");
     const seenPath = join(root, "env.json");
-    const result = await runProductionMcpDoctor({
+    const result = await runCachedMcpDoctor({
       command: process.execPath,
       args: [resolve("tests/fixtures/mcpDoctorEnvironment.mjs")],
       cwd: root,
@@ -819,7 +867,7 @@ describe("production MCP doctor child ownership", () => {
       const root = await createTestTempDirectory("rea-mcp-doctor-descendant-");
       const pidPath = join(root, "pids.json");
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      const pending = runProductionMcpDoctor({
+      const pending = runCachedMcpDoctor({
         command: process.execPath,
         args: [resolve("tests/fixtures/mcpDoctorForkDescendant.mjs")],
         cwd: process.cwd(),
@@ -856,7 +904,7 @@ describe("production MCP doctor request-flow deadline", () => {
     const root = await createTestTempDirectory("rea-mcp-doctor-session-");
     const readyPath = join(root, "ready");
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const pending = runProductionMcpDoctor({
+    const pending = runCachedMcpDoctor({
       command: process.execPath,
       args: [resolve("tests/fixtures/mcpStartupProbeChild.mjs")],
       cwd: process.cwd(),
@@ -890,7 +938,7 @@ describe("production MCP doctor request-flow deadline", () => {
   ])(
     "does not infer the doctor deadline from remote failure prose: %s",
     async (message) => {
-      const result = await runProductionMcpDoctor({
+      const result = await runCachedMcpDoctor({
         command: process.execPath,
         args: [resolve("tests/fixtures/mcpStartupProbeChild.mjs")],
         cwd: process.cwd(),
@@ -912,7 +960,7 @@ describe("production MCP doctor request-flow deadline", () => {
   );
 
   it("refuses an invalid phase budget before starting a child", async () => {
-    const result = await runProductionMcpDoctor({
+    const result = await runCachedMcpDoctor({
       command: process.execPath,
       args: ["definitely-missing-mcp-doctor-child.mjs"],
       cwd: process.cwd(),
@@ -940,7 +988,7 @@ const runNoisyDoctorChild = async (body: string) => {
   const root = await createTestTempDirectory("rea-mcp-doctor-stderr-");
   const scriptPath = join(root, "noisy.mjs");
   await writeFile(scriptPath, body);
-  return runProductionMcpDoctor({
+  return runCachedMcpDoctor({
     command: process.execPath,
     args: [scriptPath],
     cwd: root,

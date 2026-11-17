@@ -2,6 +2,8 @@ import { afterEach, expect, it } from "vitest";
 import { z } from "zod";
 import { EnhancedTools } from "../../../../src/application/EnhancedTools.js";
 import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "../../../../src/ida/IdaCallGraph.js";
+import { IDA_COMPATIBILITY_PROFILES } from "../../../../src/ida/IdaConfiguration.js";
+import { idaCapabilities } from "../../../../src/ida/IdaProviderCapabilities.js";
 import {
   callGraphSession,
   edge,
@@ -29,9 +31,30 @@ const armSession = () =>
     leafRoots: ["0x2000", "0x3000"],
   });
 
-it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", async () => {
+it("refuses direct callers and keeps caller coverage unknown in an ARM64 dossier", async () => {
   const { client } = await armSession();
   try {
+    const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false);
+    const callers = declared.find(
+      ({ operation }) => operation === "procedure_callers",
+    );
+    expect(callers).toMatchObject({
+      available: false,
+      reason: expect.any(String),
+    });
+    expect(
+      declared.find(({ operation }) => operation === "procedure_callees"),
+    ).toMatchObject({ available: true });
+    expect(
+      await client.execute("procedure_callers", { procedure: "main" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "procedure_callers",
+        reason: callers?.reason,
+      },
+    });
     const result = await client.execute("analyze_function", {
       procedure: "main",
     });

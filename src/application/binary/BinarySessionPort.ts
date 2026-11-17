@@ -144,6 +144,10 @@ export interface BinarySessionPort
     readonly refreshCandidates?: boolean;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession?():
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */
   readAnalysisSnapshot(
     path: string,
@@ -163,4 +167,17 @@ export interface BinarySessionPort
   ): Result<null, EvidenceIntegrityError>;
   onAvailabilityChanged?(listener: () => void | Promise<void>): () => void;
   onAnalysisSnapshotChanged?(listener: () => void | Promise<void>): () => void;
+}
+
+/** Narrow session interface required for one-shot managed provider execution. */
+export interface ManagedBinarySessionPort extends Pick<
+  BinarySessionPort,
+  "open" | "execute" | "close"
+> {
+  executeForDirectObservation?(
+    operation: AnalysisOperation,
+    parameters?: Readonly<Record<string, JsonValue>>,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>>;
 }

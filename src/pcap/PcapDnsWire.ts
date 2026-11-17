@@ -1,6 +1,7 @@
 import { isIPv4, isIPv6 } from "node:net";
 import { err, ok, type Result } from "../domain/result.js";
 import { byteToHex } from "../kernel/byteToHex.js";
+import { isRecord as object } from "../kernel/isRecord.js";
 
 interface DnsWireFailure {
   readonly kind: "invalid_dns_wire";
@@ -21,8 +22,6 @@ export interface DnsMessageFacts {
   readonly incomplete: boolean;
   readonly incomplete_reasons?: readonly string[];
 }
-const object = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Read named producer fields, retaining occurrence order within one PDU. */
 const fields = (source: unknown): Map<string, unknown[]> => {

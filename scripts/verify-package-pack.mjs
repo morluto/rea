@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DEFAULT_CATALOG_IDENTITY } from "../dist/contracts/catalog/catalogIdentity.js";
 
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
+import { runSettledConcurrent } from "./lib/verify-package-core.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
 import { pluginPackageMetadata } from "./lib/plugin-package.mjs";
 
@@ -16,16 +17,19 @@ const { parseSkillManifestMetadata } = await importVerifierSource(
 /** Create a tarball and assert production packaging constraints. */
 export async function verifyPackagePack({ root, workspace, commands }) {
   const packDirectory = join(workspace, "pack");
-  await mkdir(packDirectory);
   const stagingDirectory = join(workspace, "plugin-package");
-  await mkdir(stagingDirectory);
+  await runSettledConcurrent(
+    [packDirectory, stagingDirectory],
+    2,
+    (directory) => mkdir(directory),
+  );
   const [{ files }] = JSON.parse(
     (await commands.execNpm(["pack", "--dry-run", "--json"], { cwd: root }))
       .stdout,
   );
   // Reuse npm's file selection, then project metadata in an owned directory.
   // Source files and the development lock are never rewritten by packaging.
-  for (const { path } of files) {
+  const copyPlan = files.map(({ path }) => {
     const source = resolve(root, path);
     const contained = relative(root, source);
     if (
@@ -34,10 +38,16 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       isAbsolute(contained)
     )
       throw new Error(`npm selected a path outside the package: ${path}`);
-    const destination = join(stagingDirectory, contained);
-    await mkdir(dirname(destination), { recursive: true });
-    await copyFile(source, destination);
-  }
+    return { source, destination: join(stagingDirectory, contained) };
+  });
+  await runSettledConcurrent(
+    [...new Set(copyPlan.map(({ destination }) => dirname(destination)))],
+    32,
+    (directory) => mkdir(directory, { recursive: true }),
+  );
+  await runSettledConcurrent(copyPlan, 32, ({ source, destination }) =>
+    copyFile(source, destination),
+  );
   const { packageJson, shrinkwrap } = pluginPackageMetadata(
     JSON.parse(await readFile(join(root, "package.json"), "utf8")),
     JSON.parse(await readFile(join(root, "package-lock.json"), "utf8")),
@@ -123,24 +133,42 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       )
     ).stdout.trim(),
   );
-  const packedFiles = parseTarListing(
-    (await commands.exec("tar", ["-tf", tarball])).stdout,
-  );
-  const packedManifest = JSON.parse(
-    (await commands.exec("tar", ["-xOf", tarball, "package/package.json"]))
-      .stdout,
-  );
+  const listingOutput = await commands.exec("tar", ["-tf", tarball]);
+  const packedFiles = parseTarListing(listingOutput.stdout);
+  const packedFileSet = new Set(packedFiles);
+  const metadataDirectory = join(workspace, "packed-metadata");
+  await mkdir(metadataDirectory);
+  const metadataCandidates = [
+    "package/package.json",
+    "package/npm-shrinkwrap.json",
+    "package/node_modules/@lydell/node-pty/package.json",
+    "package/skills/reverse-engineer-anything/SKILL.md",
+    "package/.claude-plugin/plugin.json",
+    "package/.codex-plugin/plugin.json",
+    "package/.codex-plugin/mcp.json",
+    "package/.cursor-plugin/plugin.json",
+    "package/mcp.json",
+  ].filter((archivePath) => packedFileSet.has(archivePath));
+  if (metadataCandidates.length > 0) {
+    await commands.exec("tar", [
+      "-xzf",
+      tarball,
+      "-C",
+      metadataDirectory,
+      ...metadataCandidates,
+    ]);
+  }
+  const readPackedText = async (archivePath) => {
+    if (!packedFileSet.has(archivePath))
+      throw new Error(`package omitted ${archivePath}`);
+    return readFile(join(metadataDirectory, archivePath), "utf8");
+  };
+  const readPackedJson = async (archivePath) =>
+    JSON.parse(await readPackedText(archivePath));
+  const packedManifest = await readPackedJson("package/package.json");
   if (packedManifest.mcpName !== "io.github.morluto/rea")
     throw new Error("package did not retain its MCP Registry ownership marker");
-  const packedLock = JSON.parse(
-    (
-      await commands.exec("tar", [
-        "-xOf",
-        tarball,
-        "package/npm-shrinkwrap.json",
-      ])
-    ).stdout,
-  );
+  const packedLock = await readPackedJson("package/npm-shrinkwrap.json");
   if (
     packedManifest.overrides !== undefined ||
     packedManifest.devDependencies !== undefined ||
@@ -162,14 +190,8 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       throw new Error(
         `Plugin runtime dependency is not bundled: ${dependency}`,
       );
-  const pty = JSON.parse(
-    (
-      await commands.exec("tar", [
-        "-xOf",
-        tarball,
-        "package/node_modules/@lydell/node-pty/package.json",
-      ])
-    ).stdout,
+  const pty = await readPackedJson(
+    "package/node_modules/@lydell/node-pty/package.json",
   );
   for (const dependency of Object.keys(pty.optionalDependencies))
     if (
@@ -203,13 +225,9 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     );
   if (packedFiles.some((path) => path.startsWith("package/.cache/")))
     throw new Error("package included development cache or test metadata");
-  const skill = (
-    await commands.exec("tar", [
-      "-xOf",
-      tarball,
-      "package/skills/reverse-engineer-anything/SKILL.md",
-    ])
-  ).stdout;
+  const skill = await readPackedText(
+    "package/skills/reverse-engineer-anything/SKILL.md",
+  );
   const skillMetadata = parseSkillManifestMetadata(skill);
   if (
     !skillMetadata.ok ||
@@ -224,19 +242,9 @@ export async function verifyPackagePack({ root, workspace, commands }) {
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
   ]) {
-    const manifest = JSON.parse(
-      (await commands.exec("tar", ["-xOf", tarball, `package/${path}`])).stdout,
-    );
+    const manifest = await readPackedJson(`package/${path}`);
     const serverConfig = path.startsWith(".codex")
-      ? JSON.parse(
-          (
-            await commands.exec("tar", [
-              "-xOf",
-              tarball,
-              "package/.codex-plugin/mcp.json",
-            ])
-          ).stdout,
-        )
+      ? await readPackedJson("package/.codex-plugin/mcp.json")
       : manifest;
     const expectedArgs = [
       `${path.startsWith(".claude") ? "${CLAUDE_PLUGIN_ROOT}/" : "./"}scripts/plugin-mcp-launcher.mjs`,
@@ -267,18 +275,10 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       )
         throw new Error(`Packaged plugin ${path} is missing its shared icon`);
   }
-  const cursorManifest = JSON.parse(
-    (
-      await commands.exec("tar", [
-        "-xOf",
-        tarball,
-        "package/.cursor-plugin/plugin.json",
-      ])
-    ).stdout,
+  const cursorManifest = await readPackedJson(
+    "package/.cursor-plugin/plugin.json",
   );
-  const cursorServer = JSON.parse(
-    (await commands.exec("tar", ["-xOf", tarball, "package/mcp.json"])).stdout,
-  );
+  const cursorServer = await readPackedJson("package/mcp.json");
   const cursorLogo = String(cursorManifest.logo ?? "").replace(/^\.\//u, "");
   const cursorSkill =
     "package/.cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
