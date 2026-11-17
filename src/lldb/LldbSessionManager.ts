@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import { z } from "zod";
 
 import {
@@ -345,7 +346,8 @@ export class LldbSessionManager {
     };
     let launchPath: string | undefined = options.path;
     if (options.path !== undefined) {
-      const resolved = absoluteCallerPath(options.path);
+      const callerPath = absoluteCallerPath(options.path);
+      const resolved = await realpath(callerPath).catch(() => callerPath);
       launchPath = resolved;
       const observed = await observeDebuggerLaunchFile(resolved, {
         provider: "lldb",

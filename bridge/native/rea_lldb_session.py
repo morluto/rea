@@ -323,7 +323,7 @@ class ReaLldbSessionDaemon:
         if not self.debugger.IsValid():
             return {"error": "Debugger is not valid", "status": "failed"}
 
-        target_path = os.path.abspath(target_path)
+        target_path = os.path.realpath(target_path)
         if not os.path.exists(target_path):
             return {"error": f"Binary not found: {target_path}", "status": "failed"}
 
