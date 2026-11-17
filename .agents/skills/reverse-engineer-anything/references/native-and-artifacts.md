@@ -371,6 +371,19 @@ exports retain every arity and original atom index. CLI summary delivery require
 `--evidence_output`. Null table counts remain distinct from decoded empty tables. See
 [Erlang BEAM files](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
 
+## NuGet packages
+
+Use `inspect_nuget_nupkg` for an explicit local `.nupkg` when the question
+concerns package identity, license, repository, dependency groups, or the ZIP
+contents inventory. No `open_binary`, restore, feed access, or target execution
+is required. The CLI equivalent is `inspect-nuget-nupkg PATH`. Preserve artifact
+SHA-256, `.nuspec` fields as present, dependency version ranges as spelled, and
+path-derived member roles (`lib`, `ref`, `runtimes`, and the other NuGet folder
+conventions). Missing, ambiguous, or malformed `.nuspec` members succeed with
+inventory and limitations. Encrypted members are listed and not extracted.
+Roles are folder conventions, not restore-time asset selection. See
+[NuGet packages](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
+
 ## SQLite snapshots
 
 Use `inspect_sqlite_database` with an explicit local database snapshot for its
@@ -909,6 +922,15 @@ IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.
 Multi-file components retain their aligned physical ranges; the full payload
 is also materialized. Unknown name text retains its original 32 bytes. See
 [U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
+
+Android boot, init_boot, recovery, and vendor_boot images use the same
+inspection and extraction workflows. `ANDROID!` versions 0-4 and `VNDRBOOT`
+versions 3-4 expose header facts and stored component bytes. The header does
+not record whether an `ANDROID!` image is boot, init_boot, or recovery.
+Command lines and names are target-derived. gzip, lz4, and zstd payloads stay
+stored. The v4 signature and any AVB footer are reported with sizes and are
+not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
+[Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
 
 ## ESP images
 

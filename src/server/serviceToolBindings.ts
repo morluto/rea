@@ -1,3 +1,4 @@
+import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
@@ -615,6 +616,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<RustBinaryService>,
+  nugetNupkg: ((service) => ({
+    inspect_nuget_nupkg: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<NugetNupkgService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",

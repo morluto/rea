@@ -22,6 +22,7 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Core WebAssembly interface comparison (#2356)](2356-wasm-interface-comparison/spec.md) ([plan](2356-wasm-interface-comparison/plan.md), [tasks](2356-wasm-interface-comparison/tasks.md), [verification](2356-wasm-interface-comparison/verification.md))
 - [Inspect APK signature schemes (v1–v3.1)](apk-signature/spec.md)
 - [Documentation organization](documentation/organization/spec.md) ([plan](documentation/organization/plan.md), [tasks](documentation/organization/tasks.md), [verification](documentation/organization/verification.md))
+- [Android boot and vendor_boot images](firmware/android-boot-image/spec.md) ([plan](firmware/android-boot-image/plan.md), [tasks](firmware/android-boot-image/tasks.md))
 - [V8 cached-data compilation boundaries](javascript/v8-cached-data/spec.md) ([plan](javascript/v8-cached-data/plan.md), [tasks](javascript/v8-cached-data/tasks.md))
 - [Android `.note.android.ident` ELF note decoding](native/android-elf-ident-note/spec.md) ([plan](native/android-elf-ident-note/plan.md), [tasks](native/android-elf-ident-note/tasks.md))
 - [Native call source coordinates](native/call-source-locations/spec.md) ([plan](native/call-source-locations/plan.md), [tasks](native/call-source-locations/tasks.md), [verification](native/call-source-locations/verification.md))
@@ -40,3 +41,5 @@ for new work, roadmap granularity and producer-owned contracts.
 
 - [Release exposure audit](artifacts/release-exposure/spec.md) ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))
 - [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))
+
+- [NuGet package inspection](artifacts/nuget-nupkg/spec.md) ([plan](artifacts/nuget-nupkg/plan.md), [tasks](artifacts/nuget-nupkg/tasks.md))

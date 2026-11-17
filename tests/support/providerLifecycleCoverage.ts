@@ -1614,6 +1614,20 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-nuget-nupkg": inProcess(
+    covered(
+      test(
+        "tests/boundary/mcp/nugetNupkgMcp.test.ts",
+        "advertises inspect_nuget_nupkg and reads package identity",
+      ),
+    ),
+    covered(
+      test(
+        "src/application/nuget/NugetNupkgService.test.ts",
+        "retains completed Evidence and caller selections on late cancellation",
+      ),
+    ),
+  ),
   "rea-python-pyc": inProcess(
     covered(
       test(

@@ -12,7 +12,7 @@ import {
 } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { lazyLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import {
@@ -27,6 +27,8 @@ import {
   elfFixture,
   llvmBitcodeFixture,
 } from "../fixtures/gpu/codeObjects.js";
+
+const connectLocalToolsMcp = lazyLocalToolsMcp();
 
 cliTest(
   "reads CUDA/PTX and compressed HIP through the public CLI",

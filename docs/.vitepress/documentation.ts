@@ -213,6 +213,11 @@ export const documentationSections = [
         source: "guides/managed/managed-code-analysis.md",
         route: "/managed-code-analysis",
       },
+      {
+        text: "NuGet packages",
+        source: "guides/managed/nuget-nupkg.md",
+        route: "/nuget-nupkg",
+      },
     ],
   },
   {
@@ -537,6 +542,11 @@ export const documentationSections = [
         text: "Agent environments from recorded captures",
         source: "agent-environments.md",
         route: "/agent-environments",
+      },
+      {
+        text: "Android boot and vendor_boot images",
+        source: "android-boot-image.md",
+        route: "/android-boot-image",
       },
       {
         text: "APK signature schemes",
