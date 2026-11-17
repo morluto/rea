@@ -5,7 +5,6 @@ import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 
 import {
   ANDROID_OTA_DEFAULT_BLOCK_SIZE,
-  ANDROID_OTA_HEADER_V1_BYTES,
   ANDROID_OTA_HEADER_V2_BYTES,
   ANDROID_OTA_MAGIC,
 } from "./androidOtaPayload.js";
@@ -365,7 +364,7 @@ export const buildAndroidOtaPayload = (
     signaturesSize,
   );
   if (major === 1) {
-    const header = Buffer.alloc(ANDROID_OTA_HEADER_V1_BYTES);
+    const header = Buffer.alloc(20);
     header.write(ANDROID_OTA_MAGIC, 0, "latin1");
     header.writeBigUInt64BE(1n, 4);
     header.writeBigUInt64BE(BigInt(manifest.length), 12);

@@ -4,7 +4,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   ANDROID_BOOT_MAGIC,
   VENDOR_BOOT_MAGIC,
-  hasAndroidBootImageMagic,
 } from "../domain/androidBootImageFormat.js";
 import {
   decodeLimit,
@@ -15,8 +14,6 @@ import {
   type LimitRef,
 } from "../domain/parseFailure.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-
-export { hasAndroidBootImageMagic };
 
 /**
  * Android boot (`ANDROID!`, versions 0-4) and vendor boot (`VNDRBOOT`,

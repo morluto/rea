@@ -10,7 +10,6 @@ import {
 } from "../../tests/fixtures/androidBootImage.js";
 import {
   compressionFromPrefix,
-  hasAndroidBootImageMagic,
   inspectAvbFooter,
   parseAndroidBootHeader,
   parseVendorRamdiskTable,
@@ -29,10 +28,7 @@ const failed = (bytes: Buffer, fileSize = bytes.length) => {
   return result.error;
 };
 
-it("recognizes ANDROID! and VNDRBOOT and names compression from a prefix", () => {
-  expect(hasAndroidBootImageMagic(Buffer.from("ANDROID!"))).toBe(true);
-  expect(hasAndroidBootImageMagic(Buffer.from("VNDRBOOT"))).toBe(true);
-  expect(hasAndroidBootImageMagic(Buffer.from("short"))).toBe(false);
+it("names recognized compression from a component prefix", () => {
   expect(compressionFromPrefix(Buffer.from([0x1f, 0x8b]))).toBe("gzip");
   expect(compressionFromPrefix(Buffer.from([0x04, 0x22, 0x4d, 0x18]))).toBe(
     "lz4",
