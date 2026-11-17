@@ -791,6 +791,7 @@
 * **ghidra:** expect malformed language XML as a malformed ParseFailure ([#11234](https://github.com/morluto/rea/issues/11234)) ([90e1922](https://github.com/morluto/rea/commit/90e192240ab0166effd9fadd1ecb80841dcf0dc2))
 * **ghidra:** give simulated Linux installs a POSIX path on Windows ([01fcf8e](https://github.com/morluto/rea/commit/01fcf8e3d73f0172595b5504d5a9da3858636a61))
 * **ghidra:** serve fake Ghidra bridge replies checked against the bridge contracts ([#10945](https://github.com/morluto/rea/issues/10945)) ([71c2843](https://github.com/morluto/rea/commit/71c284377284ac983a71089510ffb6478423063a))
+* **go:** consolidate GOPATH evidence checks in the compiled CLI ([#11866](https://github.com/morluto/rea/issues/11866)) ([91e26d2](https://github.com/morluto/rea/commit/91e26d2ef353af4c4667d03907bfa05336d5a7af))
 * guard first-catalog, child CDP and queue regressions at the test deadline ([#11675](https://github.com/morluto/rea/issues/11675)) ([d4c2be5](https://github.com/morluto/rea/commit/d4c2be509ec6ae879a12a82ae43e48077b0fdc1c)), closes [#10513](https://github.com/morluto/rea/issues/10513)
 * **hopper:** assert retained cleanup without optional diagnostics ([#10636](https://github.com/morluto/rea/issues/10636)) ([01192ab](https://github.com/morluto/rea/commit/01192ab73712478f90c7407db5d459198bebba44))
 * **hopper:** audit producer-bound snapshots through MCP ([ab16163](https://github.com/morluto/rea/commit/ab16163061094a6c28e9133c9c618e0850c9cb2f))
