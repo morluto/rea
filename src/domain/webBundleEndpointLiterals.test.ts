@@ -633,3 +633,15 @@ client.POST(\`/api/uppercase-post\`);`);
     ),
   ).toBe(true);
 });
+
+it("rejects backslash-prefixed candidates that could leak URL credentials", () => {
+  // `/\user:pass@host/path` is a cross-origin reference carrying URL
+  // authentication; a transport path or URL literal never contains a
+  // backslash, so admitting one would leak credentials in
+  // `endpoint_candidate.value`.
+  const result = analyze(`fetch('/\\\\user:pass@api.example.test/path');`);
+  const candidates = result.inferences.filter(
+    ({ kind }) => kind === "endpoint_candidate",
+  );
+  expect(candidates.some(({ value }) => value.includes("\\"))).toBe(false);
+});
