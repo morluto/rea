@@ -10,6 +10,43 @@ import { readStableSymlinkTarget } from "../../../src/reference/ReferenceSourceR
 import { readReferenceSource } from "../../support/referenceSourceResourceScope.js";
 import { ok } from "../../../src/domain/result.js";
 
+it.each(["rejected", "returned"] as const)(
+  "retains a symlink's physical failure when cancellation accompanies its %s outcome",
+  async (outcome) => {
+    const root = await createTestTempDirectory("rea-reference-link-failure-");
+    const link = join(root, "alias");
+    await symlink("target", link);
+    const expected = await lstat(link, { bigint: true });
+    const controller = new AbortController();
+    const physical = Object.assign(new Error("authored link EIO"), {
+      code: "EIO",
+    });
+    const result = await readStableSymlinkTarget(
+      link,
+      "alias",
+      expected,
+      controller.signal,
+      async () => {
+        controller.abort("during link failure");
+        if (outcome === "rejected") throw physical;
+        return {
+          status: "failed",
+          kind: "symlink",
+          path: "alias",
+          code: "io",
+          message: "authored link EIO",
+        };
+      },
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      kind: "symlink",
+      path: "alias",
+      code: "io",
+    });
+  },
+);
+
 it("retains the caller reason and observed entries when traversal is cancelled", async () => {
   const root = await createTestTempDirectory("rea-reference-cancel-");
   await writeFile(join(root, "observed.js"), "observed");
@@ -146,7 +183,7 @@ describe("readReferenceSource entries", () => {
     });
   });
 
-  it("reads a source file larger than the former 16 MiB ceiling", async () => {
+  it("reads a source file above 16 MiB", async () => {
     const root = await createTestTempDirectory("rea-reference-large-");
     const size = 16 * 1024 * 1024 + 1;
     const bytes = Buffer.alloc(size, 0x61);
@@ -175,7 +212,7 @@ describe("readReferenceSource entries", () => {
     );
   });
 
-  it("traverses source directories deeper than the former depth ceiling", async () => {
+  it("traverses a source directory 40 levels deep", async () => {
     const root = await createTestTempDirectory("rea-reference-deep-");
     const segments = Array.from({ length: 40 }, (_, index) => `d${index}`);
     const directory = join(root, ...segments);

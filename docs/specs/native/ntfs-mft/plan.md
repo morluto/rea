@@ -46,7 +46,6 @@ signature.
 Current analyst behavior and limitations live in the
 [NTFS guide](../../../guides/native/ntfs-metadata.md).
 
-
 ## Acquired extension metadata
 
 The MFT owner resolves attribute-list graphs for selected base records, using
@@ -63,7 +62,6 @@ entries and explicit discovered omissions. This adds no volume reads, path
 reconstruction, nonresident payload recovery or target execution. Real extension
 captures and Windows-host execution remain unverified; source-built fixtures
 exercise reference ownership, malformed prefixes, cycles and resource bounds.
-
 
 Journal and extension joins share `hasVerifiedMftRecordIdentity` at the MFT
 owner. It consumes parsed sequence, slot verdict, extent and fixup facts; each

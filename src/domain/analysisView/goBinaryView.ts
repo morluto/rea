@@ -20,10 +20,12 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const indexSchema = z.number().int().nonnegative();
 const count = z.number().int().nonnegative();
@@ -80,6 +82,7 @@ export const goBinaryViewContextSchema = z.strictObject({
     build_info_available: z.boolean(),
     module_parse_complete: z.boolean().nullable(),
     runtime_dependencies: z.literal("unknown"),
+    // domain-vocabulary: whether the optional static (ptr, len) scan was not requested, finished within its budgets, or stopped at a budget.
     string_literals: z.enum(["not-requested", "complete", "truncated"]),
   }),
 });
@@ -145,10 +148,10 @@ export const projectGoBinaryView = (
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
+    subject.sha256 !== report.artifact.sha256 ||
     subject.format !== metadataReportSubjectFormat(report) ||
     subject.architecture !==
       (binaryMetadataArchitecture(report.architecture) ?? null)
@@ -270,7 +273,7 @@ export const projectGoBinaryView = (
               string_literals: stringSummary,
             }),
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   }
   const indices =
@@ -322,10 +325,18 @@ export const projectGoBinaryView = (
       ),
     });
   }
+  if (info === null)
+    return ok({
+      kind: "go" as const,
+      view,
+      ...shared,
+      page: { collection: view.collection, rows: [] },
+      coverage: unavailableViewCoverage(),
+    });
   if (view.collection === "dependencies") {
     const paths = view.paths === undefined ? undefined : new Set(view.paths);
     const selected = selectViewRows(
-      info?.module.dependencies ?? [],
+      info.module.dependencies,
       view,
       (row, index) =>
         (indices?.has(index) ?? true) && (paths?.has(row.path) ?? true),
@@ -353,7 +364,7 @@ export const projectGoBinaryView = (
   }
   const keys = view.keys === undefined ? undefined : new Set(view.keys);
   const selected = selectViewRows(
-    info?.module.settings ?? [],
+    info.module.settings,
     view,
     (row, index) =>
       (indices?.has(index) ?? true) && (keys?.has(row.key) ?? true),

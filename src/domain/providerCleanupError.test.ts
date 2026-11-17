@@ -5,7 +5,8 @@ import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "./analysisErrorCore.js";
 import { cleanupRetryRemediation } from "./analysisErrorRecovery.js";
 import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const CLOSE_RETRY = { operation: "close_binary" } as const;
 // Guidance comes from its owning formatters; tests check composition, not prose.
@@ -36,7 +37,7 @@ it.each([false, true])(
       { reason: "first descriptor close failed" },
       { operation: "capture_adb_screen" },
     );
-    if (resolved) primary.resolveCleanup();
+    if (resolved) releaseOwnedCleanup(primary);
     const cleanup = new ProviderCleanupError("adb", ["runtime-root"], {
       reason: "workspace removal failed",
     });
@@ -86,7 +87,7 @@ it.each(["alpha", "beta"])(
     ).bindCleanupDependencies([children, third]);
     const released = first === "alpha" ? alpha : beta;
     const remaining = first === "alpha" ? beta : alpha;
-    released.resolveCleanup();
+    releaseOwnedCleanup(released);
     expect(outer.cleanupIncomplete).toBe(true);
     expect(outer.cleanupResources).toEqual([
       ...remaining.cleanupResources,
@@ -96,10 +97,10 @@ it.each(["alpha", "beta"])(
       code: "cleanup_incomplete",
       details: { resources: [...remaining.cleanupResources, "third-file"] },
     });
-    remaining.resolveCleanup();
+    releaseOwnedCleanup(remaining);
     expect(outer.cleanupIncomplete).toBe(true);
     expect(outer.cleanupResources).toEqual(["third-file"]);
-    third.resolveCleanup();
+    releaseOwnedCleanup(third);
     expect(outer.cleanupIncomplete).toBe(false);
     expect(projectAnalysisError(outer).code).not.toBe("cleanup_incomplete");
   },
@@ -131,7 +132,7 @@ it("offers a bound cleanup retry only while that cleanup remains incomplete", ()
   );
   expect(analysisErrorProjectionSchema.parse(offered)).toEqual(offered);
 
-  retained.resolveCleanup();
+  releaseOwnedCleanup(retained);
   expect(retained.cleanupRetry).toBeUndefined();
   const released = projectAnalysisError(retained);
   expect(released.code).toBe("execution_failure");
@@ -169,7 +170,7 @@ it("keeps a retry offer with the owner of the composed resources", () => {
   );
   expect(offered.remediation.action.split(RETRY_ACTION)).toHaveLength(2);
 
-  retained.resolveCleanup();
+  releaseOwnedCleanup(retained);
   expect(composed.cleanupIncomplete).toBe(false);
   expect(projectAnalysisError(composed)).toMatchObject({ code: "cancelled" });
   expect(projectAnalysisError(composed)).not.toHaveProperty("recovery");

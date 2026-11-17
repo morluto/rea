@@ -59,12 +59,16 @@ describe("screenshot authorization during metrics reads", () => {
       ),
     ).toBe(false);
   });
+  // A proven document change is reported before scope; an unproven one
+  // (no loader) is refused by the current document's scope.
   it.each([
-    { stage: 1, expectedCaptures: 0 },
-    { stage: 2, expectedCaptures: 1 },
+    { stage: 1, expectedCaptures: 0, loader: true },
+    { stage: 2, expectedCaptures: 1, loader: true },
+    { stage: 1, expectedCaptures: 0, loader: false },
+    { stage: 2, expectedCaptures: 1, loader: false },
   ])(
-    "stops capture after scope loss during metrics read $stage",
-    async ({ stage, expectedCaptures }) => {
+    "stops capture after scope loss during metrics read $stage (loader $loader)",
+    async ({ stage, expectedCaptures, loader }) => {
       let reads = 0;
       const { browser, result } = await captureWithFake({
         eventsBeforeReply: ["Page.getLayoutMetrics"],
@@ -85,7 +89,7 @@ describe("screenshot authorization during metrics reads", () => {
             ? [
                 frameNavigated(command, {
                   id: "frame-main",
-                  loaderId: "outside-loader",
+                  ...(loader ? { loaderId: "outside-loader" } : {}),
                   url: "https://outside.test/",
                 }),
               ]
@@ -93,7 +97,7 @@ describe("screenshot authorization during metrics reads", () => {
       });
       expect(result).toMatchObject({
         ok: false,
-        error: { reason: "target_not_allowed" },
+        error: { reason: loader ? "target_changed" : "target_not_allowed" },
       });
       expect(
         browser.commands.filter(
@@ -334,13 +338,49 @@ describe("screenshot viewport freshness", () => {
     });
     expect(result).toMatchObject({
       ok: false,
-      error: { reason: "protocol_error" },
+      error: {
+        reason: "protocol_error",
+        command: "Page.getLayoutMetrics",
+        pointer: "/visualViewport",
+      },
     });
     expect(
       browser.commands.filter(
         ({ method }) => method === "Page.captureScreenshot",
       ),
     ).toHaveLength(stage - 1);
+  });
+
+  it("reports a screenshot reply without image data at the protocol boundary", async () => {
+    const { browser, result } = await captureWithFake({
+      commandResult: ({ method }) =>
+        method === "Page.getLayoutMetrics"
+          ? withCssViewport({
+              visualViewport: {
+                pageX: 0,
+                pageY: 0,
+                clientWidth: 2,
+                clientHeight: 2,
+                scale: 1,
+              },
+            })
+          : method === "Page.captureScreenshot"
+            ? { data: 5 }
+            : undefined,
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        reason: "protocol_error",
+        command: "Page.captureScreenshot",
+        pointer: "/data",
+      },
+    });
+    expect(
+      browser.commands.some(
+        ({ method }) => method === "Target.detachFromTarget",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -876,7 +916,7 @@ describe("screenshot frame identity transitions", () => {
     });
     expect(result).toMatchObject({
       ok: false,
-      error: { reason: "target_not_allowed" },
+      error: { reason: "target_changed" },
     });
   });
 });
@@ -1048,7 +1088,7 @@ it("retains a foreign base scope even when its fragment is malformed", async () 
   );
   expect(result).toMatchObject({
     ok: false,
-    error: { reason: "target_not_allowed" },
+    error: { reason: "target_changed" },
   });
 });
 

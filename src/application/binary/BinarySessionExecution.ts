@@ -9,6 +9,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { EvidenceSubjectTarget } from "../../domain/evidence.js";
+import { binaryTargetSelection } from "../../domain/targetIdentity.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisClient,
@@ -16,7 +17,8 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
+import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 import {
   isSnapshotCacheable,
   requestsFreshIndependentDecompile,
@@ -45,6 +47,11 @@ interface PrepareSessionExecutionInput {
   readonly parameters: Readonly<Record<string, JsonValue>>;
   readonly snapshotContext?: ExecutionOptions["snapshotContext"];
   readonly nativeSourceAdmitted: boolean;
+  /** Current availability as binary_session reports it, not the declaration. */
+  readonly isOperationAvailable: (operation: AnalysisOperation) => boolean;
+  readonly isOperationAdvertised:
+    | ((operation: AnalysisOperation) => boolean)
+    | undefined;
   readonly unboundOperationError: (
     operation: AnalysisOperation,
     route: SessionProviderRoute,
@@ -58,9 +65,9 @@ interface PrepareSessionExecutionInput {
 }
 
 /** Recovery for an operation absent from the selected binary route. */
-export const undeclaredOperationGuidance = (
+const undeclaredOperationGuidance = (
   operation: string,
-  entryCommentAvailable = false,
+  entryCommentAvailable: boolean,
 ): string => {
   const entryComment =
     entryCommentAvailable &&
@@ -79,6 +86,8 @@ export const prepareSessionExecution = (
     operation,
     parameters,
     nativeSourceAdmitted,
+    isOperationAvailable,
+    isOperationAdvertised,
     unboundOperationError,
     lookupSnapshot,
   } = input;
@@ -97,6 +106,15 @@ export const prepareSessionExecution = (
       capability === undefined
         ? undeclaredOperationGuidance(operation, entryCommentAvailable)
         : undefined;
+    const offered =
+      capability === undefined
+        ? offeredOperationAlternatives(
+            operation,
+            (alternative) =>
+              isOperationAvailable(alternative) &&
+              (isOperationAdvertised?.(alternative) ?? true),
+          )
+        : undefined;
     return err(
       new AnalysisCapabilityUnavailableError(
         active.route.binding?.identity.id ?? active.route.identity.id,
@@ -114,6 +132,12 @@ export const prepareSessionExecution = (
           : {
               userMessage: `The selected provider does not declare ${operation}.`,
               fallbackRemediationAction: undeclaredGuidance,
+              ...(offered === undefined
+                ? {}
+                : {
+                    alternatives: offered.operations,
+                    remediationAction: offered.remediation,
+                  }),
             },
       ),
     );
@@ -180,16 +204,15 @@ export const bindExecutionTarget = (
   target: BinaryTarget,
 ): Result<AnalysisExecution, AnalysisError> => {
   if (!result.ok) return result;
+  const selection = binaryTargetSelection(target);
   const subject: EvidenceSubjectTarget = {
     path: target.path,
     sha256: target.sha256,
-    format:
-      target.format === "analysis-database"
-        ? "analysis-database"
-        : target.format,
+    format: target.format,
     ...(target.architecture === undefined
       ? {}
       : { architecture: target.architecture }),
+    ...(selection === null ? {} : { selection }),
   };
   if (
     result.value.subject !== undefined &&
@@ -203,8 +226,16 @@ export const bindExecutionTarget = (
         `${operation}:subject`,
       ),
     );
-  return result.value.subject === undefined
-    ? ok({ ...result.value, subject })
+  const provided = result.value.subject;
+  if (provided === undefined) return ok({ ...result.value, subject });
+  // A provider subject naming the target's own bytes and format is the
+  // target, so it makes the target's selection.
+  return provided !== null &&
+    provided.selection === undefined &&
+    selection !== null &&
+    provided.sha256 === target.sha256 &&
+    provided.format === target.format
+    ? ok({ ...result.value, subject: { ...provided, selection } })
     : result;
 };
 

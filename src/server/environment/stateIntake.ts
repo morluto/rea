@@ -1,11 +1,11 @@
-import { StateResponseCleanup } from "./StateResponseCleanup.js";
+import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import { fileURLToPath } from "node:url";
 
 import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js";
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { paddedBase64ByteLength } from "../../domain/paddedBase64.js";
@@ -19,6 +19,8 @@ import {
   RegularFileCleanupFailure,
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =
@@ -54,13 +56,13 @@ export const CANCELLED: RpcError = {
 };
 
 /** An https state download must finish within this time. */
-export const STATE_FETCH_TIMEOUT_MS = 30_000;
+const STATE_FETCH_TIMEOUT_MS = 30_000;
 
 /** Fetches one https state document; injectable so tests make no external requests. */
 export type StateFetcher = (url: URL, signal: AbortSignal) => Promise<Response>;
 
 /** Redirects are refused so a download never leaves the https origin the caller named. */
-export const fetchStateDocument: StateFetcher = (url, signal) =>
+const fetchStateDocument: StateFetcher = (url, signal) =>
   fetch(url, { signal, redirect: "error" });
 
 /** How `data/add` reaches documents a uri names; injectable so tests make no external requests and need not wait. */
@@ -125,9 +127,6 @@ const fileFailure = (cause: unknown): IntakeFailure =>
     ? FILE_FAILURES.get(String(cause.code))
     : undefined) ?? "read-failed";
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 const MAX_INLINE_BASE64_CHARACTERS =
   Math.ceil(STATE_INTAKE_LIMIT_BYTES / 3) * 4;
 
@@ -135,7 +134,8 @@ const MAX_INLINE_BASE64_CHARACTERS =
 const parseDocumentBytes = (bytes: Uint8Array): Result<unknown, RpcError> => {
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // A user-saved JSON document may carry a BOM signature (RFC 8259 8.1).
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch {
     return err(invalidParams("the file is not UTF-8 text"));
   }
@@ -229,7 +229,7 @@ const downloadBounds = (
 const readCapped = async (
   body: ReadableStream<Uint8Array> | null,
   bounds: DownloadBounds,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   if (body === null) return ok(Buffer.alloc(0));
   const reader = body.getReader();
@@ -260,7 +260,7 @@ const downloadState = async (
   url: URL,
   intake: StateIntake,
   cancel: AbortSignal,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Buffer, RpcError>> => {
   const bounds = downloadBounds(intake.timeoutMs, cancel);
   const fetching = Promise.resolve().then(() =>
@@ -323,7 +323,7 @@ const fileBytes = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<Uint8Array, RpcError>> => {
   if (typeof file.bytes === "string" && file.uri === undefined) {
     if (file.bytes.length > MAX_INLINE_BASE64_CHARACTERS) return err(TOO_LARGE);
@@ -356,7 +356,7 @@ export const partDocument = async (
   intake: StateIntake,
   cancel: AbortSignal,
   files: ArtifactResourceScope,
-  responses: StateResponseCleanup,
+  responses: ResponseBodyCleanup,
 ): Promise<Result<unknown, RpcError>> => {
   if (isRecord(part) && part.kind === "data" && isRecord(part.data))
     return ok(part.data);

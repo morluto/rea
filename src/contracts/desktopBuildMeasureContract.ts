@@ -1,8 +1,9 @@
+import { portableBundleNameSchema } from "../domain/portableBundleName.js";
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, toolEffects } from "./toolEffects.js";
 
 const strings = z.array(z.string());
 const band = z
@@ -34,7 +35,18 @@ const solve = z.strictObject({
 /** The tool that runs a bundle's task in fresh computers and records how hard it is. */
 export const MEASURE_BUILD_TASK_CONTRACT = {
   name: "measure_build_task",
-  ...toolContractMetadata("measure_build_task"),
+  ...toolContractMetadata(
+    "measure_build_task",
+    // Runs the bundle's task in fresh computers and writes its record into the bundle.
+    toolEffects({
+      writesFilesystem: true,
+      launchesProcess: true,
+      accessesNetwork: true,
+      changesUiState: true,
+      executesForeignCode: true,
+      idempotent: false,
+    }),
+  ),
   kind: "application",
   description:
     "Measure how hard an exported bundle's task is for a model: run it in fresh agentenv computers on this host, each solve the bundle's own steps with the agent deployed as the solver on the model, 3 times, then 2 more unless they passed none or all, and keep it in the band when it passes 1 to 3 of 5. A solve that did not finish is run again, at most twice, and not counted. Before each solve REA stops if the largest cost so far would take the total past budget_usd; a solve's cost is known only when it ends, so the first always runs, and a solve that reports no cost stops the measure. The solver calls the model endpoint agentenv reads where REA starts: LITELLM_BASE_URL and LITELLM_API_KEY, or [model] in .agentenv/config.toml; REA holds no model client and never reads the key. It writes difficulty.json at the bundle's root, each measured task's record by name, and a Measured difficulty section in its README, and returns the record: the band, passes, finished solves (k), turns, cost, failures per check and each solve. Solves run one at a time and take minutes each; REA reports progress meanwhile.",
@@ -42,10 +54,9 @@ export const MEASURE_BUILD_TASK_CONTRACT = {
     bundle: absoluteLocalPathStringSchema.describe(
       "The exported bundle's folder on this host.",
     ),
-    task: z
-      .string()
-      .min(1)
-      .describe("The task's name, as its tasks/<name>.json names it."),
+    task: portableBundleNameSchema.describe(
+      "The task's name, as its tasks/<name>.json names it.",
+    ),
     model: z
       .string()
       .min(1)
@@ -80,7 +91,13 @@ export const MEASURE_BUILD_TASK_CONTRACT = {
     k: z.int().nonnegative().describe("The solves that finished."),
     passes: z.int().nonnegative(),
     unfinished: z.int().nonnegative(),
-    usd: z.number().nonnegative(),
+    usd: z
+      .number()
+      .nonnegative()
+      .nullable()
+      .describe(
+        "Total cost of the solves; null when a solve reported no cost.",
+      ),
     budget_usd: z.number().positive(),
     turns: z.array(z.int().nonnegative().nullable()),
     failures_per_check: z

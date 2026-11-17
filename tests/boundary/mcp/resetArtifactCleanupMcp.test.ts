@@ -3,6 +3,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { z } from "zod";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -15,11 +16,7 @@ import { silentLogger } from "../../../src/logger.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
-import {
-  createDeferred,
-  createTestBinarySession,
-} from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -91,8 +88,7 @@ it("drains ordinary exports and refuses reset until their retained artifact owne
   const checkpointPath = join(root, "caller-checkpoint.json");
   const checkpointBytes = Buffer.from("caller-owned checkpoint");
   await writeFile(checkpointPath, checkpointBytes);
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const ordinaryExportFinalCleanup = phaseGate();
   const originalClose = OwnedStagedOutput.prototype.close;
   const originalProcessRetry =
     ProcessCaptureResourceScope.prototype.retryCleanup;
@@ -130,8 +126,7 @@ it("drains ordinary exports and refuses reset until their retained artifact owne
       }
       if (this === retainedOutput) {
         cleanupAttempts += 1;
-        entered.resolve();
-        await release.promise;
+        await ordinaryExportFinalCleanup.hold();
         if (!cleanupAllowed)
           throw new Error("Controlled ordinary-export staging cleanup refusal");
       }
@@ -144,8 +139,7 @@ it("drains ordinary exports and refuses reset until their retained artifact owne
       arguments: { path: exportPath },
     });
     pending.push(exporting);
-    await awaitAcknowledgement(
-      entered.promise,
+    await ordinaryExportFinalCleanup.reached(
       exporting,
       "ordinary export final cleanup",
     );
@@ -157,7 +151,7 @@ it("drains ordinary exports and refuses reset until their retained artifact owne
     await client.ping();
     expect(cleanupAttempts).toBe(1);
     expect(session.immutableEvidenceBundle()).toEqual(before);
-    release.resolve();
+    ordinaryExportFinalCleanup.release();
     expect(parseMcpToolError(await exporting)).toMatchObject({
       error: { code: "cleanup_incomplete" },
     });
@@ -237,7 +231,7 @@ it("drains ordinary exports and refuses reset until their retained artifact owne
   } finally {
     cleanupAllowed = true;
     processCleanupAllowed = true;
-    release.resolve();
+    ordinaryExportFinalCleanup.release();
     await Promise.allSettled(pending);
     close.mockRestore();
     retryProcess.mockRestore();

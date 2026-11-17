@@ -1,9 +1,9 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
-import {
-  compareArtifacts,
-  FORMAT_DECLARATION_UNKNOWN_LIMITATION,
-} from "./artifactComparison.js";
+import { compareArtifacts } from "./artifactComparison.js";
+import { readComparisonResult } from "./comparisonEvidenceResult.js";
+import { projectAnalysisError } from "./analysisErrorProjection.js";
 import {
   artifactInventoryResultSchema,
   type ArtifactInventoryResult,
@@ -429,6 +429,67 @@ it("retains known packing changes when content is unavailable", () => {
   });
 });
 
+it("compares declared digests without using limitation prose", () => {
+  const claim = { algorithm: "md5" as const, digest: "ab".repeat(16) };
+  const edited = { algorithm: "md5" as const, digest: "cd".repeat(16) };
+  const unavailable = (integrity?: {
+    readonly algorithm: "md5";
+    readonly digest: string;
+  }) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: ["same derived note"],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const changes = (
+    left: ReturnType<typeof unavailable>,
+    right: ReturnType<typeof unavailable>,
+  ) =>
+    compareArtifacts(left, right).changes.map(
+      ({ classification, dimensions }) => ({ classification, dimensions }),
+    );
+  const equal = changes(unavailable(claim), unavailable(claim));
+  const oneSided = changes(unavailable(claim), unavailable());
+  const different = changes(unavailable(claim), unavailable(edited));
+  const noted = (
+    integrity:
+      | { readonly algorithm: "md5"; readonly digest: string }
+      | undefined,
+    limitations: readonly string[],
+  ) =>
+    observation({
+      hash_status: "unavailable",
+      limitations: [...limitations],
+      ...(integrity === undefined ? {} : { declared_integrity: integrity }),
+    });
+  const sameClaimDifferentNotes = changes(
+    noted(claim, ["reader caveat"]),
+    noted(claim, ["different caveat"]),
+  );
+  const absentDifferentNotes = changes(
+    noted(undefined, ["unread container suffix"]),
+    noted(undefined, ["content access failed"]),
+  );
+  expect(equal.length).toBeGreaterThan(0);
+  expect(oneSided).toHaveLength(equal.length);
+  expect(different).toHaveLength(equal.length);
+  expect(equal).toEqual(
+    equal.map(() => ({
+      classification: "unknown",
+      dimensions: ["availability"],
+    })),
+  );
+  expect(sameClaimDifferentNotes).toEqual(equal);
+  expect(absentDifferentNotes).toEqual(equal);
+  for (const result of [oneSided, different])
+    expect(result).toEqual(
+      result.map(() => ({
+        classification: "unknown",
+        dimensions: ["metadata", "availability"],
+      })),
+    );
+});
+
 it("keeps unavailable content unknown when packing declarations agree", () => {
   expect(
     compareArtifacts(
@@ -623,7 +684,11 @@ it.each([
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
   });
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
 });
 
 it("does not compare ESP signature block metadata", () => {
@@ -754,7 +819,11 @@ it("compares a node-less record's occurrence fields but not its limitations", ()
       dimensions: ["metadata", "availability"],
     }),
   ]);
-  expect(result.limitations).toEqual([FORMAT_DECLARATION_UNKNOWN_LIMITATION]);
+  expect(result.limitations).toEqual([
+    expect.stringMatching(
+      /metadata declarations are missing.*complete declaration unavailable/u,
+    ),
+  ]);
   // A record's `executable` marking is a declared field like `encrypted`.
   expect(
     compareArtifacts(
@@ -798,5 +867,29 @@ it("compares a node-less record's recorded ASAR storage", () => {
   ).toMatchObject({
     status: "unknown",
     changes: [{ classification: "unknown", dimensions: ["availability"] }],
+  });
+});
+
+it("names the constraint an unchanged comparison with changes violates", () => {
+  const changed = compareArtifacts(
+    ARTIFACT_COMPARISON_EXAMPLE.left,
+    ARTIFACT_COMPARISON_EXAMPLE.right,
+  );
+  const read = readComparisonResult(
+    createEvidence(
+      unknownTarget("not-observed"),
+      ARTIFACT_COMPARISON_EXAMPLE.left.provider,
+      {
+        operation: "compare_artifacts",
+        parameters: {},
+        result: { ...changed, status: "unchanged" },
+      },
+    ),
+    "compare_artifacts",
+  );
+  if (read.ok) throw new Error("Expected the comparison to be refused");
+  expect(projectAnalysisError(read.error)).toMatchObject({
+    code: "evidence_integrity_mismatch",
+    details: { constraint: "unchanged-has-no-changes" },
   });
 });

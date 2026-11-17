@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
 import {
@@ -40,7 +39,7 @@ const README = "# Notes computer app\n\n## Task `set-year`\n\nThe task.\n";
 
 /** A bundle holding TASK as the export writes it, with its README. */
 const bundleWithTask = async () => {
-  const parsed = parseDesktopTask(TASK, isPortableBundleName);
+  const parsed = parseDesktopTask(TASK);
   if (!parsed.ok) throw new Error(parsed.error);
   const bundle = await createTestTempDirectory("measured-bundle-");
   const steps = renderTaskSteps(parsed.value, "notes");

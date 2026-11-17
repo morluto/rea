@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -26,12 +26,19 @@ cliTest(
       environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(1);
+    // open_binary's pairing rule refuses before the target is opened.
     expect(result.json).toMatchObject({
       code: "invalid_request",
       details: {
-        reason: expect.stringMatching(
-          /gamecube-dol.*architecture.*DOL header/iu,
-        ),
+        operation: "binary_overview",
+        issues: [
+          expect.objectContaining({
+            path: ["architecture"],
+            message: expect.stringMatching(
+              /gamecube-dol.*architecture.*DOL header/iu,
+            ),
+          }),
+        ],
       },
     });
     const invalid = await cli.run({
@@ -78,7 +85,14 @@ cliTest(
     expect(missing.exitCode).toBe(1);
     expect(missing.json).toMatchObject({
       code: "invalid_request",
-      details: { reason: expect.stringContaining("architecture") },
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["architecture"],
+            message: expect.stringContaining("architecture"),
+          }),
+        ],
+      },
     });
   },
 );
@@ -108,7 +122,15 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "invalid_request",
-      details: { reason: expect.stringContaining("6502 address width") },
+      details: {
+        reason: expect.stringContaining("6502 address width"),
+        related_parameters: ["format", "architecture", "entry_point"],
+        related_cli_flags: {
+          format: "--target-format",
+          architecture: "--architecture",
+          entry_point: "--entry-point",
+        },
+      },
     });
   },
 );
@@ -124,7 +146,7 @@ cliTest.for([
     await writeFile(path, Buffer.from(bytes, "hex"));
     const result = await cli.run({
       arguments: [
-        "inspect",
+        "analyze",
         path,
         "--target-format",
         "raw-binary",
@@ -141,7 +163,14 @@ cliTest.for([
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "invalid_request",
-      details: { reason: expect.stringContaining(reason) },
+      details: {
+        reason: expect.stringContaining(reason),
+        related_cli_flags: {
+          format: "--target-format",
+          architecture: "--architecture",
+          entry_point: "--entry-point",
+        },
+      },
     });
   },
 );
@@ -177,5 +206,71 @@ cliTest(
     expect(JSON.stringify(result.json)).not.toMatch(
       /unsupported binary format/i,
     );
+  },
+);
+
+cliTest(
+  "renders related_cli_commands across registrars when target opening directs to another lane",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-open-related-cli-");
+    const env = { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root };
+
+    const wasmPath = join(root, "module.wasm");
+    await writeFile(wasmPath, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+    const wasm = await cli.run({
+      arguments: ["inspect", wasmPath, "--json"],
+      environment: env,
+    });
+    expect(wasm.exitCode).toBe(1);
+    expect(wasm.json).toMatchObject({
+      code: "target_unavailable",
+      details: {
+        constraint: "wasm_requires_static_inspection",
+        related_operations: ["inspect_wasm_artifact"],
+        related_cli_commands: {
+          inspect_wasm_artifact: "rea inspect-wasm-artifact",
+        },
+      },
+    });
+
+    const plainDirectory = join(root, "plain-js-dir");
+    await mkdir(plainDirectory);
+    const directory = await cli.run({
+      arguments: ["inspect", plainDirectory, "--json"],
+      environment: env,
+    });
+    expect(directory.exitCode).toBe(1);
+    expect(directory.json).toMatchObject({
+      code: "target_unavailable",
+      details: {
+        constraint: "directory_requires_file",
+        related_operations: ["analyze_javascript_application"],
+        related_cli_commands: {
+          analyze_javascript_application: "rea analyze-javascript-application",
+        },
+      },
+    });
+
+    const bundle = join(root, "Codeless.app", "Contents");
+    await mkdir(bundle, { recursive: true });
+    await writeFile(
+      join(bundle, "Info.plist"),
+      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict></dict></plist>',
+    );
+    const missingExec = await cli.run({
+      arguments: ["inspect", join(root, "Codeless.app"), "--json"],
+      environment: env,
+    });
+    expect(missingExec.exitCode).toBe(1);
+    expect(missingExec.json).toMatchObject({
+      code: "target_unavailable",
+      details: {
+        constraint: "bundle_executable_undeclared",
+        related_operations: ["inspect_plist"],
+        related_cli_commands: {
+          inspect_plist: "rea inspect-plist",
+        },
+      },
+    });
   },
 );

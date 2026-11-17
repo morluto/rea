@@ -24,10 +24,10 @@ describe("IDA profile operation admission", () => {
           expect(capability.reason).toBe(reason ?? null);
         }
       }
+      // No supported profile proves direct call edges.
       expect(
-        idaOperationUnavailableReason("procedure_callers", profile) ===
-          undefined,
-      ).toBe(name === "legacy");
+        idaOperationUnavailableReason("procedure_callers", profile),
+      ).toBeDefined();
       expect(
         idaOperationUnavailableReason("procedure_callees", profile),
       ).toBeUndefined();

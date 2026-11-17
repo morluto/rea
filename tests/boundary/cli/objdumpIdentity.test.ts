@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -45,7 +46,11 @@ cliTest(
         name: "objdump command",
         version: null,
       },
-      subject: null,
+      subject: {
+        identity: unknownTarget("not-observed"),
+        name: null,
+        local_path: null,
+      },
     });
 
     const missing = join(tmpdir(), `missing-objdump-${randomUUID()}`);

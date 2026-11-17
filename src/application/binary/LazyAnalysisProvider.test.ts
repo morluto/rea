@@ -1,13 +1,13 @@
 import { expect, it } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import type {
   AnalysisProvider,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
-import { createAnalysisExecution } from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../ports/AnalysisProvider.js";
 import { LazyAnalysisProvider } from "./LazyAnalysisProvider.js";
 import { ok as resultOk } from "../../domain/result.js";
 
@@ -61,22 +61,12 @@ it("returns a tagged provider error when lazy loading fails", async () => {
 });
 
 it("joins a cancelled unabortable module load and refuses late client acquisition", async () => {
-  let finishLoading!: (provider: AnalysisProvider) => void;
-  let enter!: () => void;
+  const loading = phaseGate<void, AnalysisProvider>();
   let creates = 0;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const loading = new Promise<AnalysisProvider>((resolve) => {
-    finishLoading = resolve;
-  });
   const provider = new LazyAnalysisProvider({
     identity,
     capabilities: [],
-    load: () => {
-      enter();
-      return loading;
-    },
+    load: () => loading.hold(),
   });
   const controller = new AbortController();
   const reason = { request: "cancel during import" };
@@ -89,11 +79,11 @@ it("joins a cancelled unabortable module load and refuses late client acquisitio
       return value;
     });
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(entered, pending, "provider module load");
+    await loading.reached(pending, "provider module load");
     controller.abort(reason);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(settled).toBe(false);
-    finishLoading(
+    loading.release(
       providerWithClient(() => {
         creates++;
       }),
@@ -109,7 +99,7 @@ it("joins a cancelled unabortable module load and refuses late client acquisitio
     expect(await client.close()).toEqual(resultOk(null));
   }, [
     () => controller.abort(),
-    () => finishLoading(providerWithClient()),
+    () => loading.release(providerWithClient()),
     async () => {
       await pending;
     },

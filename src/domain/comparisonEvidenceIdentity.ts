@@ -1,3 +1,4 @@
+import { unknownTarget, sameTargetIdentity } from "./targetIdentity.js";
 import type { Evidence } from "./evidence.js";
 import { createAnalysisProfile } from "./analysisProfile.js";
 import {
@@ -63,6 +64,9 @@ export const hasComparisonEvidenceIdentity = (evidence: Evidence): boolean => {
     providerMatches &&
     evidence.confidence === "derived" &&
     evidence.authority === "analyst-inference" &&
-    evidence.subject === null
+    sameTargetIdentity(
+      evidence.subject.identity,
+      unknownTarget("derived-from-linked-evidence"),
+    )
   );
 };

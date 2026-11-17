@@ -1,13 +1,15 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { decode, Tokenizer, Type, type Token } from "cborg";
 import type {
   SolidityMetadata,
   SolidityMetadataScalar,
 } from "../domain/evm/solidityMetadata.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const PROFILE = "terminal-cbor-scalars-v1";
 const MAX_DEPTH = 64;
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const decodeOptions = {
   useMaps: true,
   allowBigInt: true,
@@ -159,10 +161,7 @@ const solidityFailure = (
       },
     };
   return {
-    diagnostic: (cause instanceof Error ? cause.message : String(cause)).slice(
-      0,
-      512,
-    ),
+    diagnostic: errorMessage(cause).slice(0, 512),
   };
 };
 
