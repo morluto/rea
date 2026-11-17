@@ -1,8 +1,10 @@
+import { spawn } from "node:child_process";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { hasProcessStopped } from "../../support/process/hasProcessStopped.js";
 import { observePosixProcess } from "../../support/process/observePosixProcess.js";
 
 it.skipIf(process.platform === "win32")(
@@ -79,6 +81,43 @@ it.skipIf(process.platform === "win32")(
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "counts an exited descendant that waits to be reaped as stopped",
+  async () => {
+    // The shell's background job exits at once, and the `sleep` that replaces
+    // the shell never waits for it, so the job stays a zombie like it would under
+    // a PID 1 that does not reap.
+    const parent = spawn("sh", ["-c", "true & echo $!; exec sleep 30"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    try {
+      const zombie = await new Promise<number>((resolve, reject) => {
+        let output = "";
+        parent.once("error", reject);
+        parent.stdout.on("data", (chunk: Buffer) => {
+          output += chunk.toString("utf8");
+          if (output.includes("\n")) resolve(Number(output.trim()));
+        });
+      });
+      await expect
+        .poll(async () => (await observePosixProcess(zombie)).kind, {
+          interval: 25,
+        })
+        .toBe("zombie");
+      // Signal 0 still reaches a zombie, which is why it cannot show a stop.
+      expect(() => process.kill(zombie, 0)).not.toThrow();
+      await expect(hasProcessStopped(zombie)).resolves.toBe(true);
+      await expect(hasProcessStopped(parent.pid!)).resolves.toBe(false);
+    } finally {
+      parent.kill("SIGKILL");
+      await new Promise<void>((resolve) => {
+        if (parent.exitCode !== null || parent.signalCode !== null) resolve();
+        else parent.once("close", () => resolve());
+      });
     }
   },
 );

@@ -55,6 +55,7 @@ import {
   MCP_STARTUP_POLICY,
 } from "../../../src/config/mcpStartupPolicy.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { hasProcessStopped } from "../../support/process/hasProcessStopped.js";
 import { waitFor } from "../../support/testWait.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
 
@@ -1002,13 +1003,7 @@ const runNoisyDoctorChild = async (body: string) => {
 
 const waitForExit = async (pid: number): Promise<void> => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    try {
-      process.kill(pid, 0);
-    } catch (cause: unknown) {
-      if (cause instanceof Error && "code" in cause && cause.code === "ESRCH")
-        return;
-      throw cause;
-    }
+    if (await hasProcessStopped(pid)) return;
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`MCP doctor fixture process ${String(pid)} remained alive`);

@@ -14,6 +14,7 @@ import {
 } from "../../../src/domain/desktop/appTaskReaders.js";
 import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { hasProcessStopped } from "../../support/process/hasProcessStopped.js";
 
 const execute = promisify(execFile);
 const NOTE = "Documents/today.txt";
@@ -421,7 +422,7 @@ it("stops the reader, the processes it started and its folder when the export is
   const reader = await pid();
   controller.abort(new Error("cancelled"));
   await expect(read).rejects.toThrow();
-  expect(() => process.kill(reader, 0)).toThrow();
+  await expect(hasProcessStopped(reader)).resolves.toBe(true);
   const folder = (await readFile(join(out, "cwd"), "utf8")).trim();
   await expect(access(folder)).rejects.toThrow();
 });
