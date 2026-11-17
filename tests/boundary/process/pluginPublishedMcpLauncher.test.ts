@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   access,
   chmod,
@@ -124,6 +124,19 @@ const start = (
   });
   return { child, closed };
 };
+
+const awaitStdoutChunk = (child: ChildProcess, label: string) =>
+  new Promise<void>((resolve, reject) => {
+    const stdout = child.stdout;
+    if (stdout === null) {
+      reject(new Error(`${label} has no stdout pipe`));
+      return;
+    }
+    stdout.once("data", () => resolve());
+    child.once("exit", (code) =>
+      reject(new Error(`${label} exited before stdout: ${String(code)}`)),
+    );
+  });
 
 const waitForFile = async (path: string) => {
   for (;;) {
@@ -319,7 +332,7 @@ const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
 writeFileSync(
   entry,
-  "process.stdout.write(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2), prefix: " + JSON.stringify(prefix) + " }));",
+  "process.stdout.write(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2), prefix: " + JSON.stringify(prefix) + " })); process.exit(0);",
   { mode: 0o600 },
 );
 `,
@@ -330,7 +343,6 @@ writeFileSync(
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
-  child.stdin.end();
   const result = await closed;
   expect(result.code).toBe(0);
   const reported = JSON.parse(result.stdout) as {
@@ -386,7 +398,7 @@ const { dirname, join } = require("node:path");
 const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
 const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
-writeFileSync(entry, "process.stdout.write('current-arch');", { mode: 0o600 });
+writeFileSync(entry, "process.stdout.write('current-arch'); process.exit(0);", { mode: 0o600 });
 `,
   );
   const { child, closed } = start([version], {
@@ -395,7 +407,6 @@ writeFileSync(entry, "process.stdout.write('current-arch');", { mode: 0o600 });
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
-  child.stdin.end();
   const result = await closed;
   expect(result.code).toBe(0);
   expect(result.stdout).toBe("current-arch");
@@ -429,7 +440,7 @@ const { dirname, join } = require("node:path");
 const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
 const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
-writeFileSync(entry, "process.stdout.write('recovered');", { mode: 0o600 });
+writeFileSync(entry, "process.stdout.write('recovered'); process.exit(0);", { mode: 0o600 });
 `,
   );
   const { child, closed } = start([version], {
@@ -438,7 +449,6 @@ writeFileSync(entry, "process.stdout.write('recovered');", { mode: 0o600 });
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
-  child.stdin.end();
   const result = await closed;
   expect(result.code).toBe(0);
   expect(result.stdout).toBe("recovered");
@@ -469,7 +479,7 @@ const { dirname, join } = require("node:path");
 const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
 const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
-writeFileSync(entry, "process.stdout.write('lease-recovered');", { mode: 0o600 });
+writeFileSync(entry, "process.stdout.write('lease-recovered'); process.exit(0);", { mode: 0o600 });
 `,
     );
     const { child, closed } = start([version], {
@@ -478,7 +488,6 @@ writeFileSync(entry, "process.stdout.write('lease-recovered');", { mode: 0o600 }
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
       npm_execpath: npmEntry,
     });
-    child.stdin.end();
     const result = await closed;
     expect(result.code).toBe(0);
     expect(result.stdout).toBe("lease-recovered");
@@ -528,7 +537,7 @@ for (;;) {
 }
 writeFileSync(
   entry,
-  "process.stdout.write(JSON.stringify({ installs: " + count + " }));",
+  "process.stdout.write(JSON.stringify({ installs: " + count + " })); process.exit(0);",
   { mode: 0o600 },
 );
 `,
@@ -547,8 +556,6 @@ writeFileSync(
   expect(second.child.exitCode).toBeNull();
   expect(await readFile(counterPath, "utf8")).toBe("1");
   await writeFile(releasePath, "go", { mode: 0o600 });
-  first.child.stdin.end();
-  second.child.stdin.end();
   const [firstResult, secondResult] = await Promise.all([
     first.closed,
     second.closed,
@@ -597,7 +604,7 @@ writeFileSync(counterPath, String(Number(readFileSync(counterPath, "utf8")) + 1)
 const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
 const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
-writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
+writeFileSync(entry, "process.exit(0);", { mode: 0o600 });
 `,
   );
   const stale = await lstat(lockPath);
@@ -613,7 +620,6 @@ writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
   expect((await lstat(lockPath)).ino).toBe(stale.ino);
   expect(await readFile(join(lockPath, "pid"), "utf8")).toBe("2147483647\n");
   await rm(recoveryPath, { recursive: true, force: true });
-  child.stdin.end();
   const result = await closed;
   expect(result.code).toBe(0);
   expect(await readFile(counterPath, "utf8")).toBe("1");
@@ -688,6 +694,7 @@ writeFileSync(
     "    sleep(20);",
     "  }",
     "}",
+    "process.exit(0);",
   ].join("\\n"),
   { mode: 0o600 },
 );
@@ -702,18 +709,8 @@ writeFileSync(
   const first = start([version], launchEnv);
   const second = start([version], launchEnv);
   const sawImport = Promise.all([
-    new Promise<void>((resolve, reject) => {
-      first.child.stdout.once("data", () => resolve());
-      first.child.once("exit", (code) =>
-        reject(new Error(`first exited before import: ${String(code)}`)),
-      );
-    }),
-    new Promise<void>((resolve, reject) => {
-      second.child.stdout.once("data", () => resolve());
-      second.child.once("exit", (code) =>
-        reject(new Error(`second exited before import: ${String(code)}`)),
-      );
-    }),
+    awaitStdoutChunk(first.child, "first"),
+    awaitStdoutChunk(second.child, "second"),
   ]);
   const stagingPrefix = (await waitForFile(startedPath)).trim();
   expect(basename(stagingPrefix)).toMatch(stagingNamePattern(version));
@@ -721,8 +718,6 @@ writeFileSync(
   expect(first.child.exitCode).toBeNull();
   expect(second.child.exitCode).toBeNull();
   expect(await readFile(counterPath, "utf8")).toBe("1");
-  first.child.stdin.end();
-  second.child.stdin.end();
   await writeFile(releasePath, "go", { mode: 0o600 });
   await sawImport;
   expect(await readFile(counterPath, "utf8")).toBe("1");
@@ -762,7 +757,7 @@ const { dirname, join } = require("node:path");
 const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
 const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
-writeFileSync(entry, "process.stdout.write('after-retry-cleanup');", { mode: 0o600 });
+writeFileSync(entry, "process.stdout.write('after-retry-cleanup'); process.exit(0);", { mode: 0o600 });
 `,
   );
   const { child, closed } = start([version], {
@@ -771,7 +766,6 @@ writeFileSync(entry, "process.stdout.write('after-retry-cleanup');", { mode: 0o6
     PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
     npm_execpath: npmEntry,
   });
-  child.stdin.end();
   const result = await closed;
   expect(result.code).toBe(0);
   expect(result.stdout).toBe("after-retry-cleanup");
@@ -806,7 +800,7 @@ const { dirname, join } = require("node:path");
 const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
 const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
-writeFileSync(entry, "process.stdout.write('launch-ok');", { mode: 0o600 });
+writeFileSync(entry, "process.stdout.write('launch-ok'); process.exit(0);", { mode: 0o600 });
 `,
     );
     const env = {
@@ -816,7 +810,6 @@ writeFileSync(entry, "process.stdout.write('launch-ok');", { mode: 0o600 });
       npm_execpath: npmEntry,
     };
     const first = start([version], env);
-    first.child.stdin.end();
     const firstResult = await first.closed;
     expect(firstResult.code).toBe(0);
     expect(firstResult.stdout).toBe("launch-ok");
@@ -924,7 +917,7 @@ const { dirname, join } = require("node:path");
 const prefix = process.argv[process.argv.indexOf("--prefix") + 1];
 const entry = join(prefix, "node_modules", "rea-agents", "scripts", "rea.mjs");
 mkdirSync(dirname(entry), { recursive: true, mode: 0o700 });
-writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
+writeFileSync(entry, "process.exit(0);", { mode: 0o600 });
 `,
   );
   const { child, closed } = start([version], {
@@ -935,7 +928,6 @@ writeFileSync(entry, "process.exitCode = 0;", { mode: 0o600 });
     TMPDIR: spacedTmp,
     npm_execpath: npmEntry,
   });
-  child.stdin.end();
   const result = await closed;
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toBe("");
@@ -995,7 +987,7 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skip("cancels a cold-start lock wait when MCP stdin closes", async () => {
+it("cancels a cold-start lock wait when MCP stdin closes", async () => {
   const version = "6.8.0-published-stdin-cancel";
   const temp = await createLauncherTemp();
   const prefix = installPrefix(version, temp.temporaryRoot);
