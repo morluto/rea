@@ -302,7 +302,7 @@ it("advertises the parsed document for every JSON-input command", async () => {
   }
 });
 
-it("advertises caller paths as local spellings the CLI resolves, not URLs", async () => {
+it("advertises caller paths as local spellings the CLI resolves, not URLs or blank paths", async () => {
   const input = advertisedInput(
     (
       await serve([
@@ -322,7 +322,16 @@ it("advertises caller paths as local spellings the CLI resolves, not URLs", asyn
   });
   for (const path of ["ref.json", "./file:ref.json", "C:\\ref.json"])
     expect(validate(document(path)), path).toBe(true);
-  for (const path of ["file:ref.json", "FILE:ref.json", "https://x/ref.json"])
+  for (const path of [
+    "file:ref.json",
+    "FILE:ref.json",
+    "https://x/ref.json",
+    " ",
+    "\t\n",
+    "\u00A0",
+    "\u2003",
+    "\uFEFF",
+  ])
     expect(validate(document(path)), path).toBe(false);
 });
 

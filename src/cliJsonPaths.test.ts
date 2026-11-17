@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveCliJsonPaths } from "./cli/cliJsonInput.js";
+import {
+  cliJsonCallerPathSchema,
+  resolveCliJsonPaths,
+} from "./cli/cliJsonInput.js";
 import { electronActiveObservationInputSchema } from "./domain/javascript/electronActiveObservation.js";
 
 const paths = [
@@ -14,6 +17,13 @@ const paths = [
 ] as const;
 
 describe("CLI JSON path normalization", () => {
+  it.each([" ", "\t\n", "\u00A0", "\u2003", "\uFEFF"])(
+    "rejects whitespace-only caller path %j",
+    (value) => {
+      expect(cliJsonCallerPathSchema.safeParse(value).success).toBe(false);
+    },
+  );
+
   it.each([
     ["executable_path", ""],
     ["executable_path", " \t "],
