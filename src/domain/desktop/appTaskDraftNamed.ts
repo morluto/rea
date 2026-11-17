@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -41,25 +42,16 @@ import {
   type DesktopStateDifference,
 } from "./stateChanges.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
-import {
-  escapeToken,
-  isXmlElement,
-  locatePointer,
-  resolvePointer,
-} from "./viewPointer.js";
+import { isXmlElement, locatePointer, resolvePointer } from "./viewPointer.js";
 import {
   ARCHIVE,
   referenceRoots,
   valueFormat,
   type CheckTree,
 } from "./appTaskDraftTree.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
-
-const isRecord = (
-  value: JsonValue | null | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Pointers without a listed descendant: a container listed with its members is suggested through them. */
 export const innermost = (pointers: readonly string[]): readonly string[] =>
@@ -388,13 +380,13 @@ const addedChecks = (
     value.forEach((item, index) =>
       addedChecks(
         collected,
-        `${pointer}/${escapeToken(keys[index] ?? String(index))}`,
+        `${pointer}/${escapeJsonPointerToken(keys[index] ?? String(index))}`,
         item,
       ),
     );
   } else if (isRecord(value) && Object.keys(value).length > 0)
     for (const [key, item] of Object.entries(value))
-      addedChecks(collected, `${pointer}/${escapeToken(key)}`, item);
+      addedChecks(collected, `${pointer}/${escapeJsonPointerToken(key)}`, item);
   // A scalar, or an empty array or object, is checked as it is.
   else equals(collected, pointer, value);
 };
@@ -452,7 +444,7 @@ const renamedFrom = (collected: Collected, pointer: string) => {
     old.includes("][")
   )
     return;
-  const at = `${list}/${escapeToken(`[name=${before.name}][@${key}=${old}]`)}`;
+  const at = `${list}/${escapeJsonPointerToken(`[name=${before.name}][@${key}=${old}]`)}`;
   const seed = locatePointer(ends.baseline, at, "xml");
   if (
     seed.kind === "value" &&
@@ -662,7 +654,7 @@ export const namedDraft = (
     edited
       ? clean
       : options.document
-        ? flaggable.slice(0, MAX_FLAGGED)
+        ? flaggable.slice(0, MAX_FLAGGED) // generation-cap: suggested checks of flagged values
         : flaggable
   ).slice(0, options.limit.suggestions);
   const listed = [...change.added, ...change.changed, ...change.removed];
@@ -691,6 +683,7 @@ export const namedDraft = (
           ),
         ),
       ]
+        // generation-cap: suggested guards
         .slice(0, MAX_GUARDS)
         .concat(counts.guards)
     : [];

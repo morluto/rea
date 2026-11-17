@@ -9,6 +9,7 @@ import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { DesktopContentStore } from "./DesktopContentStore.js";
 import { walkHomeState } from "./HomeStateWalker.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 const sha256 = (text: string) =>
@@ -46,6 +47,19 @@ it("DesktopContentStore leaves an occupied partial filename unowned", async () =
   });
   await expect(content.discard()).rejects.toThrow();
   expect(await readFile(partial, "utf8")).toBe("foreign content");
+});
+
+it("DesktopContentStore charges nothing for a write that fails", async () => {
+  const root = await createTestTempDirectory("desktop-content-failed-charge-");
+  const content = await store(root, 1024, 8);
+  await mkdir(join(content.directory, sha256("12345678")));
+  await expect(content.retainBytes(Buffer.from("12345678"))).rejects.toThrow();
+  // The whole budget is still available to the next content.
+  await expect(content.retainBytes(Buffer.from("abcdefgh"))).resolves.toEqual({
+    kind: "retained",
+    sha256: sha256("abcdefgh"),
+    size: 8,
+  });
 });
 
 it("DesktopContentStore retains every unpublished file until discard", async () => {
@@ -205,3 +219,46 @@ describe("DesktopContentStore", () => {
     expect(await readdir(join(root, "capture/content"))).toEqual(["foreign"]);
   });
 });
+
+it.each([false, true])(
+  "retains read-close cancellation and any actual pending descriptor (close fails: %s)",
+  async (closeFails) => {
+    const root = await createTestTempDirectory("desktop-content-cancel-");
+    await writeFile(join(root, "state.ini"), "state");
+    const state = await walked(root);
+    const content = await store(root, 1024, 1024);
+    const controller = new AbortController();
+    const reason = new Error("cancel during actual source descriptor close");
+    const close = OwnedFileHandle.prototype.close;
+    const closing = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if (!closeFails) await close.call(this);
+        controller.abort(reason);
+        if (closeFails) throw new Error("source descriptor close failed");
+      });
+    try {
+      const failure = await content
+        .retain(join(root, "state.ini"), state("state.ini"), controller.signal)
+        .catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+      expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+      if (!(failure instanceof ArtifactReaderFailure))
+        throw new Error("expected actual owner cancellation");
+      expect(failure.cause).toBe(reason);
+      expect(content.files).toBe(0);
+      if (closeFails)
+        await expect(content.close()).rejects.toMatchObject({
+          cleanup: { resources: [join(root, "state.ini")] },
+        });
+      closing.mockRestore();
+      await content.close();
+      await content.discard();
+      expect(await readFile(join(root, "state.ini"), "utf8")).toBe("state");
+    } finally {
+      closing.mockRestore();
+      await content.close();
+      await content.discard();
+    }
+  },
+);

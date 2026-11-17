@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const window = "new s.BrowserWindow({webPreferences:{nodeIntegration:true}})";

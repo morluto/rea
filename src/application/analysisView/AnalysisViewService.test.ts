@@ -1,3 +1,5 @@
+import { fileSubjectTarget } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -21,7 +23,8 @@ import {
   parseEvidence,
   rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
-import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
+import { goBinarySchema } from "../../domain/go/goBinary.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {
@@ -45,7 +48,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import * as queuedInterrupts from "../../process/queuedInterrupts.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import * as evidenceFileSource from "./evidenceFileSource.js";
@@ -229,14 +232,10 @@ it("keeps retained admission and payload ownership for a large capture when only
   expect(ledger.record(parent).ok).toBe(true);
   const retained = ledger.forAnalysis(parent.evidence_id)!;
   const payload = retained.normalized_result;
-  const subject = retained.subject!;
+  const subject = retained.subject;
   const selected = rebindEvidenceToTargetPath(retained, {
+    ...fileSubjectTarget(subject),
     path: "/selected/capture.har",
-    sha256: subject.digest.sha256,
-    format: subject.format,
-    ...(subject.architecture === null
-      ? {}
-      : { architecture: subject.architecture }),
   });
   const retention = {
     recordEvidence: (evidence: Evidence) => ledger.record(evidence),
@@ -491,6 +490,15 @@ it("never seals a view as more certain than its parent Evidence", async () => {
         { kind: "summary" },
       ),
     ];
+    // The item view returns one selected section, not the whole collection.
+    expect(views[0]).toMatchObject({
+      ok: true,
+      value: {
+        normalized_result: {
+          coverage: { examined: 1, total: 1, exhausted: true },
+        },
+      },
+    });
     for (const view of views) {
       if (!view.ok) throw view.error;
       expect(view.value.confidence).toBe(expected);
@@ -574,7 +582,7 @@ it("rejects stale retained IDs and unsupported parent operations", async () => {
     },
   });
   const unsupported = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "inspect_recorded_crash",
@@ -604,12 +612,16 @@ it("rejects stale retained IDs and unsupported parent operations", async () => {
 it("preserves an absent parent subject instead of guessing its format", async () => {
   const analysis = analysisViewJavaScriptAnalysisWithSource();
   const original = analysisViewJavaScriptEvidence(analysis);
-  const parent = createEvidence(undefined, original.provider, {
-    operation: original.operation,
-    parameters: {},
-    result: original.normalized_result,
-    limitations: original.limitations,
-  });
+  const parent = createEvidence(
+    unknownTarget("not-observed"),
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: {},
+      result: original.normalized_result,
+      limitations: original.limitations,
+    },
+  );
   const result = await inspectAnalysisView(
     {
       source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
@@ -618,7 +630,7 @@ it("preserves an absent parent subject instead of guessing its format", async ()
     () => parent,
   );
   if (!result.ok) throw result.error;
-  expect(result.value.subject).toBeNull();
+  expect(result.value.subject.identity.kind).toBe("unknown");
   expect(result.value.locations).toEqual([
     { kind: "artifact-path", path: analysis.input_path },
   ]);
@@ -729,7 +741,7 @@ it("seals inferred and literal HAR pages, including a null artifact digest", asy
     });
     if (!result.ok) throw result.error;
     expect(result.value.confidence).toBe(confidence);
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(parseEvidence(result.value)).toEqual(result.value);
   }
   expect(
@@ -832,7 +844,7 @@ it("seals an inferred environment manifest and a derived manifest without templa
   });
   if (!derived.ok) throw derived.error;
   expect(derived.value.confidence).toBe("derived");
-  expect(derived.value.subject).toBeNull();
+  expect(derived.value.subject.identity.kind).toBe("unknown");
   expect(derived.value.normalized_result).toMatchObject({
     templated_groups: 0,
     tools: [{ name: "get_org" }, { name: "get_search" }, { name: "get_user" }],
@@ -1644,7 +1656,7 @@ it.each(["file", "bundle"] as const)(
   "preserves a produced %s projection failure when cancellation arrives",
   async (kind) => {
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_recorded_crash",
@@ -1725,6 +1737,110 @@ describe("inspectAnalysisView scenario parents", () => {
     if (!fromFile.ok) throw fromFile.error;
     expect(fromFile.value.parameters).toMatchObject({
       parent_evidence_id: parent.evidence_id,
+    });
+  });
+});
+
+describe("inspectAnalysisView cyclonedx", () => {
+  const version = Buffer.from("go1.22.0");
+  const moduleText = Buffer.from("module");
+  const report = goBinarySchema.parse({
+    artifact: {
+      path: "/artifacts/program",
+      sha256: "c".repeat(64),
+      bytes: 256,
+    },
+    format: "elf",
+    architecture: "amd64",
+    bits: 64,
+    byte_order: "little",
+    limitations: [],
+    build_info: {
+      header_offset: 0,
+      encoding: "inline",
+      go_version: "go1.22.0",
+      go_version_bytes_base64: version.toString("base64"),
+      module_text: "module",
+      module_bytes_base64: moduleText.toString("base64"),
+      version_location: { offset: 32, bytes: version.length },
+      module_location: { offset: 48, bytes: moduleText.length },
+      module: {
+        path: "example.com/tool/cmd/tool",
+        main: {
+          path: "example.com/tool",
+          version: "v1.0.0",
+          sum: null,
+          replacement: null,
+        },
+        dependencies: [
+          {
+            path: "example.com/dep",
+            version: "v0.1.0",
+            sum: "h1:sum",
+            replacement: null,
+          },
+        ],
+        settings: [],
+        unparsed_lines: [],
+        unparsed_line_bytes_base64: [],
+        complete: true,
+      },
+    },
+  });
+
+  it("projects inline Go Evidence into one derived CycloneDX document", async () => {
+    const parent = createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "elf",
+        architecture: "x86_64",
+      },
+      {
+        id: "go-build-info",
+        name: "REA Go build-information reader",
+        version: "1",
+      },
+      {
+        operation: "inspect_go_binary",
+        parameters: { path: report.artifact.path },
+        result: report,
+        confidence: "observed",
+      },
+    );
+    const projected = await inspectAnalysisView({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "cyclonedx" },
+    });
+    if (!projected.ok) throw projected.error;
+    expect(projected.value.confidence).toBe("derived");
+    expect(parseEvidence(projected.value).normalized_result).toMatchObject({
+      kind: "cyclonedx",
+      parent_evidence_id: parent.evidence_id,
+      parent_operation: "inspect_go_binary",
+      document: {
+        bomFormat: "CycloneDX",
+        specVersion: "1.6",
+        components: [
+          { purl: "pkg:golang/example.com/tool@v1.0.0" },
+          {
+            purl: "pkg:golang/example.com/dep@v0.1.0",
+            properties: [{ name: "rea:go:sum", value: "h1:sum" }],
+          },
+        ],
+        compositions: [{ aggregate: "unknown" }],
+      },
+    });
+  });
+
+  it("refuses CycloneDX for a parent that is neither Go nor Rust", async () => {
+    const refused = await inspectAnalysisView({
+      source: { kind: "inline", evidence: analysisViewLayoutEvidence() },
+      view: { kind: "cyclonedx" },
+    });
+    expect(refused).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisUnsupportedTargetError" },
     });
   });
 });

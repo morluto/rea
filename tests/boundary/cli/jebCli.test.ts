@@ -32,7 +32,7 @@ it("validates decompile item input before contacting the engine", async () => {
     fieldErrors: [
       {
         code: "too_small",
-        path: "item-address",
+        path: "itemAddress",
       },
     ],
   });
@@ -124,7 +124,6 @@ it.each(
       const result = await cli.run({
         arguments: argv,
         environment: { HOME: home, REA_JEB_MCP_URL: fixture.endpoint },
-        timeoutMs: 10_000,
       });
       const output = JSON.parse(result.stdout);
       if (stage === "success") {

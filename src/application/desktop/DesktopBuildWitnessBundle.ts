@@ -5,7 +5,11 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  cancelledBy,
+  carriedReason,
+} from "../../domain/analysisErrorCore.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
 import type { TaskCheckOutcome } from "../../domain/desktop/appTaskChecks.js";
 import {
@@ -28,9 +32,9 @@ import {
   guestFileAnswerWorkingBytes,
   type AgentEnvComputer,
 } from "../../desktop/AgentEnvComputer.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
-import { errorText } from "./DesktopBuildCommands.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const CHECK = "check_build_task";
 
@@ -69,7 +73,13 @@ export const bundleTaskDifference = async (
   const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
   const [steps, verifier] = await Promise.all(
     [stepsPath, verifierPath].map((path) =>
-      readHostFile(join(bundle, path), bundleFileBytes(), signal),
+      readHostFile(
+        join(bundle, path),
+        bundleFileBytes(),
+        signal,
+        false,
+        (reason) => cancelledBy(CHECK, carriedReason(reason)),
+      ),
     ),
   );
   if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
@@ -146,7 +156,7 @@ export const judgeScreenTask = async (
           ? cause
           : cause.retainDiagnostics({ completed_judge_checks: results })
         : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
-            userMessage: `The screen judge could not check the screen: ${errorText(cause)}`,
+            userMessage: `The screen judge could not check the screen: ${errorMessage(cause)}`,
             cause,
             ...(results.length === 0
               ? {}

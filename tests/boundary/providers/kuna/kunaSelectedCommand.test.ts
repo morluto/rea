@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import { expect, it as test } from "vitest";
 
-import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/ports/AnalysisProvider.js";
 import { runKunaCommand } from "../../../../src/kuna/KunaCommand.js";
 import type { KunaInstallation } from "../../../../src/kuna/KunaInstallation.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
@@ -21,6 +21,7 @@ import {
   inspectKunaInstallationOwned as inspectKunaInstallation,
   withKunaResourceScope,
 } from "./kunaResourceScope.js";
+import { withKunaProjectDeadline } from "./kunaProjectRequest.js";
 
 const it = test.skipIf(process.platform === "win32");
 const shellArgument = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
@@ -49,7 +50,7 @@ const runInstallation = (
     workspace,
     operation: "kuna:selection-fixture",
     timeoutMs: 5_000,
-    deadline: { setting: "REA_KUNA_TIMEOUT_MS", ms: 5_000 },
+    deadline: { setting: "REA_KUNA_TIMEOUT_MS", source: "setting", ms: 5_000 },
     outputBytes: 4096,
     signal: new AbortController().signal,
     retainFailedFileClose: (owner, path) => resources.retain(owner, path),
@@ -203,11 +204,13 @@ it("keeps shared-cache exports separate for equal wrapper bytes selected beside 
   try {
     const keys: string[] = [];
     for (const [index, installation] of installations.entries()) {
-      const built = await cache.build({
-        installation,
-        targetPath,
-        targetSha256,
-      });
+      const built = await cache.build(
+        withKunaProjectDeadline({
+          installation,
+          targetPath,
+          targetSha256,
+        }),
+      );
       if (!built.ok) throw built.error;
       keys.push(built.value.key);
       expect(built.value.functions[0]?.name).toBe(

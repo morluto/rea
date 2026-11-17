@@ -1,6 +1,22 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
+
+it("keeps a self-defaulted module delegate as a possible load", () => {
+  expect(
+    analyzeJavaScriptStaticSource(
+      `const box = { load: module.require };
+box.load = box.load || null;
+box.load.call(module, "./dep.cjs");`,
+    ).references,
+  ).toEqual([
+    expect.objectContaining({
+      kind: "require",
+      specifier: null,
+      operation: "load",
+    }),
+  ]);
+});
 
 it.each([
   "load('./dep.cjs')",

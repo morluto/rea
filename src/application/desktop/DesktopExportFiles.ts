@@ -1,12 +1,12 @@
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   DESKTOP_VIEW_DEFAULTS,
   desktopViewFileLimitMessage,
   type DesktopViewPolicy,
 } from "../../domain/desktop/desktopViewPolicy.js";
-import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
-import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import type { SafeOutputTree } from "../../resources/index.js";
 import type {
   DesktopAppExportPlan,
   SeedScrubReport,
@@ -30,6 +30,7 @@ import { err } from "../../domain/result.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
 import { readZipView } from "./DesktopZipView.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 /** A file the export writes from bytes it made. */
 export interface GeneratedFile {
@@ -89,7 +90,8 @@ const retainedBytes = async (
   copy: RetainedCopy,
   signal: AbortSignal | undefined,
 ): Promise<Buffer> => {
-  signal?.throwIfAborted();
+  if (signal?.aborted === true)
+    throw cancelledBy("export_desktop_application", signal);
   const bytes = await content.read(copy.digest, signal);
   if (!bytes.ok)
     throw refuse(
@@ -213,8 +215,7 @@ export const writeFiles = async (
       Readable.from([bytes]),
       {
         bytes: bytes.length,
-        sha256:
-          shipped.sha256 ?? createHash("sha256").update(bytes).digest("hex"),
+        sha256: shipped.sha256 ?? sha256Hex(bytes),
       },
       signal,
     );

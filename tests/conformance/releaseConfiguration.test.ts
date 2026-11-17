@@ -5,7 +5,7 @@ import { Version } from "release-please/build/src/version.js";
 import { describe, expect, it } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_RANGE } from "../../src/domain/runtimeVersion.js";
-import { MCP_STARTUP_POLICY } from "../../src/mcpStartupPolicy.js";
+import { MCP_STARTUP_POLICY } from "../../src/config/mcpStartupPolicy.js";
 
 const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;

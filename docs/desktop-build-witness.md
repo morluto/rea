@@ -308,7 +308,11 @@ however many entries it dropped. The result returns the same record. When writin
 folder something else wrote into, the witness keeps its stages: check the
 stage that ended it again, with the same task, and REA writes the record
 without checking again. Once it is saved, the same check returns the saved
-record again, so a record saved as its call was cancelled is not lost. A
+record again, so a record saved as its call was cancelled is not lost.
+Cancellation during the published record's final handle cleanup returns the
+record Evidence with the error. When cleanup also fails, the next matching
+check retries those handles and returns the existing record without recording
+or writing it again. A
 computer is witnessed once; witness again from a fresh computer. A bundle of
 several tasks is witnessed one task per fresh computer: the seed stage
 refuses a task whose steps and verifier differ from the bundle's for that

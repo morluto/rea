@@ -101,7 +101,7 @@ export const verifyAndroidMethodBodies = async ({
   const digest = await hashAndroidFile(apk);
   const check = (value, scenario) => {
     const evidence = parseEvidence(value);
-    assert.equal(evidence.subject.digest.sha256, digest);
+    assert.equal(evidence.subject.identity.sha256, digest);
     const result = evidence.normalized_result;
     assert.equal(result.class_name, scenario.class_name);
     assert.equal(result.method.name, scenario.method_name);

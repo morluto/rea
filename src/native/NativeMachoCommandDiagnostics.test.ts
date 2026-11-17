@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { NativeCommandCapture } from "./CommandRunner.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
 import { parseDyldFileTypeRefusal } from "./NativeMachoCommandDiagnostics.js";
 
 const capture = (stdout: string, stderr = ""): NativeCommandCapture => ({

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { EspImageArtifactReader } from "./EspImageArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as espImageDecoding from "../domain/firmware/espImage.js";
 import {

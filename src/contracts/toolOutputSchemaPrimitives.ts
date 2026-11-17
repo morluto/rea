@@ -1,3 +1,4 @@
+import { nativeSegmentListSchema } from "../domain/native/nativeSegments.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
@@ -5,7 +6,6 @@ import { investigationStatisticsSchema } from "../domain/investigationLifecycle.
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
-import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
@@ -467,6 +467,12 @@ const toolAvailabilityFacts = {
   }),
 };
 
+/**
+ * Advertised operations the current provider offers for part of an
+ * unavailable operation's question. They do not replace that operation.
+ */
+const toolAvailabilityAlternatives = z.array(z.string().min(1)).min(1);
+
 export const toolUnavailabilityReason = z.enum([
   "client_capability_missing",
   "target_required",
@@ -488,6 +494,7 @@ export const toolAvailability = z.discriminatedUnion("available", [
     available: z.literal(false),
     reason: toolUnavailabilityReason,
     remediation: z.string().nullable(),
+    alternatives: toolAvailabilityAlternatives.optional(),
   }),
 ]);
 export type ToolAvailability = z.output<typeof toolAvailability>;
@@ -535,6 +542,7 @@ const toolAvailabilityGroupOf = <Facts extends z.ZodRawShape>(facts: Facts) =>
       available: z.literal(false),
       reason: toolUnavailabilityReason,
       remediation: z.string().nullable(),
+      alternatives: toolAvailabilityAlternatives.optional(),
     }),
   ]);
 
@@ -721,34 +729,7 @@ export const addressedEntry = z.object({
   address: z.string(),
   name: z.string(),
 });
-const unavailable = z.object({
-  available: z.literal(false),
-  reason: z.string(),
-});
-
-const availableMemoryPermissions = z.object({
-  available: z.literal(true),
-  source: z.literal("ghidra-memory-block"),
-});
-
-const memoryRegionOutput = z.object({
-  name: z.string(),
-  start: z.string(),
-  end: z.string(),
-  readable: z.boolean().nullable(),
-  writable: z.boolean().nullable(),
-  executable: z.boolean().nullable(),
-  permissions: z.union([unavailable, availableMemoryPermissions]),
-  provenance: z.enum(["hopper-public-python-api", "ghidra-memory-block"]),
-  address_space: z.string().optional(),
-  image_base: z.string().optional(),
-  initialized: z.boolean().optional(),
-  overlay: z.boolean().optional(),
-});
-
-export const segmentOutput = evidenceResultOf(
-  z.array(memoryRegionOutput.extend({ sections: z.array(memoryRegionOutput) })),
-);
+export const segmentOutput = evidenceResultOf(nativeSegmentListSchema);
 
 export const procedureInfoOutput = evidenceResultOf(procedureInfoSchema);
 
@@ -775,5 +756,3 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
     identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
-
-export const functionDossierOutput = evidenceResultOf(functionDossierSchema);

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource as analyzeUnknownHostSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCommonJsStaticFixture as analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 
 it("retains an unknown-host Electron request as a candidate without claiming IPC identity", () => {
@@ -14,16 +14,16 @@ it("retains an unknown-host Electron request as a candidate without claiming IPC
       loader_authority: "candidate",
     }),
   ]);
-  expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
+  expect(analysis.analysis_coverage.applicability.electron).toBe("unknown");
   expect(analysis.references).toContainEqual(
     expect.objectContaining({
       specifier: "electron",
       loader_authority: "candidate",
     }),
   );
-  expect(
-    analysis.analysis_coverage?.semantics.unknown_findings,
-  ).toBeGreaterThan(0);
+  expect(analysis.analysis_coverage.semantics.unknown_findings).toBeGreaterThan(
+    0,
+  );
 });
 
 it.each([
