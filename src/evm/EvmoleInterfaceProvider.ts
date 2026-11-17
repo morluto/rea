@@ -34,7 +34,7 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "../resources/index.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   OwnedCommandFailure,
   ownedCommandResources,
@@ -401,11 +401,7 @@ const evmReplyCompletionFailure = (
   bindArtifactFileCleanup(cause, cleanup);
   return cancellation === undefined
     ? cleanup
-    : analysisErrorWithCleanupFailure(
-        cancellation,
-        cleanup,
-        OPERATION,
-      ).bindCleanupDependencies([cancellation, cleanup]);
+    : analysisErrorWithCleanupDependencies(cancellation, cleanup, OPERATION);
 };
 
 /** Run unchanged EVMole/WASM in an owned worker; no target, chain or network execution. */
@@ -909,11 +905,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           );
       if (markerCleanupFailure !== undefined) {
         const cleanup = retainedCleanupFailure(markerCleanupFailure);
-        failure = analysisErrorWithCleanupFailure(
+        failure = analysisErrorWithCleanupDependencies(
           failure,
           cleanup,
           OPERATION,
-        ).bindCleanupDependencies([failure, cleanup]);
+        );
       }
       result = err(failure);
     }
@@ -926,11 +922,11 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
       } else {
         result = err(
           replyFinalization.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
+            ? analysisErrorWithCleanupDependencies(
                 result.error,
                 replyFinalization,
                 OPERATION,
-              ).bindCleanupDependencies([result.error, replyFinalization])
+              )
             : result.error.retainSecondaryFailure(replyFinalization, {
                 reply_finalization_error:
                   projectAnalysisErrorWithoutCapturedOutput(replyFinalization),
