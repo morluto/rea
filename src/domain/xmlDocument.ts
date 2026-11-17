@@ -245,8 +245,11 @@ export const xmlAttributeQuoteRanges = (
   }
 };
 
-/** Thrown inside the stream to stop counting once the limit is passed. */
-class XmlNodeLimitReached extends Error {}
+/**
+ * Stops the stream once counting has passed the limit. It never leaves
+ * countXmlNodes, which returns the count instead of reporting a failure.
+ */
+class StopXmlNodeCount extends Error {}
 
 /**
  * How many nodes the DOM projection of `source` would hold (elements,
@@ -260,7 +263,7 @@ export const countXmlNodes = (source: string, limit: number): number => {
   let nodes = 0;
   const count = () => {
     nodes += 1;
-    if (nodes > limit) throw new XmlNodeLimitReached();
+    if (nodes > limit) throw new StopXmlNodeCount();
   };
   try {
     checkXmlSyntax(source, "allow", (syntax) => {
