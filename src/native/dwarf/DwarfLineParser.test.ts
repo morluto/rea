@@ -3,6 +3,7 @@ import {
   dwarfLinesSchema,
   DWARF_LINE_LIMITATIONS,
   MAX_DWARF_LINE_ADDRESS_MATCHES,
+  MAX_DWARF_LINE_SEQUENCES,
   MAX_INSPECT_DWARF_LINE_ADDRESSES,
 } from "../../domain/native/dwarfLines.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
@@ -902,7 +903,7 @@ it("bounds repeated directory prefix and path join expansion across files, rows,
       lineFileOffset: 0,
       little: true,
       defaultAddressSize: 8,
-      addresses: ["0x2000", "0x2002"],
+      addresses: ["0x2000", "0x2002", "0x9999"],
       maxPrograms: 16,
       maxRows: 600,
       unappliedLineRelocations: [],
@@ -913,6 +914,94 @@ it("bounds repeated directory prefix and path join expansion across files, rows,
   expect(rowMatchRes.limitations).toContain(
     DWARF_LINE_LIMITATIONS.stringExpansionTruncated,
   );
+  expect(rowMatchRes.limitations).not.toContain(
+    DWARF_LINE_LIMITATIONS.addressMatchesTruncated,
+  );
   expect(rowMatchRes.rows.length).toBeLessThan(600);
   expect(JSON.stringify(rowMatchRes).length).toBeLessThan(24 * 1024 * 1024);
+
+  // 3. Same match exhaustion under maxRows: 0 reports string budget, not 65536 match cap
+  const matchOnlyRes = assertValidReportSchema(
+    rowBombProg,
+    parseDwarfLinePrograms({
+      line: rowBombProg,
+      lineStr: null,
+      str: null,
+      strOffsets: null,
+      lineFileOffset: 0,
+      little: true,
+      defaultAddressSize: 8,
+      addresses: ["0x2000", "0x9999"],
+      maxPrograms: 16,
+      maxRows: 0,
+      unappliedLineRelocations: [],
+      unappliedDebugRelocations: [],
+    }),
+  );
+  expect(matchOnlyRes.coverage.status).toBe("partial");
+  expect(matchOnlyRes.coverage.reason).toContain("string expansion exceeded");
+  expect(matchOnlyRes.limitations).toContain(
+    DWARF_LINE_LIMITATIONS.stringExpansionTruncated,
+  );
+  expect(matchOnlyRes.limitations).not.toContain(
+    DWARF_LINE_LIMITATIONS.addressMatchesTruncated,
+  );
+  expect(matchOnlyRes.address_matches[0]?.matches.length).toBeLessThan(600);
+  expect(matchOnlyRes.address_matches[1]?.status).toBe("incomplete");
+});
+
+it("assigns distinct sequence_index values after reaching MAX_DWARF_LINE_SEQUENCES under max_rows: 0", () => {
+  const totalSeqs = MAX_DWARF_LINE_SEQUENCES + 2;
+  const perSeqBytes = 17; // 11 (lneSetAddress) + 1 (lnsCopy) + 2 (lnsAdvancePc) + 3 (lneEndSequence)
+  const opcodes = Buffer.allocUnsafe(totalSeqs * perSeqBytes);
+  for (let i = 0; i < totalSeqs; i += 1) {
+    const off = i * perSeqBytes;
+    const addr = 0x1000n + BigInt(i * 2);
+    opcodes[off] = 0x00;
+    opcodes[off + 1] = 0x09;
+    opcodes[off + 2] = 0x02;
+    opcodes.writeBigUInt64LE(addr, off + 3);
+    opcodes[off + 11] = 0x01; // DW_LNS_copy
+    opcodes[off + 12] = 0x02; // DW_LNS_advance_pc
+    opcodes[off + 13] = 0x02; // +2
+    opcodes[off + 14] = 0x00;
+    opcodes[off + 15] = 0x01;
+    opcodes[off + 16] = 0x01; // DW_LNE_end_sequence
+  }
+  const prog = lineProgram({
+    version: 4,
+    legacyDirectories: ["/src"],
+    legacyFiles: [{ name: "seq.c", dirIndex: 1 }],
+    opcodes,
+  });
+  const addrPost1 = `0x${(0x1000 + MAX_DWARF_LINE_SEQUENCES * 2).toString(16)}`;
+  const addrPost2 = `0x${(0x1000 + (MAX_DWARF_LINE_SEQUENCES + 1) * 2).toString(16)}`;
+  const res = assertValidReportSchema(
+    prog,
+    parseDwarfLinePrograms({
+      line: prog,
+      lineStr: null,
+      str: null,
+      strOffsets: null,
+      lineFileOffset: 0,
+      little: true,
+      defaultAddressSize: 8,
+      addresses: [addrPost1, addrPost2],
+      maxPrograms: 16,
+      maxRows: 0,
+      unappliedLineRelocations: [],
+      unappliedDebugRelocations: [],
+    }),
+  );
+  expect(res.programs[0]?.sequences.length).toBe(MAX_DWARF_LINE_SEQUENCES);
+  expect(res.coverage.status).toBe("partial");
+  expect(res.coverage.reason).toContain(String(MAX_DWARF_LINE_SEQUENCES));
+  expect(res.address_matches[0]?.status).toBe("resolved");
+  expect(res.address_matches[1]?.status).toBe("resolved");
+  expect(res.address_matches[0]?.matches[0]?.sequence_index).toBe(
+    MAX_DWARF_LINE_SEQUENCES,
+  );
+  expect(res.address_matches[1]?.matches[0]?.sequence_index).toBe(
+    MAX_DWARF_LINE_SEQUENCES + 1,
+  );
 });

@@ -188,8 +188,12 @@ interface SharedBudget {
   sequenceCountBudgetHit: boolean;
   addressMatchesRemaining: number;
   addressMatchBudgetHit: boolean;
+  addressMatchStringBudgetHit: boolean;
   sequenceBudgetHit: boolean;
 }
+
+const addressMatchingStopped = (budget: SharedBudget): boolean =>
+  budget.addressMatchBudgetHit || budget.addressMatchStringBudgetHit;
 
 interface ProgramIssueCollector {
   readonly list: DwarfLineIssue[];
@@ -1823,6 +1827,7 @@ const runLineMachine = (
 
   let regs = resetRegisters(defaultIsStmt);
   let totalRows = 0;
+  let totalSequences = 0;
   let retainedRows = 0;
   let addressesUnresolved = false;
   let aborted = false;
@@ -1838,7 +1843,8 @@ const runLineMachine = (
 
   const finalizeSequence = (hasEndSequence: boolean): void => {
     if (seqRowCount === 0) return;
-    const seqIdx = sequences.length;
+    const seqIdx = totalSequences;
+    totalSequences += 1;
     const startAddr =
       seqStartAddr !== null ? formatDwarfLineAddress(seqStartAddr) : null;
     const endAddr =
@@ -1856,7 +1862,7 @@ const runLineMachine = (
     } else {
       budget.sequenceCountBudgetHit = true;
     }
-    if (addressTargets !== null && !budget.addressMatchBudgetHit) {
+    if (addressTargets !== null && !addressMatchingStopped(budget)) {
       const seqIndex: DecodedSequenceIndex = {
         programIndex,
         programOffset,
@@ -1867,7 +1873,7 @@ const runLineMachine = (
         endAddress: seqEndAddr,
       };
       for (const entry of addressTargets) {
-        if (budget.addressMatchBudgetHit) break;
+        if (addressMatchingStopped(budget)) break;
         if (currentMonotonic) {
           matchSequenceMonotonic(seqIndex, entry.target, entry.matches, budget);
         } else {
@@ -1901,7 +1907,7 @@ const runLineMachine = (
     const fileEntry = needRowDetails
       ? lookupFileEntry(header.files, regs.file, zeroBased)
       : undefined;
-    const seqIndex = sequences.length;
+    const seqIndex = totalSequences;
 
     if (
       retainRowsForProgram &&
@@ -2395,7 +2401,7 @@ const tryPushAddressMatch = (
     (r.directory?.length ?? 0) +
     (r.path?.length ?? 0);
   if (!tryConsumeExpandedChars(budget, matchChars)) {
-    budget.addressMatchBudgetHit = true;
+    budget.addressMatchStringBudgetHit = true;
     return false;
   }
   budget.addressMatchesRemaining -= 1;
@@ -2601,6 +2607,7 @@ export const parseDwarfLinePrograms = (
     sequenceCountBudgetHit: false,
     addressMatchesRemaining: MAX_DWARF_LINE_ADDRESS_MATCHES,
     addressMatchBudgetHit: false,
+    addressMatchStringBudgetHit: false,
     sequenceBudgetHit: false,
   };
   const addressTargets =
@@ -2641,7 +2648,7 @@ export const parseDwarfLinePrograms = (
 
     if (
       programs.length >= maxPrograms &&
-      (addressTargets === null || budget.addressMatchBudgetHit)
+      (addressTargets === null || addressMatchingStopped(budget))
     ) {
       partialReason ??= `Retained line-program limit (${maxPrograms}) reached`;
       break;
@@ -2855,7 +2862,7 @@ export const parseDwarfLinePrograms = (
     addressTargets,
     anyAddressesUnresolved,
     walkIncomplete,
-    budget.addressMatchBudgetHit,
+    addressMatchingStopped(budget),
   );
 
   const limitations: string[] = [
