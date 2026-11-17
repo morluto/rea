@@ -281,7 +281,7 @@ const runSetupCommand = async (
     { runSetup },
     { systemSetupHost },
     { createSystemDoctorHost },
-    { withPluginSetup },
+    { withPluginSetup, preferPluginSetup },
   ] = await Promise.all([
     import("../application/Setup.js"),
     import("../application/SetupHost.js"),
@@ -294,10 +294,17 @@ const runSetupCommand = async (
       systemSetupHost(createSystemDoctorHost(environment, signal), environment),
       environment,
       {
-        preferPlugins:
-          options.skill !== false &&
-          options.skillClient.length === 0 &&
-          options.toolFamilies === undefined,
+        // Decide before PluginSetupHost caches a client route: plugins cannot
+        // persist caller-selected registration settings such as catalog profile
+        // or desktop build client environments.
+        preferPlugins: preferPluginSetup({
+          skill: options.skill,
+          skillClientIds: options.skillClient,
+          toolFamilies: options.toolFamilies,
+          toolCatalogProfile: options.toolCatalogProfile,
+          desktopBuild: options.desktopBuild,
+          installAgentenv: options.installAgentenv,
+        }),
         cursorPlugin: options.cursorPlugin,
         signal,
       },

@@ -3,7 +3,7 @@ import { setupPluginOperation } from "../../tests/fixtures/setupPluginProtocol.m
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
-import { withPluginSetup } from "./SetupPluginHost.js";
+import { preferPluginSetup, withPluginSetup } from "./SetupPluginHost.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import {
   supportedClientRegistrationProfile,
@@ -471,6 +471,146 @@ it("preserves custom provider registration settings", async () => {
   expect(f.base.configuredProviderEnvironments[0]).toMatchObject({
     GHIDRA_INSTALL_DIR: "/custom/ghidra",
   });
+});
+
+it.each([
+  {
+    label: "--tool-catalog-profile hot-cold",
+    options: { toolCatalogProfile: "hot-cold" },
+  },
+  {
+    label: "--tool-catalog-profile full",
+    options: { toolCatalogProfile: "full" },
+  },
+  { label: "--tool-families", options: { toolFamilies: "session" } },
+  { label: "--desktop-build", options: { desktopBuild: true } },
+  { label: "--install-agentenv", options: { installAgentenv: true } },
+  {
+    label: "--desktop-build --install-agentenv",
+    options: { desktopBuild: true, installAgentenv: true },
+  },
+  { label: "--skill=false", options: { skill: false } },
+  { label: "--skill-client", options: { skillClientIds: ["shared"] } },
+])("keeps $label on the direct registration path", ({ options }) => {
+  expect(preferPluginSetup(options)).toBe(false);
+});
+
+it("prefers plugins when no registration settings need the direct path", () => {
+  expect(preferPluginSetup({})).toBe(true);
+});
+
+it("saves --tool-catalog-profile hot-cold on the direct path instead of a plugin", async () => {
+  const f = fixture();
+  const selection = { toolCatalogProfile: "hot-cold" as const };
+  expect(preferPluginSetup(selection)).toBe(false);
+  const result = await runSetup(
+    { ...f.setupOptions, ...selection },
+    f.host(preferPluginSetup(selection)),
+  );
+  expect(result.status).toBe("ready");
+  expect(f.mutations()).toEqual([]);
+  expect(f.base.configurations).toBe(1);
+  expect(f.base.configuredProviderEnvironments[0]).toMatchObject({
+    REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+  });
+  expect(result.doctor.scope.plugin_clients).toBeUndefined();
+});
+
+it("cannot persist a selected catalog profile through the plugin route", async () => {
+  const f = fixture();
+  const result = await runSetup(
+    { ...f.setupOptions, toolCatalogProfile: "hot-cold" },
+    f.host(true),
+  );
+  expect(result.status).toBe("ready");
+  expect(f.mutations()).toHaveLength(2);
+  expect(f.base.configurations).toBe(0);
+  expect(f.base.configuredProviderEnvironments).toEqual([]);
+});
+
+it("saves desktop-build client environments on the direct path instead of a plugin", async () => {
+  const f = fixture();
+  const archive = "/fixture/cache/rea-build.tar.xz";
+  const settings = {
+    REA_AGENT_ENV_COMMAND: "/fixture/bin/agent-env",
+    REA_DOCKER_COMMAND: "/usr/bin/docker",
+    REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+  };
+  Object.assign(f.base, {
+    desktopBuild: {
+      facts: () =>
+        Promise.resolve({
+          settings,
+          selected: [],
+          archive,
+          archivePacked: true,
+          agentEnvVersion: "0.9.1485",
+          recorded: {},
+        }),
+      packRuntime: () => Promise.resolve(undefined),
+      installAgentenv: () => Promise.resolve(undefined),
+    },
+  });
+  const selection = { desktopBuild: true, installAgentenv: true };
+  expect(preferPluginSetup(selection)).toBe(false);
+  const result = await runSetup(
+    {
+      ...f.setupOptions,
+      ...selection,
+      readinessScope: {
+        clients: ["codex"],
+        providers: ["desktop_build"],
+        skill: true,
+      },
+    },
+    f.host(preferPluginSetup(selection)),
+  );
+  expect(result.status).toBe("ready");
+  expect(f.mutations()).toEqual([]);
+  expect(f.base.configurations).toBe(1);
+  expect(f.base.configuredProviderEnvironments[0]).toMatchObject(settings);
+  expect(result.doctor.scope.plugin_clients).toBeUndefined();
+});
+
+it("cannot persist desktop-build client environments through the plugin route", async () => {
+  const f = fixture();
+  const archive = "/fixture/cache/rea-build.tar.xz";
+  Object.assign(f.base, {
+    desktopBuild: {
+      facts: () =>
+        Promise.resolve({
+          settings: {
+            REA_AGENT_ENV_COMMAND: "/fixture/bin/agent-env",
+            REA_DOCKER_COMMAND: "/usr/bin/docker",
+            REA_BUILD_COMPUTER_REA_ARCHIVE: archive,
+          },
+          selected: [],
+          archive,
+          archivePacked: true,
+          agentEnvVersion: "0.9.1485",
+          recorded: {},
+        }),
+      packRuntime: () => Promise.resolve(undefined),
+      installAgentenv: () => Promise.resolve(undefined),
+    },
+  });
+  const result = await runSetup(
+    {
+      ...f.setupOptions,
+      desktopBuild: true,
+      installAgentenv: true,
+      readinessScope: {
+        clients: ["codex"],
+        providers: ["desktop_build"],
+        skill: true,
+      },
+    },
+    f.host(true),
+  );
+  expect(result.status).toBe("ready");
+  expect(f.mutations()).toHaveLength(2);
+  expect(f.base.configurations).toBe(0);
+  expect(f.base.configuredProviderEnvironments).toEqual([]);
 });
 
 it("does not launch plugin commands when direct installation is explicitly requested", async () => {

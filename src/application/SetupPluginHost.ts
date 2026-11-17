@@ -20,6 +20,26 @@ interface PluginSetupOptions {
   readonly cursorPlugin?: boolean;
 }
 
+/**
+ * Prefer client plugins only when every requested registration setting can live
+ * there. Catalog profile, tool families, desktop build client environments, and
+ * explicit skill destinations require the direct registration path.
+ */
+export const preferPluginSetup = (options: {
+  readonly skill?: boolean | undefined;
+  readonly skillClientIds?: readonly string[] | undefined;
+  readonly toolFamilies?: string | undefined;
+  readonly toolCatalogProfile?: string | undefined;
+  readonly desktopBuild?: boolean | undefined;
+  readonly installAgentenv?: boolean | undefined;
+}): boolean =>
+  options.skill !== false &&
+  (options.skillClientIds?.length ?? 0) === 0 &&
+  options.toolFamilies === undefined &&
+  options.toolCatalogProfile === undefined &&
+  options.desktopBuild !== true &&
+  options.installAgentenv !== true;
+
 type ClientRoute =
   | {
       readonly mode: "direct";
