@@ -201,13 +201,14 @@ const ensureLeaseSocketRoot = () => {
 };
 
 const leaseSocketPath = (lockPath) => {
+  const key = lockIdentityKey(lockPath);
   if (process.platform === "win32") {
-    // Named pipes vanish with the last handle; encode a stable per-lock name.
-    const encoded = Buffer.from(lockPath).toString("base64url").slice(0, 80);
-    return `\\\\.\\pipe\\rea-plugin-mcp-lock-${encoded}`;
+    // Named pipes vanish with the last handle; hash the full lock path so
+    // long TEMP prefixes for different pins cannot share a truncated name.
+    return `\\\\.\\pipe\\rea-plugin-mcp-lock-${key}`;
   }
   // Hashed name under a short temp directory stays within Linux sun_path.
-  return join(leaseSocketRootPath(), `${lockIdentityKey(lockPath)}.sock`);
+  return join(leaseSocketRootPath(), `${key}.sock`);
 };
 
 /**

@@ -1102,11 +1102,25 @@ ${holdOpen}
     expect(npmPid).toBeGreaterThan(0);
     expect(lifecyclePid).toBeGreaterThan(0);
     // Lease sockets live under a short hashed path so long TMPDIR lock
-    // directories still fit Linux's ~107-byte sun_path limit.
+    // directories still fit Linux's ~107-byte sun_path limit. The same
+    // digest keys Windows pipe names so long TEMP prefixes cannot collide.
+    const lockKey = createHash("sha256")
+      .update(lockPath)
+      .digest("hex")
+      .slice(0, 32);
+    const siblingLockPath = `${lockPath}-sibling`;
+    const siblingKey = createHash("sha256")
+      .update(siblingLockPath)
+      .digest("hex")
+      .slice(0, 32);
+    expect(lockKey).not.toBe(siblingKey);
+    expect(Buffer.from(lockPath).toString("base64url").slice(0, 80)).toBe(
+      Buffer.from(siblingLockPath).toString("base64url").slice(0, 80),
+    );
     const leaseSocket = join(
       temp.temporaryRoot,
       uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`,
-      `${createHash("sha256").update(lockPath).digest("hex").slice(0, 32)}.sock`,
+      `${lockKey}.sock`,
     );
     expect(join(lockPath, "lease.sock").length).toBeGreaterThan(107);
     expect(leaseSocket.length).toBeLessThanOrEqual(107);
