@@ -58,25 +58,24 @@ const plan = (
   tool: string,
   reason: StateWritePlan["reason"],
   extra: Partial<StateWritePlan> = {},
-): StateWritePlan =>
-  ({
-    tool,
-    effect: "create",
-    target: "/api/folders",
-    served: reason === null,
-    reason,
-    exemplar_ordinal: 4,
-    observation: null,
-    response: null,
-    body: null,
-    rules: [],
-    collection: null,
-    insert: null,
-    merge: null,
-    checked_record_ordinals: [],
-    contradicted_by: null,
-    ...extra,
-  });
+): StateWritePlan => ({
+  tool,
+  effect: "create",
+  target: "/api/folders",
+  served: reason === null,
+  reason,
+  exemplar_ordinal: 4,
+  observation: null,
+  response: null,
+  body: null,
+  rules: [],
+  collection: null,
+  insert: null,
+  merge: null,
+  checked_record_ordinals: [],
+  contradicted_by: null,
+  ...extra,
+});
 
 it("has a hint for every reason the state view reports for a withheld write", () => {
   const reasons = environmentStateFields.writes.element.shape.reason
