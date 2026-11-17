@@ -288,6 +288,10 @@ export const registerReverseEngineeringCommands = (
           description:
             "Second local artifact to compare; retained as the caller-selected path.",
         },
+        operation: {
+          description:
+            "Comparison granularity: functions returns the -Cj -A function-level JSON diff, bytes returns the -A byte-level diff text.",
+        },
       },
     },
     async (input, { signal }) =>
