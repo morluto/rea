@@ -307,6 +307,7 @@ export const evidenceLinkInspectionSchema = z.strictObject({
       missing: countSchema,
     })
     .describe("Every link read from the examined records, before link_status."),
+  // domain-vocabulary: whether every direct evidence_link in the walked subgraph is retained in this bundle, not analysis coverage.
   retained_closure: z
     .enum(["complete", "incomplete"])
     .nullable()

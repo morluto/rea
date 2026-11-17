@@ -7,7 +7,22 @@ import {
   completedStableArtifact,
 } from "./readStableArtifact.js";
 
-/** Completed file identity survives finalization; it does not establish decoded content. */
+/** Identity facts of one completed stable read; they do not establish decoded content. */
+export const stableArtifactObservation = (
+  snapshot: StableArtifactSnapshot,
+  path: string,
+): FileSnapshotPartialObservation =>
+  fileSnapshotPartialObservationSchema.parse({
+    kind: "file-snapshot-hash",
+    path,
+    sha256: snapshot.sha256,
+    bytes: snapshot.bytes.length,
+  });
+
+/**
+ * Completed file identity survives finalization and later decoding failures;
+ * `completed` is the snapshot a provider already holds when its parser fails.
+ */
 export const completedStableArtifactObservation = (
   cause: unknown,
   path: string,
@@ -16,10 +31,5 @@ export const completedStableArtifactObservation = (
   const snapshot = completedSnapshot ?? completedStableArtifact(cause);
   return snapshot === undefined
     ? undefined
-    : fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      });
+    : stableArtifactObservation(snapshot, path);
 };

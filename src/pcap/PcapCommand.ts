@@ -200,18 +200,19 @@ export const runPcapCommand = async (options: {
         },
       },
     );
+    const unredacted = capturedProviderOutput(output);
     if (selectedLimiter !== undefined)
       await assertArtifactCommandPath(selectedLimiter, operation, {
         get capturedOutput() {
-          return captureDiagnostic(output);
+          return projectDiagnostic(unredacted);
         },
       });
     return {
       get capturedOutput() {
-        return captureDiagnostic(output);
+        return projectDiagnostic(unredacted);
       },
-      stdout: output.stdout.text,
-      stderr: output.stderr.text,
+      stdout: unredacted.stdout,
+      stderr: unredacted.stderr,
       invalidUtf8Streams: [
         ...(output.stdout.invalidUtf8 === true ? (["stdout"] as const) : []),
         ...(output.stderr.invalidUtf8 === true ? (["stderr"] as const) : []),

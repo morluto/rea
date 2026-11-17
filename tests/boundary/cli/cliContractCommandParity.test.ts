@@ -1391,7 +1391,9 @@ describe("Evidence delivery of contract commands", () => {
       { name: "probe", inputSchema },
       { command: "probe", description: "Probe" },
     ).parameters;
-    expect(format!.schema.parse(undefined)).toBe("json");
+    expect(format!.schema.parse(undefined)).toBeUndefined();
+    expect(inputJsonSchema(format!.schema).default).toBe("json");
+    expect(inputSchema.parse({})).toEqual({ format: "json" });
     expect(format!.schema.safeParse("graphql").success).toBe(true);
     expect(format!.schema.safeParse("xml").success).toBe(false);
   });
