@@ -1,5 +1,6 @@
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { isRecord } from "../../kernel/isRecord.js";
+import { parseJsonWithDuplicatePolicy } from "../jsonDuplicateMember.js";
 import { err, ok, type Result } from "../result.js";
 
 /**
@@ -80,12 +81,11 @@ const chargeExpansion = async (
 export const parseTsharkJsonPackets = (
   text: string,
 ): Result<TsharkPacketLayers[], TsharkJsonEnvelopeFailure> => {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(text) as unknown;
-  } catch (cause) {
-    return err({ kind: "malformed-json", cause });
-  }
+  // Both tshark callers pass `--no-duplicate-keys`, so tshark merges repeated
+  // protocol and field names into arrays before REA parses the JSON document.
+  const parsed = parseJsonWithDuplicatePolicy(text, "last-wins");
+  if (!parsed.ok) return err({ kind: "malformed-json", cause: parsed.cause });
+  const decoded = parsed.value;
   if (!Array.isArray(decoded))
     return err({
       kind: "malformed-packet",

@@ -45,6 +45,7 @@ export interface PrCiHealthReport {
   repositoryId: number | null;
   defaultBranch: string;
   lookbackDays: number;
+  lookbackHours?: number;
   scan: {
     status: "complete" | "partial";
     cutoff: string;
@@ -67,6 +68,7 @@ export function collectPrCiHealth(options: {
   repositoryId?: number | string | null;
   defaultBranch: string;
   lookbackDays?: number;
+  lookbackHours?: number;
   now?: number;
   apiRequest?: GitHubApiRequest;
 }): Promise<PrCiHealthReport>;

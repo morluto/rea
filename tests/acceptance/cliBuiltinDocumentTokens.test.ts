@@ -4,7 +4,7 @@ import { expect } from "vitest";
 import { workspaceCliTest } from "../support/cli/workspaceCliFixture.js";
 
 workspaceCliTest(
-  "applies token controls to SDK manifest and schema documents",
+  "applies token controls to manifest and schema documents",
   async ({ cli }) => {
     const run = async (...arguments_: string[]) => {
       const invocation = { arguments: arguments_ };
@@ -13,18 +13,14 @@ workspaceCliTest(
         arguments_.join(" ") === "--llms-full --token-limit 1";
       const result = await cli.run({
         ...invocation,
-        freshProcess: !(
-          !freshTokenCount &&
-          !freshTokenLimit &&
-          (arguments_.includes("--token-count") ||
-            arguments_.includes("--token-limit"))
-        ),
+        freshProcess: freshTokenCount || freshTokenLimit,
       });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stderr).toBe("");
       return result.stdout;
     };
 
+    let llmsFullDocument = "";
     for (const args of [
       ["--llms"],
       ["--llms-full"],
@@ -33,12 +29,14 @@ workspaceCliTest(
       ["inspect-devicetree", "--schema", "--format", "json"],
     ]) {
       const document = await run(...args);
+      if (args.length === 1 && args[0] === "--llms-full")
+        llmsFullDocument = document;
       expect(await run(...args, "--token-count")).toBe(
         `${estimateTokenCount(document)}\n`,
       );
     }
 
-    const document = await run("--llms-full");
+    const document = llmsFullDocument;
     const page = await run("--llms-full", "--token-limit", "1");
     expect(page.length).toBeLessThan(document.length);
     expect(page).toMatch(/\[truncated: showing tokens 0–1 of \d+\]\n$/);
@@ -47,7 +45,7 @@ workspaceCliTest(
       await run("inspect-devicetree", "--schema", "--token-limit", "1"),
     ).toMatch(/\[truncated: showing tokens 0–1 of \d+\]\n$/);
 
-    // Schema does not outrank help or plain version in Incur's dispatch.
+    // Schema does not outrank help or plain version in CLI dispatch.
     expect(
       await run("inspect-devicetree", "--schema", "--help", "--token-count"),
     ).toBe(await run("inspect-devicetree", "--schema", "--help"));
@@ -57,6 +55,13 @@ workspaceCliTest(
     expect(await run("completions", "bash", "--schema", "--token-count")).toBe(
       await run("completions", "bash", "--schema"),
     );
+
+    expect(await run("completions", "bash", "--json", "--token-count")).toBe(
+      await run("completions", "bash", "--json"),
+    );
+    const bash = await run("completions", "bash");
+    expect(await run("completions", "bash", "--schema")).toBe(bash);
+    expect(await run("completions", "bash", "--version")).toBe(bash);
 
     const unknown = await cli.run({
       arguments: ["no-such-command", "--schema"],

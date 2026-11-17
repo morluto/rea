@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { registerFlutterCommands } from "../../src/cli/flutterCommands.js";
 import { aotFixtureImage } from "../../src/flutter/FlutterBuild.fixture.js";
@@ -39,7 +39,7 @@ const serveWithCleanupRetry = async (
   });
   const provider = new FlutterBuildProvider();
   onTestFinished(() => provider.close());
-  const cli = Cli.create("flutter-cleanup-retry-test", { sync: false });
+  const cli = createCommandCli();
   registerFlutterCommands(cli, silentLogger, provider);
   let stdout = "";
   await cli.serve([command, apk, "--format", "json"], {

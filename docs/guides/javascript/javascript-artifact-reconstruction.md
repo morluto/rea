@@ -822,6 +822,12 @@ representation bounds remain independently enforced. Omission keeps the defaults
 invalid values fail validation. For example, retry a finite candidate-limit
 observation with `semantic_precision: {"primitive_candidates": 512}`. The CLI
 accepts `--semantic-precision '{"primitive_candidates":512}'` or a JSON file.
+For `analyze_web_bundle`, evaluator budgets actually reached by a captured script
+are recorded in `unknowns[]` with that script's key, the effective parameter
+limit and next-call recovery guidance. These results are partial and retain
+the findings already established. With `--full-output`, the CLI also names
+`--semantic-precision` in `meta.cli_controls`; selecting a low budget that was
+not reached does not add a limitation.
 An override applies to that next analysis without restarting REA, remains in
 Evidence parameters and effective coverage, and cannot change already retained
 facts. Increasing these budgets does not raise graph retention, worker heap,

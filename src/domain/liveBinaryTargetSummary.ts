@@ -72,6 +72,8 @@ export const liveBinaryTargetSummaryVariants = [
       "unityfs",
       "wxapkg",
       "uimage",
+      "android-boot-image",
+      "android-ota-payload",
       "dmg",
       "pkg",
       "intel-hex",
