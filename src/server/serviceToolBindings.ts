@@ -1078,11 +1078,9 @@ const SERVICE_TOOL_BINDINGS = {
       inspect_evtx_archive: {
         admission: "sdk",
         workflow: async (input, { signal }) => {
-          const inspected = await inspectEvtxArchiveEvidence(
-            input,
-            resources,
-            { signal },
-          );
+          const inspected = await inspectEvtxArchiveEvidence(input, resources, {
+            signal,
+          });
           return inspectionExecution(
             inspected.ok ? ok(inspected.value.evidence) : inspected,
           );

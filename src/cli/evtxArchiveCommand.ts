@@ -35,7 +35,11 @@ export const registerEvtxArchiveCommand = (
         path: { description: "Local .evtx path" },
       },
     },
-    inspectWithService(createEvtxArchiveService, EVTX_ARCHIVE_PROVIDER.id, "path"),
+    inspectWithService(
+      createEvtxArchiveService,
+      EVTX_ARCHIVE_PROVIDER.id,
+      "path",
+    ),
   );
 
 /** One-shot log inspection that owns the file it opens. */
