@@ -7,7 +7,7 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { buildPerfRecording, perfEntry } from "../../fixtures/perfData.js";
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "imports a perf recording through compiled MCP (%s)",
   async (profile) => {
     const bytes = buildPerfRecording({

@@ -1077,11 +1077,14 @@ const SERVICE_TOOL_BINDINGS = {
       },
       inspect_perf_data: {
         admission: "sdk",
-        view: requestedView,
-        workflow: async (input, { signal }) =>
-          inspectionExecution(
-            await inspectPerfDataEvidence(input, resources, { signal }),
-          ),
+        workflow: async (input, { signal }) => {
+          const inspected = await inspectPerfDataEvidence(input, resources, {
+            signal,
+          });
+          return inspected.ok
+            ? inspectionExecution(ok(inspected.value.evidence))
+            : inspected;
+        },
       },
       inspect_playwright_trace: {
         admission: "sdk",
