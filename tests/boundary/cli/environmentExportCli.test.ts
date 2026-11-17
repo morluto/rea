@@ -11,6 +11,7 @@ import { join, sep } from "node:path";
 
 import { expect } from "vitest";
 
+import { supportsNodeVersion } from "../../../src/domain/runtimeVersion.js";
 import {
   analysisViewCaptureEvidence,
   analysisViewCaptureFixture,
@@ -79,7 +80,11 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-bundle-hostname-cli-");
     const files = await writeEnvironmentServeFiles(root);
-    for (const name of ["4294967296", "123", "a".repeat(64)]) {
+    for (const [name, reason] of [
+      ["4294967296", "invalid_value"],
+      ["123", "invalid_value"],
+      ["a".repeat(64), "invalid_format"],
+    ] as const) {
       const directory = join(root, `bundle-${name}`);
       const result = await cli.run({
         arguments: [
@@ -98,7 +103,7 @@ cliTest(
         code: "invalid_request",
         details: {
           operation: "environment-export",
-          issues: [{ path: ["name"] }],
+          issues: [{ path: ["name"], reason }],
         },
       });
       await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
@@ -172,10 +177,30 @@ cliTest(
     const pinnedNodeVersion = (
       await readFile(new URL("../../../.nvmrc", import.meta.url), "utf8")
     ).trim();
-    expect(dockerfile.split("\n")[0]).toBe(
-      `FROM node:${pinnedNodeVersion}-bookworm-slim`,
+    const packageManifest = JSON.parse(
+      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { name: string; version: string };
+    const lines = dockerfile.trimEnd().split("\n");
+    expect(lines[0]).toBe(`FROM node:${pinnedNodeVersion}-bookworm-slim`);
+    expect(supportsNodeVersion(pinnedNodeVersion)).toBe(true);
+    expect(lines).toContain("ENV MCP_HOST=0.0.0.0");
+    expect(lines).toContain("ENV MCP_PORT=18765");
+    expect(lines).toContain(
+      "ENV MCP_ALLOWED_HOSTS=127.0.0.1,localhost,grafana-example",
     );
-    expect(dockerfile).toContain(
+    expect(lines).toContain(
+      "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*",
+    );
+    const install = `RUN npm install -g --ignore-scripts --no-fund --no-audit ${packageManifest.name}@${packageManifest.version}`;
+    expect(
+      lines.filter((line) => line.startsWith("RUN npm install -g")),
+    ).toEqual([install]);
+    expect(lines).toContain(
+      "COPY --chown=node:node manifest.json evidence.json /env/",
+    );
+    expect(lines.indexOf("USER node")).toBeGreaterThan(lines.indexOf(install));
+    expect(dockerfile).not.toContain("rea-agents.tgz");
+    expect(lines.at(-1)).toBe(
       'CMD ["rea","environment-serve","/env/manifest.json","--evidence","/env/evidence.json"]',
     );
     const verifier = await readFile(

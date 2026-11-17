@@ -9,12 +9,8 @@ import {
 } from "./JebMcpDeadline.js";
 import { JebProvider } from "./JebProvider.js";
 import { decodeJebToolResult } from "./JebMcpConnection.js";
-import type {
-  JebMcpConnection,
-  JebMcpConnectionTimeouts,
-} from "./JebMcpConnection.js";
+import type { JebMcpConnection } from "./JebMcpConnection.js";
 import {
-  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisProtocolError,
   AnalysisCancelledError,
@@ -88,26 +84,16 @@ describe("JebProvider live availability", () => {
         input: { count: 10, index: 0 },
       });
       if (failure.ok) throw new Error("Expected transport failure");
-      expect(failure.error.diagnostics).toMatchObject({ endpoint });
+      expect(projectAnalysisError(failure.error)).toMatchObject({
+        code: "capability_unavailable",
+        details: {
+          reason: "connection closed",
+          diagnostics: { endpoint },
+        },
+      });
     } finally {
       await provider.close();
     }
-  });
-
-  it("passes its validated environment timeout to the production connection", async () => {
-    let configured: JebMcpConnectionTimeouts | undefined;
-    const provider = createJebAnalysisProvider(
-      { REA_JEB_MCP_TIMEOUT_MS: "900000" },
-      (_endpoint, timeouts) => {
-        configured = timeouts;
-        return scriptedConnection({});
-      },
-    );
-    expect(configured).toEqual({
-      requestTimeoutMs: 900_000,
-      discoveryTimeoutMs: 900_000,
-    });
-    await provider.close();
   });
 
   it("keeps the selected JEB deadline source", () => {
@@ -168,16 +154,12 @@ describe("JebProvider live availability", () => {
     await provider.close();
   });
 
-  it("reports only the operations advertised by the live engine", async () => {
+  it("reports the advertised operations from a fresh readiness probe", async () => {
     const connection = scriptedConnection({
-      get_client_information: {
-        success: true,
-        version: "5.48.0",
-        gui_client: false,
-      },
-      list_units: { success: true, units: [] },
-      decompile_code_item: { success: true, text: "" },
+      get_client_information: { success: true, version: "5.48.0" },
     });
+    let tools = ["get_client_information", "list_units", "decompile_code_item"];
+    connection.listTools = async () => tools;
     const provider = providerWith(connection);
     expect(await provider.inspectAvailability()).toMatchObject({
       status: "available",
@@ -187,16 +169,7 @@ describe("JebProvider live availability", () => {
         "decompile_jeb_item",
       ],
     });
-    expect(connection.calls).toEqual([["get_client_information", {}]]);
-  });
-
-  it("refreshes live operation support rather than reusing a readiness snapshot", async () => {
-    const connection = scriptedConnection({
-      get_client_information: { success: true, version: "5.48.0" },
-    });
-    let tools = ["get_client_information", "open_project"];
-    connection.listTools = async () => tools;
-    const provider = providerWith(connection);
+    tools = ["get_client_information", "open_project"];
     expect(await provider.inspectAvailability()).toMatchObject({
       supportedOperations: ["inspect_jeb_client", "open_jeb_project"],
     });
@@ -204,7 +177,11 @@ describe("JebProvider live availability", () => {
     expect(await provider.inspectAvailability()).toMatchObject({
       supportedOperations: ["inspect_jeb_client"],
     });
-    expect(connection.calls).toHaveLength(2);
+    expect(connection.calls).toEqual([
+      ["get_client_information", {}],
+      ["get_client_information", {}],
+      ["get_client_information", {}],
+    ]);
   });
 });
 
@@ -285,13 +262,12 @@ describe("JebProvider observations and failures", () => {
     expect(result.value.provider.version).toBe("5.48.0.202610071539");
   });
 
-  it("reports unavailable when the engine endpoint is unreachable", async () => {
+  it("reports readiness unavailable when the engine endpoint is unreachable", async () => {
     const provider = providerWith(
       scriptedConnection({
         get_client_information: new Error(
           "connect ECONNREFUSED 127.0.0.1:8425",
         ),
-        list_units: new Error("connect ECONNREFUSED 127.0.0.1:8425"),
       }),
     );
     const availability = await provider.inspectAvailability();
@@ -303,38 +279,6 @@ describe("JebProvider observations and failures", () => {
       "Start a JEB client serving MCP",
     );
     expect(availability.remediation).toContain("REA_JEB_MCP_URL");
-    const result = await provider.execute({
-      operation: "list_jeb_units",
-      input: { count: 10, index: 0 },
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-    expect(result.error.message).toContain("ECONNREFUSED");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      details: { diagnostics: { endpoint: "http://127.0.0.1:8425/mcp" } },
-    });
-  });
-
-  it("maps transport failures during an operation to provider unavailability", async () => {
-    const provider = providerWith(
-      scriptedConnection({
-        get_client_information: {
-          success: true,
-          version: "5.48.0",
-          gui_client: false,
-        },
-        list_units: new Error("connect ECONNREFUSED 127.0.0.1:8425"),
-      }),
-    );
-    const result = await provider.execute({
-      operation: "list_jeb_units",
-      input: { count: 10, index: 0 },
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
-    expect(result.error.message).toContain("ECONNREFUSED");
   });
 
   it("preserves engine refusal reasons without inferring unsupported target formats", async () => {

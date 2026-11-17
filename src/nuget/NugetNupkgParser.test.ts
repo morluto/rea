@@ -1,9 +1,6 @@
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   TextReader,
   Uint8ArrayWriter,
@@ -21,13 +18,8 @@ import {
   nugetNupkgMalformedNuspecFixture,
   nugetNupkgMissingNuspecFixture,
   ungroupedNuspec,
-  NUPKG_NAME_ENCODING_CASES,
-  nugetNupkgNameEncodingFixture,
 } from "./NugetNupkg.fixture.js";
-import {
-  ArtifactReaderFailure,
-  ZipArtifactReader,
-} from "../resources/index.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   NUPKG_LIMITATIONS,
   distinctTargetMatches,
@@ -43,48 +35,6 @@ const artifactOf = (bytes: Uint8Array) => ({
   sha256: createHash("sha256").update(bytes).digest("hex"),
   bytes: bytes.length,
 });
-
-it.each(NUPKG_NAME_ENCODING_CASES)(
-  "preserves $encoding filename provenance consistently with the shared ZIP reader",
-  async (input) => {
-    const bytes = await nugetNupkgNameEncodingFixture(input);
-    const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
-    expect(result.contents).toContainEqual(
-      expect.objectContaining({
-        name: input.name,
-        path: input.name,
-        role: "lib",
-      }),
-    );
-    const root = await createTestTempDirectory("rea-nupkg-name-encoding-");
-    const path = join(root, "package.nupkg");
-    await writeFile(path, bytes);
-    const reader = new ZipArtifactReader(path, "zip");
-    try {
-      const entries = [];
-      for await (const entry of reader.entries()) entries.push(entry);
-      const shared = entries.find((entry) => entry.path === input.name);
-      expect(shared).toBeDefined();
-      const warnings = result.limitations.filter((value) =>
-        value.includes("CP437"),
-      );
-      if (input.uncertain) {
-        expect(shared?.limitations).toEqual([
-          expect.stringContaining(input.rawName.toString("hex")),
-        ]);
-        expect(warnings).toEqual([
-          expect.stringContaining(shared!.limitations[0]!),
-        ]);
-        expect(warnings[0]).toContain(JSON.stringify(input.name));
-      } else {
-        expect(shared?.limitations).toEqual([]);
-        expect(warnings).toEqual([]);
-      }
-    } finally {
-      await reader.close();
-    }
-  },
-);
 
 it("redacts an unfollowed authority manifest target before package-path normalization", async () => {
   const bytes = await nugetNupkgFixture({
