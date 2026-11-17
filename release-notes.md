@@ -330,6 +330,7 @@
 * **pcap:** refuse a DNS message with more than one OPT record ([46e9871](https://github.com/morluto/rea/commit/46e9871e59e34702a607823b9c7820640c3ecf82)), closes [#10211](https://github.com/morluto/rea/issues/10211)
 * **pcap:** report a refused tool launch as an unavailable tool ([#10553](https://github.com/morluto/rea/issues/10553)) ([44fedc8](https://github.com/morluto/rea/commit/44fedc8fdd6193ef2cfbeb127b9a5cdf65b443df))
 * **pe:** enforce DER extension critical encoding ([#10212](https://github.com/morluto/rea/issues/10212)) ([937d10d](https://github.com/morluto/rea/commit/937d10df1c709c8b2f5af8d9406ef735d0b3a2dc))
+* **pe:** reject incomplete certificate-table alignment ([#11823](https://github.com/morluto/rea/issues/11823)) ([3c71d35](https://github.com/morluto/rea/commit/3c71d3528f6c0d3d054790152881002d0049a1ee))
 * **pe:** retain TLS templates without complete file backing ([85198fd](https://github.com/morluto/rea/commit/85198fd5cb860445f265cea9dd3cbaaecab28342)), closes [#7400](https://github.com/morluto/rea/issues/7400) [#7529](https://github.com/morluto/rea/issues/7529)
 * **plist:** record dictionary keys declared more than once ([#10737](https://github.com/morluto/rea/issues/10737)) ([4673457](https://github.com/morluto/rea/commit/4673457de26fdd0ab88b69f95beaea6c9a83bee9))
 * **plist:** surface repeated dictionary keys in every plist reader ([#10781](https://github.com/morluto/rea/issues/10781)) ([4b31661](https://github.com/morluto/rea/commit/4b3166144193ffa98370f6837a40489db1910096))
