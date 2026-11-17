@@ -35,6 +35,10 @@ export const registerEvtxArchiveCommand = (
       viewDelivery: { invalidJson: "view must be valid JSON" },
       fields: {
         path: { description: "Local .evtx path" },
+        format: {
+          name: "evtxFormat",
+          description: "Input archive syntax: Windows Event Log (evtx)",
+        },
       },
     },
     deliverWithService(createEvtxArchiveService, EVTX_ARCHIVE_PROVIDER.id),
