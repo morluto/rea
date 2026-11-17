@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { ok, err, type Result } from "../result.js";
 import type {
   RegionDecodeFailure,
@@ -242,13 +243,13 @@ export const hasSystemdJournalHeader = (prefix: Uint8Array): boolean => {
     prefix.length < JOURNAL_HEADER_SIZE_PROBE_BYTES
   )
     return false;
-  const view = new DataView(
-    prefix.buffer,
-    prefix.byteOffset,
-    prefix.byteLength,
+  const view = new BinaryReader(
+    Buffer.from(prefix.buffer, prefix.byteOffset, prefix.byteLength),
+    true,
+    "systemd-journal",
   );
   return isUsableHeaderSize(
-    view.getBigUint64(HEADER.headerSize, true),
+    view.word(HEADER.headerSize, 64),
     prefix.length,
   );
 };
@@ -259,12 +260,12 @@ export const hasSystemdJournalHeader = (prefix: Uint8Array): boolean => {
  * and the field name is recorded rather than claiming an exact source value.
  */
 const readUint64 = (
-  view: DataView,
+  view: BinaryReader,
   offset: number,
   field: string,
   overflowed: string[],
 ): number => {
-  const value = view.getBigUint64(offset, true);
+  const value = view.word(offset, 64);
   if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
     overflowed.push(field);
     return Number.MAX_SAFE_INTEGER;
@@ -272,9 +273,9 @@ const readUint64 = (
   return Number(value);
 };
 
-const readFlagFacts = (view: DataView) => {
-  const compatibleFlags = view.getUint32(HEADER.compatibleFlags, true);
-  const incompatibleFlags = view.getUint32(HEADER.incompatibleFlags, true);
+const readFlagFacts = (view: BinaryReader) => {
+  const compatibleFlags = view.u32(HEADER.compatibleFlags);
+  const incompatibleFlags = view.u32(HEADER.incompatibleFlags);
   return {
     compatible_flags: compatibleFlags,
     compatible_flag_names: flagNames(compatibleFlags, COMPATIBLE_FLAGS),
@@ -296,7 +297,7 @@ const readIdFacts = (bytes: Uint8Array) => ({
 
 /** Facts for a header too short to anchor its object area; only what was read holds. */
 const unanchoredHeader = (
-  view: DataView,
+  view: BinaryReader,
   bytes: Uint8Array,
   declaredHeaderSize: number,
 ): JournalHeaderFacts => ({
@@ -332,7 +333,7 @@ const unanchoredHeader = (
 
 /** Every header field inside `declaredHeaderSize`; later fields stay absent. */
 const readHeaderFacts = (
-  view: DataView,
+  view: BinaryReader,
   bytes: Uint8Array,
   declaredHeaderSize: number,
 ): JournalHeaderFacts => {
@@ -348,8 +349,8 @@ const readHeaderFacts = (
     ...readFlagFacts(view),
     ...readIdFacts(bytes),
     state:
-      JOURNAL_STATES.get(view.getUint8(HEADER.state)) ??
-      `unknown-${String(view.getUint8(HEADER.state))}`,
+      JOURNAL_STATES.get(view.bytes[HEADER.state]!) ??
+      `unknown-${String(view.bytes[HEADER.state]!)}`,
     header_size: declaredHeaderSize,
     arena_size: u64(HEADER.arenaSize, "arena_size"),
     data_hash_table_offset: u64(
@@ -393,10 +394,10 @@ const readHeaderFacts = (
     ),
     // Added in 252 as two adjacent 32-bit members, unlike every other field here.
     tail_entry_array_offset: covers(HEADER.tailEntryArrayOffset, 4)
-      ? view.getUint32(HEADER.tailEntryArrayOffset, true)
+      ? view.u32(HEADER.tailEntryArrayOffset)
       : null,
     tail_entry_array_n_entries: covers(HEADER.tailEntryArrayNEntries, 4)
-      ? view.getUint32(HEADER.tailEntryArrayNEntries, true)
+      ? view.u32(HEADER.tailEntryArrayNEntries)
       : null,
     tail_entry_offset: optional(HEADER.tailEntryOffset, 8, "tail_entry_offset"),
     overflowed_fields: overflowed,
@@ -424,14 +425,14 @@ class JournalScanner {
   readonly #headerBytes = new Uint8Array(JOURNAL_HEADER_BYTES);
   /** How many header bytes this reader consumes; the rest are discarded unread. */
   #headerTarget = JOURNAL_HEADER_SIZE_PROBE_BYTES;
-  #headerFilled = 0;
+  #headerFilled = 0; // not-an-allowance: cursor over the header bytes already read.
   #phase: ScanPhase = "header";
   /** True while the just-filled bytes were the 96-byte probe, not the whole header. */
   #resolvingProbe = true;
 
   /** Absolute file offset of the next object header, once the walk starts. */
   #offset = 0;
-  #skipRemaining = 0;
+  #skipRemaining = 0; // not-an-allowance: bytes still to skip, not a resource allowance.
   readonly #objectHeader = new Uint8Array(JOURNAL_OBJECT_HEADER_BYTES);
   #objectHeaderFilled = 0;
 
@@ -517,12 +518,16 @@ class JournalScanner {
 
   /** Decide how much of the header this file declares, or stop the walk. */
   #resolveHeaderTarget(): void {
-    const view = new DataView(
-      this.#headerBytes.buffer,
-      this.#headerBytes.byteOffset,
-      JOURNAL_HEADER_SIZE_PROBE_BYTES,
+    const view = new BinaryReader(
+      Buffer.from(
+        this.#headerBytes.buffer,
+        this.#headerBytes.byteOffset,
+        JOURNAL_HEADER_SIZE_PROBE_BYTES,
+      ),
+      true,
+      "systemd-journal",
     );
-    const declared = view.getBigUint64(HEADER.headerSize, true);
+    const declared = view.word(HEADER.headerSize, 64);
     if (!isUsableHeaderSize(declared, this.#fileBytes)) {
       this.#limitations.push(
         `the header declares header_size ${declared.toString()}, which is not an aligned ${String(JOURNAL_HEADER_MIN_BYTES)}-byte-or-longer offset inside the ${String(this.#fileBytes)}-byte file; object headers were not walked`,
@@ -542,19 +547,27 @@ class JournalScanner {
 
   #finishHeader(): void {
     const declared = readUint64(
-      new DataView(
-        this.#headerBytes.buffer,
-        this.#headerBytes.byteOffset,
-        this.#headerBytes.byteLength,
+      new BinaryReader(
+        Buffer.from(
+          this.#headerBytes.buffer,
+          this.#headerBytes.byteOffset,
+          this.#headerBytes.byteLength,
+        ),
+        true,
+        "systemd-journal",
       ),
       HEADER.headerSize,
       "header_size",
       [],
     );
-    const view = new DataView(
-      this.#headerBytes.buffer,
-      this.#headerBytes.byteOffset,
-      this.#headerTarget,
+    const view = new BinaryReader(
+      Buffer.from(
+        this.#headerBytes.buffer,
+        this.#headerBytes.byteOffset,
+        this.#headerTarget,
+      ),
+      true,
+      "systemd-journal",
     );
     const header = readHeaderFacts(
       view,
@@ -601,15 +614,19 @@ class JournalScanner {
       this.#phase = "closed";
       return;
     }
-    const view = new DataView(
-      this.#objectHeader.buffer,
-      this.#objectHeader.byteOffset,
-      this.#objectHeader.byteLength,
+    const view = new BinaryReader(
+      Buffer.from(
+        this.#objectHeader.buffer,
+        this.#objectHeader.byteOffset,
+        this.#objectHeader.byteLength,
+      ),
+      true,
+      "systemd-journal",
     );
-    const rawType = view.getUint8(0);
-    const flags = view.getUint8(1);
+    const rawType = view.bytes[0]!;
+    const flags = view.bytes[1]!;
     /** An object's declared size counts its own 16-byte header. */
-    const declaredSize = view.getBigUint64(8, true);
+    const declaredSize = view.word(8, 64);
     const type = describeObjectType(rawType);
     const object: JournalObjectHeader = {
       offset,
