@@ -893,22 +893,31 @@ const decodeManifest = (
   return ok(draft);
 };
 
+interface PartitionNameState {
+  readonly used: Set<string>;
+  /** Next suffix to try per stem, so collision resolution stays linear. */
+  readonly nextSuffix: Map<string, number>;
+}
+
 const partitionFileName = (
   name: string,
   index: number,
-  used: Set<string>,
+  state: PartitionNameState,
 ): string => {
   const stem =
     name.replace(/[^A-Za-z0-9._-]+/gu, "_").replace(/^\.+/u, "") ||
     `partition-${String(index)}`;
   const withExt = stem.endsWith(".img") ? stem : `${stem}.img`;
   let candidate = withExt;
-  let suffix = 1;
-  while (used.has(candidate)) {
-    candidate = `${stem}-${String(suffix)}.img`;
-    suffix += 1;
+  if (state.used.has(candidate)) {
+    let suffix = state.nextSuffix.get(stem) ?? 1;
+    do {
+      candidate = `${stem}-${String(suffix)}.img`;
+      suffix += 1;
+    } while (state.used.has(candidate));
+    state.nextSuffix.set(stem, suffix);
   }
-  used.add(candidate);
+  state.used.add(candidate);
   return candidate;
 };
 
@@ -1039,7 +1048,10 @@ export const parseAndroidOtaPayload = (
     if (fileSize < declaredEnd) blobTruncated = true;
   }
 
-  const usedNames = new Set<string>();
+  const nameState: PartitionNameState = {
+    used: new Set<string>(),
+    nextSuffix: new Map<string, number>(),
+  };
   const partitions: AndroidOtaPartition[] = manifest.value.partitions.map(
     (partition, index) => {
       const operations: AndroidOtaInstallOperation[] = partition.operations.map(
@@ -1081,7 +1093,7 @@ export const parseAndroidOtaPayload = (
       return {
         index,
         name: partition.name!,
-        path: partitionFileName(partition.name!, index, usedNames),
+        path: partitionFileName(partition.name!, index, nameState),
         newPartitionInfo: {
           size: partition.newPartitionInfo.size,
           hashHex: partition.newPartitionInfo.hashHex,

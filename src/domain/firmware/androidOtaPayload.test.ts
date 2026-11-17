@@ -12,6 +12,7 @@ import {
   ANDROID_OTA_MAX_GROUP_PARTITION_NAMES,
   ANDROID_OTA_MAX_MANIFEST_BYTES,
   ANDROID_OTA_MAX_OPERATION_DATA_BYTES,
+  ANDROID_OTA_MAX_PARTITIONS,
   ANDROID_OTA_MAX_SIGNATURE_BYTES,
   ANDROID_OTA_PAYLOAD_LIMITATIONS,
   parseAndroidOtaHeader,
@@ -658,4 +659,46 @@ it("refuses destination extents outside the image and short operation data", () 
       Buffer.alloc(blockSize, 0x41),
     ),
   ).toMatchObject({ ok: true });
+});
+
+it("names duplicate partitions with a per-name suffix that skips taken names", () => {
+  const parsed = parse(
+    buildAndroidOtaPayload({
+      partitions: ["boot", "boot-2", "boot", "boot", "boot"].map((name) => ({
+        name,
+        operations: [],
+      })),
+    }),
+  );
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  expect(parsed.value.partitions.map((partition) => partition.path)).toEqual([
+    "boot.img",
+    "boot-2.img",
+    "boot-1.img",
+    "boot-3.img",
+    "boot-4.img",
+  ]);
+});
+
+it("keeps duplicate partition naming linear at the partition count limit", () => {
+  const name = "d".repeat(1024);
+  const bytes = buildAndroidOtaPayload({
+    partitions: Array.from({ length: ANDROID_OTA_MAX_PARTITIONS }, () => ({
+      name,
+      operations: [],
+    })),
+  });
+  const started = performance.now();
+  const parsed = parse(bytes);
+  // This parse takes tens of milliseconds; restarting the suffix search at 1
+  // for every collision took over 4 seconds.
+  expect(performance.now() - started).toBeLessThan(1000);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) return;
+  const paths = parsed.value.partitions.map((partition) => partition.path);
+  expect(new Set(paths).size).toBe(ANDROID_OTA_MAX_PARTITIONS);
+  expect(paths.at(-1)).toBe(
+    `${name}-${String(ANDROID_OTA_MAX_PARTITIONS - 1)}.img`,
+  );
 });
