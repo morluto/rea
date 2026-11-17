@@ -1283,6 +1283,24 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-elf-debug-link": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDebugLinkCli.test.ts",
+        "verifies a matching debug file from absolute and relative paths",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "returns typed resource and cancellation failures",
+      ),
+      test(
+        "src/native/elf/ElfDebugLinkProvider.test.ts",
+        "keeps a completed candidate stream's identity when cancellation arrives during close",
+      ),
+    ),
+  ),
   "rea-elf-dependencies": inProcess(
     covered(
       test(

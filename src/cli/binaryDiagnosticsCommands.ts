@@ -3,6 +3,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createElfDebugLinkService,
   createNativeInitializersService,
   createElfUnwindRangesService,
   createAppleIpsService,
@@ -57,6 +58,24 @@ export const registerBinaryDiagnosticsCommands = (
       fields: { path: { description: "Local ELF32/ELF64 image" } },
     },
     inspectWithService(createElfNotesService, "rea-elf-notes"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_elf_debug_link"),
+    {
+      description:
+        "Inspect ELF separate debug-file linkage without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path", "candidate_path"],
+      fields: {
+        path: { description: "Local ELF32/ELF64 image" },
+        candidate_path: {
+          description: "One caller-selected debug file to verify",
+        },
+      },
+    },
+    inspectWithService(createElfDebugLinkService, "rea-elf-debug-link"),
   );
   registerContractCommand(
     cli,

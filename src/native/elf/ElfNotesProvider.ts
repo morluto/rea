@@ -19,7 +19,7 @@ import {
 import type { ElfNotesPort } from "../../ports/binaryDiagnostics/ElfNotesPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_NOTE_ENTRIES,
@@ -28,7 +28,11 @@ import {
 } from "../../domain/native/elfNotes.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_NOTES_PROVIDER } from "../../domain/investigationProviders.js";
-import { elfNoteSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
+import {
+  ELF_NOTE_TEXT_ALLOWANCE,
+  elfNoteSectionNameBudget,
+  parseElfNotes,
+} from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_notes";
 
@@ -108,6 +112,23 @@ const elfNotesFailurePrimary = (
         sectionNameBudget.required,
       ),
     });
+  if (isParseLimit(cause, "elf-notes")) {
+    const entryBudget = cause.failure.limit.name === "max_entries";
+    return parseLimitConstraint(
+      OPERATION,
+      entryBudget ? "capacity" : "memory",
+      cause,
+      entryBudget
+        ? {
+            retryable: false,
+            remediationAction: inputBudgetRemediation("capacity", input),
+          }
+        : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
+            limit: cause.failure.limit.maximum,
+            unit: "bytes",
+          }),
+    );
+  }
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
@@ -120,39 +141,21 @@ const elfNotesFailurePrimary = (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   ) {
-    if (cause.reason === "limit") {
-      // Caller-selected read and entry budgets name the bound to raise; a
-      // memory limit keeps the ceiling its parser named (note text).
-      const noteTextBudget = cause.boundary === "memory";
-      return new AnalysisResourceConstraintError(
+    if (cause.reason === "limit")
+      return parseLimitConstraint(
         OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
+        "file-size",
+        decodeLimit(
+          "elf-notes",
+          cause.message,
+          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          { cause },
+        ),
         {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-        },
-        {
-          cause,
-          ...(cause.boundary === undefined
-            ? {}
-            : noteTextBudget
-              ? cause.fixedAllowance === undefined
-                ? {}
-                : {
-                    retryable: false as const,
-                    fixedAllowance: cause.fixedAllowance,
-                  }
-              : {
-                  retryable: false as const,
-                  remediationAction: inputBudgetRemediation(
-                    cause.boundary,
-                    input,
-                  ),
-                }),
+          retryable: false,
+          remediationAction: inputBudgetRemediation("file-size", input),
         },
       );
-    }
     if (cause.reason === "path" || cause.reason === "format")
       return stableArtifactInputFailure(cause, OPERATION);
   }
