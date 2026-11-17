@@ -314,6 +314,50 @@ it("refuses a truncated first member without inventing ar facts", () => {
   expect(error.partial?.ar.members).toEqual([]);
 });
 
+/** A fixture whose final data.tar.gz member has an odd stored size. */
+const oddFinalMemberFixture = (bsdNames: boolean): Buffer => {
+  for (let extra = 0; extra < 64; extra++) {
+    const bytes = debPackageFixture({
+      bsdNames,
+      dataEntries: [
+        { name: "./", type: "5", mode: 0o755, content: "" },
+        { name: "./usr/share/hello.txt", content: "y".repeat(extra) },
+      ],
+    });
+    const payload = parse(bytes).ar.members.at(-1)?.size ?? 0;
+    const stored = payload + (bsdNames ? "data.tar.gz".length : 0);
+    if (stored % 2 === 1) return bytes;
+  }
+  throw new Error("no odd-sized data.tar.gz fixture");
+};
+
+it.for([false, true])(
+  "refuses an odd final ar member missing its padding byte (BSD names: %s)",
+  (bsdNames) => {
+    const bytes = oddFinalMemberFixture(bsdNames);
+    expect(parse(bytes).coverage.status).toBe("complete");
+    const error = expectFailure(
+      () => parse(bytes.subarray(0, bytes.length - 1)),
+      DebPackageFormatFailure,
+    );
+    expect(error.kind).toBe("truncated");
+    expect(error.message).toMatch(/padding byte/u);
+  },
+);
+
+it("aligns BSD extended-name members by their stored size", () => {
+  // debian-binary (13 bytes) plus "2.0\n" stores 17 bytes, so the padding
+  // byte follows the stored extent even though the payload is even.
+  const report = parse(debPackageFixture({ bsdNames: true }));
+  expect(report.ar.members.map((member) => member.name)).toEqual([
+    "debian-binary",
+    "control.tar.gz",
+    "data.tar.gz",
+  ]);
+  expect(report.ar.format_version).toBe("2.0");
+  expect(report.coverage.status).toBe("complete");
+});
+
 it("keeps parsed control when the data tar checksum fails", () => {
   const error = expectFailure(
     () => parse(debPackageFixture({ corruptDataChecksum: true })),

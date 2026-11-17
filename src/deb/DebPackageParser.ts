@@ -378,6 +378,18 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
           `ar member ${name} declares ${String(dataSize)} bytes past the end of the file.`,
         ),
       };
+    // Alignment follows the stored member size: a BSD `#1/N` name is part of
+    // the member, so the payload length alone can have the wrong parity.
+    const memberEnd = offset + AR_HEADER + size;
+    const nextOffset = memberEnd + (size % 2);
+    if (nextOffset > bytes.length)
+      return {
+        members,
+        error: new DebPackageFormatFailure(
+          "truncated",
+          `ar member ${name} is missing its padding byte at the end of the file.`,
+        ),
+      };
     if (members.length >= maxMembers)
       return {
         members,
@@ -400,7 +412,7 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
           : null,
       bytes: payload,
     });
-    offset = dataStart + dataSize + (dataSize % 2);
+    offset = nextOffset;
   }
   return { members };
 };

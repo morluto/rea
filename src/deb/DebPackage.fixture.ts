@@ -78,9 +78,9 @@ export const tarArchiveWithBadChecksum = (
   return bytes;
 };
 
-const arHeader = (name: string, size: number): Buffer => {
+const arHeader = (name: string, size: number, raw = false): Buffer => {
   const header = Buffer.alloc(60, 0x20);
-  header.write(field(name.endsWith("/") ? name : `${name}/`, 16), 0);
+  header.write(field(raw || name.endsWith("/") ? name : `${name}/`, 16), 0);
   header.write(field("0", 12), 16);
   header.write(field("0", 6), 28);
   header.write(field("0", 6), 34);
@@ -94,14 +94,25 @@ const arHeader = (name: string, size: number): Buffer => {
 export type DebArMemberSpec = {
   readonly name: string;
   readonly data: Uint8Array;
+  /** Store the name as a BSD `#1/N` extended name ahead of the payload. */
+  readonly bsdName?: boolean;
 };
 
 /** SysV ar archive as Debian packages use it: even-byte padded members. */
 export const arArchive = (members: readonly DebArMemberSpec[]): Buffer => {
   const parts: Buffer[] = [AR_MAGIC];
   for (const member of members) {
-    const data = Buffer.from(member.data);
-    parts.push(arHeader(member.name, data.length), data);
+    const name = Buffer.from(member.name, "ascii");
+    const data =
+      member.bsdName === true
+        ? Buffer.concat([name, Buffer.from(member.data)])
+        : Buffer.from(member.data);
+    parts.push(
+      member.bsdName === true
+        ? arHeader(`#1/${String(name.length)}`, data.length, true)
+        : arHeader(member.name, data.length),
+      data,
+    );
     if (data.length % 2 === 1) parts.push(Buffer.from("\n", "ascii"));
   }
   return Buffer.concat(parts);
@@ -202,6 +213,8 @@ export type DebPackageFixtureOptions = {
   readonly dataEntries?: readonly DebTarEntrySpec[];
   readonly controlEntries?: readonly DebTarEntrySpec[];
   readonly corruptDataChecksum?: boolean;
+  /** Store the three core members under BSD `#1/N` extended names. */
+  readonly bsdNames?: boolean;
 };
 
 const compress = (
@@ -259,13 +272,15 @@ export const debPackageFixture = (
           data: Buffer.from(options.controlMemberBytes),
         };
   const data = compressData(dataTar, options.dataCompression ?? "gzip");
+  const bsdName = options.bsdNames === true;
   return arArchive([
     {
       name: "debian-binary",
       data: Buffer.from(options.debianBinary ?? "2.0\n", "utf8"),
+      bsdName,
     },
-    { name: control.name, data: control.data },
-    { name: data.name, data: data.data },
+    { name: control.name, data: control.data, bsdName },
+    { name: data.name, data: data.data, bsdName },
     ...(options.extraMembers ?? []),
   ]);
 };
