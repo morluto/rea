@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import {
   inspectMavenGradleMetadataInputSchema,
   mavenGradleMetadataSchema,
-  mavenPropertyReferences,
+  mavenPropertyOccurrences,
   requestedVersionKind,
 } from "./mavenGradleMetadata.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -66,15 +66,13 @@ it("rejects extra caller arguments", () => {
 });
 
 it("classifies requested versions without interpolating properties", () => {
-  expect(mavenPropertyReferences("${revision}")).toEqual(["${revision}"]);
-  expect(mavenPropertyReferences("${revision}${sha1}${changelist}")).toEqual([
-    "${revision}",
-    "${sha1}",
-    "${changelist}",
-  ]);
-  expect(mavenPropertyReferences("1.2.3")).toEqual([]);
-  expect(mavenPropertyReferences("${}${a${b}")).toEqual(["${a${b}"]);
-  expect(mavenPropertyReferences("${a".repeat(100_000))).toEqual([]);
+  expect([...mavenPropertyOccurrences("${revision}")]).toEqual(["${revision}"]);
+  expect([
+    ...mavenPropertyOccurrences("${revision}${sha1}${changelist}"),
+  ]).toEqual(["${revision}", "${sha1}", "${changelist}"]);
+  expect([...mavenPropertyOccurrences("1.2.3")]).toEqual([]);
+  expect([...mavenPropertyOccurrences("${}${a${b}")]).toEqual(["${a${b}"]);
+  expect([...mavenPropertyOccurrences("${a".repeat(100_000))]).toEqual([]);
   expect(requestedVersionKind("${jackson.version}", "maven-pom")).toBe(
     "property",
   );
@@ -95,6 +93,14 @@ it("classifies requested versions without interpolating properties", () => {
   );
   expect(requestedVersionKind("1.2.3", "gradle-module")).toBe("literal");
   expect(requestedVersionKind("1.+", "maven-pom")).toBe("literal");
+});
+
+it("offers property occurrences lazily without retaining or deduplicating a collection", () => {
+  const occurrences = mavenPropertyOccurrences("${first}${first}${second}");
+  expect(occurrences.next()).toEqual({ value: "${first}", done: false });
+  expect(occurrences.next()).toEqual({ value: "${first}", done: false });
+  expect(occurrences.next()).toEqual({ value: "${second}", done: false });
+  expect(occurrences.next().done).toBe(true);
 });
 
 it("admits a complete POM report with unresolved parent and property references", () => {

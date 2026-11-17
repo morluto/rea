@@ -8,6 +8,7 @@ export type MavenGradleReportAllowance =
   | "dependency_rows"
   | "variants"
   | "exclusions"
+  | "unresolved_records"
   | "xml_nodes";
 
 const REPORT_REFUSALS: Readonly<
@@ -24,6 +25,8 @@ const REPORT_REFUSALS: Readonly<
     `Gradle module metadata declares ${String(required)} variants, above the ${String(limit)}-variant report allowance.`,
   exclusions: (required, limit) =>
     `Metadata declares ${String(required)} dependency exclusions, above the ${String(limit)}-exclusion report allowance.`,
+  unresolved_records: (required, limit) =>
+    `Metadata needs at least ${String(required)} unresolved reference and coordinate records, above the ${String(limit)}-record report allowance.`,
   xml_nodes: (required, limit) =>
     `Maven POM holds more than ${String(limit)} XML nodes (at least ${String(required)} counted), above the ${String(limit)}-node allowance for its document tree.`,
 };

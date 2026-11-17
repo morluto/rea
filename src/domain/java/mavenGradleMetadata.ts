@@ -38,6 +38,9 @@ export const MAVEN_GRADLE_METADATA_VARIANTS = 4_096;
  */
 export const MAVEN_GRADLE_METADATA_EXCLUSIONS = 65_536;
 
+/** Fixed allowance for expanded property-reference and coordinate-gap records. */
+export const MAVEN_GRADLE_METADATA_UNRESOLVED_RECORDS = 65_536;
+
 /**
  * Fixed allowance for XML nodes (elements, attributes, text, CDATA, comments
  * and processing instructions) in one Maven POM, counted as a stream before
@@ -59,21 +62,22 @@ export type MavenGradleMetadataFormat =
 const nullableText = z.string().min(1).nullable();
 
 /**
- * Every distinct interpolatable property a Maven/Gradle spelling still names, in
- * order. A `${` with no later `}` ends the scan, so matching stays linear.
+ * Property occurrences in source order, without collecting or deduplicating.
+ * A `${` with no later `}` ends the scan, so matching stays linear. Consumers
+ * retaining references own their admission and deduplication before storage.
  */
-export const mavenPropertyReferences = (value: string | null): string[] => {
-  if (value === null) return [];
-  const references = new Set<string>();
+export function* mavenPropertyOccurrences(
+  value: string | null,
+): Generator<string, void> {
+  if (value === null) return;
   let start = value.indexOf("${");
   while (start >= 0) {
     const close = value.indexOf("}", start + 2);
     if (close < 0) break;
-    if (close > start + 2) references.add(value.slice(start, close + 1));
+    if (close > start + 2) yield value.slice(start, close + 1);
     start = value.indexOf("${", close > start + 2 ? close + 1 : start + 2);
   }
-  return [...references];
-};
+}
 
 export const REQUESTED_VERSION_KINDS = [
   "literal",
@@ -95,7 +99,7 @@ export const requestedVersionKind = (
   format: MavenGradleMetadataFormat,
 ): RequestedVersionKind => {
   if (value === null) return "missing";
-  if (mavenPropertyReferences(value).length > 0) return "property";
+  if (!mavenPropertyOccurrences(value).next().done) return "property";
   const rangeDelimiter = format === "gradle-module" ? /[[(\]]/u : /[[(]/u;
   if (rangeDelimiter.test(value)) return "range";
   if (

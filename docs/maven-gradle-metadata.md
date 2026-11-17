@@ -36,6 +36,9 @@ selected default remains recorded.
 spelled. Missing project coordinates stay `null`. A `${property}` spelling is
 kept as written and listed in `unresolved`; this reader does not interpolate
 properties or inherit parent or BOM values.
+When a parent is declared, omitted project group/version fields point to the
+parent as possible sources. An omitted project `artifactId` is a missing child
+coordinate: [only group/version coordinates may be inherited](https://maven.apache.org/pom.html#Maven_Coordinates).
 
 For a POM, `parent` records the declared parent coordinates and `relative_path`
 when present. `relative_path_declared` distinguishes an empty `<relativePath/>`,
@@ -85,6 +88,9 @@ processing instructions) is refused as a resource limit, as is a report above
 65,536 dependency and constraint rows, 4,096 Gradle variants, or 65,536
 dependency exclusions summed over every row. Each collection is counted before
 its report records are built.
+Unresolved property-reference and coordinate-gap records share a 65,536-record
+allowance. Repeated references within one field are deduplicated in source
+order; the same spelling in different fields or rows remains separate evidence.
 Variant names repeated across dependency and constraint rows are also limited
 to 4,194,304 UTF-16 code units. These fixed parser and report allowances are
 separate from the selected file-read budget; raising `max_file_bytes` does not

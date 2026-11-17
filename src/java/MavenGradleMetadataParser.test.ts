@@ -30,6 +30,41 @@ const parse = (source: string, path = "/artifacts/pom.xml") => {
   return report;
 };
 
+it("keeps a missing child artifact separate from inheritable parent coordinates", () => {
+  const report = parse(
+    `<project><modelVersion>4.0.0</modelVersion><parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version></parent></project>`,
+  );
+  expect(report.coordinates).toEqual({
+    group_id: null,
+    artifact_id: null,
+    version: null,
+    packaging: null,
+  });
+  expect(report.unresolved).toEqual([
+    {
+      kind: "parent-coordinate",
+      reference: "parent.group_id",
+      field: "group_id",
+      owner: "project",
+      index: null,
+    },
+    {
+      kind: "missing-coordinate",
+      reference: "project.artifact_id",
+      field: "artifact_id",
+      owner: "project",
+      index: null,
+    },
+    {
+      kind: "parent-coordinate",
+      reference: "parent.version",
+      field: "version",
+      owner: "project",
+      index: null,
+    },
+  ]);
+});
+
 it("preserves an opaque XML counting failure without allocating a DOM", () => {
   const cause = new Error("controlled XML counter failure");
   const syntax = vi

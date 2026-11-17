@@ -1,3 +1,4 @@
+import { MavenGradleUnresolvedCollector } from "./MavenGradleUnresolvedCollector.js";
 import { Budget } from "../domain/budget.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
@@ -16,11 +17,9 @@ import {
   MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
   MAVEN_GRADLE_METADATA_VARIANTS,
   MAVEN_GRADLE_METADATA_XML_NODES,
-  mavenPropertyReferences,
   requestedVersionKind,
   type MavenGradleDependency,
   type MavenGradleMetadata,
-  type MavenGradleUnresolved,
 } from "../domain/java/mavenGradleMetadata.js";
 import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
@@ -122,71 +121,6 @@ const boolOf = (value: string | null): boolean | null => {
   return null;
 };
 
-const pushUnresolved = (
-  unresolved: MavenGradleUnresolved[],
-  entry: MavenGradleUnresolved,
-): void => {
-  unresolved.push(entry);
-};
-
-/** List every property reference in scalar fields whose absence is not a gap. */
-const recordPropertyReferences = (
-  unresolved: MavenGradleUnresolved[],
-  fields: readonly (readonly [MavenGradleUnresolved["field"], string | null])[],
-  owner: MavenGradleUnresolved["owner"],
-  index: number | null,
-): void => {
-  for (const [field, value] of fields)
-    for (const reference of mavenPropertyReferences(value))
-      pushUnresolved(unresolved, {
-        kind: "property",
-        reference,
-        field,
-        owner,
-        index,
-      });
-};
-
-const recordCoordinateGaps = (
-  unresolved: MavenGradleUnresolved[],
-  coordinates: {
-    group_id: string | null;
-    artifact_id: string | null;
-    version: string | null;
-  },
-  owner: MavenGradleUnresolved["owner"],
-  index: number | null,
-  parentPresent: boolean,
-): void => {
-  const fields = [
-    ["group_id", coordinates.group_id],
-    ["artifact_id", coordinates.artifact_id],
-    ["version", coordinates.version],
-  ] as const;
-  for (const [field, value] of fields) {
-    const properties = mavenPropertyReferences(value);
-    if (properties.length > 0) {
-      for (const reference of properties)
-        pushUnresolved(unresolved, {
-          kind: "property",
-          reference,
-          field,
-          owner,
-          index,
-        });
-      continue;
-    }
-    if (value !== null) continue;
-    pushUnresolved(unresolved, {
-      kind: parentPresent ? "parent-coordinate" : "missing-coordinate",
-      reference: parentPresent ? `parent.${field}` : `${owner}.${field}`,
-      field,
-      owner,
-      index,
-    });
-  }
-};
-
 const emptyGradleVersion = {
   requires: null,
   prefers: null,
@@ -274,7 +208,7 @@ const parseMavenDependency = (
   element: Element,
   origin: "dependencies" | "dependencyManagement",
   index: number,
-  unresolved: MavenGradleUnresolved[],
+  unresolved: MavenGradleUnresolvedCollector,
 ): MavenGradleDependency => {
   const group_id = childText(element, "groupId");
   const artifact_id = childText(element, "artifactId");
@@ -288,8 +222,7 @@ const parseMavenDependency = (
   }));
   const owner =
     origin === "dependencies" ? "dependency" : "dependency_management";
-  recordCoordinateGaps(
-    unresolved,
+  unresolved.coordinates(
     { group_id, artifact_id, version },
     owner,
     index,
@@ -297,8 +230,7 @@ const parseMavenDependency = (
   );
   const optional_spelling = childText(element, "optional");
   const classifier = childText(element, "classifier");
-  recordPropertyReferences(
-    unresolved,
+  unresolved.properties(
     [
       ["scope", scope],
       ["type", type],
@@ -360,7 +292,7 @@ const parsePom = (
       MAVEN_GRADLE_METADATA_FORMAT,
       "Selected XML document is not a Maven project POM.",
     );
-  const unresolved: MavenGradleUnresolved[] = [];
+  const unresolved = new MavenGradleUnresolvedCollector();
   const parentElement = soleNamed(root, "parent");
   const parent =
     parentElement === undefined
@@ -374,23 +306,15 @@ const parsePom = (
           relative_path_declared:
             soleNamed(parentElement, "relativePath") !== undefined,
         };
-  if (parent !== null)
-    recordCoordinateGaps(unresolved, parent, "parent", null, false);
+  if (parent !== null) unresolved.coordinates(parent, "parent", null, false);
   const coordinates = {
     group_id: childText(root, "groupId"),
     artifact_id: childText(root, "artifactId"),
     version: childText(root, "version"),
     packaging: childText(root, "packaging"),
   };
-  recordCoordinateGaps(
-    unresolved,
-    coordinates,
-    "project",
-    null,
-    parent !== null,
-  );
-  recordPropertyReferences(
-    unresolved,
+  unresolved.coordinates(coordinates, "project", null, parent !== null);
+  unresolved.properties(
     [["packaging", coordinates.packaging]],
     "project",
     null,
@@ -470,7 +394,7 @@ const parsePom = (
     dependencies,
     dependency_management,
     gradle: null,
-    unresolved,
+    unresolved: unresolved.finish(),
     coverage: { status: "complete", examined_bytes: artifact.bytes },
     limitations,
   };
@@ -482,7 +406,7 @@ const parseGradleDependency = (
   variant: string | null,
   platform: boolean,
   index: number,
-  unresolved: MavenGradleUnresolved[],
+  unresolved: MavenGradleUnresolvedCollector,
 ): MavenGradleDependency => {
   if (!isRecord(value))
     throw malformedInput(
@@ -494,8 +418,7 @@ const parseGradleDependency = (
   const artifact_id = textOf(record.module);
   const gradle_version = gradleVersionOf(record.version);
   const version = requestedFromGradle(gradle_version);
-  recordCoordinateGaps(
-    unresolved,
+  unresolved.coordinates(
     { group_id, artifact_id, version },
     "variant",
     index,
@@ -564,14 +487,14 @@ const parseGradle = (
     "Gradle variant attributes other than category and usage are not decoded.",
     "available-at coordinates are recorded as spelled; the named module file was not fetched.",
   ];
-  const unresolved: MavenGradleUnresolved[] = [];
+  const unresolved = new MavenGradleUnresolvedCollector();
   const coordinates = {
     group_id: component === null ? null : textOf(component.group),
     artifact_id: component === null ? null : textOf(component.module),
     version: component === null ? null : textOf(component.version),
     packaging: null,
   };
-  recordCoordinateGaps(unresolved, coordinates, "project", null, false);
+  unresolved.coordinates(coordinates, "project", null, false);
   const createdBy = isRecord(parsed.createdBy) ? parsed.createdBy : null;
   const createdGradle =
     createdBy !== null && isRecord(createdBy.gradle) ? createdBy.gradle : null;
@@ -695,7 +618,7 @@ const parseGradle = (
         createdGradle === null ? null : textOf(createdGradle.version),
       variants: gradleVariants,
     },
-    unresolved,
+    unresolved: unresolved.finish(),
     coverage: { status: "complete", examined_bytes: artifact.bytes },
     limitations,
   };

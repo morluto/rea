@@ -20,6 +20,64 @@ const outputSchema = contractNamed(
 ).outputSchema;
 
 cliTest(
+  "reports a missing child artifact independently of parent group and version through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-maven-parent-gap-");
+    const path = join(root, "pom.xml");
+    await writeFile(
+      path,
+      `<project><modelVersion>4.0.0</modelVersion><parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version></parent></project>`,
+    );
+    const result = await cli.run({
+      arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const expected = [
+      {
+        kind: "parent-coordinate",
+        reference: "parent.group_id",
+        field: "group_id",
+        owner: "project",
+        index: null,
+      },
+      {
+        kind: "missing-coordinate",
+        reference: "project.artifact_id",
+        field: "artifact_id",
+        owner: "project",
+        index: null,
+      },
+      {
+        kind: "parent-coordinate",
+        reference: "parent.version",
+        field: "version",
+        owner: "project",
+        index: null,
+      },
+    ];
+    const cliEvidence = outputSchema.parse(result.json);
+    expect(cliEvidence.normalized_result.unresolved).toEqual(expected);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_maven_gradle_metadata", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = outputSchema.parse(response.structuredContent);
+    expect(evidence.normalized_result).toEqual(cliEvidence.normalized_result);
+    const retained = await call("get_evidence_bundle", { detail: "complete" });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    const bundle = parseEvidenceBundle(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        retained.structuredContent,
+      ).result,
+    );
+    expect(
+      bundle.records.find(
+        (record) => record.evidence_id === evidence.evidence_id,
+      ),
+    ).toEqual(evidence);
+  },
+);
+
+cliTest(
   "preserves metadata caller selections and transport URL provenance through CLI, MCP and retained records",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-metadata-provenance-");

@@ -102,6 +102,8 @@ const REPORT_ALLOWANCE_SUBJECTS: Readonly<
     `The ${String(limit)}-variant allowance for Gradle module variants`,
   exclusions: (limit) =>
     `The ${String(limit)}-exclusion allowance for dependency exclusions`,
+  unresolved_records: (limit) =>
+    `The ${String(limit)}-record allowance for unresolved references and coordinates`,
   xml_nodes: (limit) =>
     `The ${String(limit)}-node allowance for a Maven POM document tree`,
   repeated_variant_name_chars: (limit) =>
@@ -127,11 +129,13 @@ const mavenGradleMetadataFailurePrimary = (
           unit:
             name === "repeated_variant_name_chars"
               ? "UTF-16 code units"
-              : name === "dependency_rows"
-                ? "rows"
-                : name === "xml_nodes"
-                  ? "nodes"
-                  : name,
+              : name === "unresolved_records"
+                ? "records"
+                : name === "dependency_rows"
+                  ? "rows"
+                  : name === "xml_nodes"
+                    ? "nodes"
+                    : name,
         },
       ),
     });
