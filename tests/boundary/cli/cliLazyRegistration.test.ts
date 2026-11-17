@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { cliCommands } from "../../../src/cli/commandRegistry.js";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 import {
@@ -33,6 +33,10 @@ import type { CliInstance } from "../../../src/cli/types.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
 import { processTest } from "../../support/process/processFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
@@ -63,14 +67,24 @@ const recordedRegistrations = async (): Promise<Record<string, string>> => {
 };
 
 describe("lazy CLI registration", () => {
-  it("records every top-level command under the one registrar that defines it", async () => {
-    const recorded = await recordedRegistrations();
-    const complete = createCli(ENVIRONMENT);
+  let recorded: Record<string, string> = {};
+  let complete!: CliInstance;
+  const registrars = new Map<CliCommandRegistrationId, CliInstance>();
+
+  beforeAll(async () => {
+    recorded = await recordedRegistrations();
+    complete = createCli(ENVIRONMENT);
+    for (const id of CLI_REGISTRATION_ORDER) {
+      registrars.set(id, await createRegistrarCli(id));
+    }
+  });
+
+  it("records every top-level command under the one registrar that defines it", () => {
     expect(Object.keys(recorded).sort()).toEqual(
       [...topLevelNames(complete)].sort(),
     );
     for (const id of CLI_REGISTRATION_ORDER) {
-      const alone = await createRegistrarCli(id);
+      const alone = registrars.get(id)!;
       expect(
         [...topLevelNames(alone)].sort(),
         `${id} registers what the recording assigns it`,
@@ -84,11 +98,10 @@ describe("lazy CLI registration", () => {
   });
 
   it("gives each command the same definition alone as in the complete CLI", async () => {
-    const complete = createCli(ENVIRONMENT);
     const completePaths = new Set(topLevelNames(complete));
     const covered = new Set<string>();
     for (const id of CLI_REGISTRATION_ORDER) {
-      const alone = await createRegistrarCli(id);
+      const alone = registrars.get(id)!;
       for (const path of topLevelNames(alone)) {
         expect(completePaths.has(path), path).toBe(true);
         covered.add(path);
@@ -143,6 +156,22 @@ describe("lazy CLI registration", () => {
 });
 
 describe("lazy CLI execution", () => {
+  let compileCacheRoot = "";
+  let compileCache = "";
+
+  beforeAll(async () => {
+    compileCacheRoot = (
+      await createTestWorkspace("rea-cli-lazy-compile-cache-")
+    ).root;
+    compileCache = join(compileCacheRoot, "node-compile");
+  });
+
+  afterAll(async () => {
+    if (compileCacheRoot !== "") {
+      await removeTestWorkspace(compileCacheRoot);
+    }
+  });
+
   processTest(
     "runs a recorded command without loading the complete CLI",
     async ({ processes }) => {
@@ -160,7 +189,13 @@ registerHooks({ resolve(specifier, context, next) {
         processes.run(
           process.execPath,
           [`--import=${hook}`, join("scripts", "rea.mjs"), ...arguments_],
-          { env: { ...ENVIRONMENT, HOME: home } },
+          {
+            env: {
+              ...ENVIRONMENT,
+              HOME: home,
+              NODE_COMPILE_CACHE: compileCache,
+            },
+          },
         );
       const lazy = await run(["list-cutter-sessions", "--json"]);
       expect(lazy.exitCode, lazy.stderr).toBe(0);
@@ -222,7 +257,13 @@ registerHooks({ resolve(specifier, context, next) {
             const result = await processes.run(
               process.execPath,
               [join("scripts", "rea.mjs"), ...invocation(name)],
-              { env: { ...ENVIRONMENT, HOME: home } },
+              {
+                env: {
+                  ...ENVIRONMENT,
+                  HOME: home,
+                  NODE_COMPILE_CACHE: compileCache,
+                },
+              },
             );
             lazy.set(name, {
               document: document(result.stdout),

@@ -150,7 +150,11 @@ export const locateDenoStandalone = async (
   } catch (cause) {
     if (
       cause instanceof ArtifactReaderFailure &&
-      (cause.reason === "format" || cause.reason === "limit")
+      (cause.reason === "format" ||
+        cause.reason === "malformed" ||
+        cause.reason === "truncated" ||
+        cause.reason === "unsupported" ||
+        cause.reason === "limit")
     )
       return { status: "present", failure: cause };
     throw cause;

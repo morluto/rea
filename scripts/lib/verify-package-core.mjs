@@ -91,3 +91,28 @@ export const pathExists = async (path) => {
     throw cause;
   }
 };
+
+/**
+ * Run bounded concurrent work, stop taking new items after the first failure,
+ * and wait for every started worker to settle before propagating failures.
+ */
+export const runSettledConcurrent = async (items, concurrency, worker) => {
+  if (items.length === 0) return;
+  let index = 0;
+  const failures = [];
+  await Promise.allSettled(
+    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (failures.length === 0 && index < items.length) {
+        const current = index++;
+        try {
+          await worker(items[current]);
+        } catch (cause) {
+          failures.push(cause);
+        }
+      }
+    }),
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "Concurrent verifier tasks failed");
+};

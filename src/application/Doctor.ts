@@ -33,7 +33,6 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
-import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import {
   execFileOutput,
   ExecFileOutputCancelledError,
@@ -61,7 +60,8 @@ import {
   type InstalledSkillIdentity,
   type SkillPathIssue,
 } from "./SetupSkill.js";
-import { DEFAULT_CATALOG_IDENTITY } from "../contracts/catalog/catalogIdentity.js";
+import type { CatalogIdentitySnapshot } from "../contracts/catalog/recordedCatalogDigests.js";
+import { loadDefaultCatalogIdentity } from "../contracts/catalog/defaultCatalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
   readClientRegistrationStatuses,
@@ -86,6 +86,7 @@ import type {
   OwnedProviderSetting,
 } from "../ports/DesktopBuildHost.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { settleConcurrent } from "./settleConcurrent.js";
 
 /** Read-only host capabilities required by diagnostics. */
 export interface DoctorHost {
@@ -176,7 +177,7 @@ interface DoctorIdentity {
   readonly expected_skill_version: string;
   readonly sdk: typeof SDK_IDENTITY;
   /** Package default advertisement; the active server reports its selected profile. */
-  readonly catalog: typeof DEFAULT_CATALOG_IDENTITY;
+  readonly catalog: CatalogIdentitySnapshot;
   readonly live_server: {
     readonly state: "unknown";
     readonly remediation: string;
@@ -450,23 +451,43 @@ const collectDoctorIdentity = async (
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
-  const launchers = (await host.installationLaunchers?.()) ?? [];
-  const registrations =
-    (await host.clientRegistrations?.(
-      scope.clients,
-      Object.fromEntries(
-        selections.flatMap(({ settings }) => Object.entries(settings)),
-      ),
-    )) ?? [];
   const skillClientIds =
     scope.skill_clients ??
     (scope.clients.length > 0 ? scope.clients : undefined);
-  const installedSkillIdentity =
-    await host.installedSkillIdentity?.(skillClientIds);
-  const skillAligned = skillIdentityAligned(installedSkillIdentity);
+  const [
+    resolvedLaunchers,
+    resolvedRegistrations,
+    installedSkillIdentity,
+    defaultCatalogIdentity,
+  ] = await settleConcurrent([
+    Promise.resolve(host.installationLaunchers?.()),
+    Promise.resolve(
+      host.clientRegistrations?.(
+        scope.clients,
+        Object.fromEntries(
+          selections.flatMap(({ settings }) => Object.entries(settings)),
+        ),
+      ),
+    ),
+    Promise.resolve(host.installedSkillIdentity?.(skillClientIds)),
+    loadDefaultCatalogIdentity(),
+  ]);
+  const launchers = resolvedLaunchers ?? [];
+  const registrations = resolvedRegistrations ?? [];
+  const skillAligned = skillIdentityAligned(
+    installedSkillIdentity,
+    defaultCatalogIdentity.counts.mcp_tools,
+  );
   return {
     checks: [
-      ...(skillAligned ? [] : [skillIdentityCheck(installedSkillIdentity)]),
+      ...(skillAligned
+        ? []
+        : [
+            skillIdentityCheck(
+              installedSkillIdentity,
+              defaultCatalogIdentity.counts.mcp_tools,
+            ),
+          ]),
       ...registrations
         .filter(
           (registration): registration is UnhealthyClientRegistrationStatus =>
@@ -479,8 +500,8 @@ const collectDoctorIdentity = async (
       expected_skill_version: PRODUCT_IDENTITY.skillVersion,
       sdk: SDK_IDENTITY,
       catalog: {
-        counts: DEFAULT_CATALOG_IDENTITY.counts,
-        digests: DEFAULT_CATALOG_IDENTITY.digests,
+        counts: defaultCatalogIdentity.counts,
+        digests: defaultCatalogIdentity.digests,
       },
       live_server: {
         state: "unknown",
@@ -498,7 +519,10 @@ const collectDoctorIdentity = async (
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
         installed_tool_count: installedSkillIdentity?.toolCount ?? null,
-        state: skillIdentityState(installedSkillIdentity),
+        state: skillIdentityState(
+          installedSkillIdentity,
+          defaultCatalogIdentity.counts.mcp_tools,
+        ),
         ...(installedSkillIdentity?.issues === undefined
           ? {}
           : { issues: installedSkillIdentity.issues }),
@@ -513,13 +537,15 @@ const collectDoctorIdentity = async (
 
 const skillIdentityAligned = (
   identity: InstalledSkillIdentity | undefined,
+  expectedToolCount: number,
 ): boolean =>
   identity?.version === PRODUCT_IDENTITY.skillVersion &&
-  identity.toolCount === DEFAULT_CATALOG_IDENTITY.counts.mcp_tools &&
+  identity.toolCount === expectedToolCount &&
   identity.canonical;
 
 const skillIdentityState = (
   identity: InstalledSkillIdentity | undefined,
+  expectedToolCount: number,
 ): DoctorSkillState => {
   if (
     identity?.issues?.some(
@@ -538,7 +564,7 @@ const skillIdentityState = (
     return "missing";
   return identity === undefined
     ? "missing"
-    : skillIdentityAligned(identity)
+    : skillIdentityAligned(identity, expectedToolCount)
       ? "aligned"
       : "stale";
 };
@@ -562,17 +588,18 @@ const skillIdentityRemediation = (
 
 const skillIdentityCheck = (
   identity: InstalledSkillIdentity | undefined,
+  expectedToolCount: number,
 ): DoctorCheck => {
   const issues = identity?.issues;
+  const state = skillIdentityState(identity, expectedToolCount);
   return {
     name: "skill:identity",
     ok: false,
     // An unreadable or unresolved copy is unknown, not proven drift.
-    classification:
-      skillIdentityState(identity) === "unknown" ? "unknown" : "config_drift",
+    classification: state === "unknown" ? "unknown" : "config_drift",
     detail:
       issues !== undefined && issues.length > 0
-        ? `Selected skill identity is ${skillIdentityState(identity)}: ${issues.map(({ path }) => path).join(", ")}.`
+        ? `Selected skill identity is ${state}: ${issues.map(({ path }) => path).join(", ")}.`
         : identity === undefined
           ? "Installed REA skill identity is missing."
           : "Installed REA skill identity is stale.",
@@ -653,6 +680,28 @@ export interface SystemDoctorHostOptions {
   ) => Promise<DesktopBuildFacts>;
 }
 
+const runInChildResourceScope = <T>(
+  parent: ArtifactResourceScope,
+  label: string,
+  operation: (child: ArtifactResourceScope) => Promise<T>,
+): Promise<T> =>
+  parent.track(async () => {
+    const child = new ArtifactResourceScope();
+    try {
+      return await operation(child);
+    } finally {
+      if (child.hasPending) {
+        parent.retain({
+          kind: "lease",
+          resource: label,
+          lease: AnalysisCleanupLease.forCloseOwner(child, label),
+        });
+      } else {
+        await child.close();
+      }
+    }
+  });
+
 /** Create diagnostics backed by the current process and host commands. */
 export const systemDoctorHost = (
   options: SystemDoctorHostOptions = {},
@@ -674,7 +723,7 @@ export const systemDoctorHost = (
   // ILSpy probe's ten-second allowance and bound each captured stream to 64 KiB.
   // Baseline diagnostics must work without provider ownership prerequisites.
   const hostExecFileOutput: typeof execFileOutput = (command, args, input) =>
-    resources.run(async () => {
+    resources.track(async () => {
       try {
         const output = await execute(command, args, {
           ...input,
@@ -719,7 +768,7 @@ export const systemDoctorHost = (
         resource,
         lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
       }),
-    run: (operation) => resources.run(operation),
+    run: (operation) => resources.track(operation),
   };
   const resolveProviderRequestBudget =
     options.resolveProviderRequestBudget === undefined
@@ -751,6 +800,7 @@ export const systemDoctorHost = (
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: () => readLinuxDistribution(architecture),
     async validTarget(path) {
+      const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
       return (
         await parseBinaryTarget(path, {
           cwd: process.cwd(),
@@ -759,6 +809,7 @@ export const systemDoctorHost = (
       ).ok;
     },
     async inspectTarget(path) {
+      const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
       const result = await parseBinaryTarget(path, {
         cwd: process.cwd(),
         hostArchitecture: architecture,
@@ -840,7 +891,7 @@ export const systemDoctorHost = (
       ? {}
       : {
           providerInspections: (clients) =>
-            resources.run(() =>
+            resources.track(() =>
               options.providerInspections!(
                 resourceScope,
                 inspectionSignal,
@@ -887,12 +938,14 @@ export const systemDoctorHost = (
       }
     },
     installedSkillIdentity: (clientIds) =>
-      readInstalledSkillIdentity(
-        homeDirectory,
-        clientIds,
-        environment,
-        platform,
-        resources,
+      runInChildResourceScope(resources, "skill-identity", (child) =>
+        readInstalledSkillIdentity(
+          homeDirectory,
+          clientIds,
+          environment,
+          platform,
+          child,
+        ),
       ),
     close: async () => {
       controller.abort(OwnerCancellation.startupOwnerClosed);
@@ -920,29 +973,33 @@ export const systemDoctorHost = (
       ownedProviderSetting,
       observeProviderSetting,
     ) =>
-      readClientRegistrationStatuses(homeDirectory, undefined, {
-        platform,
-        environment,
-        resources,
-        ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
-        ...(ownedProviderSetting === undefined ? {} : { ownedProviderSetting }),
-        ...(observeProviderSetting === undefined
-          ? {}
-          : { observeProviderSetting }),
-        ...(providerSettings === undefined
-          ? {}
-          : {
-              providerSettings: registrationSpelledSettings(
-                providerSettings,
-                environment,
-              ),
-            }),
-        ...(resolveProviderRequestBudget === undefined
-          ? {}
-          : {
-              resolveProviderRequestBudget,
-            }),
-      }),
+      runInChildResourceScope(resources, "client-registrations", (child) =>
+        readClientRegistrationStatuses(homeDirectory, undefined, {
+          platform,
+          environment,
+          resources: child,
+          ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+          ...(ownedProviderSetting === undefined
+            ? {}
+            : { ownedProviderSetting }),
+          ...(observeProviderSetting === undefined
+            ? {}
+            : { observeProviderSetting }),
+          ...(providerSettings === undefined
+            ? {}
+            : {
+                providerSettings: registrationSpelledSettings(
+                  providerSettings,
+                  environment,
+                ),
+              }),
+          ...(resolveProviderRequestBudget === undefined
+            ? {}
+            : {
+                resolveProviderRequestBudget,
+              }),
+        }),
+      ),
   };
   const readFacts = options.desktopBuildFacts;
   return readFacts === undefined
@@ -950,12 +1007,12 @@ export const systemDoctorHost = (
     : {
         ...host,
         desktopBuildFacts: (clientIds) =>
-          resources.run(() =>
+          runInChildResourceScope(resources, "desktop-build-facts", (child) =>
             readFacts({
               environment,
               platform,
               signal: inspectionSignal,
-              resources,
+              resources: child,
               run: hostExecFileOutput,
               clientIds,
               registrations: host.clientRegistrations!,

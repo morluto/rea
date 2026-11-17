@@ -1,10 +1,33 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect } from "vitest";
+import { afterAll, beforeAll, describe, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let isolatedHomeRoot = "";
+let isolatedHomeEnvironment: NodeJS.ProcessEnv = {};
+
+beforeAll(async () => {
+  isolatedHomeRoot = (await createTestWorkspace("rea-cli-json-isolated-home-"))
+    .root;
+  isolatedHomeEnvironment = {
+    HOME: isolatedHomeRoot,
+    XDG_CONFIG_HOME: isolatedHomeRoot,
+    XDG_CACHE_HOME: isolatedHomeRoot,
+  };
+});
+
+afterAll(async () => {
+  if (isolatedHomeRoot !== "") await removeTestWorkspace(isolatedHomeRoot);
+});
+
+const sharedIsolatedHome = (): NodeJS.ProcessEnv => isolatedHomeEnvironment;
 
 const JSON_COMMANDS = [
   ["inspect-analysis-view", "inspect_analysis_view"],
@@ -33,15 +56,10 @@ describe("compiled CLI JSON input failure status", () => {
     cliTest(
       `${command} rejects malformed inline input before dispatch`,
       async ({ cli }) => {
-        const root = await createTestTempDirectory("rea-cli-json-status-");
         const input = "{";
         const result = await cli.run({
           arguments: [command, input, "--json"],
-          environment: {
-            HOME: root,
-            XDG_CONFIG_HOME: root,
-            XDG_CACHE_HOME: root,
-          },
+          environment: sharedIsolatedHome(),
         });
 
         expect(result.json).toMatchObject({
@@ -67,11 +85,7 @@ describe("compiled CLI JSON input failure status", () => {
 
         const result = await cli.run({
           arguments: ["compare-javascript-export-shapes", input, "--json"],
-          environment: {
-            HOME: root,
-            XDG_CONFIG_HOME: root,
-            XDG_CACHE_HOME: root,
-          },
+          environment: sharedIsolatedHome(),
         });
 
         expect(result.json).toMatchObject({
@@ -97,18 +111,13 @@ describe("compiled CLI JSON document omissions", () => {
     ["trace-application-feature", "trace_application_feature"],
   ] as const)
     cliTest(`${command} refuses an omitted view field`, async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-cli-json-omitted-");
       const result = await cli.run({
         arguments: [
           command,
           JSON.stringify({ view: { kind: "summary" } }),
           "--json",
         ],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -157,7 +166,6 @@ describe("compiled CLI JSON document omissions", () => {
     cliTest(
       `${command} refuses ${field} inside the document`,
       async ({ cli }) => {
-        const root = await createTestTempDirectory("rea-cli-json-flagged-");
         const result = await cli.run({
           arguments: [
             command,
@@ -166,11 +174,7 @@ describe("compiled CLI JSON document omissions", () => {
             }),
             "--json",
           ],
-          environment: {
-            HOME: root,
-            XDG_CONFIG_HOME: root,
-            XDG_CACHE_HOME: root,
-          },
+          environment: sharedIsolatedHome(),
         });
         expect(result.json).toMatchObject({
           code: "invalid_request",
@@ -202,11 +206,7 @@ describe("compiled CLI JSON document admission order", () => {
           join(root, "missing.bundle.json"),
           "--json",
         ],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -230,7 +230,6 @@ describe("compiled CLI JSON document caller paths", () => {
   cliTest(
     "compare-source-to-bundle refuses a file URL reference path",
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-cli-json-url-path-");
       const result = await cli.run({
         arguments: [
           "compare-source-to-bundle",
@@ -240,11 +239,7 @@ describe("compiled CLI JSON document caller paths", () => {
           }),
           "--json",
         ],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -270,11 +265,7 @@ describe("compiled CLI session-target JSON documents", () => {
           JSON.stringify({ breakpoints: "main" }),
           "--json",
         ],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
       expect(result.json).toMatchObject({
         error: "Analysis failed",
@@ -305,11 +296,7 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
         const input = join(root, "missing.json");
         const result = await cli.run({
           arguments: ["compare-javascript-export-shapes", input, ...flags],
-          environment: {
-            HOME: root,
-            XDG_CONFIG_HOME: root,
-            XDG_CACHE_HOME: root,
-          },
+          environment: sharedIsolatedHome(),
         });
         for (const diagnostic of [
           "invalid_request",
@@ -326,14 +313,9 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
   cliTest(
     "rejects an empty file path without losing its diagnostic",
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-cli-json-empty-");
       const result = await cli.run({
         arguments: ["compare-javascript-export-shapes", "", "--json"],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
       expect(JSON.parse(result.stdout.trim())).toMatchObject({
         code: "invalid_request",
@@ -347,15 +329,10 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
   cliTest(
     "classifies an overlong malformed inline value before dispatch",
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-cli-json-overlong-");
       const input = `[${"x".repeat(3_000)}`;
       const result = await cli.run({
         arguments: ["compare-javascript-export-shapes", input, "--json"],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
 
       expect(result.json).toMatchObject({
@@ -376,15 +353,10 @@ describe("compiled CLI JSON input diagnostic preservation", () => {
   cliTest(
     "preserves explicit overlong JSON path diagnostics",
     async ({ cli }) => {
-      const root = await createTestTempDirectory("rea-cli-json-overlong-path-");
       const input = `[${"x".repeat(3_000)}.json`;
       const result = await cli.run({
         arguments: ["compare-javascript-export-shapes", input, "--json"],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
 
       expect(result.json).toMatchObject({
@@ -407,11 +379,7 @@ describe("compiled CLI JSON path ambiguity", () => {
       const result = await cli.run({
         arguments: ["capture-browser-scenario", input, "--json"],
         cwd: root,
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
+        environment: await sharedIsolatedHome(),
       });
 
       expect(result.json).toMatchObject({
@@ -444,11 +412,7 @@ describe("compiled CLI JSON path ambiguity", () => {
         const result = await cli.run({
           arguments: ["capture-browser-scenario", input, "--json"],
           cwd: root,
-          environment: {
-            HOME: root,
-            XDG_CONFIG_HOME: root,
-            XDG_CACHE_HOME: root,
-          },
+          environment: sharedIsolatedHome(),
         });
 
         expect(result.json).toMatchObject({

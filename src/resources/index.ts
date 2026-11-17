@@ -88,6 +88,7 @@ export {
   imageFileSizeRemediation,
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
@@ -145,7 +146,11 @@ export {
 } from "./withArtifactTargetIdentity.js";
 export {
   ZIP_READER_OPTIONS,
+  ZIP_ZSTANDARD_WINDOW_CEILING,
   ZipArtifactReader,
   decodeZipEntryText,
+  zipEntryNameLimitations,
   zipEntryPath,
+  zipListingCoverage,
+  typedZipFailure,
 } from "./ZipArtifactReader.js";
