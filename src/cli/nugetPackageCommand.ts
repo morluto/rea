@@ -11,7 +11,7 @@ import {
 } from "../domain/nugetPackage/nugetPackage.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
-  inspectWithService,
+  deliverWithService,
   registerContractCommand,
   type EvidenceInspectionService,
 } from "./contractCommand.js";
@@ -31,9 +31,17 @@ export const registerNugetPackageCommand = (
         "Inspect the contents and .nuspec declarations of a local NuGet package (.nupkg) offline",
       positionals: ["path"],
       callerPaths: ["path"],
+      // The contract fixes `format` to `nupkg`, and argv has no projection for
+      // a literal, so the command leaves it to the contract's own value.
+      omit: {
+        format:
+          "The contract fixes the package format; .nupkg is the only one admitted",
+      },
       fields: { path: { description: "Local .nupkg path" } },
+      // The command publishes the complete inventory or a summary beside its bundle.
+      evidenceDelivery: true,
     },
-    inspectWithService(createNugetPackageService, NUGET_PACKAGE_PROVIDER.id, "path"),
+    deliverWithService(createNugetPackageService, NUGET_PACKAGE_PROVIDER.id),
   );
 
 /** One-shot package inspection that owns the file it opens. */
