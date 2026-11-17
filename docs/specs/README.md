@@ -39,3 +39,4 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Native initializers](native/native-initializers/spec.md) ([plan](native/native-initializers/plan.md), [tasks](native/native-initializers/tasks.md))
 
 - [Release exposure audit](artifacts/release-exposure/spec.md) ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))
+- [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))

@@ -22,6 +22,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [ELF unwind function ranges](guides/native/elf-unwind-ranges.md)
 - [Linux kernel build config](guides/native/kernel-build-config.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
+- [CycloneDX dependencies](guides/native/cyclonedx-view.md)
 - [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 - [Acquired NTFS metadata and change journals](guides/native/ntfs-metadata.md)
 
