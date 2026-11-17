@@ -138,6 +138,7 @@
 * **apple:** expand loaded siblings along the first dyld chain ([#10248](https://github.com/morluto/rea/issues/10248)) ([9d32836](https://github.com/morluto/rea/commit/9d32836d371718260a9fcd1118f2e635cc1005e6))
 * **apple:** match IPS ARM32 joins by CPU subtype ([ff64ed5](https://github.com/morluto/rea/commit/ff64ed5142ba8f2f7fa69cc7ad57e3550cb435ac))
 * **apple:** retain unknown IPS row key names ([0a99147](https://github.com/morluto/rea/commit/0a99147c5701f13609e9e62291fef4cda2c78621)), closes [#7689](https://github.com/morluto/rea/issues/7689) [#7733](https://github.com/morluto/rea/issues/7733)
+* **artifacts:** accept Android boot images without final page padding ([#11857](https://github.com/morluto/rea/issues/11857)) ([bb5278c](https://github.com/morluto/rea/commit/bb5278c7e2d5b0a423a63858c8b3c9682232e2d2))
 * **artifacts:** admit empty DOCTYPE internal subsets in XML plist preflight ([596515f](https://github.com/morluto/rea/commit/596515f82c6da859c130a5bc3e99ce0abcc76425)), closes [#8407](https://github.com/morluto/rea/issues/8407) [#8438](https://github.com/morluto/rea/issues/8438)
 * **artifacts:** append bounded claims without call spreads ([7394991](https://github.com/morluto/rea/commit/7394991d1f087266eb2660a5f18fda74d12f5b88)), closes [#10342](https://github.com/morluto/rea/issues/10342)
 * **artifacts:** cancel idle .NET bundle member streams ([#11826](https://github.com/morluto/rea/issues/11826)) ([3b85623](https://github.com/morluto/rea/commit/3b85623436ffead0ff4747d664571b963d58b5f8))
