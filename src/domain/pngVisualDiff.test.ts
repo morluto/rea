@@ -533,3 +533,97 @@ const transparencyArtifact = (
     ]),
   );
 };
+
+describe("PNG scanline reconstruction", () => {
+  // Independent PNG encodings, decoded byte-for-byte with Pillow 13.0.0.
+  // Each 4x3 vector uses one filter for all rows, including its first row.
+  const vectors = [
+    {
+      channels: 3,
+      filter: 0,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAMklEQVR4nAEnANj/AABJktskbbYcZa73QACJ0jiByhNcpe5UneYAL3jBCnC5AkuU3SaMSxYRJj8oxo4AAAAASUVORK5CYII=",
+    },
+    {
+      channels: 3,
+      filter: 1,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAI0lEQVR4nGNk8Jx0Gwh+/Phx+zZj5yULEA3mMupXHIQIA7kACxEcT9/316EAAAAASUVORK5CYII=",
+    },
+    {
+      channels: 3,
+      filter: 2,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAIUlEQVR4nGNi8Jx0WyV3m0zquu8OTJ2dy0AATDFBaTAFAGo1FBJVyRtxAAAAAElFTkSuQmCC",
+    },
+    {
+      channels: 3,
+      filter: 3,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAMklEQVR4nAEnANj/AwBJktsAJEkKL1PpDgOJru/PT8HBMrLPz08D6w+lss9Pz8HBsrLPPXgTOqYbBsgAAAAASUVORK5CYII=",
+    },
+    {
+      channels: 3,
+      filter: 4,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAJ0lEQVR4nGNh8Jx0Gwh+/Phx+zZLZ+eyZT/A3GU/WJYt6wQLLwNyAQe1HBGnsGWBAAAAAElFTkSuQmCC",
+    },
+    {
+      channels: 4,
+      filter: 0,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAPklEQVR4nAEzAMz/AABJktskbbYcZa73QInSOIEAyhNcpe5UneYveMEKcLkCSwCU3SaM1R5nsPlCqPE6g8wVSb4Xov31drQAAAAASUVORK5CYII=",
+    },
+    {
+      channels: 4,
+      filter: 1,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAJUlEQVR4nGNk8Jx0W0VFxREIwBTjKeGYpQguUGDKXbUeBFdFBQBY7Q0sBYh93wAAAABJRU5ErkJggg==",
+    },
+    {
+      channels: 4,
+      filter: 2,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAJklEQVR4nGNi8Jx0WyV3m0zquu8OnZcsGplOgcDz53CKCZV76hQA9XchpursqFwAAAAASUVORK5CYII=",
+    },
+    {
+      channels: 4,
+      filter: 3,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAOUlEQVR4nGNm8Jx0W8Uzd31wxRyj8Oq9icyn3gtblIuItLV9/w6i2Jj1r/ywAtLfy7+LTGljKy8HABEfFPZNU3ijAAAAAElFTkSuQmCC",
+    },
+    {
+      channels: 4,
+      filter: 4,
+      png: "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAALklEQVR4nGNh8Jx0W0VFxREIwBTLKSBQ4eY+5QihuEECz7kduU+desf9HEipAAC/kBN7EtzDJQAAAABJRU5ErkJggg==",
+    },
+  ];
+  const expected = {
+    3: [
+      0, 73, 146, 255, 219, 36, 109, 255, 182, 28, 101, 255, 174, 247, 64, 255,
+      137, 210, 56, 255, 129, 202, 19, 255, 92, 165, 238, 255, 84, 157, 230,
+      255, 47, 120, 193, 255, 10, 112, 185, 255, 2, 75, 148, 255, 221, 38, 140,
+      255,
+    ],
+    4: [
+      0, 73, 146, 219, 36, 109, 182, 28, 101, 174, 247, 64, 137, 210, 56, 129,
+      202, 19, 92, 165, 238, 84, 157, 230, 47, 120, 193, 10, 112, 185, 2, 75,
+      148, 221, 38, 140, 213, 30, 103, 176, 249, 66, 168, 241, 58, 131, 204, 21,
+    ],
+  };
+  it.each(vectors)(
+    "preserves RGB/RGBA pixels for $channels channels and filter $filter",
+    ({ channels, png: encoded }) => {
+      const decoded = createWebScreenshotArtifact(
+        Buffer.from(encoded, "base64"),
+      );
+      const reference = artifact(4, 3, expected[channels as 3 | 4]);
+      expect(
+        comparePngScreenshots(
+          compareWebScreenshotsInputSchema.parse({
+            before: decoded,
+            after: reference,
+          }),
+        ),
+      ).toMatchObject({
+        status: "identical",
+        compared_pixels: 12,
+        changed_pixels: 0,
+        changed_ratio: 0,
+        maximum_channel_delta: 0,
+        mean_absolute_channel_delta: 0,
+      });
+    },
+  );
+});

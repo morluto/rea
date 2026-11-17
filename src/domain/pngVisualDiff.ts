@@ -417,29 +417,65 @@ const unfilter = (
   const decoded = Buffer.alloc(rowBytes * height);
   for (let row = 0; row < height; row += 1) {
     const rawOffset = row * (rowBytes + 1);
+    const sourceOffset = rawOffset + 1;
     const outputOffset = row * rowBytes;
     const filter = raw[rawOffset];
-    if (filter === undefined || filter > 4)
-      throw new TypeError("Unsupported PNG filter");
-    for (let column = 0; column < rowBytes; column += 1) {
-      const source = raw[rawOffset + 1 + column] ?? 0;
-      const left =
-        column >= channels
-          ? (decoded[outputOffset + column - channels] ?? 0)
-          : 0;
-      const above =
-        row > 0 ? (decoded[outputOffset + column - rowBytes] ?? 0) : 0;
-      const upperLeft =
-        row > 0 && column >= channels
-          ? (decoded[outputOffset + column - rowBytes - channels] ?? 0)
-          : 0;
-      decoded[outputOffset + column] = applyFilter({
-        filter,
-        source,
-        left,
-        above,
-        upperLeft,
-      });
+    switch (filter) {
+      case 0:
+        raw.copy(decoded, outputOffset, sourceOffset, sourceOffset + rowBytes);
+        break;
+      case 1:
+        for (let column = 0; column < rowBytes; column += 1) {
+          const left =
+            column >= channels
+              ? (decoded[outputOffset + column - channels] ?? 0)
+              : 0;
+          decoded[outputOffset + column] =
+            ((raw[sourceOffset + column] ?? 0) + left) & 0xff;
+        }
+        break;
+      case 2:
+        for (let column = 0; column < rowBytes; column += 1) {
+          const above =
+            row > 0 ? (decoded[outputOffset + column - rowBytes] ?? 0) : 0;
+          decoded[outputOffset + column] =
+            ((raw[sourceOffset + column] ?? 0) + above) & 0xff;
+        }
+        break;
+      case 3:
+        for (let column = 0; column < rowBytes; column += 1) {
+          const left =
+            column >= channels
+              ? (decoded[outputOffset + column - channels] ?? 0)
+              : 0;
+          const above =
+            row > 0 ? (decoded[outputOffset + column - rowBytes] ?? 0) : 0;
+          decoded[outputOffset + column] =
+            ((raw[sourceOffset + column] ?? 0) +
+              Math.floor((left + above) / 2)) &
+            0xff;
+        }
+        break;
+      case 4:
+        for (let column = 0; column < rowBytes; column += 1) {
+          const left =
+            column >= channels
+              ? (decoded[outputOffset + column - channels] ?? 0)
+              : 0;
+          const above =
+            row > 0 ? (decoded[outputOffset + column - rowBytes] ?? 0) : 0;
+          const upperLeft =
+            row > 0 && column >= channels
+              ? (decoded[outputOffset + column - rowBytes - channels] ?? 0)
+              : 0;
+          decoded[outputOffset + column] =
+            ((raw[sourceOffset + column] ?? 0) +
+              paeth(left, above, upperLeft)) &
+            0xff;
+        }
+        break;
+      default:
+        throw new TypeError("Unsupported PNG filter");
     }
   }
   return decoded;
@@ -469,32 +505,6 @@ const expandRgba = (
         : 255;
   }
   return rgba;
-};
-
-interface ApplyFilterOptions {
-  readonly filter: number;
-  readonly source: number;
-  readonly left: number;
-  readonly above: number;
-  readonly upperLeft: number;
-}
-
-const applyFilter = (options: ApplyFilterOptions): number => {
-  const { filter, source, left, above, upperLeft } = options;
-  switch (filter) {
-    case 0:
-      return source;
-    case 1:
-      return (source + left) & 0xff;
-    case 2:
-      return (source + above) & 0xff;
-    case 3:
-      return (source + Math.floor((left + above) / 2)) & 0xff;
-    case 4:
-      return (source + paeth(left, above, upperLeft)) & 0xff;
-    default:
-      throw new TypeError("Unsupported PNG filter");
-  }
 };
 
 const paeth = (left: number, above: number, upperLeft: number): number => {
