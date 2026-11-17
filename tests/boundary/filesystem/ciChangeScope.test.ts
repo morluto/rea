@@ -556,6 +556,39 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
     runtime: false,
     package: false,
   });
+  for (const staticOnly of [
+    "scripts/lib/module-layers.baseline.json",
+    "scripts/verify/architecture-guards.mjs",
+    "scripts/verify/baselines/incur-import.json",
+    "tsconfig.scripts.json",
+  ]) {
+    expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
+      code: true,
+      docs: false,
+      runtime: false,
+      package: false,
+    });
+  }
+  for (const docsAndCode of [
+    "scripts/check-doc-facts.mjs",
+    "scripts/lib/product-catalog.mjs",
+  ]) {
+    expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
+      code: true,
+      docs: true,
+      runtime: false,
+      package: false,
+    });
+  }
+  expect(
+    await classifyPaths([
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+    ]),
+  ).toMatchObject({
+    docs: true,
+    runtime: true,
+    package: false,
+  });
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {

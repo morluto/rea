@@ -37,6 +37,9 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
       - run: npm ci
       - name: Validate original release authority
         id: release

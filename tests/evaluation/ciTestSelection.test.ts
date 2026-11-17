@@ -273,6 +273,7 @@ it("traces shared script modules to their tests and falls back for other consume
             '{"scripts":{"verify:shared":"node scripts/verify-shared.mjs"}}',
           "tsconfig.scripts.json": '{"include":["scripts/lib/shared.mjs"]}',
           "stryker.config.mjs": 'import "./scripts/lib/shared.mjs";',
+          "scripts/check-doc-facts.mjs": 'import "./lib/shared.mjs";',
           "scripts/ci/scopes.mjs":
             'export const S = ["scripts/lib/shared.mjs"];',
         },
@@ -282,6 +283,25 @@ it("traces shared script modules to their tests and falls back for other consume
     "tests/boundary/filesystem/shared.test.ts",
     "tests/boundary/filesystem/verifier.test.ts",
   ]);
+  expect(
+    selectedFiles(
+      plan(["tests/fixtures/card.json"], {
+        "tests/fixtures/card.json": '{"ok":true}',
+        "tests/boundary/mcp/card.test.ts":
+          'new URL("../../fixtures/card.json", import.meta.url);',
+        "tests/boundary/mcp/unrelated.test.ts": 'import "../../../src/a.js";',
+      }),
+    ),
+  ).toEqual(["tests/boundary/mcp/card.test.ts"]);
+  expect(
+    plan(["tests/fixtures/unreferenced.bin"], {
+      "tests/fixtures/unreferenced.bin": "raw",
+      "tests/boundary/mcp/unrelated.test.ts": 'import "../../../src/a.js";',
+    }),
+  ).toMatchObject({
+    mode: "full",
+    reason: "Input is not traced to tests: tests/fixtures/unreferenced.bin",
+  });
   expect(
     plan(["scripts/lib/shared.mjs"], {
       ...sources,
@@ -297,6 +317,34 @@ it("traces shared script modules to their tests and falls back for other consume
     mode: "full",
     reason: "Input is not traced to tests: scripts/build.mjs",
   });
+});
+
+it("traces JavaScript fixture modules transitively through JS and TS helpers", () => {
+  const sources = {
+    "tests/fixtures/fakeHopperReplies.mjs":
+      "export const fakeHopperReply = () => ({});",
+    "tests/fixtures/fakeHopper.mjs":
+      'import { fakeHopperReply } from "./fakeHopperReplies.mjs"; export { fakeHopperReply };',
+    "tests/boundary/providers/hopper/hopperClient.fixture.ts":
+      'export const bridge = new URL("../../../fixtures/fakeHopper.mjs", import.meta.url);',
+    "tests/boundary/providers/hopper/fakeHopperReplyContracts.test.ts":
+      'import { fakeHopperReply } from "../../../fixtures/fakeHopperReplies.mjs"; void fakeHopperReply;',
+    "tests/boundary/providers/hopper/hopperSocket.test.ts":
+      'import { bridge } from "./hopperClient.fixture.js"; void bridge;',
+    "tests/acceptance/providers/hopperStartupRecovery.test.ts":
+      'const path = "tests/fixtures/fakeHopper.mjs"; void path;',
+    "src/unrelated.test.ts": "",
+  };
+  expect(plan(["tests/fixtures/fakeHopperReplies.mjs"], sources)).toMatchObject(
+    {
+      mode: "selected",
+      files: [
+        "tests/acceptance/providers/hopperStartupRecovery.test.ts",
+        "tests/boundary/providers/hopper/fakeHopperReplyContracts.test.ts",
+        "tests/boundary/providers/hopper/hopperSocket.test.ts",
+      ],
+    },
+  );
 });
 
 it("parses only well-formed plans and derives the selected shard count", () => {

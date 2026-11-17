@@ -1111,22 +1111,14 @@ const branchOnlyField = (
 /**
  * An option that must stay omitted when the caller omits it, because the
  * input branch or route the caller selects applies its own default on
- * admission. Help and `--schema` still state the default, in the
- * description and as JSON Schema `default`.
+ * admission. Help and `--schema` still state the default through the
+ * schema metadata.
  */
 export const withoutDefault = (schema: z.ZodType): z.ZodType => {
   if (!(schema instanceof z.ZodDefault)) return schema;
   const value: unknown = schema.parse(undefined);
   const omittable = (schema.removeDefault() as z.ZodType).optional();
-  const shown = typeof value === "string" ? value : JSON.stringify(value);
-  return omittable.meta({
-    ...schema.meta(),
-    description:
-      schema.description === undefined
-        ? `Default: ${shown}`
-        : `${schema.description} (default: ${shown})`,
-    default: value,
-  });
+  return omittable.meta({ ...schema.meta(), default: value });
 };
 
 /**
@@ -1941,12 +1933,15 @@ export const describeContractCommand = <
       schema = schema.default(projected.default as never);
       if (described !== undefined) schema = schema.describe(described);
     }
-    const description =
+    const described =
       projected?.description ??
       schema.description ??
       describedThroughWrappers(declared);
-    if (description !== undefined && description !== schema.description)
-      schema = schema.describe(description);
+    if (described !== undefined && described !== schema.description)
+      schema = schema.describe(described);
+    if (!delivery && projected?.default === undefined)
+      schema = withoutDefault(schema);
+    const description = schema.description ?? described;
     const value = core(declared);
     const selector = selectorOptions[field];
     let selectorOption: ContractCliSelectorOption | undefined;
@@ -2350,7 +2345,19 @@ export const describeContractCommand = <
             };
             return [{ path: [flag], message, issue }];
           });
-          const result = contractChecks.safeParse(toContractInput(options));
+          // Checks observe execution defaults, while the command retains the
+          // caller's raw selections. Resolve only omitted fields: supplied
+          // options have already passed argv admission, and JSON text is not
+          // decoded until the command runs.
+          const checkInput = toContractInput(options);
+          if (checks.length > 0)
+            for (const [field, declared] of Object.entries(shape)) {
+              if (Object.hasOwn(checkInput, field)) continue;
+              const omitted = declared.safeParse(undefined);
+              if (omitted.success && omitted.data !== undefined)
+                checkInput[field] = omitted.data;
+            }
+          const result = contractChecks.safeParse(checkInput);
           return result.success
             ? conflicts
             : [
