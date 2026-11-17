@@ -787,11 +787,13 @@ const expectSnapshotImportGuidance = async (mcp: Client, path: string) => {
       operation: "read",
       reason: "wrong-kind",
       detected_kind: "analysis-snapshot",
+      related_operations: ["open_binary", "export_evidence_bundle"],
     },
   });
   expect(error.remediation.action).toContain("open_binary");
+  expect(error.remediation.action).toContain("close_binary");
   expect(error.remediation.action).toContain("snapshot_path");
-  expect(error.remediation.action).toContain("--snapshot");
+  expect(error.remediation.action).not.toContain("--snapshot");
   expect((await readFile(path)).equals(before)).toBe(true);
 };
 
