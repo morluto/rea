@@ -239,3 +239,21 @@ it("refuses renderer allocation ceilings before output creation", async () => {
     await s.close();
   }
 });
+
+it("retains the admitted source identity when export decoding fails before publication", async () => {
+  const f = await fixture();
+  const s = new StructuredRasterExportService();
+  try {
+    const result = await s.export({ ...args(f), profile: "fgs-records" });
+    if (result.ok) throw Error("Expected malformed FGS failure");
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: f.path,
+      bytes: f.bytes.length,
+      sha256: f.expected_sha256,
+    });
+    await expect(access(f.output_directory)).rejects.toThrow();
+  } finally {
+    await s.close();
+  }
+});

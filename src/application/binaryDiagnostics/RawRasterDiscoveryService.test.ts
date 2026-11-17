@@ -113,7 +113,15 @@ it("short reads are completed and a failed close retains its lease for retry", a
     },
   });
   const result = await service.inspect({ path, ...grid });
-  expect(result.ok).toBe(false);
+  if (result.ok) throw Error("Expected close failure");
+  expect(result.error.partialObservation).toMatchObject({
+    operation: "inspect_raw_raster_candidates",
+    normalized_result: {
+      artifact: { path },
+      candidates: expect.any(Array),
+      coverage: expect.any(Object),
+    },
+  });
   await service.close();
   expect(closes).toBeGreaterThanOrEqual(2);
 });
@@ -325,4 +333,50 @@ it("close joins the whole inspection through final Evidence publication", async 
   await closing;
   expect(result.ok).toBe(true);
   expect(events).toEqual(["inspect", "close"]);
+});
+
+it("preserves the complete report when cancellation and close failure follow scoring", async () => {
+  const root = await createTestTempDirectory("rea-report-cancel-close-");
+  const path = join(root, "bytes");
+  await writeFile(path, Buffer.alloc(1024));
+  const controller = new AbortController();
+  let closes = 0;
+  const service = new RawRasterDiscoveryService({
+    stat,
+    open: async (...args) => {
+      const file = await open(...args),
+        close = file.close.bind(file);
+      Object.defineProperty(file, "close", {
+        value: async () => {
+          if (++closes === 1) {
+            controller.abort();
+            throw Error("close failed");
+          }
+          await close();
+        },
+      });
+      return file;
+    },
+  });
+  try {
+    const result = await service.inspect(
+      { path, ...grid },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw Error("Expected cancellation and cleanup failure");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.partialObservation).toMatchObject({
+      operation: "inspect_raw_raster_candidates",
+      normalized_result: {
+        artifact: { path },
+        candidates: expect.any(Array),
+        coverage: expect.any(Object),
+      },
+    });
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await service.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await service.close();
+  }
 });

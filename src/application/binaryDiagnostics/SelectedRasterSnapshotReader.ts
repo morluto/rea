@@ -18,6 +18,7 @@ import {
   AnalysisInputError,
   fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
+import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -102,6 +103,7 @@ export class SelectedRasterSnapshotReader {
         { path: [field], reason: "invalid_value", message },
       ]);
     let admitted = false;
+    let acquiredIdentity: FileSnapshotPartialObservation | undefined;
     const failureDialect: ProviderFailureDialect = {
       providerId: REA_WORKFLOW_PROVIDER.id,
       operation: operation,
@@ -258,17 +260,21 @@ export class SelectedRasterSnapshotReader {
             )
           )
             throw changed();
+          const artifact = {
+            path: input.path,
+            bytes: size,
+            sha256: hash.digest("hex"),
+          };
+          // The entire file and final descriptor/path metadata are checked now.
+          // Retain these facts before cancellation, decoding or cleanup can fail.
+          acquiredIdentity = { kind: "file-snapshot-hash", ...artifact };
           assertArtifactReadActive(options.signal);
           // Yield before bounded synchronous scoring so queued cancellation is observed.
           await setImmediate();
           assertArtifactReadActive(options.signal);
           return consume({
             bytes: selectedBytes,
-            artifact: {
-              path: input.path,
-              bytes: size,
-              sha256: hash.digest("hex"),
-            },
+            artifact,
             window: { offset: input.offset, length },
           });
         },
@@ -276,6 +282,18 @@ export class SelectedRasterSnapshotReader {
       return ok(report);
     } catch (cause) {
       const completion = artifactFileCompletion(cause);
+      const observation =
+        (completion === undefined
+          ? undefined
+          : options.completedObservation?.(completion.value)) ??
+        acquiredIdentity;
+      const retainObservation = (error: AnalysisError): AnalysisError => {
+        if (observation !== undefined)
+          error.retainPartialObservation(observation);
+        return error;
+      };
+      const failure = (error: AnalysisError): Result<T, AnalysisError> =>
+        err(retainObservation(error));
       if (cause instanceof ArtifactFileCleanupFailure) {
         const outcome = cause.fileCleanupFailure.outcome;
         const cleanup = new AnalysisOutputError(
@@ -284,13 +302,7 @@ export class SelectedRasterSnapshotReader {
           {
             cause,
             cleanup: cause.cleanup,
-            ...(completion === undefined
-              ? {}
-              : {
-                  partialObservation: options.completedObservation?.(
-                    completion.value,
-                  ),
-                }),
+            partialObservation: observation,
           },
         );
         bindArtifactFileCleanup(cause, cleanup);
@@ -305,7 +317,7 @@ export class SelectedRasterSnapshotReader {
             { cleanup: cause.cleanup },
           ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
-          return err(cancelled);
+          return failure(cancelled);
         }
         const cancellation = completion?.cancellation;
         if (cancellation !== undefined) {
@@ -318,34 +330,32 @@ export class SelectedRasterSnapshotReader {
             },
           ).retainSecondaryFailure(cleanup);
           bindArtifactFileCleanup(cause, cancelled);
-          return err(cancelled);
+          return failure(cancelled);
         }
         if (outcome.kind === "failed") {
           const primary = classifyProviderFailure(
             outcome.cause,
             failureDialect,
           );
-          return err(
-            analysisErrorWithCleanupDependencies(primary, cleanup, operation),
+          return failure(
+            analysisErrorWithCleanupDependencies(
+              retainObservation(primary),
+              cleanup,
+              operation,
+            ),
           );
         }
-        return err(cleanup);
+        return failure(cleanup);
       }
       if (cause instanceof ArtifactReaderFailure) {
         if (cause.reason === "cancelled") {
           const cancelled = cancelledBy(
             operation,
             carriedReason(artifactFileCancellationCause(cause)),
-            completion === undefined
-              ? {}
-              : {
-                  partialObservation: options.completedObservation?.(
-                    completion.value,
-                  ),
-                },
+            { partialObservation: observation },
           );
           bindArtifactFileCleanup(cause, cancelled);
-          return err(cancelled);
+          return failure(cancelled);
         }
         const retry = new AnalysisOutputError(
           operation,
@@ -356,9 +366,9 @@ export class SelectedRasterSnapshotReader {
           },
         );
         bindArtifactFileCleanup(cause, retry);
-        return err(retry);
+        return failure(retry);
       }
-      return err(classifyProviderFailure(cause, failureDialect));
+      return failure(classifyProviderFailure(cause, failureDialect));
     }
   }
 }

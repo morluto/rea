@@ -8,8 +8,7 @@ it("normalizes overlapping and adjacent spans without covering holes", () => {
     { offset: 0, length: 3 },
     { offset: 5, length: 1 },
   ]);
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw new Error("coverage rejected");
+  if (!result.ok) throw result.error;
   expect(result.value.covers(0, 6)).toBe(true);
   expect(result.value.covers(5, 4)).toBe(false);
   expect(result.value.covers(8, 4)).toBe(true);
@@ -27,8 +26,7 @@ it("normalizes overlapping and adjacent spans without covering holes", () => {
 it("retains its own immutable coverage after callers mutate the input", () => {
   const ranges = [{ offset: 1, length: 2 }];
   const result = RasterCoverageIndex.prepare(4, ranges);
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw new Error("coverage rejected");
+  if (!result.ok) throw result.error;
   ranges[0]!.length = 3;
   ranges.push({ offset: 0, length: 1 });
   expect(result.value.covers(1, 2)).toBe(true);
@@ -51,6 +49,6 @@ it.each([
 
 it("permits an empty coverage set without treating bytes as observed", () => {
   const result = RasterCoverageIndex.prepare(4, []);
-  expect(result.ok).toBe(true);
-  if (result.ok) expect(result.value.covers(0, 1)).toBe(false);
+  if (!result.ok) throw result.error;
+  expect(result.value.covers(0, 1)).toBe(false);
 });

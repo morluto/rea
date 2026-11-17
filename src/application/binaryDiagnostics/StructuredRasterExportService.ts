@@ -166,7 +166,10 @@ export class StructuredRasterExportService {
         classifyProviderFailure(
           cause,
           rasterExportFailureDialect(options?.signal),
-        ),
+        ).retainPartialObservation({
+          kind: "file-snapshot-hash",
+          ...snapshot.artifact,
+        }),
       );
     }
   }

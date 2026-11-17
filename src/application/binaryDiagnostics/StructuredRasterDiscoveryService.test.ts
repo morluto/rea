@@ -308,3 +308,24 @@ it("shares the 256 source-span budget across all projected resource mappings", a
     await service.close();
   }
 });
+
+it("retains whole-file identity after malformed FGS decoding", async () => {
+  const root = await createTestTempDirectory("rea-fgs-identity-");
+  const path = join(root, "source"),
+    bytes = Buffer.from("malformed FGS payload");
+  await writeFile(path, bytes);
+  const { createHash } = await import("node:crypto");
+  const service = new StructuredRasterDiscoveryService();
+  try {
+    const result = await service.inspect({ path, profile: "fgs-records" });
+    if (result.ok) throw Error("Expected malformed FGS failure");
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+  } finally {
+    await service.close();
+  }
+});
