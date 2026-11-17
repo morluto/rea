@@ -345,8 +345,8 @@ const translatedCall = (
 /** Answer one probe request as the environment would and compare it with the application's answer; one without an answer is only made. */
 const compareStep = (
   run: ProbeRun,
-  manifest: EnvironmentSource["manifest"],
   probe: ProbeStep,
+  translated: ReturnType<typeof translatedCall>,
 ): CompareStep | undefined => {
   const { request, live } = probe;
   const base = {
@@ -362,7 +362,7 @@ const compareStep = (
     live === undefined ? undefined : stepOf(base, call, outcome);
   // Matched in the environment's terms, so a tool whose path holds a seeded id literally still matches. Scopes and
   // literals come from the live path: translating a parent id first would name a different collection than learning did.
-  const { liveSegments, call } = translatedCall(run, manifest, probe);
+  const { liveSegments, call } = translated;
   if (call === undefined)
     return report(call, {
       env_status: null,
@@ -567,7 +567,8 @@ export const compareEnvironment = (input: {
     const results: CompareStep[] = [];
     let needsRequestBodies = false;
     for (const step of steps) {
-      const { call } = translatedCall(run, source.manifest, step);
+      const translated = translatedCall(run, source.manifest, step);
+      const { call } = translated;
       if (
         !capture.value.requestBodies &&
         (["POST", "PUT", "PATCH"].includes(step.request.method) ||
@@ -576,7 +577,7 @@ export const compareEnvironment = (input: {
         needsRequestBodies = true;
         continue;
       }
-      const result = compareStep(run, source.manifest, step);
+      const result = compareStep(run, step, translated);
       if (result !== undefined) results.push(result);
     }
     if (!capture.value.requestBodies && needsRequestBodies)
