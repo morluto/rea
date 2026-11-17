@@ -25,6 +25,7 @@ const listFiles = async (dir) => {
     } else if (
       entry.name.endsWith(".ts") &&
       !entry.name.endsWith(".test.ts") &&
+      !entry.name.endsWith(".spec.ts") &&
       !entry.name.endsWith(".fixture.ts")
     )
       output.push(path);
@@ -36,10 +37,33 @@ const listFiles = async (dir) => {
 export const NUMERIC_LIMIT_DECLARATION = "src/domain/numericLimitRegistry.ts";
 
 /**
+ * Where the removed restart-field names cannot return: these roots, files with
+ * these extensions. The cached `lint` task's inputs in turbo.json must cover
+ * every such file, or a cached pass would hide a reintroduced name.
+ */
+export const FORBIDDEN_FIELD_SCAN_ROOTS = [
+  "src",
+  "tests",
+  ".agents",
+  "scripts",
+];
+export const FORBIDDEN_FIELD_SCAN_EXTENSIONS = [
+  "ts",
+  "tsx",
+  "mjs",
+  "js",
+  "md",
+  "json",
+  "py",
+  "yml",
+  "yaml",
+];
+
+/**
  * These limits are moving onto runtime analysis settings on their own PRs.
  * A producer or a registry entry cannot satisfy that requirement.
  */
-export const REQUIRED_RUNTIME_LIMITS = [
+const REQUIRED_RUNTIME_LIMITS = [
   "REA_NTFS_MFT_MAX_FILE_BYTES",
   "REA_REGF_HIVE_MAX_FILE_BYTES",
   "REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES",
@@ -94,29 +118,36 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
     ts.forEachChild(node, collect);
   };
   collect(sourceFile);
-  const potential = (node) => {
+  const potential = (node, matchesCandidate) => {
     const expression = unwrapExpression(node);
     if (exactLimit(literalText(expression)) !== undefined) return true;
-    if (ts.isIdentifier(expression)) return candidates.has(expression.text);
+    if (ts.isIdentifier(expression)) return matchesCandidate(expression);
     if (ts.isPropertyAccessExpression(expression))
       return (
         exactLimit(expression.name.text) !== undefined ||
-        potential(expression.expression)
+        potential(expression.expression, matchesCandidate)
       );
     if (ts.isElementAccessExpression(expression))
       return (
         expression.argumentExpression !== undefined &&
-        potential(expression.argumentExpression)
+        potential(expression.argumentExpression, matchesCandidate)
       );
     if (ts.isObjectLiteralExpression(expression))
       return expression.properties.some(
         (property) =>
-          ts.isPropertyAssignment(property) && potential(property.initializer),
+          ts.isPropertyAssignment(property) &&
+          potential(property.initializer, matchesCandidate),
       );
     if (ts.isConditionalExpression(expression))
-      return potential(expression.whenTrue) || potential(expression.whenFalse);
+      return (
+        potential(expression.whenTrue, matchesCandidate) ||
+        potential(expression.whenFalse, matchesCandidate)
+      );
     if (ts.isBinaryExpression(expression))
-      return potential(expression.left) || potential(expression.right);
+      return (
+        potential(expression.left, matchesCandidate) ||
+        potential(expression.right, matchesCandidate)
+      );
     return false;
   };
   let changed = true;
@@ -125,9 +156,30 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
     for (const declaration of declarations) {
       if (
         !candidates.has(declaration.name.text) &&
-        potential(declaration.initializer)
+        potential(declaration.initializer, (identifier) =>
+          candidates.has(identifier.text),
+        )
       ) {
         candidates.add(declaration.name.text);
+        changed = true;
+      }
+    }
+  }
+  // Names narrow the search cheaply, but only the lexical declaration can
+  // establish that a particular use is an alias of a limit.
+  const lexicalCandidates = new Set();
+  changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      if (
+        candidates.has(declaration.name.text) &&
+        !lexicalCandidates.has(declaration) &&
+        potential(declaration.initializer, (identifier) =>
+          lexicalCandidates.has(symbols(identifier)?.valueDeclaration),
+        )
+      ) {
+        lexicalCandidates.add(declaration);
         changed = true;
       }
     }
@@ -142,8 +194,16 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
           item.offset === offset &&
           item.reason === reason,
       )
-    )
-      unresolved.push({ path, offset, reason });
+    ) {
+      const location = sourceFile.getLineAndCharacterOfPosition(offset);
+      unresolved.push({
+        path,
+        offset,
+        line: location.line + 1,
+        column: location.character + 1,
+        reason,
+      });
+    }
   };
   const initializer = (identifier) => {
     if (!candidates.has(identifier.text)) return undefined;
@@ -152,11 +212,12 @@ const stringBindings = (sourceFile, symbols, unresolved) => {
       declaration === undefined ||
       !ts.isVariableDeclaration(declaration) ||
       !ts.isVariableDeclarationList(declaration.parent) ||
-      declaration.initializer === undefined
+      declaration.initializer === undefined ||
+      !lexicalCandidates.has(declaration)
     )
       return undefined;
     if ((declaration.parent.flags & ts.NodeFlags.Const) === 0) {
-      unknown(identifier, "mutable setting-key or value alias");
+      unknown(declaration.name, "mutable setting-key or value alias");
       return undefined;
     }
     if (declaration.pos >= identifier.pos) {
@@ -890,7 +951,7 @@ if (direct) {
   const entries = parseNumericLimitRegistry(registry);
   const listed = new Map();
   for (const entry of entries) {
-    const { name, policy, read, reason } = entry;
+    const { name, read, reason } = entry;
     if (listed.has(name)) failures.push(`${name} is listed twice`);
     listed.set(name, entry);
     if (reason.trim().length < 40)
@@ -920,7 +981,7 @@ if (direct) {
 
   for (const issue of discovered.unresolved)
     console.log(
-      `${issue.path}:${issue.offset}: numeric limit candidate unresolved (${issue.reason})`,
+      `${issue.path}:${issue.line}:${issue.column}: numeric limit candidate unresolved (${issue.reason})`,
     );
 
   for (const [name, file] of [...discovered].sort(([left], [right]) =>
@@ -981,7 +1042,7 @@ if (direct) {
   }
 
   const parameterOwners = [
-    "src/artifacts/ArtifactReaderLimits.ts",
+    "src/resources/ArtifactReaderLimits.ts",
     "src/domain/artifactReaderLimits.ts",
     "src/domain/webNetworkCapture.ts",
   ];
@@ -999,9 +1060,8 @@ if (direct) {
     /(?<![A-Za-z0-9_])(?:rea_restart_required|restartRequired|restart_required)(?![A-Za-z0-9_])|effect:\s*"(?:immediate|next_process)"|SettingChangeEffect/gu;
   // Docs and verification receipts keep the field names they recorded.
   // Source, tests, skills, and scripts cannot reintroduce those names.
-  const scanRoots = ["src", "tests", ".agents", "scripts"].map((dir) =>
-    join(root, dir),
-  );
+  const scanRoots = FORBIDDEN_FIELD_SCAN_ROOTS.map((dir) => join(root, dir));
+  const scanned = new Set(FORBIDDEN_FIELD_SCAN_EXTENSIONS);
   const skipDir = new Set([
     "node_modules",
     "dist",
@@ -1016,7 +1076,7 @@ if (direct) {
       if (skipDir.has(entry.name)) continue;
       const path = join(dir, entry.name);
       if (entry.isDirectory()) output.push(...(await listText(path)));
-      else if (/\.(?:ts|tsx|mjs|js|md|json|py|yml|yaml)$/u.test(entry.name))
+      else if (scanned.has(entry.name.slice(entry.name.lastIndexOf(".") + 1)))
         output.push(path);
     }
     return output;

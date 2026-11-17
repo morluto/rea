@@ -1,9 +1,11 @@
+import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { decode } from "@msgpack/msgpack";
 import {
   BinaryResourceFailure,
   BinaryFormatFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { rejectGpu } from "./GpuSource.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export const AMD_METADATA_BYTES = 8 * 1024 * 1024;
 const AMD_METADATA_DEPTH = 32;
@@ -12,7 +14,7 @@ const AMD_METADATA_CONTAINER_ENTRIES = 65536;
 const AMD_METADATA_VALUE_BYTES = 65536;
 
 /** Validate allocation and nesting costs before the standard decoder allocates containers. */
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const utf8 = strictUtf8Decoder("preserve");
 const preflight = (bytes: Buffer): Set<string> => {
   const strings = new Set<string>();
   let at = 0,
@@ -191,9 +193,7 @@ export const readAmdMetadata = (bytes: Buffer): unknown => {
   }
 };
 export const amdRecord = (value: unknown): Record<string, unknown> | null =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  isRecord(value) ? (value as Record<string, unknown>) : null;
 export const amdCount = (value: unknown): number | null => {
   if (typeof value === "bigint")
     return value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)

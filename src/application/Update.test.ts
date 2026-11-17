@@ -227,6 +227,29 @@ describe("REA update", () => {
   });
 });
 
+describe("update maintenance notices", () => {
+  it("names a client left unmaintained because its registration is unknown", async () => {
+    const host = new FakeUpdateHost();
+    host.maintenance = {
+      status: "current",
+      plannedActions: [],
+      unresolved: [
+        {
+          client: "mcporter",
+          config_path: "config/mcporter.json",
+          state: "unknown",
+          remediation: "Set an absolute MCPORTER_CONFIG.",
+        },
+      ],
+    };
+    const result = await runUpdate("3.2.1", host);
+    expect(result).toMatchObject({ status: "updated" });
+    expect(result.status === "updated" && result.remediation).toBe(
+      "REA is updated. Restart agents running this installation to load the new version. REA did not maintain one client whose registration it cannot update: mcporter (config/mcporter.json): Set an absolute MCPORTER_CONFIG.",
+    );
+  });
+});
+
 describe("update failures and version boundaries", () => {
   it("normalizes accepted release metadata before installing and comparing versions", async () => {
     const host = new FakeUpdateHost();

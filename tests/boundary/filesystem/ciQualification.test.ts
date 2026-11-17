@@ -259,7 +259,10 @@ async function requiredRun(
             : "success",
     };
   }
-  results.changes = { result: "success", outputs: changes };
+  results.changes = {
+    result: "success",
+    outputs: { test_mode: "full", ...changes },
+  };
   const receiptDirectory = join(directory, ".cache", "receipt");
   const output = join(directory, "github-output");
   await writeFile(output, "");

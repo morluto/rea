@@ -1,18 +1,20 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { cancelledBy } from "../../domain/analysisErrorCore.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureProgressSchema,
   type DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../../ports/BuildComputerControl.js";
 import {
   adapterError,
   readOutput,
   reportedFailure,
-  type Answer,
 } from "./DesktopBuildCommands.js";
 
 /** The most lines, and characters, a message quotes from the end of the app's stderr. */
@@ -73,7 +75,7 @@ const unredacted: Redact = (text) => text;
 /** Why the capture is not answering, from what the controller saw instead of the event; its output stays out of the message. */
 export const notAnswered = (
   operation: string,
-  answer: Answer,
+  answer: BuildControllerAnswer,
   redact: Redact = unredacted,
 ): AnalysisError => {
   if (answer.error !== undefined) return adapterError(operation, answer.error);
@@ -149,7 +151,7 @@ const appExited = (
 export const endedCapture = async (
   computer: ControlledComputer,
   step: CaptureStep & { readonly folder: string; readonly redact?: Redact },
-  answer: Answer,
+  answer: BuildControllerAnswer,
   signal: AbortSignal,
 ): Promise<AnalysisError> => {
   const { redact = unredacted } = step;
@@ -176,10 +178,7 @@ export const endedCapture = async (
     );
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return cause;
-    if (signal.aborted)
-      return new AnalysisCancelledError(step.operation, {
-        cause: signal.reason,
-      });
+    if (signal.aborted) return cancelledBy(step.operation, signal);
     return notAnswered(step.operation, answer, redact);
   }
 };

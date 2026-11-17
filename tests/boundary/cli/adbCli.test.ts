@@ -57,6 +57,7 @@ it
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'; exit 0; fi
 if [ "$1" = -s ] && [ "$3" = exec-out ]; then /bin/cat "$(dirname "$0")/frame.png"; exit 0; fi
 exit 1
@@ -130,6 +131,7 @@ it.skipIf(process.platform === "win32").each([
   const adb = await workspace.write(
     "adb",
     `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 printf '%s\\n' "$3" >> "$root/calls"
 if [ "$1" = version ]; then
@@ -193,6 +195,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'; exit 0; fi
 if [ "$1" = -s ] && [ "$3" = shell ] && [ "$4" = test ]; then
@@ -260,6 +263,7 @@ it.skipIf(process.platform === "win32")(
     const file = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
 `,
     );
@@ -274,6 +278,14 @@ printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
         result,
         `Execution of the selected adb binary was denied (EACCES): ${binary}. Set REA_ADB_PATH to an absolute path to the adb executable file, not a directory`,
       );
+      const { details } = JSON.parse(result.stdout) as {
+        details: { diagnostics: Record<string, unknown> };
+      };
+      expect(details.diagnostics).toMatchObject({
+        selected_binary: binary,
+        path_source: "environment",
+        filesystem_error: "EACCES",
+      });
     }
     // A parent component that is a file, a symlink loop and a missing path
     // fail before any process starts, so no exit code is reported.
@@ -545,6 +557,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
   exit 0
@@ -631,6 +644,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 printf '%s\\n' "$*" >> "$root/calls"
 if [ "$1" = version ]; then
@@ -763,6 +777,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = "version" ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\nInstalled as %s\\n' "$0"
   exit 0
@@ -801,7 +816,7 @@ it.skipIf(process.platform === "win32")(
       "exact-serial device model:Pixel transport_id:18446744073709551615";
     const binary = await workspace.write(
       "adb",
-      `#!${process.execPath}\nif(process.argv[2]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(process.argv[2]==='devices'&&process.argv[3]==='-l')process.stdout.write(${JSON.stringify(line + "\n")});\nelse throw Error('No other command authorized');\n`,
+      `#!${process.execPath}\nif(process.argv[2]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(process.argv[2]==='start-server');\nelse if(process.argv[2]==='devices'&&process.argv[3]==='-l')process.stdout.write(${JSON.stringify(line + "\n")});\nelse throw Error('No other command authorized');\n`,
     );
     await chmod(binary, 0o755);
     const result = await serve(["list-adb-devices", "--json"], {

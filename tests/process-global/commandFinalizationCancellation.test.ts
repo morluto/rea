@@ -1,7 +1,7 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
 import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
@@ -11,7 +11,7 @@ import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands
 import { registerCutterCommands } from "../../src/cli/cutterCommands.js";
 import { registerWasmCommands } from "../../src/cli/wasmCommands.js";
 import { wasmArtifactModule } from "../../src/composition/wasm.js";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { CutterBridgeService } from "../../src/cutter/CutterBridgeService.js";
 import { AnalysisOutputError } from "../../src/domain/analysisErrorCore.js";
@@ -73,6 +73,7 @@ const cutterDiscoveryFixture = () =>
         current_file: "C:\\Caller files\\token=literal%2F.bin",
         cutter_version: "2.3.4",
         identity_status: "partial",
+        bridge_source: "unknown",
       },
       {
         session_id: "00000000-0000-4000-8000-000000000002",
@@ -81,6 +82,7 @@ const cutterDiscoveryFixture = () =>
         current_file: null,
         cutter_version: null,
         identity_status: "partial",
+        bridge_source: "unknown",
       },
     ],
     bridge_directory: "/caller/Cutter bridge/token=literal%2F/证据",
@@ -156,9 +158,7 @@ it.each([
         closed = true;
         if (failsCleanup) throw cleanup;
       });
-    const cli = Cli.create("cutter-discovery-finalization-test", {
-      sync: false,
-    });
+    const cli = createCommandCli();
     registerCutterCommands(cli, silentLogger, {});
     let output = "";
     let settled = false;
@@ -282,7 +282,7 @@ it.each([
       },
     });
     vi.spyOn(wasmArtifactModule, "create").mockReturnValue(service);
-    const cli = Cli.create("finalization-test", { sync: false });
+    const cli = createCommandCli();
     registerWasmCommands(cli, silentLogger, {});
     let output = "";
     const previousExitCode = process.exitCode;
@@ -479,7 +479,7 @@ it.each([
         if (signal !== "control" && phase === "close") interrupt();
         if (phase.startsWith("authentication")) queueInterrupt();
       });
-    const cli = Cli.create("analysis-view-finalization-test", { sync: false });
+    const cli = createCommandCli();
     registerAnalysisViewCommands(cli, silentLogger);
     let output = "";
     const previousExitCode = process.exitCode;

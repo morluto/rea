@@ -7,6 +7,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival } from "../../../tests/support/lifecycleHarness.js";
 
 const closeFailureControl = vi.hoisted(() => ({
   failure: null as Error | null,
@@ -41,13 +43,9 @@ import {
 } from "../../../tests/fixtures/environmentServe.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "../../resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import {
-  environmentCard,
-  STATE_INTAKE_EXTENSION,
-  STATE_OPERATIONS,
-} from "../../application/environment/environmentTools.js";
+import { environmentCard } from "../../application/environment/environmentTools.js";
 import { stateDataPlane } from "./environmentDataPlane.js";
 import {
   ENVIRONMENT_CARD_PATH,
@@ -158,16 +156,13 @@ const addByUri = (
 /** A fetcher that reports each call and the signal it was given, then answers only when `answer` settles. */
 const heldFetcher = (answer: () => Promise<Response>) => {
   const signals: AbortSignal[] = [];
-  let started: () => void = () => undefined;
-  const fetching = new Promise<void>((resolve) => {
-    started = resolve;
-  });
+  const fetching = phaseArrival();
   const fetchState = (_: URL, signal: AbortSignal) => {
     signals.push(signal);
-    started();
+    fetching.arrive();
     return answer();
   };
-  return { signals, fetching, fetchState };
+  return { signals, fetching: fetching.reached, fetchState };
 };
 
 describe("state data plane", () => {
@@ -554,7 +549,7 @@ describe("state data plane timing and order", () => {
       addByUri(1),
       { jsonrpc: "2.0", id: 2, method: "data/get" },
     ]);
-    await held.fetching;
+    await held.fetching(batch, "state fetch admission");
     const reset = plane.call("data/reset");
     release();
     const replies = (await batch).json;
@@ -605,7 +600,7 @@ describe("state data plane cancellation", () => {
       addByUri(1),
       { jsonrpc: "2.0", id: 2, method: "data/reset" },
     ]);
-    await held.fetching;
+    await held.fetching(batch, "state fetch admission");
     stopping.abort();
     expect((await batch).json).toEqual([
       {
@@ -646,7 +641,7 @@ describe("state data plane cancellation", () => {
     });
     const leaving = new AbortController();
     const add = plane.post(addByUri(1), leaving.signal);
-    await held.fetching;
+    await held.fetching(add, "state fetch admission");
     leaving.abort();
     expect((await add).json).toMatchObject({
       error: { code: -32000, data: { reason: "cancelled" } },
@@ -991,8 +986,28 @@ describe("serveEnvironment with a state", () => {
     ).json();
     expect(card).toEqual(JSON.parse(JSON.stringify(environment.card)));
     const { capabilities } = environment.card;
-    expect(capabilities.extensions).toEqual([STATE_INTAKE_EXTENSION]);
-    expect(capabilities.operations).toEqual(STATE_OPERATIONS);
+    expect(capabilities.extensions).toMatchObject([
+      {
+        uri: "urn:agentenv:intake/v1",
+        params: {
+          add: [
+            { part: "data", format: "rea-state/v1", load: "replace" },
+            {
+              part: "file",
+              format: "rea-state/v1",
+              mimeTypes: ["application/json"],
+              load: "replace",
+            },
+          ],
+          get: [{ part: "data", format: "rea-state/v1" }],
+        },
+      },
+    ]);
+    expect(capabilities.operations).toEqual([
+      "data/reset",
+      "data/add",
+      "data/get",
+    ]);
     const names = capabilities.tools.map((tool) => tool.name);
     expect(names).toContain("get_users_by_id");
     for (const write of [
@@ -1124,7 +1139,7 @@ describe("state response cleanup", () => {
       signal: AbortSignal.timeout(10_000),
     }).catch(() => undefined);
     try {
-      await held.fetching;
+      await held.fetching(answered, "state fetch admission");
       await environment.close();
       giveResponse(
         new Response(
@@ -1136,7 +1151,7 @@ describe("state response cleanup", () => {
           }),
         ),
       );
-      await entered;
+      await awaitAcknowledgement(entered, cleanup, "late response cleanup");
       await expect(environment.close()).rejects.toMatchObject({
         _tag: "AnalysisOutputError",
         cleanupIncomplete: true,
@@ -1145,6 +1160,7 @@ describe("state response cleanup", () => {
       release();
       await expect(environment.close()).resolves.toBeUndefined();
     } finally {
+      giveResponse(new Response(null, { status: 500 }));
       release();
       await answered;
       await environment.close();
@@ -1167,7 +1183,7 @@ describe("serveEnvironment state file cleanup", () => {
       (response) => response.status,
       () => "closed",
     );
-    await held.fetching;
+    await held.fetching(answered, "state fetch admission");
     // The download's own limit is 30 s; stopping must not wait for it.
     const started = performance.now();
     await environment.close();
@@ -1207,7 +1223,8 @@ describe("serveEnvironment state file cleanup", () => {
     await expect(
       add({ kind: "data", data: renamedDocument() }),
     ).resolves.toMatchObject({ result: {} });
-    await expect(environment.close()).rejects.toMatchObject({
+    const reported = await environment.close().catch((cause: unknown) => cause);
+    expect(reported).toMatchObject({
       _tag: "AnalysisOutputError",
       diagnostics: { cleanup_stages: ["state-files"] },
       cause: expect.any(ArtifactResourceRetryFailure),
@@ -1217,6 +1234,8 @@ describe("serveEnvironment state file cleanup", () => {
     failing = false;
     await expect(environment.close()).resolves.toBeUndefined();
     expect(owners[0]?.handle.fd).toBe(-1);
+    // The earlier report reads the confirmed release instead of staying open.
+    expect(reported).toMatchObject({ cleanupIncomplete: false });
   });
 });
 

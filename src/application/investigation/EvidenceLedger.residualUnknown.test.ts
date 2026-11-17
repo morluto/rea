@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
@@ -28,7 +29,7 @@ const evidence = (
   label: string,
   confidence: "observed" | "derived" | "inferred" = "derived",
 ) =>
-  createEvidence(undefined, provider, {
+  createEvidence(unknownTarget("not-observed"), provider, {
     operation: label,
     parameters: {},
     result: { label },

@@ -2,14 +2,14 @@ import { mkdir } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { defaultHopperLauncherPath } from "../config/parseConfig.js";
+import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
-import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./MacHopperPaths.js";
+import { MAC_HOPPER_SYSTEM_LAUNCHER } from "../hopperPaths/MacHopperPaths.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const configurationHost = (
@@ -17,7 +17,7 @@ const configurationHost = (
 ): DoctorHost => ({
   ...systemDoctorHost({ environment: { ...environment } }),
   ...host({
-    installationPaths: () => Promise.resolve([]),
+    installationLaunchers: () => Promise.resolve([]),
     clientRegistrations: () => Promise.resolve([]),
   }),
 });
@@ -32,7 +32,7 @@ describe("doctor Hopper startup timeout", () => {
         value === undefined ? {} : { REA_HOPPER_STARTUP_TIMEOUT_MS: value },
     }),
     ...host({
-      installationPaths: () => Promise.resolve([]),
+      installationLaunchers: () => Promise.resolve([]),
       clientRegistrations: () => Promise.resolve([]),
       ...overrides,
     }),
@@ -725,8 +725,13 @@ describe("doctor installation identity", () => {
     const result = await runDoctor(
       undefined,
       host({
-        installationPaths: () =>
-          Promise.resolve(["/usr/local/bin/rea", "/home/user/bin/rea"]),
+        installationLaunchers: () =>
+          Promise.resolve(
+            ["/usr/local/bin", "/home/user/bin"].map((installation) => ({
+              path: `${installation}/rea`,
+              installation,
+            })),
+          ),
         installedSkillIdentity: () =>
           Promise.resolve({
             version: "10",
@@ -1388,5 +1393,26 @@ describe("doctor target admission diagnostics", () => {
       }),
     );
     expect(result.checks).toContainEqual(targetCheck);
+  });
+});
+
+describe("doctor installation count", () => {
+  it("reports one installation when several launchers resolve to it", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installationLaunchers: () =>
+          Promise.resolve(
+            ["rea", "rea.cmd"].map((name) => ({
+              path: `C:\\npm\\${name}`,
+              installation: "c:\\npm",
+            })),
+          ),
+      }),
+    );
+    expect(result.identity?.installations).toEqual({
+      paths: ["C:\\npm\\rea", "C:\\npm\\rea.cmd"],
+      state: "single",
+    });
   });
 });

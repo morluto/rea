@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { walkHomeState } from "./HomeStateWalker.js";
 
 describe("walkHomeState", () => {

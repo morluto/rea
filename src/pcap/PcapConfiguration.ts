@@ -1,9 +1,9 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, isAbsolute } from "node:path";
+import { isAbsolute } from "node:path";
 
-import { appendCallerPath } from "../filesystem/callerPath.js";
+import { posixPathCandidates } from "../process/executableSearch.js";
 
-import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import type { ProviderAvailability } from "../ports/AnalysisProvider.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { AnalysisErrorOptions } from "../domain/analysisErrorBase.js";
 import {
@@ -112,7 +112,7 @@ export const selectWiresharkTool = (
  */
 export const resolvePcapTools = (
   environment: Readonly<Record<string, string | undefined>>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): PcapToolSelection => {
   // Report every configuration error before consulting PATH for either tool.
   const selected = {
@@ -147,9 +147,11 @@ export const locateWiresharkTool = (
 ): string | undefined => {
   if (selection.source === "environment" || isAbsolute(selection.command))
     return selection.command;
-  for (const directory of (environment.PATH ?? "").split(delimiter)) {
-    if (!isAbsolute(directory)) continue;
-    const candidate = appendCallerPath(directory, selection.command);
+  for (const { path: candidate } of posixPathCandidates(
+    selection.command,
+    environment.PATH ?? "",
+    { relativeEntries: "skip" },
+  )) {
     try {
       accessSync(candidate, constants.X_OK);
       if (statSync(candidate).isFile()) return candidate;

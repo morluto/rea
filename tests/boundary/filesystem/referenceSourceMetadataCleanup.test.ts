@@ -13,7 +13,7 @@ import { constants } from "node:fs";
 
 import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../../src/application/ReferenceSourceImport.js";
 import { readReferenceSourceVcs } from "../../../src/application/ReferenceSourceVcsAdapter.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";

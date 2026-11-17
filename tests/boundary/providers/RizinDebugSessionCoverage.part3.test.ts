@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-} from "../../../src/domain/analysisErrorCore.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
@@ -43,7 +45,10 @@ it.skipIf(process.platform === "win32")(
       },
     });
     expect(result.value.evidence.limitations).toEqual([
-      expect.stringMatching(/target identity.*not established/iu),
+      expect.stringMatching(
+        /session target is the launch file.*do not rebind/iu,
+      ),
+      expect.stringMatching(/launch file could not be hashed.*unknown/iu),
       expect.stringMatching(
         /timed out.*10 ms.*REA_DEBUGGER_COMMAND_DEADLINE_MS.*partial.*completion is unknown/iu,
       ),
@@ -105,7 +110,9 @@ it.skipIf(process.platform === "win32")(
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
-    const clock = vi.spyOn(Date, "now");
+    // The command deadline is monotonic: it starts on the first reading and
+    // expires on the fourth, while the marker frame is still queued.
+    const clock = vi.spyOn(performance, "now");
     clock
       .mockReturnValueOnce(100)
       .mockReturnValueOnce(100)
@@ -235,7 +242,11 @@ it.skipIf(process.platform === "win32").each([false, true])(
       {
         stopProcess: async () =>
           incomplete
-            ? { status: "incomplete", reason: "injected stop uncertainty" }
+            ? {
+                status: "incomplete",
+                code: "stop-failed",
+                reason: "injected stop uncertainty",
+              }
             : { status: "stopped" },
       },
       { REA_DEBUGGER_COMMAND_DEADLINE_MS: "1000" },
@@ -320,7 +331,10 @@ it.skipIf(process.platform === "win32")(
       });
       expect(result.value.evidence.raw_result).toEqual(result.value.result);
       expect(result.value.evidence.limitations).toEqual([
-        expect.stringMatching(/target identity.*not established/iu),
+        expect.stringMatching(
+          /session target is the launch file.*do not rebind/iu,
+        ),
+        expect.stringMatching(/launch file could not be hashed.*unknown/iu),
         expect.stringMatching(
           /Rizin exited.*output is partial.*completion is unknown/iu,
         ),
@@ -355,7 +369,13 @@ it.skipIf(process.platform === "win32")(
     expect((await first).ok).toBe(true);
     const second = await queued;
     expect(second.ok).toBe(false);
-    if (!second.ok) expect(second.error).toBeInstanceOf(AnalysisInputError);
+    if (!second.ok)
+      expect(second.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        reason: expect.stringContaining(
+          "The Rizin process exited (exit code null, signal SIGTERM)",
+        ),
+      });
     expect(writes.some((text) => text.includes("second\n"))).toBe(false);
   },
 );
@@ -376,7 +396,11 @@ it
     const { manager, started } = await startInjected(injected.spawnProcess, {
       stopProcess: async () =>
         retained
-          ? { status: "incomplete", reason: "owned stop pending" }
+          ? {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: "owned stop pending",
+            }
           : { status: "stopped" },
     });
     if (!started.ok) throw started.error;
@@ -429,7 +453,11 @@ it.skipIf(process.platform === "win32").each([false, true])(
             injected.control.exit();
             return { status: "stopped" };
           } catch (cause) {
-            return { status: "incomplete", reason: String(cause) };
+            return {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: String(cause),
+            };
           }
         },
       },
@@ -505,14 +533,7 @@ it.skipIf(process.platform === "win32").each([
   async ({ stage, incomplete }) => {
     const controller = new AbortController();
     const reason = { boundary: "final cleanup" };
-    let enterStop!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enterStop = resolve;
-    });
-    let releaseStop!: () => void;
-    const released = new Promise<void>((resolve) => {
-      releaseStop = resolve;
-    });
+    const debuggerFinalCleanup = phaseGate();
     let stopping = true;
     const injected = createInjectedProcess({
       onWrite: (_text, control) => {
@@ -529,11 +550,14 @@ it.skipIf(process.platform === "win32").each([
       {
         stopProcess: async () => {
           if (stopping) {
-            enterStop();
-            await released;
+            await debuggerFinalCleanup.hold();
           }
           return incomplete && stopping
-            ? { status: "incomplete", reason: "stop settlement pending" }
+            ? {
+                status: "incomplete",
+                code: "stop-failed",
+                reason: "stop settlement pending",
+              }
             : { status: "stopped" };
         },
       },
@@ -549,9 +573,9 @@ it.skipIf(process.platform === "win32").each([
       controller.signal,
     );
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(entered, pending, "debugger final cleanup");
+      await debuggerFinalCleanup.reached(pending, "debugger final cleanup");
       controller.abort(reason);
-      releaseStop();
+      debuggerFinalCleanup.release();
       const result = await pending;
       expect(result.ok).toBe(false);
       if (result.ok) return;
@@ -570,7 +594,7 @@ it.skipIf(process.platform === "win32").each([
         expect(result.error.cleanupIncomplete).toBe(false);
       }
     }, [
-      releaseStop,
+      debuggerFinalCleanup.release,
       async () => {
         await pending;
       },
@@ -604,7 +628,11 @@ it.skipIf(process.platform === "win32")(
             injected.control.exit();
             return { status: "stopped" };
           } catch (cause) {
-            return { status: "incomplete", reason: String(cause) };
+            return {
+              status: "incomplete",
+              code: "stop-failed",
+              reason: String(cause),
+            };
           }
         },
       },
@@ -663,7 +691,11 @@ it.skipIf(process.platform === "win32").each([false, true])(
         stopProcess: async () => {
           controller.abort(reason);
           return incomplete && retained
-            ? { status: "incomplete", reason: "stop settlement pending" }
+            ? {
+                status: "incomplete",
+                code: "stop-failed",
+                reason: "stop settlement pending",
+              }
             : { status: "stopped" };
         },
       },
@@ -685,9 +717,87 @@ it.skipIf(process.platform === "win32").each([false, true])(
     expect(primary.secondaryFailures[0]?.cause).toBe(reason);
     expect(result.error.cleanupIncomplete).toBe(incomplete);
     if (incomplete) {
+      // The composed failure names why cleanup is incomplete at its top level.
+      expect(result.error.diagnostics).toMatchObject({
+        debugger_cleanup: "stop-failed",
+      });
       retained = false;
       await manager.closeAll();
       expect(result.error.cleanupIncomplete).toBe(false);
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "binds command Evidence to the session and the launch file hashed before Rizin starts",
+  async () => {
+    const directory = await createTestTempDirectory("rea-rizin-launch-");
+    const launchFile = join(directory, "target.bin");
+    await writeFile(launchFile, "launch bytes");
+    const missing = join(directory, "missing.bin");
+    for (const path of [launchFile, missing]) {
+      const injected = createInjectedProcess({
+        // Rewriting the file after the hash must not rebind the session.
+        beforeSpawnReturns: () => {
+          if (path === launchFile) writeFileSync(launchFile, "after spawn");
+        },
+        onWrite: (text, control) => {
+          const marker = /!echo (.+)\n/u.exec(text)?.[1];
+          if (marker !== undefined)
+            setImmediate(() => {
+              control.output(Buffer.from([0]));
+              control.output(Buffer.from(`${marker}\0`));
+            });
+        },
+      });
+      const manager = createManager(
+        { REA_RIZIN_COMMAND: "injected-rizin" },
+        { spawnProcess: injected.spawnProcess },
+      );
+      const started = await manager.start({
+        path,
+        inferior_tty: await rizinTestInferiorTty(),
+      });
+      if (!started.ok) throw started.error;
+      const first = await manager.execute(started.value.session_id, "dr");
+      if (!first.ok) throw first.error;
+      await writeFile(launchFile, "between commands");
+      const result = await manager.execute(started.value.session_id, "dr");
+      if (!result.ok) throw result.error;
+      expect(
+        result.value.evidence.subject,
+        "later commands keep the subject bound at start",
+      ).toEqual(first.value.evidence.subject);
+      expect(
+        result.value.evidence.subject,
+        "the subject is the minted session bound to its launch file, or an explicit unknown when the file could not be hashed",
+      ).toEqual({
+        identity: {
+          kind: "session",
+          session_kind: "rizin",
+          id: started.value.session_id,
+          target:
+            path === launchFile
+              ? {
+                  kind: "file",
+                  sha256: createHash("sha256")
+                    .update("launch bytes")
+                    .digest("hex"),
+                  format: "file",
+                  architecture: null,
+                  selection: null,
+                }
+              : { kind: "unknown", reason: "not-observed" },
+        },
+        name: null,
+        local_path: null,
+      });
+      expect(
+        result.value.evidence.limitations.some((limitation) =>
+          /launch file could not be hashed/iu.test(limitation),
+        ),
+        "only an unhashable launch file records the hash failure",
+      ).toBe(path === missing);
     }
   },
 );

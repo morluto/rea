@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -41,7 +42,7 @@ const deliverPartialFailure = async (): Promise<{
   readonly evidence: Evidence;
 }> => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Completed capture fixture", version: "1" },
     {
       operation: "inspect_packet_capture",

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { readBoundedControlLines } from "../process/BoundedControlLines.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
@@ -14,10 +15,11 @@ import {
 } from "../process/ProviderProcess.js";
 import { SolveSandboxRoot } from "./SolveSandboxRoot.js";
 import {
-  AGENTENV_PROVIDER,
   agentEnvInterpreter,
   removeSandbox,
 } from "./AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "./AgentEnvProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const HELPER = fileURLToPath(
   new URL("../../bridge/agentenv/solve.py", import.meta.url),
@@ -182,26 +184,29 @@ export const runSolveHelper = async (options: {
   } catch (cause: unknown) {
     const cleanup = await sandboxRoot.stop();
     if (cleanup.status === "incomplete") {
+      const release = new AnalysisCleanupRelease();
       const failure = new SolveCleanupError(
         undefined,
         [`sandbox root ${sandboxRoot.path}`],
         {
           reason: cleanup.reason,
-          spawn_error: cause instanceof Error ? cause.message : String(cause),
+          spawn_error: errorMessage(cause),
         },
         options.operation,
       );
-      failure.bindCleanupResourceOwner({
-        get cleanupResources() {
-          return sandboxRoot.removed
-            ? []
-            : [`sandbox root ${sandboxRoot.path}`];
-        },
-      });
+      release.bind(
+        failure.bindCleanupResourceOwner({
+          get cleanupResources() {
+            return sandboxRoot.removed
+              ? []
+              : [`sandbox root ${sandboxRoot.path}`];
+          },
+        }),
+      );
       options.retainCleanup({
         async stop() {
           const result = await sandboxRoot.stop();
-          if (result.status === "verified-cleanup") failure.resolveCleanup();
+          if (result.status === "verified-cleanup") release.confirm();
           return result;
         },
         dispose: () => sandboxRoot.dispose(),
@@ -269,7 +274,8 @@ export const runSolveHelper = async (options: {
     ...(!sandboxRoot.removed ? [`sandbox root ${sandboxRoot.path}`] : []),
     ...(unknown ? ["agentenv sandbox identity unknown"] : []),
   ];
-  let cleanupError: SolveCleanupError | undefined;
+  // Confirmed once a stop removes everything and identifies every sandbox.
+  const release = new AnalysisCleanupRelease();
   const cleanupOwner: SolveCleanupOwner = {
     async stop() {
       if (processPending) {
@@ -294,7 +300,7 @@ export const runSolveHelper = async (options: {
         return { status: "incomplete", reason: failures.join(" ") };
       // The solve's sandboxes are all local under its private root, and agentenv keeps a sandbox's folder until its teardown is confirmed, so an emptied root leaves none up.
       if (sandboxRoot.removed) unknown = false;
-      if (!unknown) cleanupError?.resolveCleanup();
+      if (!unknown) release.confirm();
       return { status: "verified-cleanup" };
     },
     dispose: () => {
@@ -309,7 +315,7 @@ export const runSolveHelper = async (options: {
       cleanup.status === "incomplete"
         ? cleanup.reason
         : "The helper ended before identifying every sandbox, and REA could not empty its sandbox root.";
-    cleanupError = new SolveCleanupError(
+    const cleanupError = new SolveCleanupError(
       report,
       resources(),
       {
@@ -326,7 +332,7 @@ export const runSolveHelper = async (options: {
         return resources();
       },
     });
-    throw cleanupError;
+    throw release.bind(cleanupError);
   }
   if (signal.aborted && report !== undefined)
     throw new SolveCancelledError(report, options.operation, signal.reason);
