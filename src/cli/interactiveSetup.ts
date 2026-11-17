@@ -294,7 +294,7 @@ export const describeReadyCapabilities = (
   const jebConfigured = result.doctor.providerInspections?.some(
     ({ id, configured }) => id === "jeb" && configured,
   );
-  const jebClient = readyClients[0] ?? result.doctor.scope.clients[0];
+  const jebClient = result.doctor.scope.clients[0];
   return [
     "◆  What you can do now",
     ...(providers.length > 0
@@ -311,7 +311,7 @@ export const describeReadyCapabilities = (
       ? [
           jebClient === undefined
             ? `│  JEB diagnostics: ${cli} ${cliCommandFor("inspect_jeb_client")} (using this terminal's JEB settings)`
-            : `│  JEB diagnostics: in ${jebClient}, call MCP binary_session using that client's saved JEB settings.`,
+            : `│  JEB diagnostics: in ${jebClient}, call MCP inspect_jeb_client using that client's saved JEB settings.`,
         ]
       : []),
     ...(readyClients[0] === undefined

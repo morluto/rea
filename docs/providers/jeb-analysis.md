@@ -23,7 +23,8 @@ For setup registration, set `REA_JEB_MCP_URL` in the REA process environment
 before running `rea setup`. The approved setup plan preserves the exact selected
 URL after validating its syntax. That validation does not establish that the
 JEB service is reachable or that a project is open. For a read-only service
-query, call MCP `binary_session` through the selected client. The terminal
+query, call MCP `inspect_jeb_client` through the selected client (available with
+`--tool-families jeb`). The terminal
 `inspect-jeb-client` command uses the invoking shell's settings, not a client's
 saved registration; use it only after selecting the same JEB settings there. A configured but
 unprobed JEB endpoint is not included in setup's ready-provider list; setup can
@@ -45,6 +46,8 @@ registration. An empty URL alone does not mark JEB configured or suppress
 first-run provider setup.
 
 MCP `binary_session` probes the live JEB service and its advertised tool catalog.
+It requires the `session` tool family; with `--tool-families jeb`, use
+`inspect_jeb_client` for a live client query, or add `session` and restart the client.
 Availability is reported per operation: a reachable headless client can support
 inspection and decompilation while refusing `open_jeb_project`. Catalog discovery
 is one deadline across connection and pagination; a responsive server cannot keep

@@ -401,7 +401,8 @@ but the report remains audit-wide unless a scope option is also supplied.
 JEB's doctor inspection is syntax-only and makes no network request. A valid
 registration still reports availability as `unknown` and does not pass the JEB
 readiness scope or enter setup's ready-provider list. For a live service query,
-call MCP `binary_session` through the selected client, or use `rea inspect-jeb-client`
+call MCP `inspect_jeb_client` through the selected client (including JEB-only
+tool registrations), or use `rea inspect-jeb-client`
 from a terminal with the same JEB settings; the CLI does not read the client's
 saved registration. A later syntax-only doctor run
 does not inherit that probe's readiness result.

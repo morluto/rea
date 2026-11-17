@@ -408,42 +408,49 @@ test.for([
   },
 );
 
-test("starts production stdio MCP and retains peer requests around a JEB configuration refusal", async ({
-  workspace,
-}) => {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [resolve("scripts/rea.mjs"), "mcp"],
-    cwd: workspace.root,
-    env: isolatedEnvironment(workspace),
-    stderr: "pipe",
-  });
-  const client = new Client(
-    { name: "jeb-isolation-acceptance", version: "1" },
-    { jsonSchemaValidator: schemaValidation },
-  );
-  let stderr = "";
-  transport.stderr?.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  await withVerifierCleanup(async () => {
-    await client.connect(transport);
-    await client.ping();
-    const definition = (await client.listTools()).tools.find(
-      ({ name }) => name === "inspect_jeb_client",
-    );
-    if (definition === undefined)
-      throw new Error(`Production MCP omitted inspect_jeb_client: ${stderr}`);
-    const refusal = parseMcpToolError(
-      await client.callTool(
-        { name: "inspect_jeb_client", arguments: {} },
-        { toolDefinition: withCanonicalOutputSchema(definition) },
-      ),
-    );
-    expect(refusal.error).toMatchObject({
-      code: "configuration_invalid",
-      details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
+test.for([undefined, "jeb"])(
+  "starts production stdio MCP and retains peer requests around a JEB configuration refusal (families: %s)",
+  async (families, { workspace }) => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve("scripts/rea.mjs"), "mcp"],
+      cwd: workspace.root,
+      env: {
+        ...isolatedEnvironment(workspace),
+        ...(families === undefined ? {} : { REA_MCP_TOOL_FAMILIES: families }),
+      },
+      stderr: "pipe",
     });
-    await client.ping();
-  }, [() => client.close(), () => transport.close()]);
-});
+    const client = new Client(
+      { name: "jeb-isolation-acceptance", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    let stderr = "";
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    await withVerifierCleanup(async () => {
+      await client.connect(transport);
+      await client.ping();
+      const tools = (await client.listTools()).tools;
+      if (families === "jeb")
+        expect(tools.some(({ name }) => name === "binary_session")).toBe(false);
+      const definition = tools.find(
+        ({ name }) => name === "inspect_jeb_client",
+      );
+      if (definition === undefined)
+        throw new Error(`Production MCP omitted inspect_jeb_client: ${stderr}`);
+      const refusal = parseMcpToolError(
+        await client.callTool(
+          { name: "inspect_jeb_client", arguments: {} },
+          { toolDefinition: withCanonicalOutputSchema(definition) },
+        ),
+      );
+      expect(refusal.error).toMatchObject({
+        code: "configuration_invalid",
+        details: { settings: [{ setting: "REA_JEB_MCP_TIMEOUT_MS" }] },
+      });
+      await client.ping();
+    }, [() => client.close(), () => transport.close()]);
+  },
+);

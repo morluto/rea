@@ -112,14 +112,25 @@ it.each([true, false])(
     };
     const lines = describeReadyCapabilities(
       selected,
-      ready ? ["codex"] : [],
+      ready ? ["claude_code", "codex"] : [],
       "rea",
     );
     expect(lines).toContain(
-      "│  JEB diagnostics: in codex, call MCP binary_session using that client's saved JEB settings.",
+      "│  JEB diagnostics: in codex, call MCP inspect_jeb_client using that client's saved JEB settings.",
     );
     expect(lines.some((line) => line.includes("inspect-jeb-client"))).toBe(
       false,
     );
   },
 );
+
+it("does not substitute an unselected ready client for terminal JEB settings", () => {
+  const lines = describeReadyCapabilities(
+    resultWithProviders([], { REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp" }),
+    ["claude_code"],
+    "rea",
+  );
+  expect(lines).toContain(
+    "│  JEB diagnostics: rea inspect-jeb-client (using this terminal's JEB settings)",
+  );
+});
