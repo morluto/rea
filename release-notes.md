@@ -755,6 +755,7 @@
 * **cli:** assert retained entropy Evidence beside the cleanup diagnostic ([6c8be10](https://github.com/morluto/rea/commit/6c8be105a2d92a69b1ae91b24c7dea18b0cb2e2c)), closes [#7279](https://github.com/morluto/rea/issues/7279)
 * **cli:** assert the retained entropy observation at its current location ([9e24b36](https://github.com/morluto/rea/commit/9e24b36fa69423098627309cb61f8bbf1d23d3f8)), closes [#7279](https://github.com/morluto/rea/issues/7279)
 * **cli:** compare each registrar in a fresh lazy process ([5451d3c](https://github.com/morluto/rea/commit/5451d3cb2d140eaa0f9030ce60ec94313856b9bd))
+* **cli:** consolidate recovery and result control checks ([#11891](https://github.com/morluto/rea/issues/11891)) ([c320923](https://github.com/morluto/rea/commit/c3209239c3df7ccff30c2c1089c7129e2ee132cb))
 * **cli:** cover terminal stdout behaviour in the CLI parity goldens ([#11677](https://github.com/morluto/rea/issues/11677)) ([80c60ac](https://github.com/morluto/rea/commit/80c60ac68ca965ad4158cb5b3dbd9fb1b1b2e697))
 * **cli:** derive CLI tool coverage and schema parity from command registry ([#11776](https://github.com/morluto/rea/issues/11776)) ([e44f007](https://github.com/morluto/rea/commit/e44f0077c94e45ec7b4eaae1781ef9fdde227426))
 * **cli:** expect the update alias to pass the host platform to the update host ([#11263](https://github.com/morluto/rea/issues/11263)) ([c4154b0](https://github.com/morluto/rea/commit/c4154b0c7ea240bef55ae9e1af155ed0152f2824))
