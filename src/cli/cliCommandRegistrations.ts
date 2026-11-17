@@ -155,6 +155,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
     (module, context) =>
       module.registerRpmPackageCommands(context.cli, context.logger),
   ),
+  nugetNupkg: plain(
+    () => import("./nugetNupkgCommands.js"),
+    (module, context) =>
+      module.registerNugetNupkgCommands(context.cli, context.logger),
+  ),
   erlang: plain(
     () => import("./erlangCommands.js"),
     (module, context) =>
@@ -164,6 +169,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./v8CodeCacheCommands.js"),
     (module, context) =>
       module.registerV8CodeCacheCommands(context.cli, context.logger),
+  ),
+  mavenGradleMetadata: plain(
+    () => import("./mavenGradleMetadataCommands.js"),
+    (module, context) =>
+      module.registerMavenGradleMetadataCommands(context.cli, context.logger),
   ),
   sqlite: plain(
     () => import("./sqliteCommands.js"),
@@ -448,8 +458,10 @@ const CLI_FAMILY_REGISTRATIONS: {
     "rust",
     "pythonPyc",
     "rpmPackage",
+    "nugetNupkg",
     "erlang",
     "v8CodeCache",
+    "mavenGradleMetadata",
     "sqlite",
     "artifact",
   ],

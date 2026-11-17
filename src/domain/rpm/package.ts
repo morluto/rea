@@ -15,13 +15,6 @@ export const MAX_INSPECT_RPM_PACKAGE_FILES = 1048576;
 /** Hard ceiling on one scriptlet's stored text when the caller requests it. */
 export const MAX_INSPECT_RPM_PACKAGE_SCRIPT_BYTES = 16 * 1024 * 1024;
 
-export const RPM_PACKAGE_LIMIT_MAXIMA = {
-  max_file_bytes: MAX_INSPECT_RPM_PACKAGE_FILE_BYTES,
-  max_header_index_entries: MAX_INSPECT_RPM_PACKAGE_HEADER_INDEX_ENTRIES,
-  max_files: MAX_INSPECT_RPM_PACKAGE_FILES,
-  max_script_bytes: MAX_INSPECT_RPM_PACKAGE_SCRIPT_BYTES,
-} as const;
-
 /** Complete bounded inspection of one RPM lead, signature header, and main header. */
 export const inspectRpmPackageInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -73,23 +66,10 @@ const nullableText = z.string().min(1).nullable();
 const range = z.strictObject({ offset, bytes: offset });
 
 export const RPM_PACKAGE_TYPES = ["binary", "source"] as const;
-export type RpmPackageType = (typeof RPM_PACKAGE_TYPES)[number];
 
 export const RPM_DEPENDENCY_COMPARISONS = ["<", "<=", "=", ">=", ">"] as const;
 export type RpmDependencyComparison =
   (typeof RPM_DEPENDENCY_COMPARISONS)[number];
-
-export const RPM_DEPENDENCY_SETS = [
-  "provides",
-  "requires",
-  "conflicts",
-  "obsoletes",
-  "recommends",
-  "suggests",
-  "supplements",
-  "enhances",
-] as const;
-export type RpmDependencySet = (typeof RPM_DEPENDENCY_SETS)[number];
 
 export const RPM_SCRIPTLET_KINDS = [
   "prein",
@@ -221,6 +201,7 @@ export const rpmPackageSchema = z.strictObject({
     vendor: nullableText,
     packager: nullableText,
     url: nullableText,
+    url_credentials_redacted: z.boolean(),
     build_time: uint.nullable(),
     build_host: nullableText,
     source_rpm: nullableText,

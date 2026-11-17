@@ -69,6 +69,7 @@ const report: RpmPackage = {
     vendor: null,
     packager: null,
     url: null,
+    url_credentials_redacted: false,
     build_time: null,
     build_host: null,
     source_rpm: null,
@@ -190,7 +191,7 @@ it("records the selected artifact and header ranges", async () => {
   );
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains selected parameters and completed Evidence on late cancellation", async () => {
   const controller = new AbortController();
   const reason = { source: "caller-request", operation: "cancel" };
   const service = new RpmPackageService({
@@ -209,6 +210,14 @@ it("discards an observation if the caller cancels while the provider completes",
   if (!result.ok) {
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: "inspect_rpm_package",
+      parameters: { path: report.artifact.path },
+      normalized_result: report,
+    });
+    expect(result.error.partialObservation).toHaveProperty("parameters", {
+      path: report.artifact.path,
+    });
   }
 });
 
@@ -227,3 +236,26 @@ it("refuses a provider report that claims more files than the caller budget", as
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
+
+it.each([
+  {},
+  { include_script_text: false, max_files: 16384 },
+  { max_files: 3 },
+])(
+  "records only the caller-selected parameters while executing defaults: %j",
+  async (selected) => {
+    const raw = { path: report.artifact.path, ...selected };
+    const service = new RpmPackageService({
+      identity,
+      close: async () => {},
+      inspect: (input) => {
+        expect(input.include_script_text).toBe(false);
+        expect(input.max_files).toBe(selected.max_files ?? 16384);
+        return Promise.resolve(ok(report));
+      },
+    });
+    const result = await service.inspect(raw);
+    if (!result.ok) throw result.error;
+    expect(result.value.parameters).toEqual(raw);
+  },
+);

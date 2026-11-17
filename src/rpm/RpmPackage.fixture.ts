@@ -9,16 +9,7 @@ import {
   RPM_TYPE,
 } from "./RpmPackageTags.js";
 
-export {
-  RPM_FILE_FLAG,
-  RPM_HEADER_MAGIC,
-  RPM_LEAD_MAGIC,
-  RPM_LEAD_SIZE,
-  RPM_SENSE,
-  RPM_SIG_TAG,
-  RPM_TAG,
-  RPM_TYPE,
-} from "./RpmPackageTags.js";
+export { RPM_SENSE, RPM_SIG_TAG, RPM_TAG, RPM_TYPE } from "./RpmPackageTags.js";
 
 export type RpmFixtureTag = {
   readonly tag: number;

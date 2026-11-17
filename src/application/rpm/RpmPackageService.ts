@@ -10,7 +10,10 @@ import {
 } from "../../domain/rpm/package.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_rpm_package";
 
@@ -26,6 +29,7 @@ export class RpmPackageService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
+    const selectedParameters = callerAnalysisParameters(rawInput);
     const input = parseAnalysisInput(
       OPERATION,
       rawInput,
@@ -58,7 +62,7 @@ export class RpmPackageService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.value,
+          parameters: selectedParameters(input.value),
           result: value,
           confidence: "observed",
           limitations: value.limitations,

@@ -1,3 +1,7 @@
+import { MavenGradleMetadataProvider } from "../../src/java/MavenGradleMetadataProvider.js";
+import { MavenGradleMetadataService } from "../../src/application/java/MavenGradleMetadataService.js";
+import { inspectMavenGradleMetadataInputSchema } from "../../src/domain/java/mavenGradleMetadata.js";
+import { mavenPomFixture } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
 import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
@@ -9,6 +13,7 @@ import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ZipReader } from "@zip.js/zip.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -111,8 +116,14 @@ import { ArtifactReaderFailure } from "../../src/resources/ArtifactReader.js";
 import { GoBinaryProvider } from "../../src/go/GoBinaryProvider.js";
 import { PythonPycProvider } from "../../src/python/PythonPycProvider.js";
 import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.js";
+import { RpmPackageService } from "../../src/application/rpm/RpmPackageService.js";
+import { rpmBinaryPackageFixture } from "../../src/rpm/RpmPackage.fixture.js";
 import { RpmPackageProvider } from "../../src/rpm/RpmPackageProvider.js";
 import { inspectRpmPackageInputSchema } from "../../src/domain/rpm/package.js";
+import { NugetNupkgProvider } from "../../src/nuget/NugetNupkgProvider.js";
+import { NugetNupkgService } from "../../src/application/nuget/NugetNupkgService.js";
+import { nugetNupkgFixture } from "../../src/nuget/NugetNupkg.fixture.js";
+import { inspectNugetNupkgInputSchema } from "../../src/domain/nuget/nupkg.js";
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
@@ -171,6 +182,102 @@ const staticProviders = [
   ["PE", () => new PeResourcesProvider()],
   ["IL2CPP metadata", () => new Il2cppMetadataProvider()],
 ] as const;
+
+it("preserves opaque NuGet decoder failures and the completed file identity", async () => {
+  const path = await selectedImage();
+  const bytes = await nugetNupkgFixture();
+  await writeFile(path, bytes);
+  fault.blockNew = false;
+  const cause = new Error("controlled decoder runtime failure");
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* () {
+      throw cause;
+    });
+  const provider = new NugetNupkgProvider();
+  try {
+    const result = await provider.inspect(
+      inspectNugetNupkgInputSchema.parse({ path }),
+    );
+    if (result.ok) throw new Error("Expected opaque decoder failure");
+    expect(result.error._tag).toBe("ArtifactOperationError");
+    expect(result.error.cause).toBe(cause);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    });
+    expect(fault.handles).toHaveLength(1);
+    expect(fault.handles[0]?.fd).toBe(-1);
+  } finally {
+    enumeration.mockRestore();
+    await provider.close();
+  }
+});
+
+it.each(
+  ["close failure", "close cancellation"].flatMap((outcome) =>
+    ["NuGet", "Maven/Gradle", "RPM"].map((kind) => ({ outcome, kind })),
+  ),
+)(
+  "retains only the completed $kind file snapshot through $outcome and cleanup retry",
+  async ({ outcome, kind }) => {
+    const path = await selectedImage();
+    const bytes =
+      kind === "NuGet"
+        ? await nugetNupkgFixture()
+        : kind === "RPM"
+          ? rpmBinaryPackageFixture()
+          : Buffer.from(mavenPomFixture);
+    await writeFile(path, bytes);
+    const controller = new AbortController();
+    const reason = { source: `${kind} file finalization` };
+    if (outcome === "close cancellation")
+      fault.onClose = () => controller.abort(reason);
+    const service =
+      kind === "NuGet"
+        ? new NugetNupkgService(new NugetNupkgProvider())
+        : kind === "RPM"
+          ? new RpmPackageService(new RpmPackageProvider())
+          : new MavenGradleMetadataService(new MavenGradleMetadataProvider());
+    try {
+      const result = await service.inspect(
+        { path },
+        { signal: controller.signal },
+      );
+      if (result.ok)
+        throw new Error("Expected descriptor finalization failure");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+      const beforeCleanup = projectAnalysisError(result.error).details
+        ?.partial_observation;
+      if (outcome === "close cancellation")
+        expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      await expect(service.close()).rejects.toBeDefined();
+      expect(result.error.cleanupIncomplete).toBe(true);
+      fault.blocked.clear();
+      await service.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(
+        projectAnalysisError(resolvedAnalysisError(result.error)).details
+          ?.partial_observation,
+      ).toEqual(beforeCleanup);
+      expect(fault.handles).toHaveLength(1);
+      expect(fault.handles[0]?.fd).toBe(-1);
+    } finally {
+      fault.onClose = undefined;
+      fault.blocked.clear();
+      await service.close();
+    }
+  },
+);
 
 it.each(
   ["Rust service", "selected producer input", "source map"].flatMap(
@@ -1038,6 +1145,8 @@ const stableArtifactProviders = [
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
   ["RPM package", () => new RpmPackageProvider()],
+  ["NuGet nupkg", () => new NugetNupkgProvider()],
+  ["Maven/Gradle metadata", () => new MavenGradleMetadataProvider()],
 ] as const;
 
 const fileFailureProviders = [
@@ -1051,6 +1160,16 @@ const inspectFileFailure = (
   signal?: AbortSignal,
 ) => {
   const options = signal === undefined ? undefined : { signal };
+  if (provider instanceof MavenGradleMetadataProvider)
+    return provider.inspect(
+      inspectMavenGradleMetadataInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof NugetNupkgProvider)
+    return provider.inspect(
+      inspectNugetNupkgInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof PythonPycProvider)
     return provider.inspect(
       inspectPythonPycInputSchema.parse({ path }),
@@ -1187,7 +1306,9 @@ it.each(
           provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
           provider instanceof PeResourcesProvider ||
-          provider instanceof RpmPackageProvider
+          provider instanceof RpmPackageProvider ||
+          provider instanceof NugetNupkgProvider ||
+          provider instanceof MavenGradleMetadataProvider
             ? "ArtifactOperationError"
             : "ProviderAdapterError"),
       );

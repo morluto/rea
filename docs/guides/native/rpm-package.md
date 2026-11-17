@@ -39,7 +39,10 @@ presence does not establish trust.
 
 `package` reports NEVRA, summary, license, vendor, packager, URL, build time,
 build host, source RPM, and payload format/compressor/flags. Missing optional
-tags stay `null`. Epoch `0` is reported when that tag is present.
+tags stay `null`. Epoch `0` is reported when that tag is present. Transport
+userinfo is removed from `url`, with `url_credentials_redacted: true`; an
+ambiguous transport authority becomes `null`. Other URL spelling, query text,
+scriptlet source and package metadata remain as recorded.
 
 `provides`, `requires`, `conflicts`, `obsoletes`, and weak dependency sets
 (`recommends`, `suggests`, `supplements`, `enhances`) include each name,
@@ -66,7 +69,11 @@ The selected file is limited to 64 MiB by default (512 MiB maximum). Header
 index entries default to 4096 (65536 maximum), file-inventory rows default to
 16384 (1048576 maximum), and one scriptlet's stored text defaults to 1 MiB
 (16 MiB maximum) when requested. Exceeding a budget fails without treating the
-count as zero or silently truncating.
+count as zero or silently truncating. Expanded file-path bytes share the
+`max_file_bytes` allowance and are checked before constructing joined paths;
+that parser memory refusal names `expanded_path_bytes`, while physical file
+admission reports the `file-size` resource. Evidence records only caller-selected
+parameters; omitted defaults still apply to execution.
 
 Malformed or truncated headers fail with typed refusals. A tag the report reads
 that is stored with another type or a different fixed count (for example a

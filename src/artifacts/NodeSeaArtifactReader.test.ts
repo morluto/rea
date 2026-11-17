@@ -1122,7 +1122,7 @@ it("confirms SEA naming before rejecting an unrelated cyclic PE resource branch"
   try {
     await expect(
       locateNodeSea(handle, fixture.bytes.length),
-    ).rejects.toMatchObject({ reason: "format" });
+    ).rejects.toMatchObject({ reason: "malformed" });
   } finally {
     await handle.close();
   }

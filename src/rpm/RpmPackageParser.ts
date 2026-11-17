@@ -16,10 +16,12 @@ import type {
 import {
   type ParseFailureKind,
   ParseFailureError,
+  decodeLimit,
   unsupportedInput,
 } from "../domain/parseFailure.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
+import { Budget } from "../domain/budget.js";
+import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   RPM_FILE_FLAG,
   RPM_HEADER_MAGIC,
@@ -638,10 +640,10 @@ const PER_FILE_TAGS: ReadonlyMap<number, string> = new Map([
 const checkPerFileCount = (entry: IndexEntry, maxFiles: number): void => {
   const name = PER_FILE_TAGS.get(entry.tag);
   if (name !== undefined && entry.count > maxFiles)
-    throw new RpmPackageCapacityFailure(
-      "max_files",
-      maxFiles,
+    throw decodeLimit(
+      FORMAT,
       `RPM ${name} declares ${String(entry.count)} rows, above the ${String(maxFiles)}-file budget.`,
+      { name: "max_files", maximum: maxFiles, required: entry.count },
     );
 };
 
@@ -670,10 +672,14 @@ const parseHeader = (
     `RPM ${label} header index and data store`,
   );
   if (indexEntries > maxIndex)
-    throw new RpmPackageCapacityFailure(
-      "max_header_index_entries",
-      maxIndex,
+    throw decodeLimit(
+      FORMAT,
       `RPM ${label} header declares ${String(indexEntries)} index entries, above the ${String(maxIndex)}-entry budget.`,
+      {
+        name: "max_header_index_entries",
+        maximum: maxIndex,
+        required: indexEntries,
+      },
     );
   const storeOffset = start + 16 + indexBytes;
   const store = new BinaryReader(
@@ -1016,19 +1022,12 @@ const digestAlgorithm = (
 
 const files = (
   header: DecodedHeader,
-  maxFiles: number,
   maxPathBytes: number,
 ): RpmPackageFile[] | null => {
   const baseNames = stringArray(header, RPM_TAG.baseNames);
   const dirNames = stringArray(header, RPM_TAG.dirNames);
   const dirIndexes = intArray(header, RPM_TAG.dirIndexes);
   if (baseNames === undefined) return null;
-  if (baseNames.length > maxFiles)
-    throw new RpmPackageCapacityFailure(
-      "max_files",
-      maxFiles,
-      `RPM file inventory has ${String(baseNames.length)} rows, above the ${String(maxFiles)}-file budget.`,
-    );
   if (dirNames === undefined || dirIndexes === undefined)
     return fail("RPM file inventory is missing DIRNAMES or DIRINDEXES.", {
       field: "file inventory",
@@ -1065,7 +1064,7 @@ const files = (
   // rows expands far past the stored header bytes. The joined path text is
   // counted against the read budget before any path string is built.
   const dirBytes = dirNames.map((name) => Buffer.byteLength(name, "utf8"));
-  let pathBytes = 0;
+  const pathBytes = new Budget(maxPathBytes);
   baseNames.forEach((baseName, index) => {
     const dirIndex = dirIndexes[index]!;
     if (dirIndex < 0 || dirIndex >= dirNames.length)
@@ -1073,13 +1072,18 @@ const files = (
         `RPM DIRINDEXES[${String(index)}] ${String(dirIndex)} is outside DIRNAMES.`,
         { field: "file inventory" },
       );
-    pathBytes += dirBytes[dirIndex]! + Buffer.byteLength(baseName, "utf8");
-    if (pathBytes > maxPathBytes)
-      throw new RpmPackageCapacityFailure(
-        "max_file_bytes",
-        maxPathBytes,
-        `RPM file paths expand past the ${String(maxPathBytes)}-byte read budget.`,
-      );
+    const bytes = dirBytes[dirIndex]! + Buffer.byteLength(baseName, "utf8");
+    pathBytes.charge(bytes, () =>
+      decodeLimit(
+        FORMAT,
+        `RPM file paths require at least ${String(pathBytes.used + bytes)} expanded bytes, above the ${String(maxPathBytes)}-byte path budget selected by max_file_bytes.`,
+        {
+          name: "expanded_path_bytes",
+          maximum: maxPathBytes,
+          required: pathBytes.used + bytes,
+        },
+      ),
+    );
   });
   return baseNames.map((baseName, index) => {
     const directory = dirNames[dirIndexes[index]!]!;
@@ -1108,10 +1112,10 @@ const scriptText = (
 ): { readonly bytes: number; readonly text: string | null } | undefined => {
   if (source === undefined) return undefined;
   if (include && source.bytes > maxBytes)
-    throw new RpmPackageCapacityFailure(
-      "max_script_bytes",
-      maxBytes,
+    throw decodeLimit(
+      FORMAT,
       `RPM ${kind} scriptlet is ${String(source.bytes)} bytes, above the ${String(maxBytes)}-byte script budget.`,
+      { name: "max_script_bytes", maximum: maxBytes, required: source.bytes },
     );
   return { bytes: source.bytes, text: include ? source.text() : null };
 };
@@ -1368,7 +1372,7 @@ export const parseRpmPackage = (
       RPM_TAG.enhanceFlags,
       RPM_TAG.enhanceVersion,
     );
-    const fileRows = files(mainHeader, input.max_files, input.max_file_bytes);
+    const fileRows = files(mainHeader, input.max_file_bytes);
     const scriptletRows = scriptlets(
       mainHeader,
       input.include_script_text,
@@ -1424,7 +1428,9 @@ export const parseRpmPackage = (
         license: text(stringValue(mainHeader, RPM_TAG.license)),
         vendor: text(stringValue(mainHeader, RPM_TAG.vendor)),
         packager: text(stringValue(mainHeader, RPM_TAG.packager)),
-        url: text(stringValue(mainHeader, RPM_TAG.url)),
+        ...redactRecordedTransportUrl(
+          text(stringValue(mainHeader, RPM_TAG.url)),
+        ),
         build_time: intValue(mainHeader, RPM_TAG.buildTime) ?? null,
         build_host: text(stringValue(mainHeader, RPM_TAG.buildHost)),
         source_rpm: text(stringValue(mainHeader, RPM_TAG.sourceRpm)),

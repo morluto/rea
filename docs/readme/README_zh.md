@@ -158,6 +158,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                           | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../guides/native/native-investigation.md)                                                                 |
 | 离线 ELF 布局         | 节、段、原始符号/重定位信息及静态防护机制候选项                                  | Linux x64 上由调用方提供的 pwntools；[二进制诊断](../guides/native/binary-diagnostics.md)                                                         |
 | Go 二进制文件         | 内嵌编译器版本、模块、替换项和构建设置                                           | 内置静态 ELF/PE/thin Mach-O 检查；无需安装 Go                                                                                                     |
+| NuGet 包              | 包标识、依赖组、许可证、仓库及 ZIP 内容                                          | 内置静态 .nupkg 检查；[NuGet 包](../guides/managed/nuget-nupkg.md)                                                                                |
 | WASM 工件             | 验证、节、精确的导入/导出 WAT 形式及解码后的 WAT                                 | 调用方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                                                 |
 | EVM 字节码            | 分派选择器、字节偏移、推断的参数和状态可变性                                     | Linux x64 上的本地原始字节/十六进制输入载体；[离线 EVM 指南](../guides/evm/evm-bytecode.md)                                                       |
 | Rust binaries         | Embedded cargo-auditable dependency list                                         | [Rust binaries](../rust-binaries.md)                                                                                                              |
@@ -180,7 +181,6 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                       | 静态检查；[托管代码指南](../guides/managed/managed-code-analysis.md)                                                                              |
 | PyInstaller           | CArchive, PYZ, Python bytecode                                                   | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
 | Deno compile binaries | Virtual files, entry point, recorded options, npm snapshot length                | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                              |
-| RPM packages          | Lead, signature and header metadata, dependencies, scriptlets and file inventory | None (static only); [RPM packages](../guides/native/rpm-package.md)                                                                               |
 | Android APK           | 清单声明、类、反编译的方法和引用                                                 | Linux/macOS/Windows x64 上的无界面 JADX 和完整 JDK；[Android 指南](../guides/android/android-analysis.md)                                         |
 | Android 设备          | 设备、软件包、进程、日志、转储、屏幕截图以及 APK/文件传输                        | 调用方提供的 adb（模拟器或实体设备）；[ADB 指南](../guides/android/adb-device-analysis.md)                                                        |
 | JEB 项目              | 引擎支持的项目单元、工件摘要和类型/方法的伪代码                                  | 由调用方启动、提供 MCP 的 JEB 客户端，通过 REA_JEB_MCP_URL 选择；[JEB 指南](../providers/jeb-analysis.md)                                         |
@@ -197,6 +197,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | IL2CPP 元数据         | Unity global-metadata.dat 程序集映像、类型和方法名、索引范围                     | 静态解码版本 24、27、29、31 和 39；无需 Unity                                                                                                     |
 | Godot PCK             | 归档目录与提取、原始头部和目录信息、选定内容身份                                 | 静态格式 2、3 和 4；无需 Godot                                                                                                                    |
 | APK 签名              | v1/v2/v3/v3.1 签名者、证书指纹、密钥轮换和摘要自洽性                             | 内置静态检查; `inspect_apk_signature`                                                                                                             |
+| RPM packages          | Lead, signature and header metadata, dependencies, scriptlets and file inventory | None (static only); [RPM packages](../guides/native/rpm-package.md)                                                                               |
 
 静态 JavaScript 和 .NET 检查读取提供的文件，不运行应用。运行时捕获会以你的用户权限运行目标或与之交互；各运行时指南说明了具体影响。
 

@@ -61,6 +61,7 @@ const report: RpmPackage = {
     vendor: null,
     packager: null,
     url: null,
+    url_credentials_redacted: false,
     build_time: null,
     build_host: null,
     source_rpm: null,

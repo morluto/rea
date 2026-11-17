@@ -5,7 +5,6 @@ import {
   rpmPackageSchema,
 } from "../domain/rpm/package.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
-import { RpmPackageCapacityFailure } from "./RpmPackage.errors.js";
 import {
   encodeRpmPackage,
   rpmBinaryPackageFixture,
@@ -528,9 +527,12 @@ it("refuses header index counts above the caller budget", () => {
     );
     throw new Error("expected index budget refusal");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageCapacityFailure);
-    if (!(cause instanceof RpmPackageCapacityFailure)) return;
-    expect(cause.resource).toBe("max_header_index_entries");
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "limit",
+      limit: { name: "max_header_index_entries" },
+    });
   }
 });
 
@@ -559,9 +561,12 @@ it("refuses file inventories above the caller budget", () => {
     );
     throw new Error("expected file budget refusal");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageCapacityFailure);
-    if (!(cause instanceof RpmPackageCapacityFailure)) return;
-    expect(cause.resource).toBe("max_files");
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "limit",
+      limit: { name: "max_files" },
+    });
   }
 });
 
@@ -586,10 +591,18 @@ it("refuses a per-file array above the file budget before building its rows", ()
     );
     throw new Error("expected file budget refusal");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageCapacityFailure);
-    if (!(cause instanceof RpmPackageCapacityFailure)) return;
-    expect(cause.resource).toBe("max_files");
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "limit",
+      limit: { name: "max_files" },
+    });
     expect(cause.message).toContain("BASENAMES declares 64 rows");
+    expect(cause.failure.kind === "limit" && cause.failure.limit).toEqual({
+      name: "max_files",
+      maximum: 8,
+      required: 64,
+    });
   }
 });
 
@@ -620,7 +633,6 @@ it.each([
       parse(bytes);
       throw new Error("expected malformed extent refusal");
     } catch (cause) {
-      expect(cause).not.toBeInstanceOf(RpmPackageCapacityFailure);
       expect(cause).toBeInstanceOf(ParseFailureError);
       if (!(cause instanceof ParseFailureError)) return;
       expect(cause.kind).toBe("malformed");
@@ -630,9 +642,9 @@ it.each([
 );
 
 it("refuses file paths that expand past the read budget through a shared directory", () => {
-  const directory = `/${"d".repeat(1023)}`;
+  const directory = `/${"d".repeat(255)}`;
   const baseNames = Array.from(
-    { length: 64 },
+    { length: 4 },
     (_, index) => `f${String(index)}`,
   );
   const bytes = rpmBinaryPackageFixture({
@@ -659,9 +671,9 @@ it("refuses file paths that expand past the read budget through a shared directo
     ],
   });
   // The stored header holds the directory once, so the file fits the budget
-  // while the 64 joined paths (over 64 KiB) do not.
-  const budget = bytes.length + 4096;
-  expect(budget).toBeLessThan(64 * 1024);
+  // while the four joined paths do not.
+  const budget = bytes.length;
+  expect(budget).toBeLessThan(4 * 256);
   try {
     parse(
       bytes,
@@ -672,12 +684,17 @@ it("refuses file paths that expand past the read budget through a shared directo
     );
     throw new Error("expected path budget refusal");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageCapacityFailure);
-    if (!(cause instanceof RpmPackageCapacityFailure)) return;
-    expect(cause.resource).toBe("max_file_bytes");
-    expect(cause.maximum).toBe(budget);
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "limit",
+      limit: { name: "expanded_path_bytes" },
+    });
+    expect(cause.failure.kind === "limit" && cause.failure.limit.maximum).toBe(
+      budget,
+    );
   }
-  expect(parse(bytes).files).toHaveLength(64);
+  expect(parse(bytes).files).toHaveLength(4);
 });
 
 it("refuses oversize scriptlet text when the caller requested it", () => {
@@ -692,9 +709,12 @@ it("refuses oversize scriptlet text when the caller requested it", () => {
     );
     throw new Error("expected script budget refusal");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(RpmPackageCapacityFailure);
-    if (!(cause instanceof RpmPackageCapacityFailure)) return;
-    expect(cause.resource).toBe("max_script_bytes");
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (!(cause instanceof ParseFailureError)) return;
+    expect(cause.failure).toMatchObject({
+      kind: "limit",
+      limit: { name: "max_script_bytes" },
+    });
   }
 });
 
@@ -764,4 +784,27 @@ it("refuses a header value the report cannot carry, keeping the facts read", () 
       lead: { magic: "edabeedb" },
     });
   }
+});
+
+it("redacts only transport userinfo from the recorded package URL", () => {
+  const url =
+    "HTTPS://fixture-user:fixture-password@Example.invalid/a/../b?token=visible";
+  const bytes = encodeRpmPackage({
+    headerTags: [
+      { tag: RPM_TAG.url, type: RPM_TYPE.string, string: url },
+      {
+        tag: RPM_TAG.prein,
+        type: RPM_TYPE.string,
+        string: "token=visible password=source-data",
+      },
+    ],
+  });
+  const report = parse(bytes, { ...defaults, include_script_text: true });
+  expect(report.package).toMatchObject({
+    url: "HTTPS://Example.invalid/a/../b?token=visible",
+    url_credentials_redacted: true,
+  });
+  expect(report.scriptlets?.[0]?.text).toBe(
+    "token=visible password=source-data",
+  );
 });
