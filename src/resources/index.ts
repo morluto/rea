@@ -148,6 +148,7 @@ export {
   ZIP_ZSTANDARD_WINDOW_CEILING,
   ZipArtifactReader,
   decodeZipEntryText,
+  zipEntryNameLimitations,
   zipEntryPath,
   zipListingCoverage,
   typedZipFailure,

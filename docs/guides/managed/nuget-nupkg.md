@@ -53,6 +53,11 @@ an `encrypted` flag, and a `path`-derived `role` (`lib`, `ref`, `runtimes`,
 `native`, `analyzers`, `build`, `buildTransitive`, `buildMultiTargeting`,
 `content`, `contentFiles`, `tools`, `nuspec`, `opc`, or `unknown`). Directory
 markers are omitted. Encrypted members are listed and not extracted.
+Unflagged non-ASCII names use the ZIP CP437 fallback unless a valid Unicode Path
+extra field supplies the name. For fallback names, limitations identify the
+member, retain the exact raw filename bytes as hex, and mark the source encoding
+as unverified. ASCII names, flagged UTF-8 names, and valid Unicode Path names do
+not carry that uncertainty warning.
 
 `nuspec` names the selected manifest path, decoded byte length, and whether it
 came from an OPC `_rels/.rels` manifest relationship or a unique root `.nuspec`.

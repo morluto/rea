@@ -481,14 +481,14 @@ const projectZipEntry = (
         : [
             `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
           ]),
-      ...legacyNameLimitations(entry),
+      ...zipEntryNameLimitations(entry),
     ],
     adapterKey: `zip-entry:${index}`,
   };
 };
 
 /** Preserve source bytes when an unflagged legacy name may use another code page. */
-const legacyNameLimitations = (entry: Entry): readonly string[] => {
+export const zipEntryNameLimitations = (entry: Entry): readonly string[] => {
   if (entry.filenameUTF8 || entry.extraFieldUnicodePath?.valid === true)
     return [];
   const bytes = entry.rawFilename;

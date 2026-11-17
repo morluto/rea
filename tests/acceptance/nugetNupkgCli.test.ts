@@ -3,8 +3,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../src/contracts/nuget/nupkgToolContracts.js";
+import { toolContract } from "../../src/contracts/toolContracts.js";
+import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
-import { nugetNupkgFixture } from "../../src/nuget/NugetNupkg.fixture.js";
+import {
+  nugetNupkgFixture,
+  NUPKG_NAME_ENCODING_CASES,
+  nugetNupkgNameEncodingFixture,
+} from "../../src/nuget/NugetNupkg.fixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
@@ -16,6 +22,70 @@ const nupkgContract = contractNamed(
 const completeNupkgEvidenceSchema = nupkgContract.outputSchema.safeExtend({
   normalized_result: nugetNupkgSchema,
 });
+
+cliTest(
+  "preserves ZIP filename bytes and encoding uncertainty through CLI, MCP and retained views",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-nupkg-name-provenance-");
+    const { call } = await connectLocalToolsMcp();
+    for (const input of NUPKG_NAME_ENCODING_CASES) {
+      const path = join(root, `${input.encoding}.nupkg`);
+      await writeFile(path, await nugetNupkgNameEncodingFixture(input));
+      const output = await cli.run({
+        arguments: ["inspect-nuget-nupkg", path, "--json"],
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      const cliEvidence = completeNupkgEvidenceSchema.parse(output.json);
+      const response = await call("inspect_nuget_nupkg", { path });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const evidence = completeNupkgEvidenceSchema.parse(
+        response.structuredContent,
+      );
+      expect(evidence.normalized_result).toEqual(cliEvidence.normalized_result);
+      expect(evidence.normalized_result.contents).toContainEqual(
+        expect.objectContaining({ name: input.name, path: input.name }),
+      );
+      const warnings = evidence.normalized_result.limitations.filter((value) =>
+        value.includes("CP437"),
+      );
+      if (input.uncertain) {
+        expect(warnings).toEqual([
+          expect.stringContaining(input.rawName.toString("hex")),
+        ]);
+        expect(warnings[0]).toContain(JSON.stringify(input.name));
+        expect(evidence.limitations).toContain(warnings[0]);
+      } else expect(warnings).toEqual([]);
+      const view = await call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: evidence.evidence_id,
+        },
+        view: { kind: "summary" },
+      });
+      expect(view.isError, JSON.stringify(view)).not.toBe(true);
+      if (input.uncertain)
+        expect(JSON.stringify(view.structuredContent)).toContain(
+          input.rawName.toString("hex"),
+        );
+      else
+        expect(JSON.stringify(view.structuredContent)).not.toContain("CP437");
+      const retained = await call("get_evidence_bundle", {
+        detail: "complete",
+      });
+      expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+      const bundle = parseEvidenceBundle(
+        toolContract("get_evidence_bundle").outputSchema.parse(
+          retained.structuredContent,
+        ).result,
+      );
+      expect(
+        bundle.records.find(
+          (record) => record.evidence_id === evidence.evidence_id,
+        ),
+      ).toEqual(evidence);
+    }
+  },
+);
 
 cliTest(
   "reports NuGet package identity and dependencies through the public CLI",

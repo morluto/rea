@@ -17,6 +17,7 @@ import type { Element, Node } from "@xmldom/xmldom";
 import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   decodeZipEntryText,
+  zipEntryNameLimitations,
   typedZipFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
@@ -549,6 +550,10 @@ export const parseNugetNupkg = async (
       const sourceName = zipEntryPath(entry);
       const name = nugetNupkgLogicalPath(sourceName);
       if (name === "") continue;
+      for (const limitation of zipEntryNameLimitations(entry))
+        limitations.push(
+          `ZIP member ${JSON.stringify(sourceName)}: ${limitation}`,
+        );
       files.push({ entry, name });
       contents.push({
         name: sourceName,
