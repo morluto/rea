@@ -990,6 +990,7 @@ export const readElfDependenciesSteps = function* (
   const imports = parseImports(
     reader,
     bytes,
+    header.machine,
     bits,
     dynsymTable,
     versymTable,
@@ -1485,9 +1486,18 @@ const parseVerdef = (
   }
 };
 
+/**
+ * On SPARC (EM_SPARC, EM_SPARC32PLUS, EM_SPARCV9) symbol type 13 is
+ * STT_SPARC_REGISTER: an undefined entry declares use of the global register
+ * in st_value and may have an empty name (SPARC V9 ABI). It is not an import.
+ */
+const SPARC_MACHINES: ReadonlySet<number> = new Set([2, 18, 43]);
+const STT_SPARC_REGISTER = 13;
+
 const parseImports = (
   reader: BinaryReader,
   bytes: Buffer,
+  machine: number,
   bits: 32 | 64,
   dynsym: LocatedTable | null,
   versym: LocatedTable | null,
@@ -1571,6 +1581,8 @@ const parseImports = (
       continue;
     }
     if (parsed.value.section_index !== 0) continue;
+    if (parsed.value.type === STT_SPARC_REGISTER && SPARC_MACHINES.has(machine))
+      continue;
     charge(
       imports.length + 1,
       maxImports,

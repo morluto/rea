@@ -1181,3 +1181,50 @@ it("reports the fixed GNU hash allowance before traversing an over-limit table",
     }),
   );
 });
+
+it.each([
+  [2, 32],
+  [18, 32],
+  [43, 64],
+] as const)(
+  "does not count SPARC register declarations as imports on machine %s",
+  (machine, bits) => {
+    // JNA's sunos-sparcv9 libjnidispatch.so declares %g2 and %g3 this way:
+    // undefined STT_SPARC_REGISTER (type 13) entries with empty names.
+    const report = parse(
+      elfDependencyFixture({
+        bits,
+        little: false,
+        machine,
+        imports: [
+          { name: "printf", version: 1 },
+          { name: "", type: 13, version: 0 },
+        ],
+      }),
+    );
+    expect(report.imports.map(({ name }) => name)).toEqual(["printf"]);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      examined_imports: 1,
+    });
+    expect(report.issues).toEqual([]);
+  },
+);
+
+it("keeps processor-specific symbol type 13 as an import outside SPARC", () => {
+  const report = parse(
+    elfDependencyFixture({
+      bits: 64,
+      little: true,
+      imports: [
+        { name: "printf", version: 1 },
+        { name: "", type: 13, version: 0 },
+      ],
+    }),
+  );
+  expect(report.imports.map(({ name, type }) => [name, type])).toEqual([
+    ["printf", "function"],
+    [null, "other"],
+  ]);
+  expect(report.coverage.status).toBe("partial");
+});
