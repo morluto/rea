@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   accessSync,
   chmodSync,
@@ -180,13 +181,33 @@ const isOlderThanGrace = (path) => {
 /** Keep listening servers reachable so GC cannot drop a live install lease. */
 const heldLockServers = new Set();
 
+/** Bounded digest so POSIX socket paths and Windows pipe names stay unique. */
+const lockIdentityKey = (lockPath) =>
+  createHash("sha256").update(lockPath).digest("hex").slice(0, 32);
+
+/**
+ * Short per-uid lease directory under the process temp root. Lock directories
+ * under long TMPDIR paths exceed Linux's ~107-byte pathname limit when the
+ * socket lives beside the lock.
+ */
+const leaseSocketRootPath = () =>
+  join(tmpdir(), uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`);
+
+const ensureLeaseSocketRoot = () => {
+  const root = leaseSocketRootPath();
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  verifyOwnedCachePath(root, "root");
+  return root;
+};
+
 const leaseSocketPath = (lockPath) => {
   if (process.platform === "win32") {
     // Named pipes vanish with the last handle; encode a stable per-lock name.
-    const key = Buffer.from(lockPath).toString("base64url").slice(0, 80);
-    return `\\\\.\\pipe\\rea-plugin-mcp-lock-${key}`;
+    const encoded = Buffer.from(lockPath).toString("base64url").slice(0, 80);
+    return `\\\\.\\pipe\\rea-plugin-mcp-lock-${encoded}`;
   }
-  return join(lockPath, "lease.sock");
+  // Hashed name under a short temp directory stays within Linux sun_path.
+  return join(leaseSocketRootPath(), `${lockIdentityKey(lockPath)}.sock`);
 };
 
 /**
@@ -196,6 +217,7 @@ const leaseSocketPath = (lockPath) => {
 const bindLockLease = (lockPath) => {
   const socketPath = leaseSocketPath(lockPath);
   if (process.platform !== "win32") {
+    ensureLeaseSocketRoot();
     try {
       rmSync(socketPath, { force: true });
     } catch {

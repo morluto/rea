@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   access,
   chmod,
@@ -1100,6 +1101,16 @@ ${holdOpen}
     );
     expect(npmPid).toBeGreaterThan(0);
     expect(lifecyclePid).toBeGreaterThan(0);
+    // Lease sockets live under a short hashed path so long TMPDIR lock
+    // directories still fit Linux's ~107-byte sun_path limit.
+    const leaseSocket = join(
+      temp.temporaryRoot,
+      uid === undefined ? "rea-mcp-l" : `rea-mcp-l-${uid}`,
+      `${createHash("sha256").update(lockPath).digest("hex").slice(0, 32)}.sock`,
+    );
+    expect(join(lockPath, "lease.sock").length).toBeGreaterThan(107);
+    expect(leaseSocket.length).toBeLessThanOrEqual(107);
+    await access(leaseSocket);
     child.kill("SIGTERM");
     const result = await closed;
     expect(result.code).toBe(143);
