@@ -1,3 +1,9 @@
+import {
+  rasterThumbnailDimensions,
+  rasterSampleCoordinate,
+  packedRasterIndex,
+  diagnosticRasterGray,
+} from "../../domain/rasterSampling.js";
 import { RasterCoverageIndex } from "../../domain/rasterCoverage.js";
 import { setImmediate } from "node:timers/promises";
 import type { z } from "zod";
@@ -185,7 +191,7 @@ function colors(
     return {
       status: "colors",
       entries: Array.from({ length: count }, (_, i) => {
-        const v = Math.round((i * 255) / (count - 1));
+        const v = diagnosticRasterGray(i, layout.bitsPerPixel);
         return [v, v, v, 255];
       }),
     };
@@ -322,12 +328,11 @@ export function preflightRasterResource(
     return unavailable("Invalid or unsupported raster layout.");
   if (maxSide !== undefined && !integer(maxSide, 1, 128))
     return unavailable("Thumbnail side must be in 1..128.");
-  const scale =
-    maxSide === undefined
-      ? 1
-      : Math.min(1, maxSide / Math.max(layout.width, layout.height));
-  const width = Math.max(1, Math.floor(layout.width * scale)),
-    height = Math.max(1, Math.floor(layout.height * scale));
+  const { width, height } = rasterThumbnailDimensions(
+    layout.width,
+    layout.height,
+    maxSide,
+  );
   const pixelLimit = options.maxPixels ?? PIXEL_LIMIT,
     outputLimit = options.maxOutputBytes ?? WORKING_LIMIT;
   if (
@@ -382,10 +387,10 @@ async function render(
       await setImmediate();
       options.signal?.throwIfAborted();
     }
-    const sy = Math.floor((y * layout.height) / height),
+    const sy = rasterSampleCoordinate(y, layout.height, height),
       row = layout.rowOrder === "bottom-up" ? layout.height - 1 - sy : sy;
     for (let x = 0; x < width; x++) {
-      const sx = Math.floor((x * layout.width) / width);
+      const sx = rasterSampleCoordinate(x, layout.width, width);
       let color: Color;
       if (layout.layout === "rgb565le") {
         const word = p.reader.u16(
@@ -414,13 +419,9 @@ async function render(
               row * layout.stride +
               Math.floor(bit / 8),
           );
-        const shift =
-          layout.bitOrder === "msb-first"
-            ? 8 - layout.bitsPerPixel - (bit % 8)
-            : bit % 8;
         color =
           mapped!.entries[
-            (packed >>> shift) & ((1 << layout.bitsPerPixel) - 1)
+            packedRasterIndex(packed, sx, layout.bitsPerPixel, layout.bitOrder)
           ]!;
       }
       rgba.set(color, (y * width + x) * 4);

@@ -1,3 +1,9 @@
+import {
+  rasterThumbnailDimensions,
+  rasterSampleCoordinate,
+  packedRasterIndex,
+  diagnosticRasterGray,
+} from "../../domain/rasterSampling.js";
 import { crc32, deflateSync } from "node:zlib";
 
 export interface IndexThumbnailLayout {
@@ -57,27 +63,17 @@ export function renderIndexThumbnail(
     throw new RangeError(
       "Index payload is not fully covered by the supplied bytes",
     );
-  const scale = Math.min(1, side / Math.max(width, height));
-  const outputWidth = Math.max(1, Math.floor(width * scale));
-  const outputHeight = Math.max(1, Math.floor(height * scale));
+  const { width: outputWidth, height: outputHeight } =
+    rasterThumbnailDimensions(width, height, side);
   const rows = Buffer.alloc((outputWidth + 1) * outputHeight);
   for (let y = 0; y < outputHeight; y++)
     for (let x = 0; x < outputWidth; x++) {
-      const sourceY = Math.min(
-        height - 1,
-        Math.floor((y * height) / outputHeight),
-      );
-      const sourceX = Math.min(
-        width - 1,
-        Math.floor((x * width) / outputWidth),
-      );
+      const sourceY = rasterSampleCoordinate(y, height, outputHeight);
+      const sourceX = rasterSampleCoordinate(x, width, outputWidth);
       const packed =
         bytes[offset + sourceY * stride + Math.floor((sourceX * bits) / 8)]!;
-      const index =
-        (packed >>> (8 - bits - ((sourceX * bits) % 8))) & ((1 << bits) - 1);
-      rows[y * (outputWidth + 1) + x + 1] = Math.round(
-        (index * 255) / ((1 << bits) - 1),
-      );
+      const index = packedRasterIndex(packed, sourceX, bits, "msb-first");
+      rows[y * (outputWidth + 1) + x + 1] = diagnosticRasterGray(index, bits);
     }
   const header = Buffer.alloc(13);
   header.writeUInt32BE(outputWidth, 0);

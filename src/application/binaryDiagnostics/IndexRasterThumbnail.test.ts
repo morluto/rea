@@ -80,3 +80,59 @@ it("rejects malformed layouts, short payload and excessive thumbnail size", () =
     ),
   ).toThrow();
 });
+
+it.each([1, 2, 4, 8] as const)(
+  "keeps %s-bit diagnostic sampling aligned with RGBA rendering without changing PNG channel contracts",
+  async (bits) => {
+    const { renderRasterResourceThumbnail } =
+      await import("./RasterResourceRendering.js");
+    const width = 7,
+      height = 3,
+      stride = Math.ceil((width * bits) / 8);
+    const source = Uint8Array.from(
+      { length: stride * height + 2 },
+      (_, i) => (i * 53 + 17) % 256,
+    );
+    const preview = renderIndexThumbnail(
+      source,
+      { width, height, payloadOffset: 2, bitsPerPixel: bits },
+      4,
+    );
+    const gray = decode(preview.pngBase64);
+    const rendered = await renderRasterResourceThumbnail(
+      source,
+      {
+        width,
+        height,
+        stride,
+        layout: `indexed${bits}`,
+        bitsPerPixel: bits,
+        payloadRange: { offset: 2, length: stride * height },
+        bitOrder: "msb-first",
+        rowOrder: "top-down",
+      },
+      { kind: "diagnostic-indices" },
+      { coverage: [{ offset: 0, length: source.length }], maxSide: 4 },
+    );
+    expect(rendered.status).toBe("rendered");
+    if (rendered.status !== "rendered") throw new Error(rendered.reason);
+    expect([rendered.width, rendered.height]).toEqual([
+      gray.width,
+      gray.height,
+    ]);
+    // The existing endpoint remains grayscale PNG (color type 0); the richer
+    // renderer remains RGBA PNG (color type 6), with identical selector samples.
+    expect(rendered.png[25]).toBe(6);
+    for (let y = 0; y < gray.height; y++)
+      for (let x = 0; x < gray.width; x++) {
+        const value = gray.pixels[y * (gray.width + 1) + x + 1]!;
+        const at = (y * gray.width + x) * 4;
+        expect([...rendered.rgba.subarray(at, at + 4)]).toEqual([
+          value,
+          value,
+          value,
+          255,
+        ]);
+      }
+  },
+);
