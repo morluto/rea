@@ -3,8 +3,8 @@
 ## Boundary and contract
 
 `src/rust/RustWasmImage.ts` owns WebAssembly section framing: the preamble,
-layer and version, LEB128 section sizes, custom-section names, the `.dep-v0`
-payload ranges and the data-section range. It reports failures through the
+layer and version, section sizes read with the shared `readLeb128`,
+custom-section names, the `.dep-v0` payload ranges and the data-section range. It reports failures through the
 `ParseFailure` algebra with format `wasm`, and the section bound as a
 `max_wasm_sections` decode limit.
 
@@ -15,8 +15,10 @@ from `RustWasmImage`. The dependency decoder, PE alignment allowance and rustc
 path retention are shared and unchanged.
 
 `src/domain/rust/rustBinary.ts` owns the report contract: `format` gains
-`wasm`, `bits` is nullable, and refinements bind `bits`, `architecture` and
-`byte_order` to the container. `metadataReportSubjectFormat` in
+`wasm`, `bits` is nullable, and refinements bind `bits`, `architecture`,
+`byte_order` and the dependency section name to the container.
+`rustDependencySectionName` is the one owner of that name for the reader and
+the schema. `metadataReportSubjectFormat` in
 `src/domain/apple/machoTargetSelection.ts` maps a `wasm` report to the `file`
 subject, and `requireMetadataReportSubject` accepts it, so the service, the
 retained views and the CycloneDX view agree on one mapping.

@@ -27,9 +27,11 @@ implementation already had; no earlier plan is reconstructed.
 2. A version 1 core module is accepted. A component (layer 1) and any other
    module version are unsupported targets, because a component embeds several
    core modules and no input selects one.
-3. A custom section named `.dep-v0` supplies the dependency list.
-   `file_offset` and `section_bytes` locate the payload after the section
-   name, in the original file. A second `.dep-v0` section is malformed.
+3. A custom section named `.dep-v0` supplies the dependency list, and the
+   report's `section_name` is `.dep-v0`; the report schema binds each
+   container to its section name. `file_offset` and `section_bytes` locate the
+   payload after the section name, in the original file. A second `.dep-v0`
+   section is malformed.
 4. A missing `.dep-v0` section is null metadata with a limitation. It is not
    evidence that the module has no dependencies.
 5. `format` and `architecture` are `wasm` and `byte_order` is `little`.
@@ -39,9 +41,11 @@ implementation already had; no earlier plan is reconstructed.
 6. The rustc commit is inferred from `/rustc/<40-hex>/` paths in the module's
    data section. Limitations name that source. A second data section is
    malformed.
-7. A header or section that ends past the file is truncated. A section size or
-   name length that is not a 32-bit LEB128 integer, a custom-section name that
-   extends past its section, and a name that is not UTF-8 are malformed.
+7. A header, section or section size that ends past the file is truncated. A
+   size or name length that does not fit a 32-bit LEB128 integer, a
+   custom-section name or name length that extends past its section, and a
+   name that is not UTF-8 are malformed. Integers are decoded by the shared
+   LEB128 reader.
 8. The section walk stops after 65,536 sections with a `cpu` resource
    constraint. The format sets no section count and the walk is synchronous.
    The allowance is fixed; `producer_limits` does not raise it. Retained state
@@ -65,7 +69,7 @@ implementation already had; no earlier plan is reconstructed.
   schema and check the section-bound refusal through the public error
   contract.
 - A view test refuses imported reports whose container facts contradict
-  requirement 5.
+  requirements 3 and 5.
 
 ## Non-goals
 

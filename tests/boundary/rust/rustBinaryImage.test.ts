@@ -205,6 +205,25 @@ it.each([
     { kind: "truncated", format: "wasm", offset: 8, field: "section" },
   ],
   [
+    "a section size cut off by the end of the file",
+    Buffer.concat([WASM_MODULE_HEADER, Buffer.from([0x00, 0x80])]),
+    { kind: "truncated", format: "wasm", offset: 9, field: "section size" },
+  ],
+  [
+    "a custom name length cut off by its section",
+    Buffer.concat([
+      WASM_MODULE_HEADER,
+      wasmSection(0, Buffer.from([0x80])),
+      wasmSection(1, Buffer.from([0x00])),
+    ]),
+    {
+      kind: "malformed",
+      format: "wasm",
+      offset: 10,
+      field: "custom section name length",
+    },
+  ],
+  [
     "a section size over 32 bits",
     Buffer.concat([
       WASM_MODULE_HEADER,

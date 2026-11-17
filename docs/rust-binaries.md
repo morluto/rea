@@ -152,10 +152,11 @@ The report's `format` and `architecture` are `wasm` and its `byte_order` is
 memory address types are not inspected. The Evidence subject format is
 `file`, as for `inspect_wasm_artifact`.
 
-A header or section that ends past the file is truncated. A custom-section
-name that extends past its section, a size that is not a 32-bit LEB128
-integer, a custom-section name that is not UTF-8, a second `.dep-v0` section,
-or a second data section is malformed. Both are invalid input. WebAssembly
+A header, section or section size that ends past the file is truncated. A
+custom-section name or name length that extends past its section, a size that
+does not fit a 32-bit LEB128 integer, a custom-section name that is not UTF-8,
+a second `.dep-v0` section, or a second data section is malformed. Both are
+invalid input. WebAssembly
 components, such as `wasm32-wasip2` output, embed several core modules. They
 are unsupported: no input selects one embedded module the way `architecture`
 selects a universal Mach-O slice.

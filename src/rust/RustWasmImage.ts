@@ -1,4 +1,5 @@
 import { isUtf8 } from "node:buffer";
+import { readLeb128, ULEB32 } from "../domain/leb128.js";
 import {
   decodeLimit,
   malformedInput,
@@ -128,24 +129,30 @@ const customSection = (
   return { name, payload };
 };
 
-/** Decode one unsigned LEB128 u32, which the binary format bounds to five bytes. */
+/**
+ * Decode one unsigned LEB128 u32 that must end before `end`. An integer the
+ * file cuts off is truncated; one its enclosing section cuts off is malformed.
+ */
 const readU32 = (
   bytes: Buffer,
   offset: number,
   end: number,
   label: string,
 ): { readonly value: number; readonly end: number } => {
-  let value = 0;
-  for (let index = 0; index < 5 && offset + index < end; index += 1) {
-    const byte = bytes[offset + index]!;
-    // The fifth byte may only carry the four remaining bits and no continuation.
-    if (index === 4 && byte > 0x0f) break;
-    value += (byte & 0x7f) * 2 ** (7 * index);
-    if ((byte & 0x80) === 0) return { value, end: offset + index + 1 };
-  }
+  const read = readLeb128(bytes, offset, end, ULEB32);
+  if ("value" in read) return { value: Number(read.value), end: read.next };
+  const site = { offset, field: label };
+  if (read.failure === "truncated" && end === bytes.length)
+    throw truncatedInput(
+      WASM_FORMAT,
+      `WebAssembly ${label} extends past the end of the file`,
+      site,
+    );
   throw malformedInput(
     WASM_FORMAT,
-    `WebAssembly ${label} is not a complete 32-bit LEB128 integer`,
-    { offset, field: label },
+    read.failure === "truncated"
+      ? `WebAssembly ${label} extends past its section`
+      : `WebAssembly ${label} does not fit a 32-bit LEB128 integer`,
+    site,
   );
 };

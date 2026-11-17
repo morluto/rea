@@ -12,6 +12,7 @@ import type {
 import {
   DEFAULT_RUSTC_HASH_LIMIT,
   rustcPartialCoverage,
+  rustDependencySectionName,
 } from "../domain/rust/rustBinary.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
@@ -89,8 +90,7 @@ export const readRustBinaryImage = (
 
 const nativeLayout = (bytes: Buffer): RustImageLayout => {
   const container = readContainer(bytes);
-  const section_name =
-    container.format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
+  const section_name = rustDependencySectionName(container.format);
   const dependency = dependencySection(section_name, container.sections);
   return {
     format: container.format,
@@ -135,7 +135,7 @@ const wasmLayout = (bytes: Buffer): RustImageLayout => {
     architecture: "wasm",
     bits: null,
     byte_order: "little",
-    section_name: ".dep-v0",
+    section_name: rustDependencySectionName("wasm"),
     dependency: dependency_sections[0] ?? null,
     compiler_strings: data_section === null ? [] : [data_section],
   };

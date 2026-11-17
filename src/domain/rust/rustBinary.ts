@@ -43,9 +43,17 @@ const dependencyEdgeSchema = z.strictObject({
   to_index: index,
 });
 
+const DEPENDENCY_SECTION_NAMES = [".dep-v0", "__DATA,.dep-v0"] as const;
+
+/** The dependency section's name in a container: Mach-O qualifies it with its segment. */
+export const rustDependencySectionName = (
+  format: "elf" | "pe" | "macho" | "wasm",
+): (typeof DEPENDENCY_SECTION_NAMES)[number] =>
+  format === "macho" ? "__DATA,.dep-v0" : ".dep-v0";
+
 /** zlib JSON from one `.dep-v0` section, in the section's package order. */
 export const rustAuditableMetadataSchema = z.strictObject({
-  section_name: z.enum([".dep-v0", "__DATA,.dep-v0"]),
+  section_name: z.enum(DEPENDENCY_SECTION_NAMES),
   file_offset: index,
   /** Stored section range, including accepted PE file-alignment bytes. */
   section_bytes: z.int().positive(),
@@ -181,6 +189,12 @@ export const rustBinarySchema = z
       issue(context, ["byte_order"], "A WebAssembly module is little-endian.");
     const metadata = report.auditable_metadata;
     if (metadata !== null) {
+      if (metadata.section_name !== rustDependencySectionName(report.format))
+        issue(
+          context,
+          ["auditable_metadata", "section_name"],
+          "Dependency section name does not belong to the report's container.",
+        );
       checkSection(report.artifact.bytes, metadata, context);
       checkPackages(metadata, context);
     }

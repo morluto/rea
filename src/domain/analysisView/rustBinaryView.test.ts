@@ -143,7 +143,18 @@ it("checks exact artifact identity and subject architecture for every Rust view"
   }
 });
 
-it("refuses imported reports whose container facts contradict WebAssembly", () => {
+const withSectionName = (
+  value: RustBinary,
+  section_name: NonNullable<RustBinary["auditable_metadata"]>["section_name"],
+): RustBinary => ({
+  ...value,
+  auditable_metadata:
+    value.auditable_metadata === null
+      ? null
+      : { ...value.auditable_metadata, section_name },
+});
+
+it("refuses imported reports whose container facts contradict their format", () => {
   const wasm: RustBinary = {
     ...structuredClone(report),
     format: "wasm",
@@ -157,6 +168,8 @@ it("refuses imported reports whose container facts contradict WebAssembly", () =
     { ...wasm, byte_order: "big" as const },
     { ...wasm, bits: 32 as const },
     { ...structuredClone(report), architecture: "wasm" },
+    withSectionName(wasm, "__DATA,.dep-v0"),
+    withSectionName(structuredClone(report), "__DATA,.dep-v0"),
   ])
     expect(projectAnalysisView(parent(value), { kind: "summary" }).ok).toBe(
       false,
