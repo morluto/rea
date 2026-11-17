@@ -1363,7 +1363,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside an unreadable RT_
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1388,7 +1388,7 @@ it("fails closed when a readable D3N0L4ND resource sits beside a non-directory R
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 
@@ -1401,7 +1401,7 @@ it("fails closed when a D3N0L4ND payload is not file-backed", async () => {
     locateDenoStandalone(bytesHandle(fixture.bytes), fixture.bytes.length),
   ).resolves.toMatchObject({
     status: "present",
-    failure: { reason: "format" },
+    failure: { reason: "malformed" },
   });
 });
 

@@ -88,6 +88,7 @@ export {
   imageFileSizeRemediation,
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   readerIntegrityFailure,
