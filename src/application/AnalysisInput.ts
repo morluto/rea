@@ -6,16 +6,18 @@ import { err, ok, type Result } from "../domain/result.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 /** Keep top-level caller selections separate from defaults resolved for execution. */
-export const callerAnalysisParameters = <Input extends object>(
-  rawInput: unknown,
-  resolved: Input,
-): Partial<Input> => {
-  if (!isRecord(rawInput)) return {};
-  const parameters = { ...resolved };
-  for (const name of Object.keys(parameters))
-    if (!Object.hasOwn(rawInput, name) || rawInput[name] === undefined)
-      Reflect.deleteProperty(parameters, name);
-  return parameters;
+export const callerAnalysisParameters = (rawInput: unknown) => {
+  const selected = new Set(
+    isRecord(rawInput)
+      ? Object.keys(rawInput).filter((name) => rawInput[name] !== undefined)
+      : [],
+  );
+  return <Input extends object>(resolved: Input): Partial<Input> => {
+    const parameters = { ...resolved };
+    for (const name of Object.keys(parameters))
+      if (!selected.has(name)) Reflect.deleteProperty(parameters, name);
+    return parameters;
+  };
 };
 
 /** Validate an application request, honoring cancellation before admission when supplied. */

@@ -53,7 +53,7 @@ export class ElfDependenciesService {
           },
         ]),
       );
-    const parameters = callerAnalysisParameters(rawInput, input.value);
+    const parameters = callerAnalysisParameters(rawInput)(input.value);
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = elfDependenciesSchema.safeParse(result.value);
