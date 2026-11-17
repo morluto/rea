@@ -77,7 +77,7 @@ export const collectJavaScriptSemanticDataEffects = (
   // A fetch or WebSocket the host refuses to construct sends nothing.
   const requests = collectRequests(program, context).filter(
     ({ node, operation }) =>
-      !hostRefusesJavaScriptRequest(node, operation.method),
+      !hostRefusesJavaScriptRequest(node, operation.method, state),
   );
   return {
     configurationOperations: [

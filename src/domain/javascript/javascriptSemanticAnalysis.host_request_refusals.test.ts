@@ -162,3 +162,41 @@ it("keeps header enumeration with getters unknown across hosts", () => {
     ),
   ).toEqual(["fetch"]);
 });
+
+it.each([
+  [
+    "a prior inherited iterator replacement",
+    'Object.prototype[Symbol.iterator] = function* () { yield ["x-ok", "1"]; }; fetch(url, { headers: { "bad name": "1" } })',
+  ],
+  [
+    "an inherited iterator replacement during argument evaluation",
+    'fetch(url, { headers: { "bad name": "1" }, ignored: (Object.prototype[Symbol.iterator] = function* () { yield ["x-ok", "1"]; }, 0) })',
+  ],
+  [
+    "an inherited iterator replacement through an alias",
+    'const prototype = Object.prototype; prototype[Symbol.iterator] = function* () { yield ["x-ok", "1"]; }; fetch(url, { headers: { "bad name": "1" } })',
+  ],
+  [
+    "opaque global code before construction",
+    'eval(source); fetch(url, { headers: { "bad name": "1" } })',
+  ],
+])("keeps a fetch with %s", (_name, source) => {
+  expect(requestsFor(source)).toEqual(["fetch"]);
+});
+
+it("keeps a callable fetch when a later iterator write may precede another call", () => {
+  expect(
+    requestsFor(
+      'fetch(url, { headers: { "bad name": "1" } }); Object.prototype[Symbol.iterator] = function* () { yield ["x-ok", "1"]; }',
+    ),
+  ).toEqual(["fetch"]);
+});
+
+it("still excludes invalid headers before a later top-level iterator write", () => {
+  const result = analyzeJavaScriptSemantics(
+    'fetch("https://unit.example/", { headers: { "bad name": "1" } }); Object.prototype[Symbol.iterator] = function* () { yield ["x-ok", "1"]; }',
+  );
+  expect(
+    result.requestOperations.filter(({ kind }) => kind === "request"),
+  ).toEqual([]);
+});

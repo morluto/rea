@@ -264,6 +264,10 @@ these built-in effects only when the file has no visible possible write to that
 global, including a computed write through a global object. The check does not
 evaluate order or reachability, so a later or guarded polyfill write also
 removes the resolved effect.
+For literal `fetch` headers, an invalid record key only rules out the request
+when no source-visible change or escape may replace the inherited iterator before
+construction. A retained request remains a static candidate, not proof that it
+was sent.
 
 Local callback candidates do not establish a complete target set when a
 conditional write may leave a parameter, catch binding, or uninitialized

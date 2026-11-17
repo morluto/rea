@@ -8,6 +8,9 @@ import {
   staticObjectPropertyReader,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
+import { intrinsicPrototypeMemberMayHaveChanged } from "./javascriptSemanticIntrinsicInstances.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 
 /** RFC 9110 `token`, the grammar of methods, header names and subprotocols. */
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
@@ -105,7 +108,10 @@ const provenBody = (node: t.Node): boolean => {
  *
  * Only a string URL proves the default GET; a Request object may carry its own method.
  */
-const fetchRefused = (node: t.Node): boolean => {
+const fetchRefused = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
   const [input, init] = node.arguments;
@@ -153,7 +159,18 @@ const fetchRefused = (node: t.Node): boolean => {
   const record = unwrapJavaScriptExpression(headers.value).node;
   if (!t.isObjectExpression(record)) return false;
   const names = recordHeaderNames(record);
-  return names !== undefined && names.some((name) => !TOKEN.test(name));
+  if (names === undefined || !names.some((name) => !TOKEN.test(name)))
+    return false;
+  // An inherited iterator changes HeadersInit from record to sequence. A
+  // source-visible write or escape can happen while arguments are evaluated.
+  return (
+    !intrinsicPrototypeMemberMayHaveChanged(
+      state,
+      "Object",
+      "Symbol.iterator",
+      node,
+    ) && !opaqueCodeMayChangeGlobalRead(node.callee, state, "Object", node)
+  );
 };
 
 /**
@@ -203,9 +220,10 @@ const webSocketRefused = (node: t.Node): boolean => {
 export const hostRefusesJavaScriptRequest = (
   node: t.Node,
   method: string,
+  state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   method === "fetch"
-    ? fetchRefused(node)
+    ? fetchRefused(node, state)
     : method === "WebSocket"
       ? webSocketRefused(node)
       : false;
