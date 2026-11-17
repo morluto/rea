@@ -69,7 +69,7 @@ import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { bindRegularFileCleanup } from "../process/RegularFileRead.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
-import { systemDesktopBuildSetupHost } from "../desktop/DesktopBuildSetupHost.js";
+import type { DesktopBuildSetupHostFactory } from "../ports/DesktopBuildHost.js";
 import { clientEnvironment } from "./SetupPlan.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
@@ -129,6 +129,7 @@ export const hostRemediation = (host: SetupHost): string | undefined =>
 export const systemSetupHost = (
   selectedDoctorHost: DoctorHost | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  createDesktopBuildHost: DesktopBuildSetupHostFactory | undefined = undefined,
 ): SetupHost => {
   const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
   const platform = doctorHost.platform;
@@ -331,21 +332,18 @@ export const systemSetupHost = (
         resources,
       ),
     doctor: (scope) => runDoctor(undefined, doctorHost, scope),
-    desktopBuild: desktopBuildHost(doctorHost, environment, resources),
+    ...(createDesktopBuildHost === undefined
+      ? {}
+      : {
+          desktopBuild: createDesktopBuildHost(
+            environment,
+            doctorHost.platform,
+            doctorHost.clientRegistrations,
+            resources,
+          ),
+        }),
   };
 };
-
-const desktopBuildHost = (
-  doctorHost: DoctorHost,
-  environment: Readonly<NodeJS.ProcessEnv>,
-  resources: ArtifactResourceScope,
-) =>
-  systemDesktopBuildSetupHost(
-    environment,
-    doctorHost.platform,
-    doctorHost.clientRegistrations,
-    resources,
-  );
 
 const setupInstallerDiagnostic = (
   value: string | undefined,
