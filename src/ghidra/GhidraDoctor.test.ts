@@ -108,22 +108,57 @@ const doctorHost = (
       Promise.resolve([projectGhidraDoctorInspection(ghidra)]),
   });
 
-describe("Ghidra doctor integration", async () => {
+describe("Ghidra doctor selection admission", () => {
   it.each([
-    { path: "relative.gpr", available: false },
-    { path: "/work/project.grez", available: false },
-    { path: "/work/project.gzf", available: false },
-    { path: "/work/project.gpr", available: true },
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "relative.gpr" },
+      available: false,
+    },
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "/work/project.grez" },
+      available: false,
+    },
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "/work/project.gzf" },
+      available: false,
+    },
+    {
+      environment: { REA_GHIDRA_PROJECT_PATH: "/work/project.gpr" },
+      available: true,
+    },
+    {
+      environment: {
+        REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+        REA_GHIDRA_SEED_FILE: "/work/seeds.json",
+      },
+      available: false,
+    },
+    {
+      environment: {
+        REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+        REA_GHIDRA_PROGRAM_NAME: "module",
+      },
+      available: true,
+    },
+    { environment: { REA_GHIDRA_PROGRAM_NAME: "module" }, available: false },
+    {
+      environment: {
+        REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+        REA_GHIDRA_CHECKPOINT_DIR: "/work/checkpoints",
+      },
+      available: false,
+    },
+    { environment: { REA_GHIDRA_COMPILER_SPEC_ID: "gcc" }, available: false },
   ])(
-    "preserves installation facts but validates selected project $path",
-    async ({ path, available }) => {
+    "preserves installation facts but validates the full selection $environment",
+    async ({ environment, available }) => {
       const installed = await inspection();
       const inspect = vi
         .spyOn(ghidraInstallation, "inspectGhidraInstallation")
         .mockResolvedValue(installed);
       onTestFinished(() => inspect.mockRestore());
       const result = await inspectSystemGhidraProvider(
-        { REA_GHIDRA_PROJECT_PATH: path },
+        environment,
         inspectionResources.owner,
         undefined,
         "linux",
@@ -138,6 +173,9 @@ describe("Ghidra doctor integration", async () => {
       ).toBe(!available);
     },
   );
+});
+
+describe("Ghidra doctor integration", async () => {
   it("accepts a valid BYO Ghidra engine when Hopper is absent", async () => {
     const result = await runDoctor(undefined, doctorHost(await inspection()));
 

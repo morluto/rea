@@ -37,6 +37,33 @@ import { parseLoaderArgs, parseStringArray } from "./parsers.js";
 import { processStartConfigurationSchema } from "./processStart.js";
 import { parseJebMcpEndpoint } from "./jebMcpEndpoint.js";
 
+/** One owner for fields participating in Ghidra's cross-field selection rules. */
+export const ghidraSelectionEnvironmentShape = {
+  REA_GHIDRA_NATIVEAOT_JAR: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_GHIDRA_NATIVEAOT_JAR must be absolute")
+    .optional(),
+  REA_GHIDRA_PROJECT_PATH: ghidraProjectPathSchema.optional(),
+  REA_GHIDRA_CHECKPOINT_DIR: z
+    .string()
+    .min(1)
+    .refine(
+      (value) => value.startsWith("/") && !value.includes("\0"),
+      "must be an absolute POSIX directory path",
+    )
+    .optional(),
+  REA_GHIDRA_PROGRAM_NAME: ghidraProgramNameSchema.optional(),
+  REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
+  REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
+  REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),
+  REA_GHIDRA_SEED_FILE: z
+    .string()
+    .min(1)
+    .refine(isAbsolute, "REA_GHIDRA_SEED_FILE must be absolute")
+    .optional(),
+};
+
 const environmentSchema = z.object({
   ...debuggerSessionLimitEnvironmentShape,
   REA_ANALYSIS_PROVIDER: analysisProviderSelectorSchema.default("auto"),
@@ -79,32 +106,10 @@ const environmentSchema = z.object({
     .min(1)
     .refine(isAbsolute, "JAVA_HOME must be absolute")
     .optional(),
-  REA_GHIDRA_NATIVEAOT_JAR: z
-    .string()
-    .min(1)
-    .refine(isAbsolute, "REA_GHIDRA_NATIVEAOT_JAR must be absolute")
-    .optional(),
+  ...ghidraSelectionEnvironmentShape,
   REA_SWIFTC_COMPILE_TIMEOUT_MS: providerStartupTimeoutSchema.default(
     DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
   ),
-  REA_GHIDRA_PROJECT_PATH: ghidraProjectPathSchema.optional(),
-  REA_GHIDRA_CHECKPOINT_DIR: z
-    .string()
-    .min(1)
-    .refine(
-      (value) => value.startsWith("/") && !value.includes("\0"),
-      "must be an absolute POSIX directory path",
-    )
-    .optional(),
-  REA_GHIDRA_PROGRAM_NAME: ghidraProgramNameSchema.optional(),
-  REA_GHIDRA_LANGUAGE_ID: ghidraLanguageIdSchema.optional(),
-  REA_GHIDRA_COMPILER_SPEC_ID: ghidraCompilerSpecIdSchema.optional(),
-  REA_GHIDRA_DISABLED_ANALYZERS: ghidraDisabledAnalyzersSchema.optional(),
-  REA_GHIDRA_SEED_FILE: z
-    .string()
-    .min(1)
-    .refine(isAbsolute, "REA_GHIDRA_SEED_FILE must be absolute")
-    .optional(),
   REA_ILSPY_CMD_PATH: z
     .string()
     .min(1)

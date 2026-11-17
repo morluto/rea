@@ -121,6 +121,8 @@ it.each([true, false])(
       line.includes("inspect_jeb_client"),
     );
     expect(diagnostic).toContain("codex");
+    expect(diagnostic).toContain("tool-family");
+    expect(diagnostic).toContain("restart");
     expect(diagnostic).not.toContain("claude_code");
     expect(lines.some((line) => line.includes("inspect-jeb-client"))).toBe(
       false,

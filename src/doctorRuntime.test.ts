@@ -753,6 +753,50 @@ test("keeps reading this terminal when no client is selected", async () => {
   }
 });
 
+it.each([
+  "REA_GHIDRA_SEED_FILE",
+  "REA_GHIDRA_LANGUAGE_ID",
+  "REA_GHIDRA_PROGRAM_NAME",
+])(
+  "keeps unresolved Ghidra selection field %s unknown before probing",
+  async (setting) => {
+    const home = await createTestTempDirectory("rea-qwen-ghidra-selection-");
+    await mkdir(join(home, ".qwen"), { recursive: true });
+    await writeFile(
+      join(home, ".qwen/settings.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "node",
+            args: ["rea"],
+            env: {
+              GHIDRA_INSTALL_DIR: "/opt/ghidra",
+              REA_GHIDRA_PROJECT_PATH: "/work/project.gpr",
+              [setting]: "${SELECTED_GHIDRA_VALUE}",
+            },
+          },
+        },
+      }),
+    );
+    const host = createSystemDoctorHost({ HOME: home });
+    try {
+      const inspections = await host.providerInspections?.(["qwen_code"]);
+      expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+        configured: true,
+        available: null,
+        checks: [
+          expect.objectContaining({
+            code: "registration_environment_unknown",
+            classification: "unknown",
+          }),
+        ],
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
 test("keeps a selected client without a registration on the setup's settings", async () => {
   const home = await createTestTempDirectory(
     "rea-opencode-doctor-unregistered-",

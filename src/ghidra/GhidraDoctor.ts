@@ -1,5 +1,8 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { ghidraProjectPathSchema } from "../config/ghidraExistingProject.js";
+import {
+  ghidraSelectionEnvironmentShape,
+  parseEnvironment,
+} from "../config/environment.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import type {
@@ -27,7 +30,7 @@ export const GHIDRA_DOCTOR_SETTINGS = [
   "GHIDRA_INSTALL_DIR",
   "JAVA_HOME",
   "PATH",
-  "REA_GHIDRA_PROJECT_PATH",
+  ...Object.keys(ghidraSelectionEnvironmentShape),
 ] as const;
 
 /** Project installation and runtime-authority facts into the doctor contract. */
@@ -167,12 +170,17 @@ export const inspectSystemGhidraProvider = async (
         existingProject: environment.REA_GHIDRA_PROJECT_PATH !== undefined,
       },
     );
-    const project = ghidraProjectPathSchema
-      .optional()
-      .safeParse(environment.REA_GHIDRA_PROJECT_PATH);
-    if (project.success) return inspection;
-    const constraint = project.error.issues
-      .map((issue) => issue.message)
+    const project = parseEnvironment(
+      Object.fromEntries(
+        Object.keys(ghidraSelectionEnvironmentShape).map((key) => [
+          key,
+          environment[key],
+        ]),
+      ),
+    );
+    if (project.ok) return inspection;
+    const constraint = project.error.settings
+      .map(({ setting, constraint }) => `${setting}: ${constraint}`)
       .join("; ");
     return {
       ...inspection,
@@ -185,7 +193,7 @@ export const inspectSystemGhidraProvider = async (
           code: "invalid_configuration",
           classification: "config_drift",
           detail: constraint,
-          remediation: `Fix REA_GHIDRA_PROJECT_PATH or unset it for ephemeral analysis. ${constraint}`,
+          remediation: `Fix the selected Ghidra settings before analysis. ${constraint}`,
         },
       ],
     };

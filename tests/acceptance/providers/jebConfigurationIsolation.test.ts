@@ -408,8 +408,8 @@ test.for([
   },
 );
 
-test.for([undefined, "jeb"])(
-  "starts production stdio MCP and retains peer requests around a JEB configuration refusal (families: %s)",
+test.for([undefined, "jeb", "artifact"])(
+  "preserves the selected JEB diagnostic tool-family scope in production stdio MCP (families: %s)",
   async (families, { workspace }) => {
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -433,6 +433,13 @@ test.for([undefined, "jeb"])(
       await client.connect(transport);
       await client.ping();
       const tools = (await client.listTools()).tools;
+      if (families === "artifact") {
+        expect(tools.some(({ name }) => name === "inspect_jeb_client")).toBe(
+          false,
+        );
+        await client.ping();
+        return;
+      }
       if (families === "jeb")
         expect(tools.some(({ name }) => name === "binary_session")).toBe(false);
       const definition = tools.find(
