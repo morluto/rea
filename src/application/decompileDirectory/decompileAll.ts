@@ -645,7 +645,7 @@ const publishOne = async (input: {
         ? {
             code: "no_pseudocode",
             message:
-              "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh (CLI: --resume --retry-failed independent_fresh). The retry may use different analysis context.",
+              "The provider reported a function decompilation failure. If it supports independent decompilation, resume this export with retry_failed: independent_fresh. The retry may use different analysis context.",
           }
         : pseudocodeFailure(pseudocode);
     recordFailure(

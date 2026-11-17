@@ -868,7 +868,9 @@ describe("ELF repeated observations", () => {
       sectionHeader(2, at + symbolsAt, rows * 24, 9, 24),
     ]);
     const report = await read(bytes);
-    expect(report.status).toBe("incomplete");
+    expect(report.status).toBe("parsed");
+    expect(report.coverage.status).toBe("complete");
+    expect(row(report)).toEqual(row(await read(elfRelocatableCtors())));
     expect(
       report.limitations.filter((line) =>
         line.includes("exceeded the 1024-byte name budget"),
@@ -1493,6 +1495,126 @@ describe("ELF COPY relocations read as section records", () => {
       ["init_array", "symbol_addend"],
       ["ctors", "unresolved"],
     ]);
+  });
+});
+
+describe("Indexed initializer name coverage", () => {
+  it("qualifies a withheld ELF relocation import name at its entry", async () => {
+    const file = elfRelocatableCtors();
+    const name = "w".repeat(MAX_NATIVE_INITIALIZER_NAME_BYTES + 76);
+    const strings = Buffer.from("\0" + name + "\0init_b\0");
+    const bytes = Buffer.concat([file, strings]);
+    // Redirect .strtab and make the first .ctors relocation symbol undefined.
+    const strtab = 0x500 + 5 * 64;
+    bytes.writeBigUInt64LE(BigInt(file.length), strtab + 24);
+    bytes.writeBigUInt64LE(BigInt(strings.length), strtab + 32);
+    bytes.writeUInt16LE(0, 0x338 + 6);
+    bytes.writeUInt32LE(name.length + 2, 0x368);
+    const report = await read(bytes);
+    expect(report.coverage).toMatchObject({
+      status: "partial",
+      total_entries: null,
+    });
+    expect(report.entries).toEqual([
+      expect.objectContaining({
+        kind: "init_array",
+        value_va: "0x8",
+        symbol: expect.objectContaining({ name: "init_b" }),
+      }),
+      expect.objectContaining({
+        kind: "ctors",
+        resolution: "unresolved_import",
+        symbol: null,
+      }),
+    ]);
+  });
+
+  it.each([
+    { address: 0x100001000n, status: "partial", total: null },
+    { address: 0x100001200n, status: "complete", total: 3 },
+  ])(
+    "qualifies a withheld Mach-O symbol at $address as $status",
+    async ({ address, status, total }) => {
+      const file = machoArm64Initializers();
+      const name = "w".repeat(MAX_NATIVE_INITIALIZER_NAME_BYTES + 76);
+      const strings = Buffer.from("\0" + name + "\0_term\0");
+      const bytes = Buffer.concat([file, strings]);
+      // Redirect LC_SYMTAB's string range and change where the first nlist points.
+      bytes.writeUInt32LE(file.length, 528);
+      bytes.writeUInt32LE(strings.length, 532);
+      bytes.writeBigUInt64LE(address, 0x3008);
+      bytes.writeUInt32LE(name.length + 2, 0x3010);
+      const report = await read(bytes);
+      expect(report.coverage).toMatchObject({
+        status,
+        total_entries: total,
+        returned_entries: 3,
+      });
+      expect(
+        report.entries.map(({ value_va, symbol }) => [
+          value_va,
+          symbol?.name ?? null,
+        ]),
+      ).toEqual([
+        ["0x100001000", null],
+        ["0x100001000", null],
+        ["0x100001100", "_term"],
+      ]);
+      expect(report.limitations).toContain(
+        "1 symbol name(s) exceeded the 1024-byte name budget and were not used.",
+      );
+    },
+  );
+
+  it.each(["ELF", "Mach-O"])(
+    "keeps a long %s name with an unverified terminator unknown",
+    async (format) => {
+      const elf = format === "ELF";
+      const original = elf ? elfRelocatableCtors() : machoArm64Initializers();
+      const prefix = Buffer.from(elf ? "\0init_b\0" : "\0_term\0");
+      const strings = Buffer.concat([
+        prefix,
+        Buffer.alloc(MAX_NATIVE_INITIALIZER_NAME_BYTES + 76, 0x77),
+      ]);
+      const bytes = Buffer.concat([original, strings]);
+      if (elf) {
+        const strtab = 0x500 + 5 * 64;
+        bytes.writeBigUInt64LE(BigInt(original.length), strtab + 24);
+        bytes.writeBigUInt64LE(BigInt(strings.length), strtab + 32);
+        bytes.writeUInt32LE(prefix.length, 0x338);
+        bytes.writeUInt16LE(0, 0x338 + 6);
+        bytes.writeUInt32LE(1, 0x368);
+      } else {
+        bytes.writeUInt32LE(original.length, 528);
+        bytes.writeUInt32LE(strings.length, 532);
+        bytes.writeUInt32LE(prefix.length, 0x3000);
+        bytes.writeBigUInt64LE(0x100001200n, 0x3008);
+        bytes.writeUInt32LE(1, 0x3010);
+      }
+      const report = await read(bytes);
+      expect(report.coverage).toMatchObject({
+        status: "unknown",
+        total_entries: null,
+      });
+      expect(report.entries.map(({ symbol }) => symbol?.name ?? null)).toEqual(
+        elf ? ["init_b", null] : [null, null, "_term"],
+      );
+      expect(report.limitations).toContain(
+        "1 symbol name(s) had no verified string-table terminator.",
+      );
+    },
+  );
+
+  it("keeps an unterminated short name at the end of the table unknown", async () => {
+    const bytes = machoArm64Initializers();
+    // End the table at the last byte of _init, before its terminator.
+    bytes.writeUInt32LE(6, 532);
+    bytes.writeUInt32LE(0, 0x3010);
+    const report = await read(bytes);
+    expect(report.coverage.status).toBe("unknown");
+    expect(report.limitations).toContain(
+      "1 symbol name(s) had no verified string-table terminator.",
+    );
   });
 });
 

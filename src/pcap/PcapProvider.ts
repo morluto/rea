@@ -32,7 +32,10 @@ import {
   type AnalysisCleanupReleaseClaim,
 } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
@@ -457,11 +460,7 @@ export class PcapProvider {
           cause,
           this.#failureDialect(operation),
         );
-        throw analysisErrorWithCleanupFailure(
-          primary,
-          pending,
-          operation,
-        ).bindCleanupDependencies([primary, pending]);
+        throw analysisErrorWithCleanupDependencies(primary, pending, operation);
       }
       throw cause;
     }

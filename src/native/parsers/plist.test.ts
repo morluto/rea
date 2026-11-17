@@ -93,7 +93,7 @@ it.each([
           code: "resource_constraint",
           retryable: false,
           details: {
-            reported_limits: { maximum_nesting_depth: maximum },
+            reported_limits: { boundary: "plist-nesting-depth", maximum },
             refusal: {
               kind: "fixed_ceiling",
               allowance: "The native plist nesting allowance",

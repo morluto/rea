@@ -1,11 +1,13 @@
 import { readFileSync } from "node:fs";
-import { Cli } from "incur";
+import {
+  cliCommands,
+  commandOwnOperations,
+} from "../../../src/cli/commandRegistry.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { CLI_COMMAND_TOOL_ALIASES } from "./cliContractAliases.js";
 
 /**
  * Report-only parity between each CLI command's own field schemas and the MCP
@@ -175,10 +177,7 @@ const cliAdmittedValue = (
 
 const collectParity = () => {
   const cli = createCli();
-  const commands = Cli.toCommands.get(
-    cli as unknown as Parameters<typeof Cli.toCommands.get>[0],
-  );
-  if (commands === undefined) throw new Error("No CLI commands registered");
+  const commands = cliCommands(cli);
   const contracts = new Map<string, z.ZodType>(
     TOOL_CONTRACTS.map((contract) => [contract.name, contract.inputSchema]),
   );
@@ -187,11 +186,13 @@ const collectParity = () => {
   let compared = 0;
   let commandsCompared = 0;
   let unmatchedFields = 0;
-  for (const [name, entry] of commands) {
-    if ("_alias" in entry) continue;
-    const contractNames: readonly string[] = CLI_COMMAND_TOOL_ALIASES[
-      name as keyof typeof CLI_COMMAND_TOOL_ALIASES
-    ] ?? [snake(name)];
+  for (const command of commands) {
+    const { name, definition: entry } = command;
+    const ownOperations = commandOwnOperations(command);
+    const contractNames: readonly string[] =
+      ownOperations.length > 0
+        ? ownOperations.map((operation) => operation.name)
+        : [snake(name)];
     for (const contractName of contractNames) {
       const contract = contracts.get(contractName);
       if (contract === undefined) {
