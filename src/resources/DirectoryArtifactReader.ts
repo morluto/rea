@@ -259,14 +259,25 @@ export class DirectoryArtifactReader implements ArtifactReader {
       | { readonly kind: "failed"; readonly cause: unknown } = {
       kind: "complete",
     };
+    let verifiedAfterOpen = false;
+    let needsContainmentRecheck = false;
     try {
       for (;;) {
         abortIfNeeded(signal);
-        await withDirectoryIoContext("inspect directory", directory, () =>
-          assertContainedDirectory(root, directory, admittedRoot.identity),
-        );
+        if (needsContainmentRecheck) {
+          await withDirectoryIoContext("inspect directory", directory, () =>
+            assertContainedDirectory(root, directory, admittedRoot.identity),
+          );
+          needsContainmentRecheck = false;
+        }
         const child = await handle.handle.read();
         if (child === null) break;
+        if (!verifiedAfterOpen) {
+          await withDirectoryIoContext("inspect directory", directory, () =>
+            assertContainedDirectory(root, directory, admittedRoot.identity),
+          );
+          verifiedAfterOpen = true;
+        }
         examine();
         abortIfNeeded(signal);
         const decoded = decodeDirectoryEntryName(child.name);
@@ -287,6 +298,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
           continue;
         }
         yield entry;
+        needsContainmentRecheck = true;
         if (entry.kind === "directory") {
           if (options?.descendInto?.(path) ?? true)
             childDirectories.push(absolute);
@@ -759,10 +771,29 @@ const assertContainedDirectory = async (
   rootIdentity: { readonly dev: bigint; readonly ino: bigint } | undefined,
   failureReason: "path" | "integrity" = "path",
 ): Promise<void> => {
-  const canonical = await realpath(directory);
+  const [canonicalResult, metadataResult, currentRootResult] =
+    directory === root
+      ? await Promise.allSettled([
+          realpath(root),
+          lstat(root, { bigint: true }),
+        ])
+      : await Promise.allSettled([
+          realpath(directory),
+          lstat(directory, { bigint: true }),
+          lstat(root, { bigint: true }),
+        ]);
+  if (canonicalResult.status === "rejected") throw canonicalResult.reason;
+  if (metadataResult.status === "rejected") throw metadataResult.reason;
+  if (
+    currentRootResult !== undefined &&
+    currentRootResult.status === "rejected"
+  )
+    throw currentRootResult.reason;
+  const canonical = canonicalResult.value;
   const fromRoot = relative(root, canonical);
-  const metadata = await lstat(directory);
-  const currentRoot = await lstat(root, { bigint: true });
+  const metadata = metadataResult.value;
+  const currentRoot =
+    currentRootResult === undefined ? metadata : currentRootResult.value;
   if (
     rootIdentity === undefined ||
     currentRoot.dev !== rootIdentity.dev ||
