@@ -18,8 +18,8 @@
 are not independently validated. `inspect_byte_entropy` describes byte diversity,
 not image identity. Neither supplies a reliable raw-image classifier. This work
 adds bounded spatial-layout hypotheses, rather than another magic-signature list
-or a profile-specific FordMap extractor. The latter's known descriptor tables and
-palette addresses cannot establish general discovery quality.
+or a sample-specific extractor. Known descriptor tables and palette addresses
+cannot establish general discovery quality.
 
 ## Preview continuation
 

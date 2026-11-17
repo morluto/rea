@@ -13,9 +13,12 @@
 - Keep public PR draft until scope and implementation review. Private firmware,
   generated private previews and reference manifests are never committed.
 
-## Palette continuation
+## Explicit family rendering and export
 
-A future explicit binding may select a verified palette source, channel order,
-LUT relationship and transparency policy. A plausible color table alone is not
-sufficient. Data-flow/reference evidence or analyst choice must establish the
-relationship before a preview is described as the original artwork.
+The opt-in registry/LUT family retains palette and binding alternatives. Rendering
+requires an explicit interpretation policy; a plausible color table alone is not
+sufficient and selected software semantics do not establish hardware truth.
+Full export uses the shared acquisition and publication owners, a checked source
+hash, no-clobber destinations, separate output/rendering budgets and a complete
+segment sidecar. Skipped alternatives remain evidence rather than executable
+export plans. See [usage](usage.md) and [validation](validation.md).

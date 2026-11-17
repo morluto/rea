@@ -73,8 +73,9 @@ These are intended checks, not a record of executed verification.
 
 Automatic detection, compression/container parsing, other indexed and sub-byte formats,
 16-bit channels, color management, tiled/GPU textures and bitmap-font layout are
-out of scope. Production artifact/subject integration, stronger snapshot
-guarantees, cancellation, Evidence provenance and registered CLI/MCP workflows
-remain future work.
+out of scope. This unregistered experiment does not provide production artifact/subject
+integration, cancellation or Evidence delivery. The separate discovery workflows
+implement shared acquisition and registered CLI/MCP operations; stronger snapshot
+guarantees and maintainer acceptance are not implied.
 
 See [implementation plan](plan.md) and [tasks](tasks.md).

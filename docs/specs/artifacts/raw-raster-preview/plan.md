@@ -37,7 +37,8 @@ whole-artifact identity, Evidence, cancellation and snapshot semantics.
 Before any public tool is enabled, use the canonical contracts and shared
 application workflow for both CLI and MCP; account for full representation
 expansion under the existing [limits model](../../../design/limits-and-recovery.md).
-This branch does not claim that those integration requirements are complete.
+The separate discovery specifications describe the registered workflows; their
+implementation does not establish maintainer acceptance of the expanded scope.
 
 ## Verification
 
@@ -137,87 +138,28 @@ The synthetic demo uses red/green/blue/white pixels only. Neither script is a
 registered REA product command or supported public API. File-workflow verification
 must be recorded separately from earlier synthetic checks below.
 
-## Verification recorded for this branch
+## Verification scope
 
-- 41 core Vitest tests passed; 57 tests passed including existing artifact-file,
-  artifact-reader and regular-file admission coverage.
-- Twenty-one experimental Node tests passed, including a real subprocess CLI invocation,
-  a sparse 128 MiB file with a small selected range, source changes/truncation,
-  descriptor cleanup on Linux, symlink rejection, no-clobber and source preservation.
-  Additional cases cover budget rejection/override, CLI help and errors, and
-  ENOSPC partial-output retention.
-- The synthetic 2×2 PNG was independently decoded with Pillow, checking integrity,
-  RGBA mode and all four pixels. The real-file subprocess test validates the same
-  workflow's output and actual selected source range.
-- Independent reviews checked decoder and file-workflow boundaries. Suggested
-  fixtures, selected-path provenance and misleading documentation were corrected.
-- `npm run check:fast` (typecheck and full lint), `npm run docs:check`, focused
-  format/lint, test discovery and module-boundary checks passed.
+Committed core and experimental file tests cover exact pixels, explicit palettes,
+row/nibble order, padding, bounds, source stability, no-clobber publication,
+working-buffer admission and partial-output retention. The file CLI is tested in
+real subprocesses. Linux-only descriptor and symlink checks are not a Windows
+verification claim. Run `npm run test:raw-raster` for the current result.
 
-Full repository test suite and aggregate PR gate are not run. Fixtures include
-synthetic binary files and the external PPM below, not representative firmware. Official REA
-CLI/MCP, cancellation integration and artifact/subject identity remain deferred.
-Maintainer approval and human review are pending; these checks do not establish
-production or release readiness.
+An external photographic PPM fixture is available from
+[Pillow at a pinned revision](https://raw.githubusercontent.com/python-pillow/Pillow/7533ff222598f4745487b402dfb58f39b438288b/Tests/images/hopper.ppm).
+It is not vendored; image-specific redistribution rights were not established.
+The RGB888 body begins at offset 53, has length 49152, dimensions 128×128 and
+stride 384 with top-down rows. Independent decoding previously matched every
+pixel and verified unchanged source and output hashes. This is an explicit-layout
+control, not container autodetection or firmware-provider verification.
 
-## Indexed4 verification scope
+A private indexed4 resource also matched an independent decoder through both the
+pure core and the experimental file CLI. Private bytes, palette, paths and output
+are not distributed, so that observation is not a public CI fixture or evidence
+of unseen-format coverage. Current verification belongs in the PR and CI results,
+not a running history in this implementation plan.
 
-The experimental increment adds only generic packed indices with explicit RGBA
-palette, not a provider or firmware-specific parser. Synthetic checks cover all
-16 indices and alpha values, both nibble and row orders, odd-width rows, padding,
-subviews, truncated input, sparse/invalid palettes and copied metadata. A real
-subprocess file test checks PNG pixels and manifest palette/range provenance.
-An independent reviewer checked 144 size/order combinations. Private firmware
-verification is tracked separately and never requires publishing source bytes or
-palettes.
-
-## External fixture verification
-
-A publicly available photographic PPM P6 fixture was checked, not firmware:
-[Pillow hopper.ppm at pinned revision](https://raw.githubusercontent.com/python-pillow/Pillow/7533ff222598f4745487b402dfb58f39b438288b/Tests/images/hopper.ppm).
-No third-party image is vendored. Image-specific rights were not independently
-established; this is a reproducible source pointer rather than a redistribution.
-Source SHA-256: `4c5f7cecc9d468eb37c886840d8f7e7824267e7e315d08751318efddb09a5efb`.
-
-```json
-{
-  "offset": 53,
-  "length": 49152,
-  "width": 128,
-  "height": 128,
-  "stride": 384,
-  "format": "rgb888",
-  "rowOrder": "top-down"
-}
-```
-
-The file CLI exported the raw body using the explicit layout above. Independent
-Pillow 13.0.0 decoded the original PPM and output PNG: all 16,384 pixels (65,536
-RGBA bytes) matched; PNG integrity, selected-range hash, output hash and unchanged
-source were verified. The selected-range SHA-256 is
-`007b25e71a766d530394bec4f86f73442b8a41cfc34f04dd326a47a34c0b9525`.
-This validates real external pixel data, not container autodetection or firmware
-provider behavior.
-
-## Private indexed4 validation
-
-The actual published decoder and PNG exporter at revision `0a34803b` were run on
-an authorized private firmware-derived indexed4 resource. All 88,000 pixels
-(352,000 RGBA bytes) matched both the existing decoder reference and an independent
-scalar reference; PNG integrity, manifest hashes/palette/order, and unchanged
-input were verified. This exercised the exact decoding/export source in a minimal
-Node/tsx harness, not the full file-acquisition CLI on that machine. Private raw
-bytes, palette, personal paths and reference output are not published. The generic
-core has no firmware-specific LUT/CLUT parser.
-
-### Full private file-workflow acceptance
-
-On 2026-11-15 the unregistered file CLI at `da9d35c3` was run on the same
-private 440×200 indexed4 resource, using Node 24.22.2 on macOS (one patch above
-the repository pin). Independent Pillow decoding matched all 88,000 pixels
-(352,000 RGBA bytes) against the retained reference. PNG integrity, selected-range
-and output hashes, explicit palette/order, unchanged source/layout, default
-manifest privacy and refusal to overwrite an existing output all passed. This
-closes the earlier full file-acquisition CLI gap for that sample on macOS, not
-production REA CLI/MCP integration or proprietary container parsing. No private
-source, palette, paths or images are included in the repository or CI.
+The separate raw and structured discovery workflows provide registered CLI/MCP
+operations; this experimental script remains unregistered. Human readiness and
+maintainer acceptance are separate from all automated checks.

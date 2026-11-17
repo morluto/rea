@@ -7,4 +7,6 @@
 - [x] Real-file evaluation against annotations held out of search inputs.
 - [x] Structured non-image controls and unresolved palette/format alternatives.
 - [x] Independent diff review; final focused tests, type/docs checks.
+- [x] S8: Explicit registry/LUT alternatives and caller-controlled color policy.
+- [x] S9: Full RAW/PNG export, complete segment sidecar and publication controls.
 - [ ] Human review of final expanded draft; no automatic readiness claim.

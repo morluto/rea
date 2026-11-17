@@ -8,7 +8,7 @@ This expands the original issue's scope, not a claim of maintainer approval.
 Find candidate resource tables and inspect their packed indices without supplying
 known table addresses, individual dimensions, format IDs or palette locations.
 The caller selects a source representation and an explicit grammar family. This
-is not arbitrary-format recognition or recovery of correct colors.
+is not arbitrary-format recognition or proof of original hardware colors.
 
 ## Required separation
 
@@ -48,13 +48,21 @@ is not arbitrary-format recognition or recovery of correct colors.
 - S7: Bound previews independently of original image area. Label them index-only,
   show preview order assumptions, and do not interpret index values as alpha.
 
+- S8: Offer an opt-in registry/LUT family with retained alternatives and explicit
+  palette, precision, alpha, theme, sentinel and RGB565 color-key policy. Do not
+  treat a plausible palette or a selected policy as hardware rendering truth.
+- S9: Export exact packed payloads and full PNGs to a new directory, checking the
+  expected source hash and preserving a complete segment sidecar, output hashes,
+  skipped alternatives, cleanup ownership and independent memory/output budgets.
+
 ## Explicit limits
 
 A structurally identical non-graphical table can pass. An unknown grammar,
 compression, different pointer base, swizzled pixels or runtime-generated layout
 may be missed. Correct table positions do not establish correct palettes.
 Choosing an arbitrary plausible RGBA table would fabricate colors, so this
-increment intentionally does not automatically bind palettes.
+generic mode intentionally does not automatically bind palettes. The opt-in
+registry family uses explicit structural relationships and caller color policy.
 
 The selected family lets its users avoid reverse-engineering individual resource
 addresses, but it is not a way to avoid all format knowledge. For unsupported

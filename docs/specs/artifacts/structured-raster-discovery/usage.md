@@ -126,9 +126,9 @@ not just the current inspection page. Incomplete discovery remains incomplete.
 Hard bounds: 128 MiB input hashing, 16 MiB selected/logical bytes, 4,096 outcomes,
 8,194 files and 256 MiB total output including metadata. Full PNG rendering is
 limited to 4,194,304 pixels and 64 MiB transient rendering budget; RAW-only export
-can avoid rendering limits. Generic and family work budgets are separate. The
-500,000-span worst-case synthetic mapping used about 288 MiB process peak RSS in
-one local measurement; cancellation is cooperative, not a real-time guarantee.
+can avoid rendering limits. Generic and family work budgets are separate. These
+budgets are not process RSS ceilings; cancellation is cooperative, not a
+real-time guarantee.
 No-clobber publication is not an atomic directory rename: files may be visible
 before commit, and Windows inherits destination ACLs.
 
