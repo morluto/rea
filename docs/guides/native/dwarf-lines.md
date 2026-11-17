@@ -58,12 +58,12 @@ order:
   when `exact` is true.
 - `not_found`: Every selected `.debug_line` program was walked completely and
   none covered the address.
-- `unapplied_relocation`: An ELF `ET_REL` object carries unapplied relocations
-  targeting `.debug_line` (such as `.rela.debug_line`), leaving address operands
-  and DWARF 5 external string offsets at unlinked placeholders. Relocated
-  DWARF 5 string references remain `unresolved`, `addresses_unresolved` is
-  `true`, and `addresses` queries never treat `0x0` placeholders as resolved
-  addresses.
+- `unapplied_relocation`: An ELF `ET_REL` or Mach-O `MH_OBJECT` object carries
+  unapplied relocations targeting `__DWARF,__debug_line` / `.debug_line` (such
+  as `.rela.debug_line`), leaving address operands and DWARF 5 external string
+  offsets at unlinked placeholders. Relocated DWARF 5 string references remain
+  `unresolved`, `addresses_unresolved` is `true`, and `addresses` queries never
+  treat `0x0` placeholders as resolved addresses.
 - `incomplete`: Line-program coverage stopped early (for example at the
   decode step/header-entry/match budget, the 100,000-program walk cap, or a
   truncated/unreadable section) before proving the address absent.

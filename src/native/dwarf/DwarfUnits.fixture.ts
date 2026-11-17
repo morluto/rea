@@ -417,12 +417,16 @@ export interface MachoSectionSpec {
   readonly body: Buffer;
   /** Defaults to `__DWARF`. */
   readonly segment?: string;
+  /** Section relocation count (`nreloc`). */
+  readonly relocationCount?: number;
 }
 
 /** Thin little-endian Mach-O 64. An empty section list is a valid object with no commands. */
 export const macho64 = (options: {
   readonly cpuType: number;
   readonly cpuSubtype?: number;
+  /** Mach-O header `filetype`. Defaults to `1` (`MH_OBJECT`). */
+  readonly fileType?: number;
   readonly sections?: readonly MachoSectionSpec[];
 }): Buffer => {
   const sections = options.sections ?? [];
@@ -430,7 +434,7 @@ export const macho64 = (options: {
   header.writeUInt32LE(0xfeedfacf, 0);
   header.writeUInt32LE(options.cpuType, 4);
   header.writeUInt32LE(options.cpuSubtype ?? 0, 8);
-  header.writeUInt32LE(1, 12);
+  header.writeUInt32LE(options.fileType ?? 1, 12);
   if (sections.length === 0) return header;
   const cmdsize = 72 + sections.length * 80;
   const bodies = concat(...sections.map((section) => section.body));
@@ -457,6 +461,9 @@ export const macho64 = (options: {
     bytes.writeBigUInt64LE(BigInt(address), at + 32);
     bytes.writeBigUInt64LE(BigInt(section.body.length), at + 40);
     bytes.writeUInt32LE(file, at + 48);
+    if (section.relocationCount !== undefined) {
+      bytes.writeUInt32LE(section.relocationCount, at + 60);
+    }
     address += section.body.length;
     file += section.body.length;
   });

@@ -23,6 +23,7 @@ import {
   lineProgram,
   lneEndSequence,
   lneSetAddress,
+  lnsAdvancePc,
   lnsCopy,
   lnsSetFile,
   macho64,
@@ -308,6 +309,112 @@ it("handles absent/SHT_NOBITS sections, decompression bombs, file budgets, symli
         bytes: badOffsetElfBytes.length,
       });
     }
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks MH_OBJECT Mach-O __DWARF,__debug_line relocations unresolved without false address matches", async () => {
+  const provider = new DwarfLinesProvider();
+  try {
+    const strTable = buildStringTable(["/reloc_dir", "reloc.c"]);
+    const relocProg = lineProgram({
+      version: 5,
+      v5Directories: [{ form: 0x0e, strp: strTable.offsets[0] ?? 0 }],
+      v5Files: [
+        {
+          path: { form: 0x0e, strp: strTable.offsets[1] ?? 0 },
+          dirIndex: 0,
+        },
+      ],
+      opcodes: Buffer.concat([
+        lneSetAddress(0x0n, 8, true),
+        lnsSetFile(0),
+        lnsCopy(),
+        lnsAdvancePc(4),
+        lneEndSequence(),
+      ]),
+    });
+
+    const mhObjectPath = await makeTempFile(
+      "reloc.o.macho",
+      macho64({
+        cpuType: 0x0100000c,
+        fileType: 1,
+        sections: [
+          { name: "__debug_line", body: relocProg, relocationCount: 1 },
+          { name: "__debug_str", body: strTable.table },
+        ],
+      }),
+    );
+    const relocRes = await provider.inspect(
+      inspectDwarfLinesInputSchema.parse({
+        path: mhObjectPath,
+        addresses: ["0x0", "0x2", "0x2000"],
+      }),
+    );
+    if (!relocRes.ok) throw relocRes.error;
+    const relocReport = dwarfLinesSchema.parse(relocRes.value);
+    expect(relocReport.programs[0]?.addresses_unresolved).toBe(true);
+    expect(relocReport.programs[0]?.issues.map((i) => i.code)).toContain(
+      "unapplied_relocation",
+    );
+    expect(relocReport.programs[0]?.files[0]?.name).toEqual({
+      state: "unresolved",
+      value: null,
+    });
+    expect(relocReport.address_matches.map((m) => m.status)).toEqual([
+      "unapplied_relocation",
+      "unapplied_relocation",
+      "unapplied_relocation",
+    ]);
+
+    const strOnlyRelocPath = await makeTempFile(
+      "str-reloc.o.macho",
+      macho64({
+        cpuType: 0x0100000c,
+        fileType: 1,
+        sections: [
+          { name: "__debug_line", body: relocProg, relocationCount: 0 },
+          { name: "__debug_str", body: strTable.table, relocationCount: 1 },
+        ],
+      }),
+    );
+    const strOnlyRes = await provider.inspect(
+      inspectDwarfLinesInputSchema.parse({
+        path: strOnlyRelocPath,
+        addresses: ["0x2"],
+      }),
+    );
+    if (!strOnlyRes.ok) throw strOnlyRes.error;
+    expect(strOnlyRes.value.programs[0]?.files[0]?.name).toEqual({
+      state: "unresolved",
+      value: null,
+    });
+    expect(strOnlyRes.value.address_matches[0]?.status).toBe(
+      "unapplied_relocation",
+    );
+
+    const linkedPath = await makeTempFile(
+      "linked.macho",
+      macho64({
+        cpuType: 0x0100000c,
+        fileType: 2,
+        sections: [
+          { name: "__debug_line", body: relocProg, relocationCount: 1 },
+          { name: "__debug_str", body: strTable.table },
+        ],
+      }),
+    );
+    const linkedRes = await provider.inspect(
+      inspectDwarfLinesInputSchema.parse({
+        path: linkedPath,
+        addresses: ["0x2"],
+      }),
+    );
+    if (!linkedRes.ok) throw linkedRes.error;
+    expect(linkedRes.value.programs[0]?.addresses_unresolved).toBe(false);
+    expect(linkedRes.value.address_matches[0]?.status).toBe("resolved");
   } finally {
     await provider.close();
   }

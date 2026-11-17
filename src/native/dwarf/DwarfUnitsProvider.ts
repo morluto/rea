@@ -233,10 +233,13 @@ const limitationsFor = (
         ? "A .gnu_debuglink section is present and its contents were not decoded. A GNU build-id note was not read."
         : ".gnu_debuglink was not observed in this file. A GNU build-id note was not read.",
     );
-  if (located.unappliedDebugRelocations.length > 0)
+  if (located.unappliedDebugRelocations.length > 0) {
+    const objectKind =
+      located.format === "macho" ? "Mach-O (MH_OBJECT)" : "ELF (ET_REL)";
     limitations.push(
-      `Relocatable ELF (ET_REL) debug relocations were not applied (${located.unappliedDebugRelocations.join(", ")}). Relocated strings and stmt_list are unresolved, and a unit is decoded only when .debug_abbrev holds one table.`,
+      `Relocatable ${objectKind} debug relocations were not applied (${located.unappliedDebugRelocations.join(", ")}). Relocated strings and stmt_list are unresolved, and a unit is decoded only when .debug_abbrev holds one table.`,
     );
+  }
   return limitations;
 };
 

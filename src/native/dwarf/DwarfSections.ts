@@ -24,6 +24,7 @@ import {
   type ElfCompressedSectionResult,
 } from "../../domain/native/elfCompressedSection.js";
 import { readMachoImage } from "../../domain/apple/machoImage.js";
+import { readMachoHeaderDeclarations } from "../../domain/apple/machoLoadCommands.js";
 import {
   readElfDirectoryFromBuffer,
   readPeSectionDirectory,
@@ -33,6 +34,7 @@ import {
 
 const SHF_COMPRESSED = 0x800n;
 const ET_REL = 1;
+const MH_OBJECT = 0x1;
 /** SHT_RELA, SHT_REL, SHT_CREL, and the earlier LLVM CREL encoding. */
 const ELF_RELOCATION_TYPES = new Set([4, 9, 20, 0x40000014]);
 type AnyDwarfRole = DwarfSectionRole | DwarfLineSectionRole;
@@ -230,19 +232,13 @@ const normalizeObjectSectionName = (stored: string): string =>
     : stored;
 
 /** Mach-O caps section names at 16 bytes, so two compressed names are cut short. */
-const machoSectionRole = <Role extends AnyDwarfRole>(
-  stored: string,
-  roles: ReadonlySet<string>,
-): Role | null => {
+const normalizeMachoDwarfSectionName = (stored: string): string | null => {
   if (stored === "__debug_str_offs" || stored === "__zdebug_str_off")
-    return roleOf<Role>(".debug_str_offsets", roles);
-  if (stored === "__zdebug_line_st")
-    return roleOf<Role>(".debug_line_str", roles);
+    return ".debug_str_offsets";
+  if (stored === "__zdebug_line_st") return ".debug_line_str";
   if (stored.startsWith("__zdebug_"))
-    return roleOf<Role>(`.debug_${stored.slice("__zdebug_".length)}`, roles);
-  return stored.startsWith("__debug_")
-    ? roleOf<Role>(`.${stored.slice(2)}`, roles)
-    : null;
+    return `.debug_${stored.slice("__zdebug_".length)}`;
+  return stored.startsWith("__debug_") ? `.${stored.slice(2)}` : null;
 };
 
 const gnuZdebugName = (name: string): boolean =>
@@ -870,12 +866,26 @@ const locateMacho = <Role extends AnyDwarfRole>(
   roles: ReadonlySet<string>,
 ): ImageIdentity<Role> => {
   const image = readMachoImage(bytes);
+  const header = readMachoHeaderDeclarations(bytes, bytes.length);
+  const isMachoObject = header.ok && header.value?.fileType === MH_OBJECT;
   const candidates: Candidate<Role>[] = [];
+  const relocations = new Set<string>();
+  const lineRelocations = new Set<string>();
   const satisfied = new Set<Role>();
   for (const section of image.sections) {
     if (section.format !== "macho") continue;
     if (!section.name.startsWith(MACHO_DWARF_SEGMENT)) continue;
-    const role = machoSectionRole<Role>(section.section_name, roles);
+    const normalizedName = normalizeMachoDwarfSectionName(section.section_name);
+    if (
+      isMachoObject &&
+      normalizedName !== null &&
+      section.relocations.count > 0
+    ) {
+      relocations.add(section.name);
+      if (LINE_ROLES.has(normalizedName)) lineRelocations.add(section.name);
+    }
+    const role =
+      normalizedName === null ? null : roleOf<Role>(normalizedName, roles);
     if (role === null) continue;
     const name = section.section_name;
     if (MACHO_ZERO_FILL_TYPES.has(section.type)) {
@@ -911,8 +921,8 @@ const locateMacho = <Role extends AnyDwarfRole>(
     architecture: binaryMetadataArchitecture(image.architecture) ?? null,
     candidates,
     gnuDebugLink: false,
-    unappliedDebugRelocations: [],
-    unappliedLineRelocations: [],
+    unappliedDebugRelocations: [...relocations],
+    unappliedLineRelocations: [...lineRelocations],
   };
 };
 

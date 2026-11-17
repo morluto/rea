@@ -311,6 +311,18 @@ const readOffsetBySize = (cursor: DwarfCursor, size: 4 | 8): bigint | null => {
   return cursor.u64();
 };
 
+const targetsStrOffsets = (name: string): boolean =>
+  name.endsWith(".debug_str_offsets") ||
+  name.endsWith(".zdebug_str_offsets") ||
+  name.endsWith("__debug_str_offs") ||
+  name.endsWith("__zdebug_str_off");
+
+const targetsDebugStr = (name: string): boolean =>
+  name.endsWith(".debug_str") ||
+  name.endsWith(".zdebug_str") ||
+  name.endsWith("__debug_str") ||
+  name.endsWith("__zdebug_str");
+
 const initStringOffsetsTable = (
   strOffsets: Buffer | null,
   little: boolean,
@@ -319,14 +331,7 @@ const initStringOffsetsTable = (
 ): StringTableState["strOffsetsTable"] => {
   if (strOffsets === null || strOffsets.length === 0)
     return { state: "absent" };
-  if (
-    lineRelocated ||
-    unappliedDebugRelocations.some(
-      (name) =>
-        name.endsWith(".debug_str_offsets") ||
-        name.endsWith(".zdebug_str_offsets"),
-    )
-  ) {
+  if (lineRelocated || unappliedDebugRelocations.some(targetsStrOffsets)) {
     return { state: "relocated" };
   }
   const cursor = new DwarfCursor(strOffsets, little);
@@ -356,10 +361,7 @@ const createStringTableState = (
 ): StringTableState => {
   const lineRelocated = input.unappliedLineRelocations.length > 0;
   const debugStrRelocated =
-    lineRelocated ||
-    input.unappliedDebugRelocations.some(
-      (name) => name.endsWith(".debug_str") || name.endsWith(".zdebug_str"),
-    );
+    lineRelocated || input.unappliedDebugRelocations.some(targetsDebugStr);
   return {
     str: input.str,
     lineStr: input.lineStr,
@@ -497,7 +499,7 @@ const readExternalStringAtOffset = (
   if (relocated) {
     issues.push(
       "unapplied_relocation",
-      `Unapplied ET_REL relocations leave ${tableName} references unresolved`,
+      `Unapplied object relocations leave ${tableName} references unresolved`,
     );
     return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
@@ -552,7 +554,7 @@ const resolveStrxIndex = (
   if (state.lineRelocated) {
     issues.push(
       "unapplied_relocation",
-      "Unapplied ET_REL relocations leave DW_FORM_strx references unresolved",
+      "Unapplied object relocations leave DW_FORM_strx references unresolved",
     );
     return { fact: UNRESOLVED_STRING, nonEmpty: false };
   }
@@ -566,7 +568,7 @@ const resolveStrxIndex = (
     } else if (table.state === "relocated") {
       issues.push(
         "unapplied_relocation",
-        "Unapplied ET_REL relocations target .debug_str_offsets",
+        "Unapplied object relocations target .debug_str_offsets",
       );
     } else {
       issues.push(
@@ -2088,7 +2090,7 @@ const runLineMachine = (
           addressesUnresolved = true;
           issues.push(
             "unapplied_relocation",
-            "Unapplied ET_REL relocations leave DW_LNE_set_address values at object placeholder offsets",
+            "Unapplied object relocations leave DW_LNE_set_address values at object placeholder offsets",
           );
         }
       } else if (extOpcode === DW_LNE_DEFINE_FILE) {
