@@ -57,6 +57,8 @@ export interface ExportOutcome {
   height: number;
   status: "exported" | "skipped";
   reason?: string;
+  /** Admitted interpretations withheld by ambiguity policy, not executable export plans. */
+  alternatives?: ExportAlternative[];
   hypothesis?: { bits_per_pixel: number; offset_unit: number };
   descriptor: ReturnType<typeof reference>;
   payload?: ReturnType<typeof reference>;
@@ -71,6 +73,31 @@ export interface ExportOutcome {
   discovery_status: "unique" | "ambiguous" | "unresolved";
   files: { raw?: SafeOutputFile; png?: SafeOutputFile };
   interpretation?: RasterRendered["interpretation"];
+}
+export type ExportAlternative = Required<
+  Pick<ExportOutcome, "hypothesis" | "payload" | "provenance">
+> &
+  Pick<ExportOutcome, "lookup" | "palette" | "registry"> & {
+    evidence?: Pick<
+      StructuredRasterResource["hypotheses"][number],
+      "matches" | "consistency" | "stride" | "covered"
+    >;
+  };
+/** Keep the same projected facts as an exportable candidate, without granting write eligibility. */
+function alternativeEvidence(
+  prepared: Prepared,
+  plan: Plan,
+  payload: StructuredRasterRange,
+): ExportAlternative {
+  const { hypothesis, provenance, lookup, palette, registry } = plan.outcome;
+  return {
+    hypothesis: hypothesis!,
+    provenance,
+    payload: reference(prepared, payload),
+    ...(lookup ? { lookup } : {}),
+    ...(palette ? { palette } : {}),
+    ...(registry ? { registry } : {}),
+  };
 }
 export interface Plan {
   outcome: ExportOutcome;
@@ -284,6 +311,13 @@ export function planExport(
             reason: alternatives.length
               ? "Multiple registry alternatives; select a registry or ambiguity=all."
               : "No admitted family binding.",
+            alternatives: alternatives.map(({ c, b }) =>
+              alternativeEvidence(
+                prepared,
+                familyPlan(prepared, input, outcome, c, b),
+                b.payloadRange,
+              ),
+            ),
           },
         });
         continue;
@@ -304,6 +338,19 @@ export function planExport(
             reason: hypotheses.length
               ? "Ambiguous generic layout; choose an admitted hypothesis or ambiguity=all."
               : "No admitted generic layout.",
+            alternatives: hypotheses.map((h) => ({
+              ...alternativeEvidence(
+                prepared,
+                genericPlan(r, h, outcome),
+                h.payloadRange,
+              ),
+              evidence: {
+                matches: h.matches,
+                consistency: h.consistency,
+                stride: h.stride,
+                covered: h.covered,
+              },
+            })),
           },
         });
         continue;

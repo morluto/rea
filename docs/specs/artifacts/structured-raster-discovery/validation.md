@@ -138,3 +138,24 @@ returned by the public MCP tools listing. Container and logical-mapping errors
 now use the shared parse-failure owner: malformed data, truncation and named
 capacity limits retain their format/site/cause rather than becoming one generic
 invalid-value error.
+
+## Review follow-up: direct colors and skipped alternatives
+
+The color-policy resolver now uses the admitted layout. Direct RGB565 resources
+retain their explicit color-key policy without requiring an unrelated registry
+palette. Indexed resources still require a covered palette. Service regressions
+exercise both preview and full PNG export with no palette, with a disabled key
+and a matching transparent key; direct-color interpretation does not claim that
+palette precision, alpha, sentinels or a theme were used.
+
+With `ambiguity=skip`, the export manifest retains the admitted alternatives
+instead of only a generic skip reason. Generic alternatives include bpp/unit,
+stride and corroboration evidence; family alternatives retain registry identity,
+pointer bias and mapped payload/LUT/palette references. They remain evidence-only:
+skipped resources do not gain executable export plans or payload files. The
+references point into the complete segment sidecar rather than duplicating it.
+Manifest bytes remain charged to the publication budget; highly fragmented
+source mappings can still make per-alternative reference projection expensive.
+
+These regressions use synthetic public fixtures. They do not establish new
+unknown-family coverage, hardware color truth, or a fresh Windows pass.

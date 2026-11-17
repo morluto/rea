@@ -44,6 +44,7 @@ import {
   type DerivedSources,
   createEvidenceToolHandler,
   createRetainedSummaryToolHandler,
+  type RetainedSummaryOperation,
   createValueToolHandler,
   type ContractToolService,
   type ValueOutcome,
@@ -293,9 +294,7 @@ type DerivedBinding = {
  * Admit `detail`/`view` in the adapter, run the workflow on the remaining
  * input, and retain the complete Evidence behind a summary.
  */
-interface RetainedSummaryBinding<Input> {
-  readonly admission: ContractInputAdmission;
-  readonly summary: EvidenceOperation<Omit<Input, "detail" | "view">>;
+type RetainedSummaryBinding<Input> = RetainedSummaryOperation<Input> & {
   readonly run?: never;
   readonly value?: never;
   readonly derive?: never;
@@ -306,7 +305,7 @@ interface RetainedSummaryBinding<Input> {
   readonly mutation?: never;
   readonly query?: never;
   readonly provider?: never;
-}
+};
 
 /**
  * Run an application workflow that completes Evidence from session-held
@@ -653,7 +652,7 @@ export const registerContractTools = (
                         : createRetainedSummaryToolHandler(
                             server,
                             contract as SummaryContract,
-                            binding.summary,
+                            binding,
                             logger,
                             retention,
                             withAdmittedAnalysis,

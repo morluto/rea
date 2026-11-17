@@ -1407,7 +1407,9 @@ describe("Evidence delivery of contract commands", () => {
       { name: "probe", inputSchema },
       { command: "probe", description: "Probe" },
     ).parameters;
-    expect(format!.schema.parse(undefined)).toBe("json");
+    expect(format!.schema.parse(undefined)).toBeUndefined();
+    expect(inputJsonSchema(format!.schema).default).toBe("json");
+    expect(inputSchema.parse({})).toEqual({ format: "json" });
     expect(format!.schema.safeParse("graphql").success).toBe(true);
     expect(format!.schema.safeParse("xml").success).toBe(false);
   });
@@ -2005,7 +2007,7 @@ describe("contract-owned numeric argv projections", () => {
       { name: "numeric_probe", inputSchema: z.object({ value: field }) },
       { command: "numeric-probe", description: "Probe" },
     ).parameters[0]!;
-  it("preserves defaulted numeric arrays and each declared bound", () => {
+  it("preserves numeric array omission, advertised defaults and each declared bound", () => {
     const declared = z
       .array(z.number().int().min(8).max(32))
       .min(1)
@@ -2013,7 +2015,9 @@ describe("contract-owned numeric argv projections", () => {
       .default([16]);
     const field = parameter(declared);
     expect(field.repeatable).toBe(true);
-    expect(field.schema.parse(undefined)).toEqual([16]);
+    expect(field.schema.parse(undefined)).toBeUndefined();
+    expect(declared.parse(undefined)).toEqual([16]);
+    expect(z.toJSONSchema(field.schema).default).toEqual([16]);
     expect(field.schema.parse(["8", "32"])).toEqual([8, 32]);
     for (const rejected of [
       [],
@@ -2032,7 +2036,9 @@ describe("contract-owned numeric argv projections", () => {
       .max(3)
       .default([1, 2]);
     const field = parameter(declared);
-    expect(field.schema.parse(undefined)).toEqual([1, 2]);
+    expect(field.schema.parse(undefined)).toBeUndefined();
+    expect(declared.parse(undefined)).toEqual([1, 2]);
+    expect(z.toJSONSchema(field.schema).default).toEqual([1, 2]);
     expect(field.schema.parse(["1", "4"])).toEqual([1, 4]);
     expect(field.schema.parse([1, 4])).toEqual([1, 4]);
     for (const rejected of [
@@ -2046,8 +2052,11 @@ describe("contract-owned numeric argv projections", () => {
       expect(field.schema.safeParse(rejected).success).toBe(false);
   });
   it("admits bounded decimal fractions only for noninteger numeric contracts", () => {
-    const field = parameter(z.number().min(0.5).max(1).default(0.9));
-    expect(field.schema.parse(undefined)).toBe(0.9);
+    const declared = z.number().min(0.5).max(1).default(0.9);
+    const field = parameter(declared);
+    expect(field.schema.parse(undefined)).toBeUndefined();
+    expect(declared.parse(undefined)).toBe(0.9);
+    expect(z.toJSONSchema(field.schema).default).toBe(0.9);
     for (const value of ["0.5", "0.75", "1", "1.0"])
       expect(field.schema.parse(value)).toBe(Number(value));
     for (const value of [
@@ -2079,7 +2088,7 @@ describe("contract-owned numeric argv projections", () => {
   });
 });
 
-it("collects repeated numeric choices through the CLI parser and advertises their actual defaults", () => {
+it("collects explicit numeric choices, preserves omitted options and advertises contract defaults", () => {
   const described = describeContractCommand(
     {
       name: "array_probe",
@@ -2120,7 +2129,7 @@ it("collects repeated numeric choices through the CLI parser and advertises thei
   });
   expect(parseCliArgv([], { options })).toEqual({
     ok: true,
-    value: { args: {}, options: { widths: [16], bits: [1, 2], score: 0.5 } },
+    value: { args: {}, options: {} },
   });
   const schema = z.toJSONSchema(options.shape.bits!);
   expect(schema.default).toEqual([1, 2]);

@@ -2,6 +2,7 @@ import type { StructuredRasterExportService } from "../application/binaryDiagnos
 import type { RawRasterDiscoveryService } from "../application/binaryDiagnostics/RawRasterDiscoveryService.js";
 import type { StructuredRasterDiscoveryService } from "../application/binaryDiagnostics/StructuredRasterDiscoveryService.js";
 import { appendStructuredRasterThumbnails } from "./indexThumbnailDelivery.js";
+import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
@@ -38,6 +39,7 @@ import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsS
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
@@ -515,6 +517,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfNotesService>,
+  elfDebugLink: ((service) => ({
+    inspect_elf_debug_link: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDebugLinkService>,
   nativeInitializers: ((service) => ({
     inspect_native_initializers: {
       admission: "sdk",
@@ -869,6 +877,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  elfDependencies: ((service) => ({
+    inspect_elf_dependencies: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDependenciesService>,
   guidance: ((resources) => ({
     search_guidance: {
       admission: "application",

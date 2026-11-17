@@ -83,7 +83,7 @@ export async function createRasterPreviews(
               )
             : undefined;
       else layout = genericPreviewLayout(r);
-      const resolved = resolveRasterColorPolicy(policy, registry);
+      const resolved = resolveRasterColorPolicy(policy, registry, layout);
       if (
         !layout ||
         !resolved ||

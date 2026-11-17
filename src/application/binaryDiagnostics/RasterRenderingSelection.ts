@@ -4,7 +4,10 @@ import type {
   rasterRegistrySelectionInputSchema,
 } from "../../domain/native/rasterRendering.js";
 import type { RasterRegistryCandidate } from "../../domain/rasterRegistryFamily.js";
-import type { RasterColorPolicy } from "./RasterResourceRendering.js";
+import type {
+  RasterColorPolicy,
+  RasterRenderLayout,
+} from "./RasterResourceRendering.js";
 /** One admitted identity rule for export and preview; never pick the first alternative. */
 export function selectRasterRegistries(
   registries: RasterRegistryCandidate[],
@@ -19,18 +22,22 @@ export function selectRasterRegistries(
       )
     : registries;
 }
-/** Palette ranges can only come from the admitted registry, never caller ranges. */
+/** Indexed palettes come only from the admitted registry. Direct RGB565 has no palette dependency. */
 export function resolveRasterColorPolicy(
   p: z.infer<typeof rasterColorPolicyInputSchema>,
-  registry?: RasterRegistryCandidate,
+  registry: RasterRegistryCandidate | undefined,
+  layout: RasterRenderLayout | undefined,
 ): RasterColorPolicy | undefined {
   if (p.kind !== "record12-lut-registry") return p;
-  const palette = registry?.palettes.find((c) => c.slot === p.theme_slot);
-  if (!palette) return undefined;
+  const direct = layout?.layout === "rgb565le";
+  const palette = direct
+    ? undefined
+    : registry?.palettes.find((c) => c.slot === p.theme_slot);
+  if (!direct && !palette) return undefined;
   return {
     kind: p.kind,
     themeSlot: p.theme_slot,
-    paletteRange: palette.range,
+    paletteRange: palette?.range ?? null,
     precision: p.precision,
     alpha: p.alpha,
     sentinel: p.sentinel,

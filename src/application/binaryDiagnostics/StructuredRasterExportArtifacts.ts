@@ -82,7 +82,7 @@ export function preflightExport(
     signal?.throwIfAborted();
     if (
       !plan.layout ||
-      !resolveRasterColorPolicy(input.color_policy, plan.registry)
+      !resolveRasterColorPolicy(input.color_policy, plan.registry, plan.layout)
     )
       continue;
     const result = preflightRasterResource(plan.layout);
@@ -133,6 +133,7 @@ async function writeResources(
       const policy = resolveRasterColorPolicy(
         input.color_policy,
         plan.registry,
+        plan.layout,
       );
       if (!plan.layout || !policy)
         outcome.reason =

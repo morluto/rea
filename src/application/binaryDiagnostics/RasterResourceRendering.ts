@@ -30,7 +30,8 @@ export type RasterColorPolicy =
   | {
       kind: "record12-lut-registry";
       themeSlot: number;
-      paletteRange: RasterRenderRange;
+      /** Null for direct RGB565; indexed family colors require an admitted range. */
+      paletteRange: RasterRenderRange | null;
       precision: "byte8" | "expand-high6";
       alpha: "palette" | "opaque";
       sentinel: "profile" | "disabled";
@@ -245,7 +246,8 @@ function colors(
     );
   if (
     policy.kind === "record12-lut-registry" &&
-    (policy.paletteRange.length !== 1024 ||
+    (!policy.paletteRange ||
+      policy.paletteRange.length !== 1024 ||
       !coverage.covers(policy.paletteRange.offset, 1024))
   )
     return unavailable("Selected ARGB palette is not fully covered.");
@@ -276,7 +278,7 @@ function colors(
         );
       entries.push([color[0], color[1], color[2], color[3]]);
     } else {
-      const at = policy.paletteRange.offset + index * 4;
+      const at = policy.paletteRange!.offset + index * 4;
       const expand = (v: number) =>
         policy.precision === "expand-high6" ? (v & 252) | (v >>> 6) : v;
       entries.push([
@@ -469,7 +471,9 @@ async function render(
         `Explicit ${policy.kind} policy; ${layout.layout}, ${layout.rowOrder}, ${layout.bitOrder}.`,
         ...(policy.kind === "record12-lut-registry"
           ? [
-              `Theme slot ${policy.themeSlot}; precision ${policy.precision}; alpha ${policy.alpha}; sentinel ${policy.sentinel}; RGB565 color key ${policy.rgb565ColorKey === null ? "disabled" : policy.rgb565ColorKey}.`,
+              layout.layout === "rgb565le"
+                ? `Direct RGB565 bit replication; color key ${policy.rgb565ColorKey === null ? "disabled" : policy.rgb565ColorKey}; alpha255 except key transparency. No palette, theme slot, palette precision, palette alpha or indexed sentinel is used.`
+                : `Theme slot ${policy.themeSlot}; precision ${policy.precision}; alpha ${policy.alpha}; sentinel ${policy.sentinel}; RGB565 color key ${policy.rgb565ColorKey === null ? "disabled" : policy.rgb565ColorKey}.`,
             ]
           : policy.kind === "rgba-palette"
             ? [
@@ -478,7 +482,7 @@ async function render(
             : []),
         policy.kind === "diagnostic-indices"
           ? "Artificial selector grayscale; no original colors, alpha, palette or LUT meaning is established."
-          : "Straight RGBA under the caller-selected palette, precision and transparency policy; no live theme or screen compositing is established.",
+          : "Straight RGBA under the caller-selected color interpretation; no live theme or screen compositing is established.",
         ...(maxSide === undefined
           ? []
           : [

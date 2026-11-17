@@ -40,6 +40,26 @@ it("plans all140 retained resources rather than inspection page128 and keeps all
   const skipped = planExport(prepared, input());
   expect(skipped).toHaveLength(140);
   expect(skipped.every((p) => p.outcome.status === "skipped")).toBe(true);
+  expect(skipped[0]!.payload).toBeUndefined();
+  expect(skipped[0]!.outcome).toMatchObject({
+    files: {},
+    alternatives: prepared.report.tables[0]!.resources[0]!.hypotheses.map(
+      (h) => ({
+        hypothesis: {
+          bits_per_pixel: h.bitsPerPixel,
+          offset_unit: h.offsetUnit,
+        },
+        payload: reference(prepared, h.payloadRange),
+        provenance: "inferred",
+        evidence: {
+          matches: h.matches,
+          consistency: h.consistency,
+          stride: h.stride,
+          covered: h.covered,
+        },
+      }),
+    ),
+  });
   const all = planExport(prepared, input({ ambiguity: "all" }));
   expect(all).toHaveLength(420);
   expect(new Set(all.map((p) => p.outcome.files)).size).toBe(420);

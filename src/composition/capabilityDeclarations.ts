@@ -32,6 +32,8 @@ import {
   BYTE_ENTROPY_PROVIDER,
   REA_WORKFLOW_PROVIDER,
   DEVICETREE_PROVIDER,
+  ELF_DEBUG_LINK_PROVIDER,
+  ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
   ELF_UNWIND_RANGES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
@@ -267,8 +269,18 @@ export const CAPABILITY_DECLARATIONS = {
       ]),
     ],
   },
+  elfDependencies: {
+    providers: [
+      providerBinding(ELF_DEPENDENCIES_PROVIDER, ["inspect_elf_dependencies"]),
+    ],
+  },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  elfDebugLink: {
+    providers: [
+      providerBinding(ELF_DEBUG_LINK_PROVIDER, ["inspect_elf_debug_link"]),
+    ],
   },
   nativeInitializers: {
     providers: [
