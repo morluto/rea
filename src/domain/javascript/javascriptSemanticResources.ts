@@ -646,35 +646,16 @@ const bigIntUnaryChain = (
 };
 
 /**
- * Whether a later `tls.connect` argument cannot replace the port. Measured on Node
- * 24.22.1, `tls.connect(-0n, () => {})`, `(-0n, undefined)`, `(-0n, {})`,
- * `(-0n, "host")` and `(-0n, "host", {})` throw, while `(-0n, "host", { port: 443 })`
- * and `(-0n, undefined, { port: 443 })` connect. A spread, a computed value or an
- * object with members stays undecided.
- */
-const cannotSupplyTlsPort = (
-  argument: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (t.isSpreadElement(argument)) return false;
-  const value = unwrapJavaScriptExpression(argument).node;
-  return (
-    t.isFunctionExpression(value) ||
-    t.isArrowFunctionExpression(value) ||
-    t.isClassExpression(value) ||
-    primitiveOwnKeys(value, (child) => isNullishPlaceholder(child, state)) !==
-      null ||
-    (t.isObjectExpression(value) && value.properties.length === 0)
-  );
-};
-
-/**
  * `net` and `tls` validate a numeric port before creating a socket, so a
  * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
  * or `null` first argument throws synchronously and no socket exists. A string
  * is a Unix socket path and an object may carry a path, so only an exactly
  * readable non-port literal is decided. `""` is a path with no length, which
  * Node also rejects.
+ *
+ * `tls` is the exception: it merges the options object from argument 1 or 2 over
+ * the port argument first, so a bad first argument still yields a socket when
+ * that object carries a `port` (`tlsPortMayBeReplaced`). `net` does not merge.
  *
  * `net` also rejects an omitted or undefined port, before it returns a socket.
  * TLS merges later options, so an undefined first argument alone cannot decide
@@ -689,22 +670,29 @@ const rejectsSocketLiteralArguments = (
   if (port === undefined) return specifier === "net";
   if (t.isSpreadElement(port)) return false;
   const value = unwrapJavaScriptExpression(port).node;
+  // The first argument is a bad port. `tls` may still connect when later
+  // options supply one; `net` never merges.
+  const badPort = (): boolean =>
+    specifier !== "tls" || !tlsPortMayBeReplaced(node, context.state);
   if (
     specifier === "net" &&
     (t.isUnaryExpression(value, { operator: "void" }) ||
       isUnmodifiedGlobalReference(value, context.state, "undefined"))
   )
     return true;
-  if (t.isStringLiteral(value)) return value.value.length === 0;
+  if (t.isStringLiteral(value)) return value.value.length === 0 && badPort();
   if (
     t.isNullLiteral(value) ||
     t.isBigIntLiteral(value) ||
     t.isBooleanLiteral(value)
   )
-    return true;
+    return badPort();
   if (t.isNumericLiteral(value))
     return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
+      (!Number.isInteger(value.value) ||
+        value.value < 0 ||
+        value.value > 65535) &&
+      badPort()
     );
   // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
   if (
@@ -712,28 +700,21 @@ const rejectsSocketLiteralArguments = (
     (value.name === "NaN" || value.name === "Infinity") &&
     isUnmodifiedGlobalReference(value, context.state, value.name)
   )
-    return true;
+    return badPort();
   // Numeric unary operators are judged by their result: `-0` is port zero,
   // and `~(-1.5)` is zero too. `typeof` instead yields a nonempty IPC path.
   if (t.isUnaryExpression(value)) {
-    if (value.operator === "!" || value.operator === "delete") return true;
-    // `+0n` throws before the call, so no socket exists. `-0n` and `~0n` are
-    // BigInts, which Node rejects as a port, but `tls` merges later options
-    // first, so `tls.connect(-0n, { port: 443 })` still returns a socket. Only
-    // later arguments that cannot carry a port leave the call rejected.
+    if (value.operator === "!" || value.operator === "delete") return badPort();
+    // `+0n` throws a TypeError while the arguments are evaluated, before the
+    // call, so no later argument can rescue it. `-0n` and `~0n` are BigInts
+    // that Node rejects as a port, which `tls` may replace like any other.
     const bigInt = bigIntUnaryChain(value, 0);
-    if (bigInt !== undefined)
-      return (
-        bigInt.plus ||
-        specifier !== "tls" ||
-        node.arguments
-          .slice(1)
-          .every((later) => cannotSupplyTlsPort(later, context.state))
-      );
+    if (bigInt !== undefined) return bigInt.plus || badPort();
     const number = unaryOperandNumber(value, context, 0);
     return (
       number !== undefined &&
-      (!Number.isInteger(number) || number < 0 || number > 65535)
+      (!Number.isInteger(number) || number < 0 || number > 65535) &&
+      badPort()
     );
   }
   return false;
@@ -758,6 +739,8 @@ const TLS_PROTOCOL_VERSIONS = new Set([
 const tlsOptionMerge = (
   node: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
+  /** Argument 0 is already known to be a primitive port, never an options object. */
+  firstIsPort = false,
 ):
   | {
       readonly target: t.ObjectExpression | "fresh" | "unknown";
@@ -794,7 +777,7 @@ const tlsOptionMerge = (
     return "unknown";
   };
   const first = argument(0);
-  const firstKind = objectKind(first);
+  const firstKind = firstIsPort ? "non-object" : objectKind(first);
   const second = argument(1);
   const secondKind = objectKind(second);
   if (firstKind === "unknown" || secondKind === "unknown") return undefined;
@@ -826,11 +809,12 @@ const socketOptionReader = (
   node: t.CallExpression | t.OptionalCallExpression,
   specifier: string,
   state: JavaScriptSemanticAnalysisState,
+  firstIsPort = false,
 ): ((member: string) => t.Node | "unknown" | undefined) | undefined => {
   let target: t.ObjectExpression | undefined;
   let source: t.Node | undefined;
   if (specifier === "tls") {
-    const merge = tlsOptionMerge(node, state);
+    const merge = tlsOptionMerge(node, state, firstIsPort);
     if (merge === undefined || merge.target === "unknown") return undefined;
     target = merge.target === "fresh" ? undefined : merge.target;
     source = merge.source;
@@ -887,6 +871,23 @@ const socketOptionReader = (
     }
     return read;
   };
+};
+
+/**
+ * Whether a `tls.connect` call whose argument 0 is not a usable port may still
+ * connect. Node merges argument 1 over a fresh options object when it is an object
+ * (an array counts), otherwise argument 2, so the port can come from only that one
+ * argument. Measured on Node 24.22.1, `(-0n, { port })`, `(-0n, undefined, { port })`,
+ * `(-0n, "host", { port })` and `(-0n, () => {}, { port })` connect, while `(-0n, {})`,
+ * `(-0n, [])`, `(-0n, {}, { port })` and `(-0n, undefined, undefined, { port })` throw.
+ * An unknown merge, a spread or an accessor leaves the call kept.
+ */
+const tlsPortMayBeReplaced = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const read = socketOptionReader(node, "tls", state, true);
+  return read === undefined || read("port") !== undefined;
 };
 
 /**

@@ -6,6 +6,9 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  * `net` and `tls` validate a numeric port before creating a socket, so a literal
  * port outside `[0, 65535]`, a fractional or non-finite number, or a BigInt,
  * boolean or `null` first argument throws synchronously and no socket exists.
+ * `tls.connect` is the exception: it merges the options object from argument 1
+ * (an array counts), or from argument 2 when argument 1 is not an object, over
+ * the port argument first, so a `port` in that one object still yields a socket.
  *
  * Measured on Node 24.22.1:
  *
@@ -21,7 +24,13 @@ import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
  *   tls.connect(-0n, () => {}) / undefined / {} / "host" / "host", {} -> THREW
  *   tls.connect(-0n, { port: 443 })   -> Socket created (later options win)
  *   tls.connect(-0n, undefined, { port: 443 }) -> Socket created
+ *   tls.connect(-0n, "host", { port: 443 }) / (-0n, () => {}, { port: 443 }) -> Socket created
  *   tls.connect(~0n, { port: 443 })   -> Socket created (later options win)
+ *   tls.connect(0n / null / true / "" / 1.5 / NaN / 65536 / !0, { port: 443 }) -> Socket created
+ *   tls.connect(-0n, {}, { port: 443 }) -> THREW (argument 1 is the merged object)
+ *   tls.connect(-0n, undefined, undefined, { port: 443 }) -> THREW (argument 3 is ignored)
+ *   tls.connect(-0n, []) / (-0n, [], { port: 443 }) -> THREW (an array is the merged object)
+ *   net.connect(65536, { port: 443 }) -> THREW ERR_SOCKET_BAD_PORT (no merge)
  *   net.connect("")                   -> THREW ERR_SOCKET_BAD_PORT
  *   net.connect("/tmp/x.sock")        -> Socket created (Unix socket path)
  *   net.connect({ port: 80 })         -> Socket created
@@ -54,6 +63,27 @@ it.each([
   ["a tls negated BigInt port with undefined", `tls.connect(-0n, undefined)`],
   ["a tls negated BigInt port with empty options", `tls.connect(-0n, {})`],
   ["a tls negated BigInt port with a host", `tls.connect(-0n, "host", {})`],
+  [
+    "a tls negated BigInt port whose merged argument has no port",
+    `tls.connect(-0n, {}, { port: 443 })`,
+  ],
+  [
+    "a tls negated BigInt port with a port only in the fourth argument",
+    `tls.connect(-0n, undefined, undefined, { port: 443 })`,
+  ],
+  ["a tls negated BigInt port with an array", `tls.connect(-0n, [])`],
+  [
+    "a tls negated BigInt port with an array and a later port",
+    `tls.connect(-0n, [], { port: 443 })`,
+  ],
+  [
+    "a tls port above the range with options that carry no port",
+    `tls.connect(65536, { host: "h" })`,
+  ],
+  [
+    "a net port above the range with options",
+    `net.connect(65536, { port: 443 })`,
+  ],
   ["a net negated BigInt port with options", `net.connect(-0n, { port: 443 })`],
   ["a boolean port", `net.connect(true)`],
   ["a null port", `net.connect(null)`],
@@ -101,6 +131,66 @@ it.each([
   [
     "a tls negated BigInt port with a computed later argument",
     `tls.connect(-0n, p)`,
+    "connect",
+  ],
+  [
+    "a tls BigInt port that later options replace",
+    `tls.connect(0n, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls port above the range that later options replace",
+    `tls.connect(65536, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls negative port that later options replace",
+    `tls.connect(-1, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls fractional port that later options replace",
+    `tls.connect(1.5, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls NaN port that later options replace",
+    `tls.connect(NaN, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls null port that later options replace",
+    `tls.connect(null, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls boolean port that later options replace",
+    `tls.connect(true, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls negated boolean port that later options replace",
+    `tls.connect(!0, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls empty path that later options replace",
+    `tls.connect("", { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls negated BigInt port with a host and a port in the third argument",
+    `tls.connect(-0n, "host", { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls negated BigInt port with a callback and a port in the third argument",
+    `tls.connect(-0n, () => {}, { port: 443 })`,
+    "connect",
+  ],
+  [
+    "a tls bad port with a spread that may carry the options",
+    `tls.connect(NaN, ...p)`,
     "connect",
   ],
   ["a tls port", `tls.connect(80)`, "connect"],
