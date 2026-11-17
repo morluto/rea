@@ -30,6 +30,7 @@ import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
+import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -246,22 +247,8 @@ check(
 );
 
 // "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
-// A local predicate with that body, under any name, is a copy. The listed files
-// still hold one and may only be removed from the list; a listed file that no
-// longer matches fails so the list shrinks with the code.
-const RECORD_PREDICATE_COPIES = [
-  // Exported under a module-specific name; importers still use that name.
-  "src/browser/history/CaptureRedaction.ts",
-  "src/contracts/compactJsonSchema.ts",
-  "src/domain/analysisView/environmentStateRules.ts",
-  // Owned by the advertised-schema workstream.
-  "src/contracts/inputSchemaPresentation.ts",
-  // Narrows a protocol-specific parameter type, not unknown.
-  "src/browser/execution/CdpRuntimeInitiator.ts",
-  // Named `object`, which also spells the typeof result in these files.
-  "src/pcap/PcapDnsWire.ts",
-  "src/pcap/PcapOutput.ts",
-];
+// A local predicate with that body, under any name, is a copy.
+const RECORD_PREDICATE_COPIES = [];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
   if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
@@ -1077,6 +1064,15 @@ checkCounted(
     "tests/boundary/mcp/outputValidatorReuse.test.ts",
   ],
 );
+
+// Scripts covered by tsconfig.scripts.json declare and check their types in
+// JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
+// creates a second, unchecked type source that hides signature drift.
+const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
+if (siblingDeclarationFiles.length > 0)
+  failures.push(
+    `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
 
 for (const key of baselineTexts.keys())
   if (!checkedBaselineKeys.has(key))

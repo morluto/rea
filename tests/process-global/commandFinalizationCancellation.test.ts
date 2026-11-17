@@ -1,7 +1,7 @@
+import { createCommandCli } from "../support/cli/commandCli.js";
 import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
 import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
@@ -158,9 +158,7 @@ it.each([
         closed = true;
         if (failsCleanup) throw cleanup;
       });
-    const cli = Cli.create("cutter-discovery-finalization-test", {
-      sync: false,
-    });
+    const cli = createCommandCli();
     registerCutterCommands(cli, silentLogger, {});
     let output = "";
     let settled = false;
@@ -284,7 +282,7 @@ it.each([
       },
     });
     vi.spyOn(wasmArtifactModule, "create").mockReturnValue(service);
-    const cli = Cli.create("finalization-test", { sync: false });
+    const cli = createCommandCli();
     registerWasmCommands(cli, silentLogger, {});
     let output = "";
     const previousExitCode = process.exitCode;
@@ -481,7 +479,7 @@ it.each([
         if (signal !== "control" && phase === "close") interrupt();
         if (phase.startsWith("authentication")) queueInterrupt();
       });
-    const cli = Cli.create("analysis-view-finalization-test", { sync: false });
+    const cli = createCommandCli();
     registerAnalysisViewCommands(cli, silentLogger);
     let output = "";
     const previousExitCode = process.exitCode;

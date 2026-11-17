@@ -1,5 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import { Cli } from "incur";
 import { expect, it } from "vitest";
 import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -28,7 +28,7 @@ it.each([false, true])(
       { operation: "inspect_packet_capture", partialObservation: evidence },
     );
     let closed = false;
-    const cli = Cli.create("capture-cleanup-test", { sync: false });
+    const cli = createCommandCli();
     registerCaptureCommands(
       cli,
       silentLogger,
@@ -85,7 +85,7 @@ it.each([false, true])(
 );
 
 it("keeps the primary CLI failure when close throws an untyped error", async () => {
-  const cli = Cli.create("capture-cleanup-primary-test", { sync: false });
+  const cli = createCommandCli();
   registerCaptureCommands(
     cli,
     silentLogger,
@@ -135,7 +135,7 @@ it("keeps the primary CLI failure when close throws an untyped error", async () 
 });
 
 it("closes the service and retains an unexpected producer rejection", async () => {
-  const cli = Cli.create("capture-producer-rejection-test", { sync: false });
+  const cli = createCommandCli();
   let closed = false;
   registerCaptureCommands(
     cli,
@@ -194,7 +194,7 @@ const rejectBeforeService = async (
   name: string,
   args: string[],
 ): Promise<string> => {
-  const cli = Cli.create(name, { sync: false });
+  const cli = createCommandCli();
   let called = false;
   registerCaptureCommands(
     cli,

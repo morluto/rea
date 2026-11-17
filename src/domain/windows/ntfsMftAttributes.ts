@@ -102,6 +102,7 @@ export type MftAttribute = z.infer<typeof ntfsAttributeSchema>;
 /** Per selected record; each additional decoded record is bounded to 64 KiB. */
 export const MFT_INLINE_ATTRIBUTE_REFERENCE_LIMIT = 32;
 export const ntfsAttributeListResolutionSchema = z.strictObject({
+  // domain-vocabulary: whether every $ATTRIBUTE_LIST entry resolved within the inline reference budget.
   coverage: z.enum(["complete", "incomplete"]),
   knownEntryCount: offset,
   omittedKnownEntries: offset,
