@@ -399,6 +399,7 @@
 
 ### Performance Improvements
 
+* **ci:** narrow PR test selection fallbacks, unify stray lanes, and cache Windows builds ([#11797](https://github.com/morluto/rea/issues/11797)) ([30d5ad2](https://github.com/morluto/rea/commit/30d5ad2a48fc8668ff0be961c7637fdbf638f65e))
 * **ci:** use four Vitest workers on hosted runners ([#10399](https://github.com/morluto/rea/issues/10399)) ([3403338](https://github.com/morluto/rea/commit/3403338ea05d231fc1b8d45c80d74e026d266a3f))
 * **cli:** answer a standalone --version without loading the command registry ([#11312](https://github.com/morluto/rea/issues/11312)) ([6a51213](https://github.com/morluto/rea/commit/6a5121363c494c696ca30be65cba5559eef660c5))
 * **cli:** find recorded controls without reparsing whole union branches ([#11607](https://github.com/morluto/rea/issues/11607)) ([482165d](https://github.com/morluto/rea/commit/482165d7ceec9fb2eff6d798d6c7ff4d2fbdae65))
@@ -594,6 +595,7 @@
 * **parsers:** decode LEB128 through one owner ([#10695](https://github.com/morluto/rea/issues/10695)) ([51e9dc1](https://github.com/morluto/rea/commit/51e9dc156f6ccb584fcce2f4f900b74257d14bdd))
 * **parsers:** report format failures through one ParseFailure algebra ([#10593](https://github.com/morluto/rea/issues/10593)) ([a0d9025](https://github.com/morluto/rea/commit/a0d90252020ef41eef1e572314e745a2b4d854ac))
 * **parsers:** select once-only sections and JSON fields through one keyed owner ([#10740](https://github.com/morluto/rea/issues/10740)) ([eca039b](https://github.com/morluto/rea/commit/eca039b596a7a242f4a8ad92dd86773c95599b73))
+* **parsers:** state duplicate-member policies and bring parser-json-parse to 0 ([#11789](https://github.com/morluto/rea/issues/11789)) ([4a6bee6](https://github.com/morluto/rea/commit/4a6bee6cdb71f5cb230dd7757255d8402cb5aa57))
 * **pe:** move the PE resource parser into domain with domain parse failures ([#11550](https://github.com/morluto/rea/issues/11550)) ([807dd17](https://github.com/morluto/rea/commit/807dd1742f731ad4a0dba34176527eb248b848a2)), closes [#11527](https://github.com/morluto/rea/issues/11527)
 * **platform:** give the host platform one owner and ratchet ambient process.platform reads ([#10911](https://github.com/morluto/rea/issues/10911)) ([2caedcf](https://github.com/morluto/rea/commit/2caedcfb57742753f010943b3459f7c1288db29f))
 * **ports:** give the bundle resource operation policy a port owner ([#11533](https://github.com/morluto/rea/issues/11533)) ([a0e89a8](https://github.com/morluto/rea/commit/a0e89a8970941ec96cc78ce380b128e20aa70b7f))
