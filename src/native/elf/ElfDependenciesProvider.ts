@@ -1,4 +1,9 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
 import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
@@ -11,22 +16,24 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
+  imageFileSizeRemediation,
 } from "../../resources/index.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
+  MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+  MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
+  MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
   type InspectElfDependenciesInput,
 } from "../../domain/native/elfDependencies.js";
 import { err, ok } from "../../domain/result.js";
 import { ELF_DEPENDENCIES_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
 import {
-  ElfDependencyCountFailure,
-  type ElfDependencyCountLimit,
-  parseElfDependencies,
-} from "./ElfDependencyParser.js";
+  BinaryResourceFailure,
+  binaryResourceCeiling,
+} from "../../domain/binaryContainer.js";
+import { parseElfDependencies } from "./ElfDependencyParser.js";
 
 const OPERATION = "inspect_elf_dependencies";
 
@@ -86,15 +93,11 @@ export class ElfDependenciesProvider {
   }
 }
 
-const fileSizeRemediation = (input: InspectElfDependenciesInput): string =>
-  input.max_file_bytes >= MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES
-    ? `The image exceeds the ${String(MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES)}-byte input ceiling this operation accepts. This release has no runtime override, and raising max_file_bytes does not raise it; select a smaller artifact.`
-    : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-
-const countLimitRemediation = (limit: ElfDependencyCountLimit): string =>
-  limit.kind === "budget"
-    ? `Raise ${limit.parameter} above ${String(limit.value)}, up to ${String(limit.ceiling)}, or select a smaller artifact; the limit is the caller-selected budget for ${limit.entries}.`
-    : `${limit.entries} are limited to a fixed ceiling of ${String(limit.value)} entries. This release has no runtime override, and raising max_needed, max_versions, or max_imports does not raise it; select a smaller artifact.`;
+const COUNT_CEILINGS = {
+  max_needed: MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
+  max_versions: MAX_INSPECT_ELF_DEPENDENCY_VERSIONS,
+  max_imports: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+} as const;
 
 const elfDependenciesFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -102,19 +105,46 @@ const elfDependenciesFailurePrimary = (
 ) => {
   const { cause, origin } = facts;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       "memory",
-      cause.message,
-      { boundary: cause.boundary, maximum_bytes: cause.maximum_bytes },
+      cause,
+      fixedAllowanceOptions(
+        "The ELF structural decoding allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
+    );
+  if (isParseLimit(cause, "elf-dependencies")) {
+    const limit = cause.failure.limit;
+    const parameter = (
+      Object.keys(COUNT_CEILINGS) as (keyof typeof COUNT_CEILINGS)[]
+    ).find((name) => name === limit.name);
+    if (parameter !== undefined)
+      return parseLimitConstraint(OPERATION, "capacity", cause, {
+        path: input.path,
+        retryable: false,
+        remediationAction: `Raise ${parameter} above ${String(limit.maximum)}, up to ${String(COUNT_CEILINGS[parameter])}, or select a smaller artifact.`,
+      });
+    const text =
+      limit.name === "scanned_text_bytes" ||
+      limit.name === "retained_text_bytes";
+    return parseLimitConstraint(
+      OPERATION,
+      text ? "memory" : "capacity",
+      cause,
       {
-        cause,
+        path: input.path,
         ...fixedAllowanceOptions(
-          "The ELF structural decoding allowance",
-          "parser",
+          text
+            ? "The ELF dependency text budget fixed by the admitted image length"
+            : `The ELF dependency ${limit.name} allowance`,
+          text ? "parser" : "count",
+          { limit: limit.maximum, unit: text ? "bytes" : "entries" },
         ),
       },
     );
+  }
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   const identityFailure = projectOwnedArtifactIdentityFailure(
@@ -128,33 +158,22 @@ const elfDependenciesFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
-      const textBudget = cause.boundary === "memory";
-      return new AnalysisResourceConstraintError(
+      return parseLimitConstraint(
         OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
+        "file-size",
+        decodeLimit(
+          "elf-dependencies",
+          cause.message,
+          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          { cause },
+        ),
         {
-          max_file_bytes: input.max_file_bytes,
-          max_needed: input.max_needed,
-          max_versions: input.max_versions,
-          max_imports: input.max_imports,
-        },
-        {
-          cause,
-          ...(cause.boundary === undefined
-            ? {}
-            : textBudget
-              ? fixedAllowanceOptions(
-                  "The ELF dependency text budget fixed by the admitted image length",
-                  "parser",
-                )
-              : {
-                  retryable: false as const,
-                  remediationAction:
-                    cause instanceof ElfDependencyCountFailure
-                      ? countLimitRemediation(cause.limit)
-                      : fileSizeRemediation(input),
-                }),
+          path: input.path,
+          retryable: false,
+          remediationAction: imageFileSizeRemediation(
+            input.max_file_bytes,
+            MAX_INSPECT_ELF_DEPENDENCY_FILE_BYTES,
+          ),
         },
       );
     }

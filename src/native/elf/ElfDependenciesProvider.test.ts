@@ -7,7 +7,7 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { inspectElfDependenciesInputSchema } from "../../domain/native/elfDependencies.js";
 import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
 import { ElfDependenciesProvider } from "./ElfDependenciesProvider.js";
-import { ElfDependencyCountFailure } from "./ElfDependencyParser.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 it("keeps the read file's identity when parsing fails", async () => {
   const root = await createTestTempDirectory("rea-elf-dependencies-parse-");
@@ -57,8 +57,8 @@ const countLimitOf = async (
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   const error = result.error as AnalysisResourceConstraintError;
   expect(error.retryable).toBe(false);
-  expect(error.cause).toBeInstanceOf(ElfDependencyCountFailure);
-  return (error.cause as ElfDependencyCountFailure).limit;
+  expect(error.cause).toBeInstanceOf(ParseFailureError);
+  return error.reportedLimits;
 };
 
 it.each([
@@ -70,10 +70,9 @@ it.each([
   async (parameter, ceiling) => {
     const image = elfDependencyFixture();
     expect(await countLimitOf(image, { [parameter]: 2 })).toMatchObject({
-      kind: "budget",
-      parameter,
-      value: 2,
-      ceiling,
+      boundary: parameter,
+      maximum: 2,
+      required: 3,
     });
     const raised = await inspectWith(image, { [parameter]: ceiling });
     if (!raised.ok) throw raised.error;
@@ -86,7 +85,7 @@ it("reports a fixed dynamic-symbol ceiling that a raised budget cannot clear", a
     name: `s${String(index)}`,
   }));
   const image = elfDependencyFixture({ imports });
-  const ceiling = { kind: "ceiling", value: 262144 };
+  const ceiling = { boundary: "dynamic_symbols", maximum: 262144 };
   expect(await countLimitOf(image)).toMatchObject(ceiling);
   expect(await countLimitOf(image, { max_imports: 262144 })).toMatchObject(
     ceiling,

@@ -77,7 +77,15 @@ it("records an empty PT_DYNAMIC inventory and its x86_64 architecture", async ()
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: {
+      identity: {
+        kind: "file",
+        format: "elf",
+        architecture: "x86_64",
+        sha256: report.artifact.sha256,
+      },
+      local_path: report.artifact.path,
+    },
     normalized_result: report,
   });
 });
@@ -142,7 +150,15 @@ it("retains a completed observation if the caller cancels while the provider com
   expect(parseEvidence(late.error.partialObservation)).toMatchObject({
     operation: "inspect_elf_dependencies",
     confidence: "observed",
-    subject: { format: "elf", architecture: "x86_64" },
+    subject: {
+      identity: {
+        kind: "file",
+        format: "elf",
+        architecture: "x86_64",
+        sha256: report.artifact.sha256,
+      },
+      local_path: report.artifact.path,
+    },
     normalized_result: report,
   });
 });

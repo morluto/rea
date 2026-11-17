@@ -50,7 +50,10 @@ mcpTest(
         (evidence.normalized_result as { needed: { name: string | null }[] })
           .needed[0]?.name,
       ).toBe("libstdc++.so.6");
-      expect(evidence.subject?.architecture).toBe("mips");
+      expect(evidence.subject?.identity).toMatchObject({
+        kind: "file",
+        architecture: "mips",
+      });
     } finally {
       await session.close();
     }

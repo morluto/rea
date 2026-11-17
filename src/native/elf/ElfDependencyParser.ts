@@ -1,5 +1,6 @@
 import { keyedBy, uniqueKeyed } from "../../domain/keyedCollection.js";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import { decodeLimit, ParseFailureError } from "../../domain/parseFailure.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { validateElfSectionTablePresence } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
@@ -169,38 +170,16 @@ const fileRange = (offset: bigint, size: bigint, label: string): Range => {
   return { offset: Number(offset), bytes: Number(size) };
 };
 
-/** The count limit a failure hit: a caller budget, or a fixed ceiling. */
-export type ElfDependencyCountLimit =
-  | {
-      readonly kind: "budget";
-      readonly parameter: "max_needed" | "max_versions" | "max_imports";
-      readonly value: number;
-      readonly ceiling: number;
-      readonly entries: string;
-    }
-  | {
-      readonly kind: "ceiling";
-      readonly value: number;
-      readonly entries: string;
-    };
-
-/** A count limit failure that keeps which limit failed for recovery advice. */
-export class ElfDependencyCountFailure extends ArtifactReaderFailure {
-  constructor(
-    message: string,
-    readonly limit: ElfDependencyCountLimit,
-  ) {
-    super("limit", message, { boundary: "capacity" });
-  }
-}
-
 const ceilingFailure = (
   entries: string,
   ceiling: number,
-): ElfDependencyCountFailure =>
-  new ElfDependencyCountFailure(
+  name: string,
+  required: number,
+) =>
+  decodeLimit(
+    "elf-dependencies",
     `${entries} exceed the ${String(ceiling)}-entry ceiling this operation accepts.`,
-    { kind: "ceiling", value: ceiling, entries },
+    { name, maximum: ceiling, required },
   );
 
 const charge = (
@@ -210,11 +189,13 @@ const charge = (
   entries: string,
   parameter: "max_needed" | "max_versions" | "max_imports",
 ): void => {
-  if (count > ceiling) throw ceilingFailure(entries, ceiling);
+  if (count > ceiling)
+    throw ceilingFailure(entries, ceiling, `${parameter}_ceiling`, count);
   if (count > limit)
-    throw new ElfDependencyCountFailure(
+    throw decodeLimit(
+      "elf-dependencies",
       `${entries} exceed the ${String(limit)}-entry budget.`,
-      { kind: "budget", parameter, value: limit, ceiling, entries },
+      { name: parameter, maximum: limit, required: count },
     );
 };
 
@@ -309,14 +290,12 @@ class DynamicStrings {
   }
 
   #charge(field: "scanned" | "retained", bytes: number): void {
-    (field === "scanned" ? this.#scanned : this.#retained).charge(
-      bytes,
-      () =>
-        new ArtifactReaderFailure(
-          "limit",
-          `ELF dependency text exceeds the ${String(this.limit)}-byte budget fixed by the admitted image length.`,
-          { boundary: "memory" },
-        ),
+    (field === "scanned" ? this.#scanned : this.#retained).charge(bytes, () =>
+      decodeLimit(
+        "elf-dependencies",
+        `ELF dependency text exceeds the ${String(this.limit)}-byte budget fixed by the admitted image length.`,
+        { name: `${field}_text_bytes`, maximum: this.limit },
+      ),
     );
   }
 
@@ -1394,12 +1373,13 @@ const parseVerneed = (
     settleConflicts();
     return { status: "present", location: table.location, files };
   } catch (cause) {
-    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof ParseFailureError && cause.kind === "limit")
+      throw cause;
     settleConflicts();
     issues.push({
       code: "version_unresolved",
       location: hex(table.offset),
-      message: `GNU version requirements: ${cause instanceof Error ? cause.message : String(cause)}`,
+      message: `GNU version requirements: ${errorMessage(cause)}`,
     });
     // Keep the records read before the failure; versionNames already joins
     // imports against exactly this prefix.
@@ -1507,11 +1487,12 @@ const parseVerdef = (
     }
     return { status: "present", location: table.location, names };
   } catch (cause) {
-    if (cause instanceof ArtifactReaderFailure) throw cause;
+    if (cause instanceof ParseFailureError && cause.kind === "limit")
+      throw cause;
     issues.push({
       code: "version_unresolved",
       location: hex(table.offset),
-      message: `GNU version definitions: ${cause instanceof Error ? cause.message : String(cause)}`,
+      message: `GNU version definitions: ${errorMessage(cause)}`,
     });
     return { status: "unreadable", location: table.location, names };
   }
@@ -1545,7 +1526,12 @@ const parseImports = (
       message: `The dynamic symbol count ${String(declaredCount)} exceeds the ${String(dynsym.size)}-byte located table; only its first ${String(symbolCount)} symbols were read`,
     });
   if (symbolCount > MAX_INSPECT_ELF_DEPENDENCY_IMPORTS)
-    throw ceilingFailure("Dynamic symbols", MAX_INSPECT_ELF_DEPENDENCY_IMPORTS);
+    throw ceilingFailure(
+      "Dynamic symbols",
+      MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+      "dynamic_symbols",
+      symbolCount,
+    );
   const imports: ElfDependencyImport[] = [];
   try {
     reader.range(dynsym.offset, symbolCount * entrySize, ".dynsym");

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   inspectElfDependenciesInputSchema,
   elfDependenciesSchema,
@@ -765,10 +765,12 @@ it("fails when DT_NEEDED entries exceed the caller-selected budget", () => {
     parse(elfDependencyFixture(), { max_needed: 2 });
     throw new Error("Expected DT_NEEDED budget failure");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(ArtifactReaderFailure);
-    if (cause instanceof ArtifactReaderFailure) {
-      expect(cause.reason).toBe("limit");
-      expect(cause.boundary).toBe("capacity");
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (cause instanceof ParseFailureError) {
+      expect(cause.failure).toMatchObject({
+        kind: "limit",
+        limit: { name: "max_needed", maximum: 2, required: 3 },
+      });
       expect(cause.message).toContain("DT_NEEDED");
     }
   }
@@ -779,8 +781,8 @@ it("fails when GNU version records exceed the caller-selected budget", () => {
     parse(elfDependencyFixture(), { max_versions: 2 });
     throw new Error("Expected version budget failure");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(ArtifactReaderFailure);
-    if (cause instanceof ArtifactReaderFailure)
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (cause instanceof ParseFailureError)
       expect(cause.message).toContain("GNU version records");
   }
 });
@@ -790,22 +792,26 @@ it("fails when undefined symbols exceed the caller-selected import budget", () =
     parse(elfDependencyFixture(), { max_imports: 2 });
     throw new Error("Expected import budget failure");
   } catch (cause) {
-    expect(cause).toBeInstanceOf(ArtifactReaderFailure);
-    if (cause instanceof ArtifactReaderFailure)
+    expect(cause).toBeInstanceOf(ParseFailureError);
+    if (cause instanceof ParseFailureError)
       expect(cause.message).toContain("Undefined dynamic symbols");
   }
 });
 
 it.each([
-  ["DT_NEEDED entries", { max_needed: 2 }, "max_needed", 65536],
-  ["GNU version records", { max_versions: 2 }, "max_versions", 65536],
-  ["Undefined dynamic symbols", { max_imports: 2 }, "max_imports", 262144],
+  ["DT_NEEDED entries", { max_needed: 2 }, "max_needed"],
+  ["GNU version records", { max_versions: 2 }, "max_versions"],
+  ["Undefined dynamic symbols", { max_imports: 2 }, "max_imports"],
 ] as const)(
   "names the caller budget when %s fail",
-  (entries, budget, parameter, ceiling) => {
+  (_entries, budget, parameter) => {
     expect(() => parse(elfDependencyFixture(), budget)).toThrow(
       expect.objectContaining({
-        limit: { kind: "budget", parameter, value: 2, ceiling, entries },
+        failure: expect.objectContaining({
+          kind: "limit",
+          format: "elf-dependencies",
+          limit: { name: parameter, maximum: 2, required: 3 },
+        }),
       }),
     );
   },
@@ -817,7 +823,14 @@ it("reports a fixed ceiling when dynamic symbols pass it under default budgets",
   }));
   expect(() => parse(elfDependencyFixture({ imports }))).toThrow(
     expect.objectContaining({
-      limit: { kind: "ceiling", value: 262144, entries: "Dynamic symbols" },
+      failure: expect.objectContaining({
+        kind: "limit",
+        format: "elf-dependencies",
+        limit: expect.objectContaining({
+          name: "dynamic_symbols",
+          maximum: 262144,
+        }),
+      }),
     }),
   );
 });
@@ -990,8 +1003,13 @@ it("charges every retained reference to one repeated dynamic string", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-  expect(failure).toMatchObject({ reason: "limit", boundary: "memory" });
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: "retained_text_bytes", maximum: bytes.length },
+    },
+  });
   expect((failure as Error).message).toContain(
     `${String(bytes.length)}-byte budget fixed by the admitted image length`,
   );
