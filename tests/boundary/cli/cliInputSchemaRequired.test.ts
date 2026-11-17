@@ -1,5 +1,11 @@
+import {
+  cliCommand,
+  registerCliCommand,
+  cliCommands,
+} from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Cli, z } from "incur";
+import { z } from "zod";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -18,10 +24,8 @@ import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js"
 import { dataTypeSelectorGuidance } from "../../../src/cli/analysisSelector.js";
 
 type CliInstance = ReturnType<typeof createCli>;
-type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
 
 const INPUT_GROUPS = ["args", "options"] as const;
-const registeredCommands: WeakMap<object, CommandMap> = Cli.toCommands;
 
 const advertisedGroupSchema = z
   .object({
@@ -63,7 +67,7 @@ const parserSchema = (
   command: string,
   group: (typeof INPUT_GROUPS)[number],
 ): z.ZodObject | undefined => {
-  const entry = registeredCommands.get(cli)?.get(command);
+  const entry = cliCommand(cli, command)?.definition;
   if (entry === undefined || !(group in entry)) return undefined;
   const schema: unknown = Reflect.get(entry, group);
   return schema instanceof z.ZodObject ? schema : undefined;
@@ -86,7 +90,7 @@ const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
     const mismatches: string[] = [];
-    const primary = createCliInventory(cli).primary;
+    const primary = createCliInventory(cliCommands(cli)).primary;
     expect(primary).toEqual(
       expect.arrayContaining(["inspect-pcap-client", "inspect-pcap-capture"]),
     );
@@ -165,10 +169,13 @@ describe("CLI advertised input schemas", () => {
               : "./selected",
           ),
         };
-        expect(validate(input)).toBe(count === 16);
+        // WASM path count is admitted by the workflow's selected
+        // max_artifact_paths budget; JavaScript recovery retains its own cap.
+        const accepted = command === "inspect-wasm-artifact" || count === 16;
+        expect(validate(input)).toBe(accepted);
         expect(
           parserSchema(cli, command, "options")?.safeParse(input).success,
-        ).toBe(count === 16);
+        ).toBe(accepted);
       }
     }
     const scenario = await advertisedSchema(cli, "capture-native-ui-scenario");
@@ -199,9 +206,9 @@ describe("CLI advertised input schemas", () => {
 
     expect(options?.safeParse({}).success).toBe(true);
     expect(validate({})).toBe(true);
-    expect(options?.safeParse({ commandTimeoutMs: undefined }).success).toBe(
-      false,
-    );
+    // Argv omits an absent option rather than passing undefined, so the
+    // contract's own default applies.
+    expect(options?.parse({})).not.toHaveProperty("commandTimeoutMs");
     for (const commandTimeoutMs of [1, 30_000, 2_147_483_647]) {
       expect(options?.safeParse({ commandTimeoutMs }).success).toBe(true);
       expect(validate({ commandTimeoutMs })).toBe(true);
@@ -245,18 +252,18 @@ describe("CLI advertised input schemas", () => {
     );
   });
 
-  it("advertises defaults as omittable on a mounted group root", async () => {
-    const group = Cli.create("group", {
+  it("advertises defaulted command inputs as omittable", async () => {
+    const cli = createCommandCli();
+    registerCliCommand(cli, "fixture", {
       args: z.object({ scope: z.enum(["all", "selected"]).default("all") }),
       run: () => ({ ok: true }),
-    }).command("child", { run: () => ({ ok: true }) });
-    const cli = Cli.create("group-root-test", { sync: false }).command(group);
+    });
 
     presentOmittableDefaults(cli as unknown as CliInstance);
 
     const advertised = await advertisedSchema(
       cli as unknown as CliInstance,
-      "group",
+      "fixture",
     );
     expect(advertised.args?.properties.scope).toBeDefined();
     expect(advertised.args?.required ?? []).not.toContain("scope");
@@ -318,6 +325,9 @@ describe("web module CLI advertised input schema", () => {
       args({ manifestPath: resolve("manifest.json"), scriptIndex: 0 }),
     ).toBe(true);
     expect(args({ manifestPath: "", scriptIndex: 0 })).toBe(false);
+    expect(args({ manifestPath: "./manifest.json", scriptIndex: 0 })).toBe(
+      true,
+    );
     expect(args({ manifestPath: "manifest\u0000.json", scriptIndex: 0 })).toBe(
       false,
     );
@@ -349,12 +359,12 @@ describe("web source location CLI advertised input schema", () => {
 
     expect(args(valid)).toBe(true);
     expect(args({ ...valid, manifestPath: "" })).toBe(false);
-    expect(args({ ...valid, manifestPath: "./manifest.json" })).toBe(false);
+    expect(args({ ...valid, manifestPath: "./manifest.json" })).toBe(true);
     expect(
       args({ ...valid, manifestPath: `${resolve("manifest.json")}\u0000` }),
     ).toBe(false);
     expect(args({ ...valid, sourceMapPath: "" })).toBe(false);
-    expect(args({ ...valid, sourceMapPath: "app.js.map" })).toBe(false);
+    expect(args({ ...valid, sourceMapPath: "app.js.map" })).toBe(true);
     expect(
       args({ ...valid, sourceMapPath: `${resolve("app.js.map")}\u0000` }),
     ).toBe(false);
@@ -375,8 +385,8 @@ describe("ADB selector input schemas", () => {
       ["S".repeat(257), false],
     ] as const;
     let checked = 0;
-    for (const command of createCliInventory(cli).primary.filter((name) =>
-      name.includes("-adb-"),
+    for (const command of createCliInventory(cliCommands(cli)).primary.filter(
+      (name) => name.includes("-adb-"),
     )) {
       const parser = parserSchema(cli, command, "args");
       const field = parser?.shape.serial as z.ZodType | undefined;
@@ -418,17 +428,6 @@ describe("ADB selector input schemas: package and activity", () => {
   it("preserves package and activity selector boundaries in parser and advertisement", async () => {
     const cli = createCli({});
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
-    const descriptions: Record<string, string> = {
-      "pull-adb-package:package": "Installed package name",
-      "inspect-adb-package:package": "Package",
-      "uninstall-adb-package:package": "Installed package to uninstall",
-      "start-adb-app:package": "Installed package to start",
-      "stop-adb-app:package": "Package to force-stop",
-      "start-adb-activity:action": "Intent action to start",
-      "start-adb-activity:data-uri": "Intent data URI (-d)",
-      "start-adb-activity:component":
-        "Explicit component in package/activity form (-n)",
-    };
     const selections = [
       {
         commands: [
@@ -482,11 +481,14 @@ describe("ADB selector input schemas: package and activity", () => {
           undefined,
           "",
           "bad component!",
+          "example.app",
+          "example.app/",
           "com.example/.Main$Inner",
           "a".repeat(512),
-          "a".repeat(513),
+          `${"a".repeat(255)}/${"b".repeat(256)}`,
+          `${"a".repeat(256)}/${"b".repeat(256)}`,
         ],
-        valid: [true, false, false, true, true, false],
+        valid: [true, false, false, false, false, true, false, true, false],
       },
     ];
     for (const selection of selections) {
@@ -497,8 +499,14 @@ describe("ADB selector input schemas: package and activity", () => {
           throw new Error(`Missing ${command} ${selection.key}`);
         const advertised = await advertisedSchema(cli, command);
         const schema = advertised[selection.group];
+        // The CLI advertises each contract field's own description.
+        const contract = adbInputSchemas[
+          command.replaceAll("-", "_") as keyof typeof adbInputSchemas
+        ] as z.ZodObject;
         expect(schema?.properties[selection.key]).toMatchObject({
-          description: descriptions[`${command}:${selection.key}`],
+          description: (
+            contract.shape[selection.key.replaceAll("-", "_")] as z.ZodType
+          ).description,
         });
         expect(schema?.required?.includes(selection.key) ?? false).toBe(
           selection.group === "args",
@@ -509,7 +517,7 @@ describe("ADB selector input schemas: package and activity", () => {
           const expected = selection.valid[index];
           expect(
             selection.canonical.safeParse(value).success,
-            `${command} owner`,
+            `${command} ${selection.key} owner ${String(index)}`,
           ).toBe(expected);
           const base = selection.group === "args" ? { serial: "S" } : {};
           const input =
@@ -531,7 +539,7 @@ describe("ADB selector input schemas: package and activity", () => {
 
 describe("ADB selector input schemas: dispatch", () => {
   it("rejects malformed CLI selectors before an inert provider is called", async () => {
-    const cli = Cli.create("rea-adb-selector-test", { sync: false });
+    const cli = createCommandCli();
     const provider = {
       inspectAvailability: vi.fn(async (): Promise<never> => {
         throw new Error("unexpected availability probe");
@@ -561,12 +569,56 @@ describe("ADB selector input schemas: dispatch", () => {
         code: "VALIDATION_ERROR",
       });
     }
+    const incompleteComponents = [
+      "example.app",
+      "example.app/",
+      "a".repeat(512),
+    ];
+    for (const component of incompleteComponents) {
+      const result = await serve(cli, [
+        "start-adb-activity",
+        "S",
+        "x",
+        "--component",
+        component,
+        "--json",
+      ]);
+      expect(result.exitCode, component).not.toBe(0);
+      expect(JSON.parse(result.stdout), component).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: "component",
+            code: "invalid_format",
+          }),
+        ],
+      });
+    }
+    const overlongComponent = `${"a".repeat(256)}/${"b".repeat(256)}`;
+    const overlong = await serve(cli, [
+      "start-adb-activity",
+      "S",
+      "x",
+      "--component",
+      overlongComponent,
+      "--json",
+    ]);
+    expect(overlong.exitCode).not.toBe(0);
+    expect(JSON.parse(overlong.stdout)).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          path: "component",
+          code: "too_big",
+        }),
+      ],
+    });
     expect(provider.inspectAvailability).not.toHaveBeenCalled();
     expect(provider.execute).not.toHaveBeenCalled();
   });
 
   it("preserves optional activity mapping and colon-containing extra values", async () => {
-    const cli = Cli.create("rea-adb-selector-valid-test", { sync: false });
+    const cli = createCommandCli();
     const provider = {
       inspectAvailability: vi.fn(async (): Promise<never> => {
         throw new Error("unexpected availability probe");
@@ -689,7 +741,12 @@ describe("reference-source outline-depth input schema", () => {
     const cli = createCli({});
     const advertised = await advertisedSchema(cli, "import-reference-source");
     const outlineDepth = advertised.options?.properties?.outlineDepth;
-    expect(outlineDepth).toMatchObject({ type: "integer", minimum: 0 });
+    expect(outlineDepth).toMatchObject({
+      anyOf: [
+        { type: "integer", minimum: 0 },
+        { type: "string", pattern: "^[0-9]+$" },
+      ],
+    });
 
     const parser = parserSchema(cli, "import-reference-source", "options");
     expect(parser?.safeParse({}).success).toBe(true);
@@ -700,15 +757,27 @@ describe("reference-source outline-depth input schema", () => {
       [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
     ] as const;
     for (const [token, expected] of parsedValues) {
-      const parsed = parser?.safeParse({ outlineDepth: token });
+      const parsed = parser?.safeParse({
+        outlineDepth: token,
+        detail: "summary",
+      });
       expect(parsed?.success).toBe(true);
       if (parsed === undefined || !parsed.success)
         throw new Error(`Expected outline-depth token ${token} to parse`);
-      expect(parsed.data).toMatchObject({ outlineDepth: expected });
+      expect(parsed.data).toMatchObject({
+        detail: "summary",
+        outlineDepth: expected,
+      });
     }
     for (const token of ["", "-1", "9007199254740992"]) {
-      expect(parser?.safeParse({ outlineDepth: token }).success).toBe(false);
+      expect(
+        parser?.safeParse({ outlineDepth: token, detail: "summary" }).success,
+      ).toBe(false);
     }
+    expect(parser?.safeParse({ outlineDepth: "2" }).success).toBe(false);
+    expect(
+      parser?.safeParse({ outlineDepth: "2", detail: "full" }).success,
+    ).toBe(false);
 
     const ajv = new Ajv2020({ strict: false });
     const validate = ajv.compile({
@@ -716,13 +785,21 @@ describe("reference-source outline-depth input schema", () => {
       $schema: "https://json-schema.org/draft/2020-12/schema",
     });
     for (const [token] of parsedValues) {
-      const parsed = parser?.safeParse({ outlineDepth: token });
+      const parsed = parser?.safeParse({
+        outlineDepth: token,
+        detail: "summary",
+      });
       if (parsed === undefined || !parsed.success)
         throw new Error(`Expected outline-depth token ${token} to parse`);
       expect(validate(parsed.data)).toBe(true);
+      expect(validate({ outlineDepth: token, detail: "summary" })).toBe(true);
     }
+    for (const token of ["0x2", "2e0", "-1"])
+      expect(validate({ outlineDepth: token, detail: "summary" })).toBe(false);
     expect(validate({ outlineDepth: -1 })).toBe(false);
     expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
+    expect(validate({ outlineDepth: 2 })).toBe(false);
+    expect(validate({ outlineDepth: 2, detail: "full" })).toBe(false);
   });
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runInNewContext } from "node:vm";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const endpoints = (source: string) =>
   analyzeJavaScriptStaticSource(source).endpoints.map(
@@ -331,7 +331,7 @@ describe("tRPC binding identity and bundled syntax", () => {
     ]);
   });
 
-  it("preserves procedure paths beyond the former nesting cutoff", () => {
+  it("preserves a procedure path of 64 segments", () => {
     const path = Array.from({ length: 64 }, (_, i) => `router${i}`).join(".");
     expect(rpcEndpoints(`root.${path}.useQuery();`)).toEqual([
       { kind: "network", value: path, mechanism: "trpc:procedure:useQuery" },
@@ -415,7 +415,10 @@ describe("GraphQL operation recognition", () => {
     "query GetUser # prose\nparameters",
     "query Get# split name\nUser { user }",
     "query GetUser @ # missing directive name",
-    "query GetUser { # fragment\n...UserFields }",
+    "query GetUser { # missing fragment name\n... }",
+    "query GetUser { ... on }",
+    "query GetUser { ... @ }",
+    "query GetUser { ....UserFields }",
     "query\u00a0GetUser { user }",
     "query\vGetUser { user }",
   ])("keeps incomplete or unsupported header text unknown: %s", (text) => {

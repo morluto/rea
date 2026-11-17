@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import type {
   InspectWindowsShortcutInput,
   WindowsShortcut,
@@ -11,10 +10,10 @@ import type {
   WindowsShortcutStringField,
   WindowsShortcutUuidV1,
 } from "../../domain/native/windowsShortcut.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { malformedInput } from "../../domain/parseFailure.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 type Artifact = WindowsShortcut["artifact"];
 
@@ -27,10 +26,15 @@ const VOLUME_UNICODE_LABEL_SELECTOR = 0x14;
 /** ECMAScript Date range: 8.64e15 ms either side of the Unix epoch. */
 const MAX_DATE_MS = 8_640_000_000_000_000n;
 
-const isoFromUnixMs = (unixMs: bigint): string | null =>
-  unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
+const isoFromUnsigned100ns = (ticks: bigint, epoch: bigint): string | null => {
+  // Both stored clocks are unsigned and their epochs are millisecond-aligned.
+  // Truncate before epoch subtraction so pre-1970 fractions stay in their
+  // containing millisecond rather than rounding toward the Unix epoch.
+  const unixMs = ticks / 10000n - epoch / 10000n;
+  return unixMs < -MAX_DATE_MS || unixMs > MAX_DATE_MS
     ? null
     : new Date(Number(unixMs)).toISOString();
+};
 
 const LINK_FLAG_NAMES: ReadonlyArray<readonly [number, string]> = [
   [0x00000001, "HasLinkTargetIDList"],
@@ -126,9 +130,6 @@ const LIMITATIONS = [
   "Volume serial, NetBIOS machine id, and Tracker droid values are recorded as stored. Host identity is not verified.",
 ];
 
-const sha256 = (bytes: Buffer): string =>
-  createHash("sha256").update(bytes).digest("hex");
-
 const namedBits = (
   raw: number,
   names: ReadonlyArray<readonly [number, string]>,
@@ -156,7 +157,7 @@ const fileTime = (raw: bigint): WindowsShortcut["header"]["creation_time"] => {
   if (raw === 0n) return { raw: "0", iso8601: null };
   return {
     raw: raw.toString(10),
-    iso8601: isoFromUnixMs((raw - FILETIME_UNIX_EPOCH) / 10000n),
+    iso8601: isoFromUnsigned100ns(raw, FILETIME_UNIX_EPOCH),
   };
 };
 
@@ -227,9 +228,9 @@ const uuidV1 = (
     evidence_kind: "derived",
     version: 1,
     mac: [...bytes.subarray(offset + 10, offset + 16)]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .map((byte) => byteToHex(byte))
       .join(":"),
-    timestamp_iso8601: isoFromUnixMs((timestamp - UUID_UNIX_EPOCH) / 10000n),
+    timestamp_iso8601: isoFromUnsigned100ns(timestamp, UUID_UNIX_EPOCH),
     timestamp_100ns: timestamp.toString(10),
   };
 };
@@ -295,22 +296,86 @@ const isFullPath = (path: string): boolean =>
 const hasUnexpandedVariable = (path: string): boolean =>
   /%[^%\\/]+%/u.test(path);
 
+/**
+ * A recorded path and where its non-ASCII text came from. Every ANSI code page
+ * agrees with ASCII, so only non-ASCII characters depend on the encoding. A
+ * non-ASCII ANSI byte is a character from the unobserved system code page,
+ * which its Latin1 projection does not name.
+ */
+type RecordedPath = {
+  readonly path: string;
+  /** Holds non-ASCII text projected from ANSI bytes. */
+  readonly ansi: boolean;
+  /** Holds non-ASCII UTF-16 text. */
+  readonly unicode: boolean;
+};
+
+const isAscii = (text: string): boolean =>
+  [...text].every((char) => char <= "\u007f");
+
+const recorded = (path: string, ansi: boolean): RecordedPath => {
+  const nonAscii = !isAscii(path);
+  return { path, ansi: ansi && nonAscii, unicode: !ansi && nonAscii };
+};
+
+/** Two paths compare as text only when their non-ASCII parts share one encoding. */
+const comparableText = (left: RecordedPath, right: RecordedPath): boolean =>
+  !((left.ansi || right.ansi) && (left.unicode || right.unicode));
+
 const iconDiffersFromTarget = (
-  icon: string | undefined,
-  targets: readonly string[],
+  icon: WindowsShortcut["string_data"]["icon_location"],
+  targets: readonly RecordedPath[],
 ): boolean | null => {
-  if (icon === undefined || !isFullPath(icon) || hasUnexpandedVariable(icon))
-    return null;
-  const location = normalizePath(icon);
-  const fixedTargets = targets.filter(
-    (target) => isFullPath(target) && !hasUnexpandedVariable(target),
+  if (icon === null) return null;
+  const text = icon.value;
+  if (!isFullPath(text) || hasUnexpandedVariable(text)) return null;
+  const iconPath = recorded(text, icon.encoding === "ansi");
+  const location = normalizePath(text);
+  const fullTargets = targets.filter((target) => isFullPath(target.path));
+  const fixedTargets = fullTargets.filter(
+    (target) =>
+      !hasUnexpandedVariable(target.path) && comparableText(target, iconPath),
   );
-  if (fixedTargets.some((target) => normalizePath(target) === location))
+  if (fixedTargets.some((target) => normalizePath(target.path) === location))
     return false;
-  // A variable-bearing target could name the icon's file, so no difference is claimed.
-  if (targets.some((t) => isFullPath(t) && hasUnexpandedVariable(t)))
-    return null;
+  // A variable-bearing target, or one whose ANSI bytes the icon text cannot be
+  // compared with, could name the icon's file, so no difference is claimed.
+  if (fullTargets.length > fixedTargets.length) return null;
   return fixedTargets.length === 0 ? null : true;
+};
+
+/** LinkInfo local and network base paths, each joined with CommonPathSuffix. */
+const linkInfoTargets = (
+  info: NonNullable<WindowsShortcut["link_info"]>,
+): RecordedPath[] => {
+  const suffixText = info.common_path_suffix_unicode ?? info.common_path_suffix;
+  const suffix =
+    suffixText === null || suffixText.length === 0
+      ? null
+      : recorded(suffixText, info.common_path_suffix_unicode === null);
+  // Each part keeps its own encoding, so an ASCII ANSI part never hides a
+  // comparable Unicode part.
+  const withSuffix = (base: RecordedPath): RecordedPath =>
+    suffix === null
+      ? base
+      : {
+          path: `${base.path.replace(/\\$/u, "")}\\${suffix.path.replace(/^\\/u, "")}`,
+          ansi: base.ansi || suffix.ansi,
+          unicode: base.unicode || suffix.unicode,
+        };
+  const values: RecordedPath[] = [];
+  const local = info.local_base_path_unicode ?? info.local_base_path;
+  if (local !== null && (suffix !== null || local.length > 0))
+    values.push(
+      withSuffix(recorded(local, info.local_base_path_unicode === null)),
+    );
+  const net = info.common_network_relative_link;
+  if (net !== null) {
+    const share = net.net_name_unicode ?? net.net_name;
+    if (share !== null)
+      values.push(withSuffix(recorded(share, net.net_name_unicode === null)));
+  }
+  return values;
 };
 
 const targetPaths = (report: {
@@ -318,43 +383,30 @@ const targetPaths = (report: {
   readonly string_data: WindowsShortcut["string_data"];
   readonly id_list: WindowsShortcut["id_list"];
   readonly extra_data: WindowsShortcut["extra_data"];
-}): string[] => {
-  const values: string[] = [];
-  const info = report.link_info;
-  if (info !== null) {
-    const local = info.local_base_path_unicode ?? info.local_base_path;
-    const suffix = info.common_path_suffix_unicode ?? info.common_path_suffix;
-    if (local !== null && suffix !== null && suffix.length > 0)
-      values.push(
-        `${local.replace(/\\$/u, "")}\\${suffix.replace(/^\\/u, "")}`,
-      );
-    else if (local !== null && local.length > 0) values.push(local);
-    const net = info.common_network_relative_link;
-    if (net !== null) {
-      const share = net.net_name_unicode ?? net.net_name;
-      if (share !== null && suffix !== null && suffix.length > 0)
-        values.push(
-          `${share.replace(/\\$/u, "")}\\${suffix.replace(/^\\/u, "")}`,
-        );
-      else if (share !== null) values.push(share);
-    }
-  }
-  if (report.string_data.relative_path !== null)
-    values.push(report.string_data.relative_path.value);
+}): RecordedPath[] => {
+  const values: RecordedPath[] =
+    report.link_info === null ? [] : linkInfoTargets(report.link_info);
+  const relative = report.string_data.relative_path;
+  if (relative !== null)
+    values.push(recorded(relative.value, relative.encoding === "ansi"));
   if (report.id_list !== null) {
     const lastFile = [...report.id_list.items]
       .reverse()
       .find((item) => item.kind === "file_entry");
-    if (lastFile?.kind === "file_entry") values.push(lastFile.short_name);
+    // Type bit 0x04 marks a UTF-16LE name; otherwise the name is ANSI.
+    if (lastFile?.kind === "file_entry")
+      values.push(
+        recorded(lastFile.short_name, (lastFile.type_byte & 0x04) === 0),
+      );
   }
   // A stored literal target, never expanded: `%VAR%` text stays as written.
   for (const block of report.extra_data.blocks) {
     if (block.decoded.kind !== "environment_variable") continue;
-    const stored =
-      block.decoded.target_unicode.length > 0
-        ? block.decoded.target_unicode
-        : block.decoded.target_ansi;
-    if (stored.length > 0) values.push(stored);
+    const unicode = block.decoded.target_unicode.length > 0;
+    const stored = unicode
+      ? block.decoded.target_unicode
+      : block.decoded.target_ansi;
+    if (stored.length > 0) values.push(recorded(stored, !unicode));
   }
   return values;
 };
@@ -389,7 +441,7 @@ const observationsOf = (
     {
       kind: "target_extension",
       evidence_kind: "derived",
-      extension: extensionOf(targets[0] ?? null),
+      extension: extensionOf(targets[0]?.path ?? null),
     },
     {
       kind: "show_command_minimized",
@@ -399,10 +451,7 @@ const observationsOf = (
     {
       kind: "icon_location_differs_from_target",
       evidence_kind: "derived",
-      value: iconDiffersFromTarget(
-        report.string_data.icon_location?.value,
-        targets,
-      ),
+      value: iconDiffersFromTarget(report.string_data.icon_location, targets),
     },
   ];
 };
@@ -419,7 +468,7 @@ const decodeIdListItem = (
     offset,
     size,
     type_byte: typeByte,
-    sha256: sha256(data),
+    sha256: sha256Hex(data),
   });
   if (typeByte === 0x1f && data.length >= 18) {
     return {
@@ -651,7 +700,15 @@ const parseNetwork = (
   const validNetType = (flags & 0x2) !== 0;
   const netNameOffset = block.readUInt32LE(8);
   const deviceNameOffset = validDevice ? block.readUInt32LE(12) : 0;
-  const unicode = netNameOffset > 0x14 && size >= 0x1c;
+  const declaresUnicode = netNameOffset > 0x14;
+  if (declaresUnicode && size < 0x1c)
+    note(
+      walk,
+      "truncated",
+      base + offset + 20,
+      "CommonNetworkRelativeLink ends before its declared Unicode offsets",
+    );
+  const unicode = declaresUnicode && size >= 0x1c;
   const netNameOffsetUnicode = unicode ? block.readUInt32LE(20) : 0;
   const deviceNameOffsetUnicode =
     unicode && validDevice ? block.readUInt32LE(24) : 0;
@@ -831,7 +888,7 @@ const decodeExtra = (
         offset,
         "Environment ExtraData payload is shorter than 780 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     charge(
       walk,
@@ -851,7 +908,7 @@ const decodeExtra = (
         offset,
         "TrackerDataBlock payload is shorter than 0x58 bytes",
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const length = payload.readUInt32LE(0);
     const version = payload.readUInt32LE(4);
@@ -862,7 +919,7 @@ const decodeExtra = (
         offset,
         `TrackerDataBlock header is unsupported (Length 0x${length.toString(16)}, Version ${String(version)})`,
       );
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     const machine = latin1Z(payload.subarray(8, 24));
     charge(walk, machine.length);
@@ -882,14 +939,14 @@ const decodeExtra = (
   if (signature === 0xa0000004) {
     if (payload.length < 4) {
       note(walk, "truncated", offset, "ConsoleFEDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return { kind: "console_fe", code_page: payload.readUInt32LE(0) };
   }
   if (signature === 0xa0000005) {
     if (payload.length < 8) {
       note(walk, "truncated", offset, "SpecialFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "special_folder",
@@ -900,7 +957,7 @@ const decodeExtra = (
   if (signature === 0xa000000b) {
     if (payload.length < 20) {
       note(walk, "truncated", offset, "KnownFolderDataBlock is truncated");
-      return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+      return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
     }
     return {
       kind: "known_folder",
@@ -912,9 +969,9 @@ const decodeExtra = (
     return {
       kind: "property_store",
       bytes: payload.length,
-      sha256: sha256(payload),
+      sha256: sha256Hex(payload),
     };
-  return { kind: "raw", bytes: payload.length, sha256: sha256(payload) };
+  return { kind: "raw", bytes: payload.length, sha256: sha256Hex(payload) };
 };
 
 const parseIdList = async (
@@ -1095,21 +1152,23 @@ export const parseWindowsShortcut = async (
 ): Promise<WindowsShortcut> => {
   assertArtifactReadActive(signal);
   if (bytes.length < HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `File is ${String(bytes.length)} bytes, below the 76-byte ShellLinkHeader`,
     );
   const headerSize = bytes.readUInt32LE(0);
   if (headerSize !== HEADER_BYTES)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `HeaderSize ${String(headerSize)} is not 0x4C`,
+      { offset: 0, field: "HeaderSize" },
     );
   const clsid = formatGuid(bytes, 4);
   if (clsid !== SHELL_LINK_CLSID)
-    throw new WindowsShortcutFormatFailure(
-      "malformed",
+    throw malformedInput(
+      "windows-shortcut",
       `LinkCLSID ${clsid} is not ${SHELL_LINK_CLSID}`,
+      { offset: 4, field: "LinkCLSID" },
     );
   const flags = bytes.readUInt32LE(20);
   const unicode = (flags & 0x00000080) !== 0;

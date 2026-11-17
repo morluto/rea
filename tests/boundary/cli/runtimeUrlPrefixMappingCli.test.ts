@@ -1,3 +1,4 @@
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { execFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +14,6 @@ import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
-const INTEGRATION_TEST_TIMEOUT_MS = 30_000;
 const temporary: string[] = [];
 
 afterEach(async () => {
@@ -106,7 +106,7 @@ const reconcileThroughCli = async (
       observation_ms: 0,
       include_script_sources: false,
     }),
-    inspection,
+    { source: jsonValueSchema.parse(inspection), facts: inspection },
     {
       id: "rea-cdp-browser",
       name: "REA Chrome DevTools Protocol observation provider",
@@ -196,109 +196,97 @@ const mappedLocation = (path: string) => ({
   observed_as: 1,
 });
 
-it(
-  "matches a source-free webpack script to its containing asset",
-  async () => {
-    const root = await createTestTempDirectory("rea-url-bundler-asset-");
-    temporary.push(root);
-    await mkdir(join(root, "chunks"));
-    await writeFile(
-      join(root, "chunks", "runtime.js"),
-      '(globalThis["webpackChunkfixture"] = globalThis["webpackChunkfixture"] || []).push([["main"],{1:(module)=>{module.exports=1;}},(__webpack_require__)=>{__webpack_require__(1);}]);\n',
-    );
-    const analysis = await analyzeFixture(root);
-    const result = await reconcileThroughCli(root, analysis, [
-      "chunks/runtime.js",
-    ]);
-    expect(result.scripts.get("chunks/runtime.js")).toEqual(
-      mappedLocation("chunks/runtime.js"),
-    );
-    expect(result.loadStates.get("chunks/runtime.js")).toEqual({
+it("matches a source-free webpack script to its containing asset", async () => {
+  const root = await createTestTempDirectory("rea-url-bundler-asset-");
+  temporary.push(root);
+  await mkdir(join(root, "chunks"));
+  await writeFile(
+    join(root, "chunks", "runtime.js"),
+    '(globalThis["webpackChunkfixture"] = globalThis["webpackChunkfixture"] || []).push([["main"],{1:(module)=>{module.exports=1;}},(__webpack_require__)=>{__webpack_require__(1);}]);\n',
+  );
+  const analysis = await analyzeFixture(root);
+  const result = await reconcileThroughCli(root, analysis, [
+    "chunks/runtime.js",
+  ]);
+  expect(result.scripts.get("chunks/runtime.js")).toEqual(
+    mappedLocation("chunks/runtime.js"),
+  );
+  expect(result.loadStates.get("chunks/runtime.js")).toEqual({
+    status: "loaded",
+    reason: "runtime-script-correspondence",
+  });
+});
+
+it("keeps an encoded slash inside one URL segment rather than naming a nested artifact", async () => {
+  const root = await createTestTempDirectory("rea-url-prefix-segments-");
+  temporary.push(root);
+  await mkdir(join(root, "child"));
+  await Promise.all([
+    writeFile(join(root, "child", "part.js"), "export const nested = 1;\n"),
+    writeFile(join(root, "child%2Fpart.js"), "export const literal = 2;\n"),
+    writeFile(join(root, "sp ace.js"), "export const space = 3;\n"),
+    writeFile(join(root, "é.js"), "export const accent = 4;\n"),
+  ]);
+  const analysis = await analyzeFixture(root);
+
+  const { scripts } = await reconcileThroughCli(root, analysis, [
+    "child/part.js",
+    "child/part.js?v=%2F#f%2F",
+    "child%2Fpart.js",
+    "child%2fpart.js",
+    "child%252Fpart.js",
+    "sp%20ace.js",
+    "%C3%A9.js",
+    "child/%E0.js",
+  ]);
+
+  expect(Object.fromEntries(scripts)).toEqual({
+    "child/part.js": mappedLocation("child/part.js"),
+    "child/part.js?v=%2F#f%2F": mappedLocation("child/part.js"),
+    "child%2Fpart.js": unmappedLocation,
+    "child%2fpart.js": unmappedLocation,
+    "child%252Fpart.js": mappedLocation("child%2Fpart.js"),
+    "sp%20ace.js": mappedLocation("sp ace.js"),
+    "%C3%A9.js": mappedLocation("é.js"),
+    "child/%E0.js": unmappedLocation,
+  });
+});
+
+it("keeps static load state unknown beneath a prefix whose runtime script had no artifact path", async () => {
+  const root = await createTestTempDirectory("rea-url-prefix-load-state-");
+  temporary.push(root);
+  await mkdir(join(root, "child"));
+  await Promise.all([
+    writeFile(join(root, "child", "part.js"), "export const nested = 1;\n"),
+    writeFile(join(root, "other.js"), "export const other = 2;\n"),
+  ]);
+  const analysis = await analyzeFixture(root);
+
+  const control = await reconcileThroughCli(root, analysis, ["other.js"]);
+  expect(Object.fromEntries(control.loadStates)).toEqual({
+    "child/part.js": {
+      status: "not-observed-in-capture",
+      reason: "not-observed-in-bounded-capture",
+    },
+    "other.js": {
       status: "loaded",
       reason: "runtime-script-correspondence",
-    });
-  },
-  INTEGRATION_TEST_TIMEOUT_MS,
-);
+    },
+  });
 
-it(
-  "keeps an encoded slash inside one URL segment rather than naming a nested artifact",
-  async () => {
-    const root = await createTestTempDirectory("rea-url-prefix-segments-");
-    temporary.push(root);
-    await mkdir(join(root, "child"));
-    await Promise.all([
-      writeFile(join(root, "child", "part.js"), "export const nested = 1;\n"),
-      writeFile(join(root, "child%2Fpart.js"), "export const literal = 2;\n"),
-      writeFile(join(root, "sp ace.js"), "export const space = 3;\n"),
-      writeFile(join(root, "é.js"), "export const accent = 4;\n"),
-    ]);
-    const analysis = await analyzeFixture(root);
-
-    const { scripts } = await reconcileThroughCli(root, analysis, [
-      "child/part.js",
-      "child/part.js?v=%2F#f%2F",
-      "child%2Fpart.js",
-      "child%2fpart.js",
-      "child%252Fpart.js",
-      "sp%20ace.js",
-      "%C3%A9.js",
-      "child/%E0.js",
-    ]);
-
-    expect(Object.fromEntries(scripts)).toEqual({
-      "child/part.js": mappedLocation("child/part.js"),
-      "child/part.js?v=%2F#f%2F": mappedLocation("child/part.js"),
-      "child%2Fpart.js": unmappedLocation,
-      "child%2fpart.js": unmappedLocation,
-      "child%252Fpart.js": mappedLocation("child%2Fpart.js"),
-      "sp%20ace.js": mappedLocation("sp ace.js"),
-      "%C3%A9.js": mappedLocation("é.js"),
-      "child/%E0.js": unmappedLocation,
-    });
-  },
-  INTEGRATION_TEST_TIMEOUT_MS,
-);
-
-it(
-  "keeps static load state unknown beneath a prefix whose runtime script had no artifact path",
-  async () => {
-    const root = await createTestTempDirectory("rea-url-prefix-load-state-");
-    temporary.push(root);
-    await mkdir(join(root, "child"));
-    await Promise.all([
-      writeFile(join(root, "child", "part.js"), "export const nested = 1;\n"),
-      writeFile(join(root, "other.js"), "export const other = 2;\n"),
-    ]);
-    const analysis = await analyzeFixture(root);
-
-    const control = await reconcileThroughCli(root, analysis, ["other.js"]);
-    expect(Object.fromEntries(control.loadStates)).toEqual({
-      "child/part.js": {
-        status: "not-observed-in-capture",
-        reason: "not-observed-in-bounded-capture",
-      },
-      "other.js": {
-        status: "loaded",
-        reason: "runtime-script-correspondence",
-      },
-    });
-
-    const encoded = await reconcileThroughCli(root, analysis, [
-      "other.js",
-      "child%2Fpart.js",
-    ]);
-    expect(encoded.scripts.get("child%2Fpart.js")).toEqual(unmappedLocation);
-    expect(Object.fromEntries(encoded.loadStates)).toEqual({
-      "child/part.js": {
-        status: "unknown",
-        reason: "static-or-runtime-coverage-incomplete",
-      },
-      "other.js": {
-        status: "loaded",
-        reason: "runtime-script-correspondence",
-      },
-    });
-  },
-  INTEGRATION_TEST_TIMEOUT_MS,
-);
+  const encoded = await reconcileThroughCli(root, analysis, [
+    "other.js",
+    "child%2Fpart.js",
+  ]);
+  expect(encoded.scripts.get("child%2Fpart.js")).toEqual(unmappedLocation);
+  expect(Object.fromEntries(encoded.loadStates)).toEqual({
+    "child/part.js": {
+      status: "unknown",
+      reason: "static-or-runtime-coverage-incomplete",
+    },
+    "other.js": {
+      status: "loaded",
+      reason: "runtime-script-correspondence",
+    },
+  });
+});

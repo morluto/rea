@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../resources/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 const nativeCall = vi.hoisted(() => vi.fn());
@@ -125,8 +125,10 @@ describe("Windows private runtime cleanup retry", () => {
     const first = runtime.close();
     const second = runtime.close();
 
-    expect(second).toBe(first);
-    await Promise.all([first, second]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      undefined,
+      undefined,
+    ]);
     expect(closes).toBe(2);
   });
 
@@ -392,13 +394,14 @@ it("retains bound refusal and failed file close until the same owner recovers", 
   expect(closes).toBe(2);
 });
 
-it.each(["valid", "oversized"] as const)(
+it.each(["valid", "oversized", "oversized-close-failed"] as const)(
   "observes a %s Windows Ghidra endpoint through its owning runtime",
   async (kind) => {
     const { observeGhidraEndpoint } =
       await import("../ghidra/GhidraTransport.js");
     const valid = Buffer.from('{"host":"127.0.0.1","port":65535}\n');
     const operations: string[] = [];
+    let fileCloses = 0;
     nativeCall.mockImplementation((operation: string) => {
       operations.push(operation);
       if (operation === "runtime_create") return observation;
@@ -408,34 +411,52 @@ it.each(["valid", "oversized"] as const)(
           size: kind === "valid" ? valid.length : valid.length + 1,
         };
       if (operation === "read") return valid;
+      if (
+        operation === "close" &&
+        kind === "oversized-close-failed" &&
+        fileCloses++ === 0
+      )
+        throw nativeFailure(5);
       return null;
     });
     const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
-    const originalPlatform = Object.getOwnPropertyDescriptor(
-      process,
-      "platform",
-    )!;
-    Object.defineProperty(process, "platform", {
-      ...originalPlatform,
-      value: "win32",
-    });
     try {
-      const result = await observeGhidraEndpoint({
-        transport: "authenticated-loopback-tcp",
-        path: admittedFile.requestedPath,
-      });
+      const result = await observeGhidraEndpoint(
+        {
+          transport: "authenticated-loopback-tcp",
+          path: admittedFile.requestedPath,
+        },
+        { platform: "win32" },
+      );
       if (kind === "valid")
         expect(result).toEqual({
           ok: true,
           value: { host: "127.0.0.1", port: 65535 },
         });
       else {
-        expect(result.ok).toBe(false);
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            kind: "start",
+            message: "Ghidra TCP endpoint is invalid",
+            cause: { reason: "limit" },
+          },
+        });
         expect(operations).not.toContain("read");
+        if (kind === "oversized-close-failed") {
+          if (result.ok) throw new Error("Expected endpoint admission failure");
+          const cleanup = result.error.cleanupFailure;
+          expect(cleanup?.cleanupIncomplete).toBe(true);
+          expect(cleanup?.cleanupResources).toEqual([
+            admittedFile.requestedPath,
+          ]);
+          expect(windowsPrivateRuntime(observation.path)).toBe(runtime);
+          await runtime.close();
+          expect(cleanup?.cleanupIncomplete).toBe(false);
+        }
       }
       expect(operations).toContain("close");
     } finally {
-      Object.defineProperty(process, "platform", originalPlatform);
       await runtime.close();
     }
   },

@@ -29,8 +29,7 @@ import {
   artifactInventoryResultSchema,
 } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
-import type { ArtifactEntry } from "../../../../src/artifacts/ArtifactReader.js";
-import { ZipArtifactReader } from "../../../../src/artifacts/ZipArtifactReader.js";
+import type { ArtifactEntry } from "../../../../src/resources/ArtifactReader.js";
 import {
   cArchiveExecutable,
   pyzArchive,
@@ -44,6 +43,7 @@ import {
   scanArtifactInventory,
 } from "../../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { ZipArtifactReader } from "../../../../src/resources/index.js";
 
 afterEach(() => vi.restoreAllMocks());
 

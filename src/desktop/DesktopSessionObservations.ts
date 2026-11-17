@@ -6,15 +6,23 @@ import type {
   DesktopWindow,
 } from "../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../domain/desktop/desktopStateDiff.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import {
   readLinuxChildren,
   readLinuxProcessStat,
 } from "../process/capture/LinuxProcessSampling.js";
 import type { ProcessLifecycle } from "../process/ProcessLifecycle.js";
+import {
+  processInspectionCleanupFailures,
+  processInspectionCancellations,
+} from "../process/ProcessInspectionCleanup.js";
 import { readProcessRunId } from "../process/ProcessOwnership.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { readRunTokenCarriers } from "../process/ProcessRunTokenObservations.js";
-import type { ObservedWindow } from "./X11WindowObserver.js";
+import type {
+  ObservedWindow,
+  WindowMatching,
+} from "../ports/DesktopApplicationSession.js";
 
 const COMMAND_TEXT_LIMIT = 512;
 /** Parent links followed when deciding whether the capture started a process. */
@@ -26,14 +34,6 @@ type TrackedProcess = Omit<DesktopProcess, "started_by_capture"> & {
   /** Kernel start time; the same pid with another start time is another process. */
   readonly startTime: string | undefined;
 };
-
-/** How a window is recognised as the application's. */
-export interface WindowMatching {
-  /** Class or instance names, lowercase. */
-  readonly names: ReadonlySet<string>;
-  /** False when window pids live in another pid namespace, as in a flatpak sandbox. */
-  readonly byPid: boolean;
-}
 
 /** One process's stat facts, or undefined when the process is gone. */
 type ProcessStat =
@@ -64,6 +64,16 @@ const running = (stat: ProcessStat): stat is NonNullable<ProcessStat> =>
   stat.lifecycle !== "zombie" &&
   stat.lifecycle !== "dead";
 
+/** Optional observations stay unknown unless the producer transfers failure facts or cleanup. */
+const optionalInspectionFailure = (cause: unknown): undefined => {
+  if (
+    processInspectionCleanupFailures(cause).length > 0 ||
+    processInspectionCancellations(cause).length > 0
+  )
+    throw cause;
+  return undefined;
+};
+
 const systemProcfs: SessionProcfs = {
   async stat(pid, signal) {
     const stat = (await readLinuxProcessStat(pid, signal)).value;
@@ -79,20 +89,20 @@ const systemProcfs: SessionProcfs = {
     return (await readLinuxChildren(pid, signal)).value ?? [];
   },
   runId: (pid, signal) =>
-    readProcessRunId(pid, undefined, signal).catch(() => undefined),
+    readProcessRunId(pid, undefined, signal).catch(optionalInspectionFailure),
   async command(pid) {
     const text = await readFile(`/proc/${String(pid)}/cmdline`, "utf8").catch(
       () => "",
     );
-    return text.replaceAll("\0", " ").trim().slice(0, COMMAND_TEXT_LIMIT);
+    return ellipsisExcerpt(
+      text.replaceAll("\0", " ").trim(),
+      COMMAND_TEXT_LIMIT,
+    );
   },
   tokenCarriers: (runId, signal) =>
     readRunTokenCarriers(systemProcessOwnershipHost, runId, signal).then(
       (carriers) => carriers.map(({ pid }) => pid),
-      () => {
-        signal.throwIfAborted();
-        return undefined;
-      },
+      optionalInspectionFailure,
     ),
 };
 

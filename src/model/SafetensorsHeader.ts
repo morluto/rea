@@ -1,6 +1,8 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { parseJsonStringLiteral } from "../domain/jsonDuplicateMember.js";
+import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { TextDecoder } from "node:util";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type {
   ModelMetadata,
   ModelTensor,
@@ -9,7 +11,7 @@ import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import {
   MODEL_HEADER_BYTES,
   MODEL_JSON_NESTING,
-  ModelFormatFailure,
+  modelCapacityFailure,
   ModelReportBudget,
   rejectModel,
   rejectPickle,
@@ -49,7 +51,7 @@ class HeaderJson {
         const raw = this.text.slice(start, this.#position);
         this.budget.charge(6 * raw.length + 2);
         try {
-          const value: unknown = JSON.parse(raw);
+          const value: unknown = parseJsonStringLiteral(raw);
           if (typeof value !== "string")
             return rejectModel("Invalid JSON string");
           for (const unit of value) {
@@ -72,10 +74,9 @@ class HeaderJson {
     this.#space();
     this.budget.charge(64);
     if (depth > MODEL_JSON_NESTING)
-      throw new ModelFormatFailure(
-        "capacity",
-        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
+      throw modelCapacityFailure(
         "json-nesting",
+        `Safetensors JSON nesting exceeds ${String(MODEL_JSON_NESTING)} levels`,
       );
     const c = this.text[this.#position];
     if (c === '"') return this.#string();
@@ -189,15 +190,12 @@ const integersOf = (value: HeaderValue | undefined): bigint[] => {
 };
 const exactOffset = (value: bigint): number => {
   if (value > BigInt(Number.MAX_SAFE_INTEGER))
-    throw new ModelFormatFailure(
-      "capacity",
-      "Safetensors data offset exceeds exact host offset precision",
+    throw modelCapacityFailure(
       "exact-offset",
+      "Safetensors data offset exceeds exact host offset precision",
     );
   return Number(value);
 };
-const pointer = (value: string): string =>
-  value.replaceAll("~", "~0").replaceAll("/", "~1");
 
 export const readSafetensorsHeader = async (
   reader: ModelHeaderReader,
@@ -238,11 +236,7 @@ export const readSafetensorsHeader = async (
   budget.charge(2 * size);
   let text: string;
   try {
-    text =
-      "{" +
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        await reader.take(size - 1),
-      );
+    text = "{" + decodeStrictUtf8(await reader.take(size - 1), "preserve");
   } catch (cause) {
     if (cause instanceof TypeError)
       rejectModel("Safetensors header is not valid UTF-8");
@@ -271,7 +265,7 @@ export const readSafetensorsHeader = async (
         element_count: null,
         preview_complete: true,
         ...source,
-        json_pointer: `/__metadata__/${pointer(key)}`,
+        json_pointer: `/__metadata__/${escapeJsonPointerToken(key)}`,
       });
     }
   }
@@ -336,7 +330,7 @@ export const readSafetensorsHeader = async (
       byte_length_state: "declared",
       storage_validation: bits === undefined ? "unknown" : "consistent",
       ...source,
-      json_pointer: `/${pointer(name)}`,
+      json_pointer: `/${escapeJsonPointerToken(name)}`,
     });
   }
   const ordered = [...tensors].sort(

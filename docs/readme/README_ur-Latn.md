@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **Roman Urdu** · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · **Roman Urdu** · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Reverse Engineer Anything
 
@@ -92,16 +92,15 @@ Setup Claude Code, Codex, Cursor, Gemini CLI, Grok Build aur
 configuration aur manual MCP registration ke liye
 [installation aur setup](../getting-started/installation.md) dekhein.
 
-Context overhead kam rakhne ke liye MCP default mein compact input schemas use
-karta hai. Agar tamam advertised fields ki guidance aur nested validation details
-chahiye hon to apni MCP registration mein `REA_MCP_INPUT_SCHEMA_PROFILE=full`
-set karein. Dono profiles mein tamam tools aur canonical server validation
-maujood rehte hain. MCP contracts guide ka "Compact input schema profile"
+Context overhead kam rakhne ke liye MCP compact input schemas advertise karta
+hai; jo guidance compact schema chhor deta hai woh tool description ke baad aati
+hai. Tamam tools aur canonical server validation baghair tabdeeli ke maujood
+rehte hain. MCP contracts guide ka "Compact input schema profile"
 section dekhein.
 
 Setup chuna hua runtime aur REA entry script seedha register karta hai. Package runner use karne par uski cache entry aur runtime barqarar rakhein; package target project se bahar kisi bharosemand directory se hasil karein. Installation guide dekhein.
 
-Mukammal output schemas default mein advertise hote hain. Agar client `tools/list` ko limit karta hai to MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ya `off` set karein. Server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
+Default mein output schemas `tools/list` se nikal diye jate hain: koi model API inhein nahin parhti, aur REA har result ko khud validate karta hai. Har output schema ko 4096 bytes ki had mein advertise karne ke liye MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` set karein. Har setting mein server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
 
 ### Apne agent se kahein
 
@@ -337,6 +336,12 @@ REA chalne ke liye tayyar environment aur aik bunyadi test export karta hai jo u
 [Environment banane ki rehnumai](https://rea.tools/guides/rl-environments/) ·
 [Environment reference](../agent-environments.md) ·
 [X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Desktop app environments
+
+REA Linux desktop app ka environment bhi bana sakta hai, jise agent screenshots, mouse aur keyboard se istemal karta hai. Aik line ki request se, jaise "Mere liye Gnote environment banao jis mein agent shopping list note mein olive oil shamil kare", aap ka agent app ko local build computer par install karta hai, task likhta hai, environment export karta hai aur naye computer par task check karta hai. Ise banane wali machine ko amd64 ya arm64 par Linux, Docker aur guide mein muqarrar agentenv framework version chahiye.
+
+[Desktop app environments setup karein](../desktop-build-computer.md)
 
 ## FAQ
 

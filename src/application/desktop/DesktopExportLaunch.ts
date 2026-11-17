@@ -18,15 +18,16 @@ type StatePath = DesktopApplicationState["paths"][number];
 
 /**
  * The owned files present at the seed with their digests, and those read as
- * uncompressed text, which boot respells as UTF-8, but for the lock files
- * `isLeftOutLock` names, which the app holds while it runs: a copied one makes
- * the app find its profile or document in use, so those are left out.
+ * uncompressed text, which boot respells as UTF-8, but for those `isLeftOut`
+ * names: lock files the app holds while it runs, since a copied one makes it
+ * find its profile or document in use, and its logs, which record facts about
+ * the capture host.
  */
 export const seedVersions = (
   files: ReadonlyMap<string, StatePath>,
   paths: readonly string[],
   seed: number,
-  isLeftOutLock: (home: string) => boolean,
+  isLeftOut: (home: string) => boolean,
 ): {
   readonly seeds: ReadonlyMap<string, SeedVersion>;
   readonly textSeeds: readonly string[];
@@ -38,7 +39,7 @@ export const seedVersions = (
   for (const [home, path] of files) {
     const version = versionAt(path, seed);
     if (!isWithinAny(home, paths) || version?.present !== true) continue;
-    if (isLeftOutLock(home)) locks.push(home);
+    if (isLeftOut(home)) locks.push(home);
     else if (version.sha256 !== null) {
       seeds.set(home, { sha256: version.sha256, format: version.format });
       if (isTextualFormat(version.format) && version.compression === undefined)
@@ -46,6 +47,34 @@ export const seedVersions = (
     }
   }
   return { seeds, textSeeds: textSeeds.sort(), locks: locks.sort() };
+};
+
+/**
+ * Each seed file's permission bits at the seed, from the last change the
+ * capture recorded at or before it, or else the state the first later change
+ * started from, but for the 0644 a written file gets anyway. A file the
+ * capture saw no change to has no recorded mode.
+ */
+export const seedModes = (
+  capture: DesktopApplicationCapture,
+  seeds: ReadonlyMap<string, SeedVersion>,
+  files: ReadonlyMap<string, StatePath>,
+  seed: number,
+): Readonly<Record<string, number>> => {
+  const modes = new Map<string, number | null>();
+  capture.state.checkpoints.forEach(({ changes }, index) => {
+    for (const { path, before, after } of changes)
+      if (index <= seed) modes.set(path, after?.mode ?? null);
+      else if (!modes.has(path)) modes.set(path, before?.mode ?? null);
+  });
+  return Object.fromEntries(
+    [...seeds.keys()].sort().flatMap((home) => {
+      const mode = modes.get(files.get(home)?.path ?? "");
+      return mode === undefined || mode === null || (mode & 0o777) === 0o644
+        ? []
+        : [[home, mode & 0o777] as const];
+    }),
+  );
 };
 
 /** Home paths of captured files and of settings directories, in either spelling. */

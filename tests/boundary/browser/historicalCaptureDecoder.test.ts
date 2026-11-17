@@ -1,7 +1,6 @@
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
-import { createDeferred } from "../../fixtures/binarySession.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import {
   access,
@@ -10,6 +9,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
   symlink,
   truncate,
   writeFile,
@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { HistoricalCaptureDecoder } from "../../../src/browser/history/HistoricalCaptureDecoder.js";
 import { MitmproxyCaptureAdapter } from "../../../src/browser/history/MitmproxyCaptureAdapter.js";
 import {
@@ -32,6 +33,7 @@ import { decodeHarCapture } from "../../../src/browser/history/HarCapture.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { waitFor } from "../../support/testWait.js";
 
 const linux = it.skipIf(process.platform !== "linux");
 
@@ -158,16 +160,11 @@ fs.writeFileSync(request.reply_path, ${JSON.stringify(JSON.stringify({ ok: true,
     const command = MitmproxyCaptureAdapter.prototype.command;
     vi.spyOn(MitmproxyCaptureAdapter.prototype, "command").mockImplementation(
       function (this: MitmproxyCaptureAdapter, request, runtime) {
-        const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
-        Object.defineProperty(process, "platform", {
-          ...platform,
-          value: "linux",
-        });
-        try {
-          return command.call(this, request, runtime);
-        } finally {
-          Object.defineProperty(process, "platform", platform);
-        }
+        return command.call(
+          new MitmproxyCaptureAdapter(this.environment, "linux"),
+          request,
+          runtime,
+        );
       },
     );
     onTestFinished(() => {
@@ -250,8 +247,7 @@ it.each(["cancelled", "process"] as const)(
     const finishPath = join(root, "finish");
     const text = JSON.stringify(historicalHar());
     await writeFile(capturePath, text);
-    const peerEntered = createDeferred<void>();
-    const peerContinue = createDeferred<void>();
+    const peerCommand = phaseGate();
     const controller = new AbortController();
     const reason = { request: "cancel owned inert decoder" };
     let targetPid: number | undefined;
@@ -294,8 +290,7 @@ it.each(["cancelled", "process"] as const)(
                   finishPath,
                 ],
               };
-            peerEntered.resolve(undefined);
-            await peerContinue.promise;
+            await peerCommand.hold();
             await writeFile(
               join(runtimePath, "reply.json"),
               JSON.stringify({ ok: true, value: decodeHarCapture(text, []) }),
@@ -324,7 +319,7 @@ it.each(["cancelled", "process"] as const)(
     onTestFinished(async () => {
       denied = false;
       denyRoot = false;
-      peerContinue.resolve(undefined);
+      peerCommand.release();
       await targetOwner?.stop();
       await decoder.close();
       vi.restoreAllMocks();
@@ -335,14 +330,11 @@ it.each(["cancelled", "process"] as const)(
       sensitive_values: ["capture-private-runtime"],
     });
     const target = decoder.inspect(input, { signal: controller.signal });
-    await vi.waitFor(
-      async () => {
-        targetPid = JSON.parse(await readFile(markerPath, "utf8"));
-      },
-      { timeout: 5000 },
-    );
+    await waitFor(async () => {
+      targetPid = JSON.parse(await readFile(markerPath, "utf8"));
+    });
     const peer = decoder.inspect(input);
-    await peerEntered.promise;
+    await peerCommand.reached(peer, "peer decoder command");
     if (outcome === "cancelled") controller.abort(reason);
     else await writeFile(finishPath, "finish workload");
     const failed = await target;
@@ -368,7 +360,7 @@ it.each(["cancelled", "process"] as const)(
       () => undefined,
       (cause) => cause,
     );
-    peerContinue.resolve(undefined);
+    peerCommand.release();
     expect((await peer).ok).toBe(true);
     expect(await closing).toBeInstanceOf(Error);
     expect(targetRootCloses).toBe(0);
@@ -391,7 +383,6 @@ it.each(["cancelled", "process"] as const)(
       outcome === "cancelled" ? "cancelled" : "execution_failure",
     );
   },
-  15000,
 );
 
 it("applies a non-default capture deadline and releases its runtime", async () => {
@@ -434,7 +425,7 @@ it("applies a non-default capture deadline and releases its runtime", async () =
   expect(result.error.userMessage).toContain("capture_timeout_ms");
   if (runtimePath === undefined) throw new Error("runtime was not acquired");
   await expect(access(runtimePath)).rejects.toMatchObject({ code: "ENOENT" });
-}, 8_000);
+});
 
 it.each([true, false])(
   "binds decoder replies to the complete selected provider identity (matching name: %s)",
@@ -1025,9 +1016,14 @@ it.each([
           },
         },
       });
-      expect(projected.remediation.action).toContain("no runtime override");
       expect(projected.remediation.action).toContain(
-        "no completed capture Evidence",
+        `Increase max_reply_bytes above ${String(WEB_NETWORK_CAPTURE_LIMITS.outputBytes)}`,
+      );
+      expect(projected.remediation.action).toContain(
+        "next inspect_web_network_capture call",
+      );
+      expect(projected.remediation.action).toContain(
+        "do not recreate a completed report from a refused decode",
       );
       expect(projected.remediation.action).not.toContain("rea doctor");
       expect(result.error.partialObservation).toMatchObject({
@@ -1214,17 +1210,28 @@ it.each([
     const controller = new AbortController();
     const reason = { caller: "reply descriptor close" };
     const originalClose = OwnedFileHandle.prototype.close;
-    let closes = 0;
+    let replyPath: string | undefined;
+    let replyCloses = 0;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
       .mockImplementation(async function (this: OwnedFileHandle) {
-        closes += 1;
-        if (closes === 2 && closeFails) {
+        let isReply = false;
+        if (replyPath !== undefined) {
+          try {
+            const named = await stat(replyPath);
+            const opened = await this.handle.stat();
+            isReply = named.dev === opened.dev && named.ino === opened.ino;
+          } catch (cause) {
+            if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+          }
+        }
+        if (isReply) replyCloses += 1;
+        if (isReply && replyCloses === 1 && closeFails) {
           controller.abort(reason);
           throw new Error("controlled reply close denial");
         }
         await originalClose.call(this);
-        if (closes === 2) controller.abort(reason);
+        if (isReply && replyCloses === 1) controller.abort(reason);
       });
     const decoder = new HistoricalCaptureDecoder(
       [
@@ -1232,6 +1239,7 @@ it.each([
           format: "har",
           identity: HAR_CAPTURE_PROVIDER_IDENTITY,
           command: async (_, runtimePath) => {
+            replyPath = join(runtimePath, "reply.json");
             const bytes =
               reply === "malformed UTF-8"
                 ? Buffer.concat([
@@ -1260,7 +1268,7 @@ it.each([
               arguments: [
                 "-e",
                 `require('node:fs').writeFileSync(process.argv[1],Buffer.from(${JSON.stringify(bytes.toString("base64"))},'base64'))`,
-                join(runtimePath, "reply.json"),
+                replyPath,
               ],
             };
           },
@@ -1321,7 +1329,7 @@ it.each([
         if (reply === "malformed schema")
           expect(primary.message).toContain("Reply violates its schema");
       } else expect(primary.cause).toBe(reason);
-      expect(closes).toBe(closeFails ? 3 : 2);
+      expect(replyCloses).toBe(closeFails ? 2 : 1);
     } finally {
       close.mockRestore();
       await decoder.close();

@@ -185,7 +185,7 @@ export const projectApiContractView = (
     unknowns:
       context.source_coverage.status === "partial"
         ? [
-            "Unresolved or malformed declarations limit this inventory; query path-item-references and diagnostics for exact source pointers.",
+            "This inventory is partial. Inspect limitations for coverage and query path-item-references and diagnostics for any retained source pointers.",
           ]
         : [],
   };
@@ -199,7 +199,7 @@ export const projectApiContractView = (
         sha256: context.artifact.sha256,
       },
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const selected = selectRows(parsed.value, view);
   return ok({

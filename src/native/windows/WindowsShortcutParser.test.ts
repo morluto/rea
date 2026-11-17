@@ -18,10 +18,8 @@ import {
   wrongClsidShortcut,
 } from "../../../tests/fixtures/binaryDiagnostics/windowsShortcut.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
-import {
-  WindowsShortcutFormatFailure,
-  WindowsShortcutResourceFailure,
-} from "./WindowsShortcut.errors.js";
+import { WindowsShortcutResourceFailure } from "./WindowsShortcut.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const input = inspectWindowsShortcutInputSchema.parse({
   path: "/artifacts/shortcut.lnk",
@@ -83,14 +81,30 @@ it("reads a PowerShell hidden-window shortcut with a spoofed icon", async () => 
   expect(report.coverage.status).toBe("complete");
 });
 
-it("reads network-share LinkInfo names", async () => {
-  const report = await parse(networkShareShortcut());
-  expect(report.link_info?.common_network_relative_link).toMatchObject({
-    net_name_unicode: "\\\\fileserver\\docs",
-    device_name_unicode: "Z:",
-  });
-  expect(report.coverage.status).toBe("complete");
-});
+it.each([false, true])(
+  "reads network-share LinkInfo names with Unicode %s",
+  async (unicode) => {
+    const report = await parse(
+      unicode
+        ? networkShareShortcut()
+        : windowsShortcutBytes({
+            flags: LINK_FLAG.HasLinkInfo,
+            unicode: false,
+            idList: null,
+            linkInfo: { netName: "\\\\fileserver\\docs", deviceName: "Z:" },
+            extraData: [],
+          }),
+    );
+    expect(report.link_info?.common_network_relative_link).toMatchObject({
+      net_name: "\\\\fileserver\\docs",
+      device_name: "Z:",
+      net_name_unicode: unicode ? "\\\\fileserver\\docs" : null,
+      device_name_unicode: unicode ? "Z:" : null,
+    });
+    expect(report.coverage.status).toBe("complete");
+    expect(report.issues).toEqual([]);
+  },
+);
 
 it("reports the network provider type only when ValidNetType is set", async () => {
   const build = (networkFlags: number) =>
@@ -140,6 +154,42 @@ it("ignores device names when ValidDevice is clear", async () => {
   });
   expect(report.issues).toEqual([]);
   expect(report.coverage.status).toBe("complete");
+});
+
+it("retains ANSI network names with partial coverage when declared Unicode offsets are truncated", async () => {
+  const bytes = windowsShortcutBytes({
+    flags: LINK_FLAG.HasLinkInfo,
+    idList: null,
+    linkInfo: { netName: "\\\\server\\share", networkFlags: 0x2 },
+    extraData: [],
+  });
+  const network = 76 + bytes.readUInt32LE(76 + 20);
+  bytes.writeUInt32LE(24, network);
+  bytes.writeUInt32LE(21, network + 8);
+  bytes[network + 21] = 0x78;
+  bytes[network + 22] = 0;
+  const report = await parse(bytes);
+  expect(report.link_info?.common_network_relative_link).toMatchObject({
+    net_name: "x",
+    net_name_unicode: null,
+  });
+  expect(report.artifact).toEqual(artifact(bytes));
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    failing_offset: network + 20,
+  });
+  expect(report.coverage.reason).not.toBeNull();
+  expect(report.issues).toEqual([
+    {
+      code: "truncated",
+      offset: network + 20,
+      message:
+        "CommonNetworkRelativeLink ends before its declared Unicode offsets",
+    },
+  ]);
+  expect(report.link_info?.common_path_suffix).toBe("");
+  expect(report.extra_data.terminal_offset).not.toBeNull();
+  expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
 });
 
 it("derives Tracker version-1 MAC and timestamp facts", async () => {
@@ -259,7 +309,7 @@ it("lists an unknown ExtraData signature instead of dropping it", async () => {
 
 it("rejects a Shell Link whose CLSID is not the documented value", async () => {
   await expect(parse(wrongClsidShortcut())).rejects.toBeInstanceOf(
-    WindowsShortcutFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -267,8 +317,12 @@ it("rejects a HeaderSize other than 0x4C", async () => {
   await expect(
     parse(windowsShortcutBytes({ headerSize: 0x50, extraData: [] })),
   ).rejects.toMatchObject({
-    name: "WindowsShortcutFormatFailure",
-    kind: "malformed",
+    failure: {
+      kind: "malformed",
+      format: "windows-shortcut",
+      offset: 0,
+      field: "HeaderSize",
+    },
   });
 });
 
@@ -566,6 +620,62 @@ it("keeps readable dates for FILETIME values before 1970", async () => {
   expect(report.header.creation_time.iso8601).toBe("1950-01-01T00:00:00.000Z");
 });
 
+it.each([
+  [-10_001n, "1969-12-31T23:59:59.998Z"],
+  [-10_000n, "1969-12-31T23:59:59.999Z"],
+  [-9_999n, "1969-12-31T23:59:59.999Z"],
+  [-1n, "1969-12-31T23:59:59.999Z"],
+  [0n, "1970-01-01T00:00:00.000Z"],
+  [1n, "1970-01-01T00:00:00.000Z"],
+  [9_999n, "1970-01-01T00:00:00.000Z"],
+  [10_000n, "1970-01-01T00:00:00.001Z"],
+] as const)(
+  "projects 100-ns clocks into their containing millisecond (%s)",
+  async (delta, iso8601) => {
+    const filetime = 116444736000000000n + delta;
+    const timestamp = 122192928000000000n + delta;
+    const uuid = uuidV1Bytes(timestamp, 1, TRACKER_MAC);
+    const report = await parse(
+      windowsShortcutBytes({
+        creationTime: filetime,
+        accessTime: filetime,
+        writeTime: filetime,
+        extraData: [
+          { kind: "tracker", droid: [uuid, uuid], birthDroid: [uuid, uuid] },
+        ],
+      }),
+    );
+    for (const time of [
+      report.header.creation_time,
+      report.header.access_time,
+      report.header.write_time,
+    ])
+      expect(time).toEqual({ raw: filetime.toString(), iso8601 });
+    const tracker = report.extra_data.blocks[0]?.decoded;
+    if (tracker?.kind !== "tracker")
+      throw new Error("Expected TrackerDataBlock");
+    for (const time of [
+      ...tracker.droid_uuid_v1,
+      ...tracker.birth_droid_uuid_v1,
+    ])
+      expect(time).toMatchObject({
+        timestamp_100ns: timestamp.toString(),
+        timestamp_iso8601: iso8601,
+      });
+  },
+);
+
+it("keeps missing FILETIMEs distinct from the earliest nonzero instant", async () => {
+  const report = await parse(
+    windowsShortcutBytes({ creationTime: 0n, accessTime: 1n }),
+  );
+  expect(report.header.creation_time).toEqual({ raw: "0", iso8601: null });
+  expect(report.header.access_time).toEqual({
+    raw: "1",
+    iso8601: "1601-01-01T00:00:00.000Z",
+  });
+});
+
 it("marks an IDList without a TerminalID as partial", async () => {
   const bytes = windowsShortcutBytes({
     idList: [{ kind: "volume", name: "C:\\" }],
@@ -642,6 +752,96 @@ it("compares an icon with a full target path, ignoring case and separators", asy
     }),
   );
   expect(iconDifference(different)).toBe(true);
+});
+
+it("compares an icon with a target only in a shared or ASCII encoding", async () => {
+  // Windows stores the LinkInfo path only as ANSI when the system code page can
+  // represent it. 0xB9 0xA4 0xBE 0xDF is "工具" in code page 936; Latin1 differs.
+  const gbk = "D:\\\u00b9\u00a4\u00be\u00df\\app.exe";
+  const iconFor = async (
+    options: Parameters<typeof windowsShortcutBytes>[0],
+  ): Promise<boolean | null | undefined> =>
+    iconDifference(await parse(windowsShortcutBytes(options)));
+  const ansiLinkInfo = (localBasePath: string) => ({
+    localBasePath,
+    unicode: false,
+  });
+  expect(
+    await iconFor({
+      linkInfo: ansiLinkInfo(gbk),
+      iconLocation: "D:\\工具\\app.exe",
+    }),
+  ).toBeNull();
+  // A different comparable target does not outweigh the one that cannot be read.
+  expect(
+    await iconFor({
+      linkInfo: ansiLinkInfo(gbk),
+      extraData: [{ kind: "environment", unicode: "C:\\Other\\x.exe" }],
+      iconLocation: "D:\\工具\\app.exe",
+    }),
+  ).toBeNull();
+  // An ANSI icon cannot be compared with a Unicode target either.
+  expect(
+    await iconFor({
+      unicode: false,
+      linkInfo: { localBasePath: "D:\\工具\\app.exe", unicode: true },
+      iconLocation: gbk,
+    }),
+  ).toBeNull();
+  // Both ANSI: the same code page, so the bytes compare.
+  for (const [iconLocation, differs] of [
+    [gbk, false],
+    ["D:\\\u00b9\u00a4\u00be\u00df\\other.exe", true],
+  ] as const)
+    expect(
+      await iconFor({
+        unicode: false,
+        linkInfo: { localBasePath: gbk },
+        iconLocation,
+      }),
+    ).toBe(differs);
+  // ASCII is the same text in every ANSI code page, so it still compares.
+  for (const [iconLocation, differs] of [
+    ["C:\\Tools\\app.exe", false],
+    ["C:\\Tools\\other.exe", true],
+  ] as const)
+    expect(
+      await iconFor({
+        linkInfo: ansiLinkInfo("C:\\Tools\\app.exe"),
+        iconLocation,
+      }),
+    ).toBe(differs);
+  // A joined path keeps each part's encoding: an ASCII ANSI share with a
+  // Unicode suffix, or a Unicode share with an ASCII ANSI suffix, compares.
+  for (const [linkInfo, iconLocation, differs] of [
+    [
+      { netName: "\\\\server\\share", commonPathSuffix: "工具\\app.exe" },
+      "\\\\server\\share\\工具\\app.exe",
+      false,
+    ],
+    [
+      { netName: "\\\\server\\share", commonPathSuffix: "工具\\app.exe" },
+      "\\\\server\\share\\工具\\other.exe",
+      true,
+    ],
+  ] as const)
+    expect(
+      await iconFor({
+        linkInfo: { ...linkInfo, unicode: true, networkUnicode: false },
+        iconLocation,
+      }),
+    ).toBe(differs);
+  expect(
+    await iconFor({
+      linkInfo: {
+        netName: "\\\\server\\共享",
+        commonPathSuffix: "app.exe",
+        unicode: false,
+        networkUnicode: true,
+      },
+      iconLocation: "\\\\server\\共享\\app.exe",
+    }),
+  ).toBe(false);
 });
 
 it("compares an icon with a target after collapsing dot segments as text", async () => {

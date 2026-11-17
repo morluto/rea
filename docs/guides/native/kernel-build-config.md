@@ -31,10 +31,16 @@ otherwise.
 `banner` is the first printable string that starts with `Linux version `
 followed by a version token beginning with a digit and ends at a NUL or
 newline within 512 bytes. `version` is that token. `builder` is the first
-parenthesized group (`user@host`). `compiler` is the second group up to the
-last `) #`, so nested parentheses in compiler strings are kept. The banner is
-`absent` when no such string was found in the searched bytes and `unknown`
-when the bytes were not searched.
+parenthesized group (`user@host`) and is null when that group is empty.
+`compiler` is the second group up to the last `) #`, so nested parentheses in
+compiler strings are kept. Since Linux
+6.1, kbuild also leaves the weak banner of `init/version.o`. It is compiled
+before the build number and timestamp exist, so unless `KBUILD_BUILD_VERSION`
+and `KBUILD_BUILD_TIMESTAMP` are both set, it has a space right after `#` or at
+its end. When a later banner repeats that text up to `#` without that gap, the
+later banner is reported; otherwise the first one is. The banner is `absent`
+when no such string was found in the searched bytes and `unknown` when the
+bytes were not searched.
 
 `config` is `present` only when all of the following hold:
 
@@ -53,7 +59,7 @@ reported as a config. When `IKCFG_ST`, gzip magic, and a later `IKCFG_ED` frame
 a member that does not decode, a deflate stream cut off by that marker, a
 member that fails its CRC-32 or ISIZE check, or text that fails the grammar,
 the config is `malformed` with coverage
-`incomplete`, and `marker`, `gzip`, and `end_marker` locate the blob. A
+`unknown`, and `marker`, `gzip`, and `end_marker` locate the blob. A
 malformed blob is never reported as an absent config. A valid config later in
 the searched bytes still wins. `marker`, `gzip`, and `end_marker` give
 the three ranges. `sha256` hashes the inflated text. `option_count` counts
@@ -109,7 +115,8 @@ times `max_config_bytes` of output across them. A candidate whose stream fails
 partway through is charged its full per-candidate allowance, since its partial
 output is not measured. When that search budget runs
 out before a config is accepted, the config is `incomplete` with reason
-`config_search_exhausted` instead of failing or reporting an absent config.
+`config_search_exhausted` and coverage `partial` instead of failing or
+reporting an absent config.
 Inflation runs off the event loop. Every scan, including marker
 searches that find nothing, config text checks, validation of one long value,
 and hashing, yields to it at least once
@@ -118,7 +125,11 @@ at the next check. One inflate call runs to its output bound once started.
 
 Results that could not search or read the kernel bytes stay `incomplete`,
 `malformed`, or `unsupported` and are never
-reported as an absent config:
+reported as an absent config. `coverage.status` is `partial` when the config
+is known to extend past what was examined (`config_gzip_truncated`,
+`config_search_exhausted`), `unknown` when a framed config is malformed or the
+payload could not be searched (`examined_bytes` is 0), and `unsupported` for a
+payload codec REA does not inflate:
 
 | `config.reason`                    | Meaning                                                                      |
 | ---------------------------------- | ---------------------------------------------------------------------------- |

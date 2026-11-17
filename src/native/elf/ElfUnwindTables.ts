@@ -1,6 +1,14 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
+import {
+  allKeyed,
+  keyedBy,
+  uniqueKeyed,
+} from "../../domain/keyedCollection.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
 import { readElfSymbol } from "../../domain/elfSymbol.js";
 import {
@@ -23,7 +31,7 @@ import {
   readElfDirectoryFromBuffer,
   type ElfProgramDeclaration,
   type NativeSection,
-} from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/native/nativeSectionDirectory.js";
 
 const DW_EH_PE_OMIT = 0xff;
 /** CIE augmentation letters, compared as bytes. */
@@ -34,6 +42,7 @@ const AUG_R = 0x52;
 const AUG_S = 0x53;
 const AUG_B = 0x42;
 const SHT_SYMTAB = 2;
+const SHT_STRTAB = 3;
 const SHT_DYNAMIC = 6;
 const SHT_NOBITS = 8;
 const SHT_DYNSYM = 11;
@@ -49,7 +58,6 @@ const SHN_ABS = 0xfff1;
 const SHN_LORESERVE = 0xff00;
 const SHF_ALLOC = 2n;
 const SHF_EXECINSTR = 4n;
-const SHF_COMPRESSED = 0x800n;
 
 const {
   cfa: CFA_LIMITATION,
@@ -314,8 +322,9 @@ export const parseElfUnwindRanges = (
   );
   const gnu = gnuHeaders[0];
 
-  const named = (name: string): NativeSection[] =>
-    directory.sections.filter((section) => section.name === name);
+  const byName = keyedBy(directory.sections, ({ name }) => name);
+  const named = (name: string): readonly NativeSection[] =>
+    allKeyed(byName, name);
   const ehSections = named(".eh_frame");
   const hdrSections = named(".eh_frame_hdr");
   const debugSections = named(".debug_frame");
@@ -474,22 +483,8 @@ export const parseElfUnwindRanges = (
     end: number,
     signed: boolean,
   ): { readonly value: bigint; readonly next: number } | null => {
-    let result = 0n;
-    let shift = 0n;
-    let pos = offset;
-    let byte = 0;
-    while (pos < end && pos < bytes.length && shift <= 63n) {
-      byte = bytes[pos] ?? 0;
-      pos += 1;
-      result |= BigInt(byte & 0x7f) << shift;
-      shift += 7n;
-      if ((byte & 0x80) === 0) {
-        if (signed && shift < 64n && (byte & 0x40) !== 0)
-          result |= -1n << shift;
-        return { value: result, next: pos };
-      }
-    }
-    return null;
+    const read = readLeb128(bytes, offset, end, signed ? SLEB64 : ULEB64);
+    return "failure" in read ? null : read;
   };
   const safeInt = (value: bigint): number | null =>
     value >= BigInt(Number.MIN_SAFE_INTEGER) &&
@@ -639,7 +634,7 @@ export const parseElfUnwindRanges = (
           ? ".eh_frame_hdr is declared but not file-backed."
           : ".eh_frame_hdr extends past the end of the file and was not decoded.",
       );
-    } else if ((hdrSection.flags & SHF_COMPRESSED) !== 0n) {
+    } else if (hdrSection.compressed) {
       headerLocation = placement.location;
       headerStatus = "incomplete";
       fail(".eh_frame_hdr is SHF_COMPRESSED and was not decompressed.");
@@ -705,7 +700,7 @@ export const parseElfUnwindRanges = (
     } else if (frameLocation === null) {
       frameStatus = "incomplete";
       fail(".eh_frame lies outside the file.");
-    } else if ((ehSection.flags & SHF_COMPRESSED) !== 0n) {
+    } else if (ehSection.compressed) {
       frameStatus = "incomplete";
       fail(".eh_frame is SHF_COMPRESSED and was not decompressed.");
     } else {
@@ -782,7 +777,7 @@ export const parseElfUnwindRanges = (
   }
 
   // DW_EH_PE_datarel in .eh_frame is GOT-relative (LSB; i386/x86-64 psABI).
-  const gotBase = resolveGotBase(bytes, directory, named);
+  const gotBase = resolveGotBase(bytes, directory);
   datarelMissing = false;
   datarelUsed = false;
 
@@ -1094,7 +1089,7 @@ export const parseElfUnwindRanges = (
           : input.offset + pageRows.length,
     },
     coverage: {
-      status: incomplete ? "incomplete" : "complete",
+      status: incomplete ? "partial" : "complete",
       total_ranges: ranges.length,
       total_cies: cies.length,
       ranges_with_symbols: withSymbols,
@@ -1120,27 +1115,40 @@ const fileRange = (section: NativeSection): FileRange | null => {
 
 /**
  * GOT base for `.eh_frame` DW_EH_PE_datarel values: DT_PLTGOT, then the
- * `.got.plt` address, then the `.got` address. Null when none is declared.
+ * `.got.plt` address, then the `.got` address. Null when none is declared,
+ * or when a repeated PT_DYNAMIC header, SHT_DYNAMIC section or allocated GOT
+ * section leaves the source ambiguous.
  */
 const resolveGotBase = (
   bytes: Buffer,
   directory: ReturnType<typeof readElfDirectoryFromBuffer>,
-  named: (name: string) => NativeSection[],
 ): { readonly address: bigint; readonly source: string } | null => {
-  const dynamicProgram = directory.programs.find(
-    (program) => program.type === 2,
+  // The ELF gABI allows one PT_DYNAMIC and one SHT_DYNAMIC section; with
+  // repeats, read neither rather than choosing one by position or falling
+  // back to another source.
+  const dynamicProgram = uniqueKeyed(
+    keyedBy(directory.programs, ({ type }) => type),
+    2,
   );
-  const dynamic =
-    (dynamicProgram === undefined
-      ? undefined
-      : { offset: dynamicProgram.offset, fileSize: dynamicProgram.size }) ??
-    directory.sections
-      .filter((section) => section.type === SHT_DYNAMIC && section.file_backed)
-      .map((section) => ({
-        offset: section.offset,
-        fileSize: section.size,
-      }))[0];
-  if (dynamic !== undefined) {
+  if (!dynamicProgram.ok) return null;
+  let dynamic: { readonly offset: bigint; readonly fileSize: bigint } | null =
+    null;
+  if (dynamicProgram.value?.type === 2)
+    dynamic = {
+      offset: dynamicProgram.value.offset,
+      fileSize: dynamicProgram.value.size,
+    };
+  else {
+    const dynamicSection = uniqueKeyed(
+      keyedBy(directory.sections, ({ type }) => type),
+      SHT_DYNAMIC,
+    );
+    if (!dynamicSection.ok) return null;
+    const section = dynamicSection.value;
+    if (section?.file_backed === true && !section.compressed)
+      dynamic = { offset: section.offset, fileSize: section.size };
+  }
+  if (dynamic !== null) {
     const start = dynamic.offset;
     const end = dynamic.offset + dynamic.fileSize;
     if (start >= 0n && end <= BigInt(bytes.length)) {
@@ -1162,12 +1170,17 @@ const resolveGotBase = (
       }
     }
   }
+  // Only an allocated section has a load address; a repeated allocated GOT
+  // section has no single base.
+  const allocated = keyedBy(
+    directory.sections.filter(({ flags }) => (flags & SHF_ALLOC) !== 0n),
+    ({ name }) => name,
+  );
   for (const name of [".got.plt", ".got"]) {
-    const section = named(name).find(
-      (candidate) => (candidate.flags & SHF_ALLOC) !== 0n,
-    );
-    if (section !== undefined && section.address !== 0n)
-      return { address: section.address, source: `the ${name} section` };
+    const section = uniqueKeyed(allocated, name);
+    if (!section.ok) return null;
+    if (section.value !== undefined && section.value.address !== 0n)
+      return { address: section.value.address, source: `the ${name} section` };
   }
   return null;
 };
@@ -1814,6 +1827,10 @@ const scanSymbols = (
   let remaining = MAX_ELF_UNWIND_SYMBOLS;
   for (const table of tables) {
     assertArtifactReadActive(signal);
+    if (table.compressed) {
+      fail("A symbol table is SHF_COMPRESSED and was not decompressed.");
+      continue;
+    }
     const width = table.entry_size === 0n ? standard : Number(table.entry_size);
     if (width !== standard) {
       fail(
@@ -1829,6 +1846,15 @@ const scanSymbols = (
     const size = Number(table.size);
     if (size % width !== 0)
       fail("A symbol table size is not a multiple of its entry width.");
+    const strings = byIndex.get(table.link);
+    if (strings?.type !== SHT_STRTAB || !strings.file_backed) {
+      fail("A symbol table does not link to a file-backed SHT_STRTAB section.");
+      continue;
+    }
+    if (strings.compressed) {
+      fail("A symbol string table is SHF_COMPRESSED and was not decompressed.");
+      continue;
+    }
     let count = Math.floor(size / width);
     if (count > remaining) {
       fail(
@@ -1837,15 +1863,10 @@ const scanSymbols = (
       count = remaining;
     }
     remaining -= count;
-    const strings = byIndex.get(table.link);
-    const stringBytes =
-      strings !== undefined && strings.file_backed
-        ? bytes.subarray(
-            Number(strings.offset),
-            Number(strings.offset + strings.size),
-          )
-        : null;
-    if (stringBytes === null) fail("A symbol string table could not be read.");
+    const stringBytes = bytes.subarray(
+      Number(strings.offset),
+      Number(strings.offset + strings.size),
+    );
     // Observation per string-table offset; null when the name is unreadable.
     const names = new Map<number, SymbolName | null>();
     for (let index = 0; index < count; index += 1) {
@@ -1878,7 +1899,7 @@ const scanSymbols = (
         if (owner !== undefined) address += owner.address;
       }
       // Only a symbol at a decoded FDE start can name a range.
-      if (stringBytes === null || !wanted.has(address)) continue;
+      if (!wanted.has(address)) continue;
       let name = names.get(symbol.name_offset);
       if (name === undefined) {
         const observed = observeElfStringTableEntry(

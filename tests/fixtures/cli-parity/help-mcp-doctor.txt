@@ -1,0 +1,17 @@
+$ rea mcp doctor --help
+exit: 0
+--- stdout
+rea mcp doctor — Validate MCP adapter startup and tool listing
+
+Usage: rea mcp doctor [options]
+
+Options:
+  --format <toon|json|yaml|md|jsonl>  Output format
+  --json                              Emit the report as JSON
+  --full-output                       Show the full output envelope
+  --help, -h                          Show help
+
+Checks this REA adapter using the current runtime; does not verify a client's registered command or launch environment. This entry accepts only the options above.
+<end>
+--- stderr
+<end>

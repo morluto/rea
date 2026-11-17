@@ -5,14 +5,12 @@ from pathlib import Path
 import resource
 import sys
 
-OUTPUT_BYTES = 64 * 1024 * 1024
-
-def lower_resource_limits():
+def lower_resource_limits(policy):
     limits = {}
     for name, kind, maximum in (
-        ("address_space_bytes", resource.RLIMIT_AS, 3 * 1024**3),
-        ("cpu_seconds", resource.RLIMIT_CPU, 30),
-        ("file_size_bytes", resource.RLIMIT_FSIZE, OUTPUT_BYTES),
+        ("address_space_bytes", resource.RLIMIT_AS, policy["address_space_bytes"]),
+        ("cpu_seconds", resource.RLIMIT_CPU, policy["cpu_seconds"]),
+        ("file_size_bytes", resource.RLIMIT_FSIZE, policy["file_bytes"]),
     ):
         soft, hard = resource.getrlimit(kind)
         finite = [maximum] + [value for value in (soft, hard) if value != resource.RLIM_INFINITY]
@@ -25,6 +23,11 @@ def lower_resource_limits():
 
 def main(request_path, inspect, failure_type, profile):
     request = json.loads(Path(request_path).read_text(encoding="utf-8"))
+    policy = request["producer_limits"]
+    for key in ("input_bytes", "output_bytes", "diagnostic_bytes", "address_space_bytes", "file_bytes", "cpu_seconds"):
+        value = policy[key]
+        if type(value) is not int or not 1 <= value <= 9007199254740991:
+            raise ValueError("producer_limits." + key + " must be a positive safe integer")
     os.environ["PWNLIB_NOTERM"] = "1"
     os.environ["PWNLIB_CACHE_DIR"] = str(Path(request_path).parent / "cache")
     limits = None
@@ -32,7 +35,7 @@ def main(request_path, inspect, failure_type, profile):
     # The outer exit-status contract also covers allocation failure during serialization.
     memory_reserve = bytearray(1024 * 1024)
     try:
-        limits = lower_resource_limits()
+        limits = lower_resource_limits(policy)
         descriptor = os.open(Path(request_path).parent / "limits.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(limits, handle)
@@ -51,8 +54,8 @@ def main(request_path, inspect, failure_type, profile):
         else:
             reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
     encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")
-    if len(encoded) > OUTPUT_BYTES:
-        encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete artifact result exceeds the 64 MiB reply budget."}).encode("utf-8")
+    if len(encoded) > policy["output_bytes"]:
+        encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete artifact result exceeds producer_limits.output_bytes=" + str(policy["output_bytes"]) + "."}).encode("utf-8")
     descriptor = os.open(request["reply_path"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
         handle.write(encoded)

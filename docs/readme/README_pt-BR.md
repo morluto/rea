@@ -1,7 +1,7 @@
 <div align="center">
 
 [English](../../README.md) · [简体中文](README_zh.md) · [繁體中文](README_zh-TW.md) · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · **Português (Brasil)** · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
-· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
 
 # REA: Faça engenharia reversa de qualquer coisa
 
@@ -82,11 +82,11 @@ Escolha seus agentes, revise as alterações propostas e aprove-as. A configura�
 
 A configuração oferece suporte ao Claude Code, Codex, Cursor, Gemini CLI, Grok Build e [outros agentes](../getting-started/installation.md#supported-agents). Consulte [instalação e configuração](../getting-started/installation.md) para configurar provedores e registrar o MCP manualmente.
 
-O MCP usa esquemas de entrada compactos por padrão. Para obter todas as orientações de campos e validação aninhada, defina `REA_MCP_INPUT_SCHEMA_PROFILE=full` no registro MCP. Ambos os perfis mantêm todas as ferramentas e a mesma validação canônica do servidor; veja o guia dos contratos MCP.
+O MCP usa esquemas de entrada compactos por padrão. As orientações que um esquema compacto omite seguem a descrição da ferramenta. Todas as ferramentas e a validação canônica do servidor permanecem iguais; veja o guia dos contratos MCP.
 
 A configuração registra diretamente o runtime escolhido e o script de entrada do REA. Ao usar um executor de pacotes, mantenha sua entrada de cache e o runtime; obtenha o pacote em um diretório confiável fora do projeto alvo. Consulte o guia de instalação.
 
-Os esquemas de saída completos são anunciados por padrão. Se o cliente limitar `tools/list`, defina `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ou `off` no registro MCP. A validação do servidor e os resultados estruturados continuam completos. Consulte “Output schemas” no guia de contratos MCP.
+Os esquemas de saída são omitidos de `tools/list` por padrão: nenhuma API de modelo os lê, e o REA valida cada resultado por conta própria. Defina `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` no registro MCP para anunciar cada esquema de saída dentro de 4096 bytes. Em todas as configurações, a validação do servidor e os resultados estruturados continuam completos. Consulte “Output schemas” no guia de contratos MCP.
 
 ### Peça ao seu agente
 
@@ -174,7 +174,7 @@ O REA requer Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ou 26+ (>=26.12.1), alé
 | JavaScript / Electron       | Módulos, importações, source maps, rotas, IPC e relações com complementos nativos                                       | Node.js e npm; [análise de aplicativos](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
 | Sites                       | Estrutura da página, scripts, observações de rede e capturas de tela solicitadas                                        | Um navegador da família Chrome; [análise do navegador](../guides/web/browser-observation.md)                                                                     |
 | Capturas de rede salvas     | Requisições, respostas, payloads acessíveis e localizações de origem                                                    | HAR / Fiddler Everywhere SAZ; mitmdump no Linux para capturas no formato nativo do mitmproxy; [guia de capturas](../guides/web/web-network-captures.md)          |
-| Capturas de pacotes         | Endpoints, DNS, TLS SNI, distribuição de protocolos e requisições HTTP                                                  | tshark e capinfos fornecidos pelo chamador; [guia pcap](../guides/data/pcap-analysis.md)                                                                         |
+| Capturas de pacotes         | Endpoints, DNS, TLS SNI, distribuição de protocolos e requisições HTTP                                                  | tshark e capinfos fornecidos pelo chamador (verificados no Linux); [guia pcap](../guides/data/pcap-analysis.md)                                                  |
 | Assemblies .NET             | Metadados, instruções CIL, dependências nativas declaradas e comparações de builds                                      | Inspeção estática; [guia de código gerenciado](../guides/managed/managed-code-analysis.md)                                                                       |
 | PyInstaller                 | CArchive, PYZ, Python bytecode                                                                                          | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                            |
 | Deno compile binaries       | Virtual files, entry point, recorded options, npm snapshot length                                                       | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
@@ -278,6 +278,12 @@ O REA exporta um ambiente executável com um teste básico para verificar se ele
 [Guia para criar um ambiente](https://rea.tools/guides/rl-environments/) ·
 [Referência de ambientes](../agent-environments.md) ·
 [Veja a demonstração no X](https://x.com/reatools/status/2112574822584918075?s=20)
+
+### Ambientes de aplicativos de desktop
+
+O REA também pode criar um ambiente de um aplicativo de desktop Linux, que um agente usa por capturas de tela, mouse e teclado. A partir de um pedido de uma linha, como "Crie um ambiente do Gnote em que o agente adiciona azeite à nota da lista de compras", seu agente instala o aplicativo em um computador de build local, escreve a tarefa, exporta o ambiente e verifica a tarefa em um computador novo. A máquina que o cria precisa de Linux em amd64 ou arm64, Docker e da versão do framework agentenv fixada pelo guia.
+
+[Configurar ambientes de aplicativos de desktop](../desktop-build-computer.md)
 
 ## Perguntas frequentes
 

@@ -113,8 +113,8 @@ After finding method indices, parameters can be requested directly:
 }
 ```
 
-Historical Evidence that predates these member collections remains queryable.
-A missing collection has an unknown (`null`) summary count, and requesting it
+An Evidence bundle or record from an earlier Evidence format revision is
+refused; recreate the observation. A missing collection has an unknown (`null`) summary count, and requesting it
 reports that it was not collected; it is never presented as an empty inventory. The same holds for Evidence that predates binary linking: its summary
 omits `binary`, and `method_addresses`, `method_address_states`,
 `return_types`, `field_types` and `parameter_types` counts are `null`. A link retained before
@@ -156,14 +156,18 @@ preserves every decoded row for subsequent queries without the original file.
 exactly one slice of a universal Mach-O and `--generic-instances` adds generic
 method instances. The report retains the native reader's
 `amd64` spelling for x86-64; loader CPU checks use the corresponding `x86_64`
-identity. Multiple slices with the same architecture label are refused as
-`ambiguous-slice-selection`, including
-distinct ARM subtypes that both map to `arm64`. On macOS, use `lipo -info`
-to enumerate exact subtypes, then extract the intended subtype into a separate
-file, for example `lipo universal -thin arm64e -output thin-arm64e`. Inspect
-that thin file without `--architecture`. An exact `arm64e` slice is not
-selected by `lipo -thin arm64`. Thinning resolves only selection ambiguity;
-the metadata must still match and unsupported pointer encodings remain unsupported.
+identity. Slices are selected as for the other native inspectors: a CPU family
+with one slice is read by its family name, and when several slices share a
+family the value must name one slice's subtype exactly, so `arm64` reads the
+`arm64` slice beside an `arm64e` one. Selection problems are invalid
+`binary_architecture` requests, and a damaged FAT table is an invalid
+`binary_path`. `arm64e` is not a `binary_architecture` value: when the
+intended slice is the only arm64e slice among several arm64-family slices, use
+`lipo -info` to enumerate exact subtypes on macOS, extract the slice into a
+separate file, for example `lipo universal -thin arm64e -output thin-arm64e`,
+and inspect that thin file without `--architecture`. Thinning resolves only
+selection; the metadata must still match and unsupported pointer encodings
+remain unsupported.
 
 ## Observations
 
@@ -209,13 +213,20 @@ unneeded rows out of agent context without discarding the source Evidence.
 `GameAssembly.dylib` (Mach-O), Windows `GameAssembly.dll` (64-bit PE) or
 Android `libil2cpp.so` (64-bit ELF, AArch64 or x86-64). A
 universal Mach-O needs `binary_architecture` (`arm64` or `amd64`); a thin binary
-rejects it. The file is read, never loaded or executed.
+rejects it. A universal result lists other slices of the selected CPU family
+that were not read in `limitations`. The file is read, never loaded or executed.
 
 A position-independent `libil2cpp.so` stores zero in most pointer slots and
 keeps the value in `R_AARCH64_RELATIVE` or `R_X86_64_RELATIVE` relocations
-(`DT_RELA`). The reader writes those values into a private copy before
-searching it, so addresses are the link-time addresses and RVAs are relative to
-the first loaded segment. Android packed
+(`DT_RELA`). The reader indexes loader values by virtual address while keeping
+the source bytes unchanged, so addresses are the link-time addresses and RVAs are relative to
+the first loaded segment. Word-sized AArch64 ABS64/GLOB_DAT and x86-64
+absolute/GLOB_DAT pointers can also use a defined ordinary dynamic symbol from
+the selected image. Symbol-table indices must be bounded by `DT_HASH` or
+`DT_GNU_HASH`; undefined symbols, TLS offsets and IFUNC resolver results remain
+unknown. These are static link-image derivations, not observations of runtime
+symbol binding or proof that a definition cannot be interposed. Other pointer
+consumers retain their own conservative resolution policy. Android packed
 relocations (`DT_ANDROID_RELA`) are refused. No target code is executed.
 
 The binary's `Il2CppCodeRegistration` points to one `Il2CppCodeGenModule` per
@@ -434,9 +445,6 @@ The builds checked are listed after the module search rules above.
 | Reason                                  | Category    | Meaning                                                                                                      |
 | --------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
 | `unsupported-container`                 | unsupported | Not a 64-bit little-endian Mach-O, PE or ELF image (ELF: AArch64 or x86-64 with dynamic section).            |
-| `slice-selection-required`              | unsupported | A universal Mach-O was given without `binary_architecture`.                                                  |
-| `ambiguous-slice-selection`             | unsupported | More than one universal slice matches the selected architecture label; select an exact subtype externally.   |
-| `slice-not-found`                       | unsupported | The requested slice is absent, or a thin binary was given an architecture.                                   |
 | `unsupported-pointer-encoding`          | unsupported | Mach-O chained fixups or Android packed (APS2) ELF relocations; pointers not decoded.                        |
 | `malformed-container`                   | input error | The container headers are damaged.                                                                           |
 | `code-gen-modules-not-found`            | input error | An image has no module record; often a binary from a different build.                                        |
@@ -451,11 +459,11 @@ The builds checked are listed after the module search rules above.
 | `generic-method-registration-not-found` | input error | No CodeRegistration layout bounds every genericMethodTable row, or the generic tables are unreadable.        |
 | `ambiguous-generic-method-registration` | input error | More than one CodeRegistration layout bounds every genericMethodTable row.                                   |
 
-Format and selection failures name `binary_path`; capacity refusals remain typed resource errors. Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB.
+Format failures name `binary_path` and slice-selection failures name `binary_architecture`; capacity refusals remain typed resource errors whose `reported_limits` name the exceeded budget (`boundary`, the capacity reason) and its `maximum`, with `details.refusal.unit` naming the unit the budget counts (`"entries"`, `"bytes"` or `"frames"`). Failed linking preserves the metadata source identity, validated counts, selected binary path/architecture and its SHA-256 when observed, plus prior producer observations. It never publishes an incomplete native table as complete. The binary input is bounded to 1 GiB. The virtual-pointer index has the same 1 GiB estimated representation allowance, reserving 2 KiB per distinct virtual destination before insertion for retained Maps and finish-time lookup storage. Repeated declarations of one destination share that reservation. This conservative allocation accounting is separate from actual process RSS and the report allowance; exhaustion returns a typed `native-index-capacity` refusal before another destination is retained.
 
 Scans yield cooperatively in bounded batches. Name-address retention and reverse-trie construction are each limited to 65,536 entries/nodes and fallback module-array candidates to 64 (`native-index-capacity`); exceeding capacity does not prove absence. Rendered type text has a 64 MiB UTF-8 cache-workspace guard, separate from the 64 MiB encoded-report admission, and 64 nested rendering frames (`native-type-text-capacity` / `type-nesting-capacity`). Genuine cycles are malformed; unsupported type kinds are explicit coverage failures. Native row/text admission runs before allocation or retention. Unused generic parameter names are read on demand from the same stable metadata snapshot. There is no cross-inspection file cache; validated immutable Evidence is reused for session views.
 
-ELF RELATIVE writes into zero-fill are kept as a private virtual-pointer overlay. Unresolved supported-width symbol relocations, including RELA PLT entries, remain unknown only for the bytes their ELF ABI relocation type covers; an adjacent 32-bit relocation does not make a separate 64-bit method slot unknown. Stored zeros never establish no-body. COPY, TLS descriptor, REL, packed APS2 and other unsupported relocation encodings fail closed. Input bytes are unchanged.
+ELF RELATIVE writes use a virtual-pointer overlay for both file-backed and zero-fill locations. Distinct virtual addresses that share source file bytes retain independent values; an untouched alias keeps its stored bytes. Unresolved supported-width symbol relocations, including RELA PLT entries, remain unknown only for the bytes their ELF ABI relocation type covers; an adjacent 32-bit relocation does not make a separate 64-bit method slot unknown. Stored zeros never establish no-body. COPY, TLS descriptor, REL, packed APS2 and other unsupported relocation encodings fail closed. Input bytes are unchanged.
 
 ELF relocation tables and file-backed destinations may span adjacent load ranges when every range agrees on the file translation. Any overlapping zero-fill declaration makes those bytes ambiguous; REA refuses the table or relocation destination instead of choosing the stored file bytes. Missing file bytes remain distinct from conflicting owners: supported unresolved relocations outside file-backed memory retain their unknown overlay, while ambiguous destinations refuse linking. Registration coverage uses the same file/zero-fill ownership checks as pointer reads.
 

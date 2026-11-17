@@ -4,6 +4,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import {
   carriesTargetContentMarker,
   encodeToolResult,
+  errorTextWireBytes,
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 
@@ -136,5 +137,27 @@ describe("MCP result encoding budget", () => {
     // budget. The serializer's property discovery must not eagerly read values.
     expect(() => encodeToolResult(candidate, 1000)).not.toThrow();
     expect(encodeToolResult(candidate, 1000).ok).toBe(false);
+  });
+});
+
+describe("error text wire size", () => {
+  it("ranks values by escaped UTF-8 bytes, not by code units", () => {
+    const quotes = { text: '"'.repeat(10_000) };
+    const cjk = { text: "\u4e2d".repeat(15_000) };
+    const budget = 1_000_000;
+    // Quotes escape twice in error text (4 bytes each); each CJK character
+    // is 3 UTF-8 bytes, so the CJK value is larger on the wire.
+    expect(errorTextWireBytes(cjk, budget)).toBeGreaterThan(
+      errorTextWireBytes(quotes, budget),
+    );
+  });
+
+  it("keeps a value over the budget ranked above any value that fits", () => {
+    const budget = 4096;
+    const over = errorTextWireBytes({ text: "x".repeat(8192) }, budget);
+    expect(over).toBeGreaterThan(budget);
+    expect(over).toBeGreaterThan(
+      errorTextWireBytes({ text: "x".repeat(2048) }, budget),
+    );
   });
 });

@@ -1,0 +1,10 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --filter-output normalized_result.window  # stdout is a terminal
+exit: 0
+--- stdout
+normalized_result:
+  window:
+    offset: 0
+    length: 20
+<end>
+--- stderr
+<end>
