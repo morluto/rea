@@ -28,6 +28,21 @@ export const MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS =
 export const MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS = 65_536;
 
 /**
+ * Fixed allowance for Gradle variants in one module file. An empty variant
+ * (`{}`) becomes a full variant record; published modules, including Kotlin
+ * Multiplatform roots with one variant per target and usage, declare at most a
+ * few hundred.
+ */
+export const MAVEN_GRADLE_METADATA_VARIANTS = 4_096;
+
+/**
+ * Fixed allowance for dependency exclusions summed over every row in one
+ * report. An empty exclusion (`{}` or `<exclusion/>`) becomes a full exclusion
+ * record; real rows exclude a handful of modules each.
+ */
+export const MAVEN_GRADLE_METADATA_EXCLUSIONS = 65_536;
+
+/**
  * Fixed allowance for XML nodes (elements, attributes, text, CDATA, comments
  * and processing instructions) in one Maven POM, counted as a stream before
  * the document tree is built. Each node costs hundreds of bytes of tree, so a

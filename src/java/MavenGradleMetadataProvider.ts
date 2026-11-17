@@ -19,7 +19,10 @@ import {
   type InspectMavenGradleMetadataInput,
 } from "../domain/java/mavenGradleMetadata.js";
 import { err, ok } from "../domain/result.js";
-import { MavenGradleMetadataReportFailure } from "./MavenGradleMetadata.errors.js";
+import {
+  MavenGradleMetadataReportFailure,
+  type MavenGradleReportAllowance,
+} from "./MavenGradleMetadata.errors.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "./MavenGradleMetadataProviderIdentity.js";
 import { parseMavenGradleMetadata } from "./MavenGradleMetadataParser.js";
@@ -87,6 +90,22 @@ const inputBudgetRemediation = (
   return undefined;
 };
 
+/** The subject a fixed-allowance remediation names for each report allowance. */
+const REPORT_ALLOWANCE_SUBJECTS: Readonly<
+  Record<MavenGradleReportAllowance, (limit: number) => string>
+> = {
+  dependency_rows: (limit) =>
+    `The ${String(limit)}-row allowance for dependency and constraint rows`,
+  variants: (limit) =>
+    `The ${String(limit)}-variant allowance for Gradle module variants`,
+  exclusions: (limit) =>
+    `The ${String(limit)}-exclusion allowance for dependency exclusions`,
+  xml_nodes: (limit) =>
+    `The ${String(limit)}-node allowance for a Maven POM document tree`,
+  repeated_variant_name_chars: (limit) =>
+    `The ${String(limit)}-character allowance for variant names repeated across Gradle dependency rows`,
+};
+
 const mavenGradleMetadataFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectMavenGradleMetadataInput,
@@ -101,11 +120,7 @@ const mavenGradleMetadataFailurePrimary = (
       {
         cause,
         ...fixedAllowanceOptions(
-          cause.allowance === "dependency_rows"
-            ? `The ${String(cause.limit)}-row allowance for dependency and constraint rows`
-            : cause.allowance === "xml_nodes"
-              ? `The ${String(cause.limit)}-node allowance for a Maven POM document tree`
-              : `The ${String(cause.limit)}-character allowance for variant names repeated across Gradle dependency rows`,
+          REPORT_ALLOWANCE_SUBJECTS[cause.allowance](cause.limit),
           "report",
         ),
       },

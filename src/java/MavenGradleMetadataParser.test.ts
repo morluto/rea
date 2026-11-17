@@ -856,6 +856,70 @@ it.for([
   },
 );
 
+it.for([
+  [
+    "Gradle variants",
+    `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
+    { allowance: "variants", limit: 4_096, required: 4_097 },
+  ],
+  [
+    "Gradle exclusions",
+    gradleModule(
+      `{"name":"v","dependencies":[{"group":"a","module":"b","excludes":[${Array(65_537).fill("{}").join(",")}]}]}`,
+    ),
+    { allowance: "exclusions", limit: 65_536, required: 65_537 },
+  ],
+  [
+    "POM exclusions",
+    `<project><artifactId>demo</artifactId><dependencies><dependency><exclusions>${"<exclusion/>".repeat(65_537)}</exclusions></dependency></dependencies></project>`,
+    { allowance: "exclusions", limit: 65_536, required: 65_537 },
+  ],
+] as const)(
+  "refuses %s past the report allowance before building them",
+  ([, source, expected]) => {
+    const bytes = Buffer.from(source, "utf8");
+    let failure: unknown;
+    try {
+      parseMavenGradleMetadata(bytes, {
+        path: "/artifacts/selected",
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      });
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toBeInstanceOf(MavenGradleMetadataReportFailure);
+    expect(failure).toMatchObject(expected);
+  },
+);
+
+it("reports the variant refusal as a fixed report allowance", async () => {
+  const root = await createTestTempDirectory("rea-gradle-variants-");
+  const path = join(root, "demo.module");
+  await writeFile(
+    path,
+    `{"formatVersion":"1.1","variants":[${Array(4_097).fill("{}").join(",")}]}`,
+  );
+  const provider = new MavenGradleMetadataProvider();
+  try {
+    const result = await provider.inspect({
+      path,
+      max_file_bytes: 1024 * 1024,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.stringContaining("4096-variant allowance"),
+      },
+    });
+  } finally {
+    await provider.close();
+  }
+});
+
 it("refuses a POM past the XML node allowance before building its tree", () => {
   const source = `<project><artifactId>demo</artifactId><properties>${"<p/>".repeat(1_048_577)}</properties></project>`;
   const bytes = Buffer.from(source, "utf8");

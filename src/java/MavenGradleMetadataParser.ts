@@ -11,7 +11,9 @@ import {
 } from "../domain/xmlDocument.js";
 import {
   MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
+  MAVEN_GRADLE_METADATA_EXCLUSIONS,
   MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
+  MAVEN_GRADLE_METADATA_VARIANTS,
   MAVEN_GRADLE_METADATA_XML_NODES,
   mavenPropertyReferences,
   requestedVersionKind,
@@ -23,6 +25,7 @@ import { parseRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
 import {
   MAVEN_GRADLE_METADATA_FORMAT,
   MavenGradleMetadataReportFailure,
+  type MavenGradleReportAllowance,
 } from "./MavenGradleMetadata.errors.js";
 
 const BASE_LIMITATIONS = [
@@ -75,14 +78,14 @@ const isMavenProjectRoot = (root: Node | null): root is Element => {
   );
 };
 
-/** Refuse a report whose rows would outgrow the fixed row allowance. */
-const admitDependencyRows = (rows: number): void => {
-  if (rows > MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS)
-    throw new MavenGradleMetadataReportFailure(
-      "dependency_rows",
-      MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
-      rows,
-    );
+/** Refuse a report whose expanded collection would outgrow its fixed allowance. */
+const admit = (
+  allowance: MavenGradleReportAllowance,
+  limit: number,
+  required: number,
+): void => {
+  if (required > limit)
+    throw new MavenGradleMetadataReportFailure(allowance, limit, required);
 };
 
 const nonempty = (value: string | null | undefined): string | null => {
@@ -277,6 +280,12 @@ const requestedFromGradle = (
   return version.requires ?? version.strictly ?? version.prefers;
 };
 
+/** The `<exclusion>` elements of one POM dependency row. */
+const mavenExclusionElements = (element: Element): Element[] => {
+  const container = soleNamed(element, "exclusions");
+  return container === undefined ? [] : childrenNamed(container, "exclusion");
+};
+
 const parseMavenDependency = (
   element: Element,
   origin: "dependencies" | "dependencyManagement",
@@ -289,14 +298,10 @@ const parseMavenDependency = (
   const type = childText(element, "type");
   const scope = childText(element, "scope");
   const bom_import = type === "pom" && scope === "import";
-  const exclusionsContainer = soleNamed(element, "exclusions");
-  const exclusions =
-    exclusionsContainer === undefined
-      ? []
-      : childrenNamed(exclusionsContainer, "exclusion").map((exclusion) => ({
-          group_id: childText(exclusion, "groupId"),
-          artifact_id: childText(exclusion, "artifactId"),
-        }));
+  const exclusions = mavenExclusionElements(element).map((exclusion) => ({
+    group_id: childText(exclusion, "groupId"),
+    artifact_id: childText(exclusion, "artifactId"),
+  }));
   const owner =
     origin === "dependencies" ? "dependency" : "dependency_management";
   recordCoordinateGaps(
@@ -433,7 +438,19 @@ const parsePom = (
     dependenciesContainer === undefined
       ? []
       : childrenNamed(dependenciesContainer, "dependency");
-  admitDependencyRows(managedElements.length + dependencyElements.length);
+  admit(
+    "dependency_rows",
+    MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
+    managedElements.length + dependencyElements.length,
+  );
+  admit(
+    "exclusions",
+    MAVEN_GRADLE_METADATA_EXCLUSIONS,
+    [...managedElements, ...dependencyElements].reduce(
+      (count, element) => count + mavenExclusionElements(element).length,
+      0,
+    ),
+  );
   const dependency_management = managedElements.map((element, index) =>
     parseMavenDependency(element, "dependencyManagement", index, unresolved),
   );
@@ -580,17 +597,28 @@ const parseGradle = (
   const createdBy = isRecord(parsed.createdBy) ? parsed.createdBy : null;
   const createdGradle =
     createdBy !== null && isRecord(createdBy.gradle) ? createdBy.gradle : null;
-  const variants = gradleObjects(variantsValue, "variants");
-  admitDependencyRows(
-    variants.reduce(
-      (rows, variant) =>
-        rows +
-        gradleArray(variant.dependencies, "dependencies").length +
-        gradleArray(variant.dependencyConstraints, "dependencyConstraints")
-          .length,
-      0,
-    ),
+  // Count each expanded collection before any report record is built.
+  admit(
+    "variants",
+    MAVEN_GRADLE_METADATA_VARIANTS,
+    gradleArray(variantsValue, "variants").length,
   );
+  const variants = gradleObjects(variantsValue, "variants");
+  const rowLists = variants.flatMap((variant) => [
+    gradleArray(variant.dependencies, "dependencies"),
+    gradleArray(variant.dependencyConstraints, "dependencyConstraints"),
+  ]);
+  admit(
+    "dependency_rows",
+    MAVEN_GRADLE_METADATA_DEPENDENCY_ROWS,
+    rowLists.reduce((count, rows) => count + rows.length, 0),
+  );
+  let exclusions = 0;
+  for (const rows of rowLists)
+    for (const row of rows)
+      if (isRecord(row))
+        exclusions += gradleArray(row.excludes, "excludes").length;
+  admit("exclusions", MAVEN_GRADLE_METADATA_EXCLUSIONS, exclusions);
   const dependencies: MavenGradleDependency[] = [];
   const dependency_management: MavenGradleDependency[] = [];
   const gradleVariants: NonNullable<MavenGradleMetadata["gradle"]>["variants"] =

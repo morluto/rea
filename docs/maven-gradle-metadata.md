@@ -79,7 +79,9 @@ unsupported. External entities are not resolved.
 A POM is counted as a stream before its document tree is built, and one with
 more than 1,048,576 XML nodes (elements, attributes, text, CDATA, comments and
 processing instructions) is refused as a resource limit, as is a report above
-65,536 dependency and constraint rows.
+65,536 dependency and constraint rows, 4,096 Gradle variants, or 65,536
+dependency exclusions summed over every row. Each collection is counted before
+its report records are built.
 
 POM profiles, when present, stay unread and unactivated. Declared repositories
 stay unread and are not contacted. Packaging is not defaulted to `jar` when
