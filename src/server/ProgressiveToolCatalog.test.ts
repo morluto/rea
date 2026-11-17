@@ -262,4 +262,20 @@ it("ranks multi-keyword queries by relevance instead of requiring every word to 
       { name: "binary_session" },
     ],
   });
+
+  // Total matches takes priority over name matches and alphabetical order:
+  // "binary_session" matches both "sqlite" (in description) and "session" (in name) -> 2 search matches
+  // "alpha_sqlite" and "beta_sqlite" only match "sqlite" -> 1 search match
+  const ranked = await f.discover({
+    query: "sqlite session",
+    limit: 10,
+  });
+  expect(ranked.structuredContent).toMatchObject({
+    total_matches: 3,
+    tools: [
+      { name: "binary_session" },
+      { name: "alpha_sqlite" },
+      { name: "beta_sqlite" },
+    ],
+  });
 });
