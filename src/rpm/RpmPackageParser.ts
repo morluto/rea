@@ -267,7 +267,11 @@ const headerByteDiagnostic = (
   const quoted =
     displayed === undefined
       ? raw.subarray(0, MAX_QUOTED_RAW_BYTES)
-      : Buffer.from(displayed.slice(0, MAX_QUOTED_RAW_BYTES), "latin1");
+      : Buffer.from(
+          // sample-cap: diagnostic byte prefix; extent below reports the full byte count
+          displayed.slice(0, MAX_QUOTED_RAW_BYTES),
+          "latin1",
+        );
   const kind =
     url?.url_credentials_redacted === true
       ? "credential-redacted raw bytes"
