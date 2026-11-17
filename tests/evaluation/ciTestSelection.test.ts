@@ -249,15 +249,26 @@ it("traces shared script modules to their tests and falls back for other consume
     "tests/boundary/filesystem/runtimeVerifier.test.ts",
     "tests/boundary/filesystem/startup.test.ts",
   ]);
-  // Static checker JSON configs and path-string tables in scopes.mjs do not
-  // force a full-suite fallback, unless scopes.mjs actually imports the module.
+  // Static checker JSON/Stryker configs, hyphen-prefixed script names in
+  // package.json (such as verify-shared.mjs vs scripts/lib/shared.mjs), and
+  // path-string tables in scopes.mjs do not force a full-suite fallback.
   expect(
     selectedFiles(
-      plan(["scripts/lib/shared.mjs"], {
-        ...sources,
-        "tsconfig.scripts.json": '{"include":["scripts/lib/shared.mjs"]}',
-        "scripts/ci/scopes.mjs": 'export const S = ["scripts/lib/shared.mjs"];',
-      }),
+      plan(
+        [
+          "scripts/lib/shared.mjs",
+          "tests/support/analysis-efficiency/test_eval.py",
+        ],
+        {
+          ...sources,
+          "package.json":
+            '{"scripts":{"verify:shared":"node scripts/verify-shared.mjs"}}',
+          "tsconfig.scripts.json": '{"include":["scripts/lib/shared.mjs"]}',
+          "stryker.config.mjs": 'import "./scripts/lib/shared.mjs";',
+          "scripts/ci/scopes.mjs":
+            'export const S = ["scripts/lib/shared.mjs"];',
+        },
+      ),
     ),
   ).toEqual([
     "tests/boundary/filesystem/shared.test.ts",

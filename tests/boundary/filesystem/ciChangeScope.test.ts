@@ -541,6 +541,14 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   expect(await classifyPaths(["licenses/npm-dependencies.txt"])).toMatchObject({
     code: true,
     docs: true,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["THIRD_PARTY_NOTICES.md"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
   });
 });
 

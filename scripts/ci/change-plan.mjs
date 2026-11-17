@@ -196,8 +196,11 @@ export function planChanges(request, repository) {
       file === "THIRD_PARTY_NOTICES.md" ||
       file === "DISCLAIMER.md" ||
       file === "LICENSE"
-    )
+    ) {
       selected.docs = true;
+      selected.code = true;
+      return;
+    }
     if (
       /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
         file,

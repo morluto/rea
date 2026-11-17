@@ -59,6 +59,8 @@ const isCheckerInput = (path) =>
   /\.d\.m?ts$/u.test(path) ||
   path === "scripts/lib/module-layers.baseline.json" ||
   path === ".git-blame-ignore-revs" ||
+  path === "scripts/run-python-tests.py" ||
+  /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
   /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
   /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
 // Non-module fixtures with a single known owning test suite.
@@ -99,7 +101,7 @@ const isHelper = (path) =>
     isVerifier(path) ||
     isScriptLibrary(path));
 const STATIC_CHECKER_CONFIG =
-  /^(?:tsconfig(?:\..+)?\.json|\.oxlintrc\.json|\.oxfmtrc\.json|\.jscpd\.json|knip\.json)$/u;
+  /^(?:tsconfig(?:\..+)?\.json|\.oxlintrc\.json|\.oxfmtrc\.json|\.jscpd\.json|knip\.json|stryker(?:\..+)?\.config\.mjs)$/u;
 // Files outside src/ and tests/ that can run or load a shared script module:
 // other scripts, runtime/test configuration, package metadata, hooks and workflows.
 const isScriptConsumer = (path) =>
@@ -234,7 +236,15 @@ export function traceAffectedTests({ files, snapshot }) {
   }
 
   // A shared script module that another script, configuration file, hook or
-  // workflow imports or names by file name can shape every run.
+  // workflow imports or names as a standalone file name can shape every run.
+  // Require a token boundary before the basename so `verify-module-boundaries.mjs`
+  // in package.json does not falsely match `scripts/lib/module-boundaries.mjs`.
+  const namesScriptBasename = (source, libraryPath) => {
+    const escaped = posix
+      .basename(libraryPath)
+      .replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w.-])`, "u").test(source);
+  };
   const libraries = [...affected].filter(isScriptLibrary);
   if (libraries.length) {
     const consumers = tracked.filter(isScriptConsumer);
@@ -246,7 +256,7 @@ export function traceAffectedTests({ files, snapshot }) {
         (path) =>
           targets.has(path) ||
           (consumer !== "scripts/ci/scopes.mjs" &&
-            source.includes(posix.basename(path))),
+            namesScriptBasename(source, path)),
       );
       if (library !== undefined)
         untraced.push(

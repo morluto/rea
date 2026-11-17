@@ -801,9 +801,17 @@ jobs:
           console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.os != 'windows-latest'
         with:
           name: rea-build-cache
           path: .turbo/cache/
+      - name: Restore Windows Turbo build cache
+        if: matrix.os == 'windows-latest'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .turbo/cache/
+          key: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-${{ github.sha }}
+          restore-keys: rea-windows-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', '.npmrc', 'package-lock.json') }}-
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
@@ -854,21 +862,19 @@ jobs:
         env:
           REA_ARTIFACT_NODE_COMPILE_CACHE: ${{ runner.temp }}/rea-artifact-node-cache
         run: |
-          npm run verify:keyed-archive
-          npm run verify:asset-catalog
-          npm run verify:macos-bundle
-          npm run verify:legacy-simulator
-          npm run verify:apple-dispatch
-          npm run verify:interface-builder
-      - name: Verify portable iNES CLI, MCP and source boundaries
+          npm run build:cached
+          node scripts/verify/apple/keyed-archive.mjs
+          node scripts/verify/apple/asset-catalog.mjs
+          node scripts/verify/apple/macos-bundle.mjs
+          node scripts/verify/apple/legacy-simulator.mjs
+          node scripts/verify/apple/dispatch.mjs
+          node scripts/verify/apple/interface-builder.mjs
+      - name: Run native Apple, iNES, and process boundary regressions
         run: >-
           npm run test:focused --
           tests/acceptance/inesContainer.test.ts
           tests/boundary/filesystem/inesArtifact.test.ts
           tests/boundary/filesystem/inesCancellation.test.ts
-      - name: Run native Apple and process boundary regressions
-        run: >-
-          npm run test:focused --
           tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts
           tests/acceptance/providers/hopperStartupRecovery.test.ts
           tests/boundary/providers/hopper/hopperClient.helperFailure.test.ts
