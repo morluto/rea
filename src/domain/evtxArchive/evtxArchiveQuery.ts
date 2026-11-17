@@ -1,12 +1,12 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import {
   EVTX_ARCHIVE_MAX_FILE_BYTES,
   EVTX_ARCHIVE_MAX_RECORDS,
 } from "./evtxArchive.js";
 
 export const inspectEvtxArchiveInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to one local Windows Event Log (.evtx) file",
   ),
   format: z.enum(["evtx"]).default("evtx"),
