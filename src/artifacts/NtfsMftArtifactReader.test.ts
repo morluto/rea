@@ -3,8 +3,7 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -15,6 +14,7 @@ import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 const MFT_DEFAULT_RECORD_BYTES = 1024;
 import { linkedMftFixture } from "../../tests/fixtures/ntfsMftExtension.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 /** A 1 KiB FILE record whose update sequence array covers both sectors. */
 const recordBytes = (options: {

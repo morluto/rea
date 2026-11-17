@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { NugetNupkgPort } from "./NugetNupkgPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { NugetNupkgPort } from "../../ports/nuget/NugetNupkgPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -10,7 +10,10 @@ import {
 } from "../../domain/nuget/nupkg.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_nuget_nupkg";
 
@@ -26,6 +29,7 @@ export class NugetNupkgService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
+    const selectedParameters = callerAnalysisParameters(rawInput);
     const input = parseAnalysisInput(
       OPERATION,
       rawInput,
@@ -58,7 +62,7 @@ export class NugetNupkgService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.value,
+          parameters: selectedParameters(input.value),
           result: value,
           confidence: "observed",
           limitations: value.limitations,

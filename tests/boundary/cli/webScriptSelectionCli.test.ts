@@ -1,3 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { access, mkdir, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -6,10 +8,10 @@ import { expect, it, vi } from "vitest";
 
 import { registerWebScriptCommands } from "../../../src/cli/webScriptCommands.js";
 import * as webScriptExport from "../../../src/application/WebScriptExportService.js";
-import { cliCommandFor } from "../../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../../src/contracts/cliCommandNames.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok } from "../../../src/domain/result.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   scriptCaptureEvidenceFixture,
@@ -18,18 +20,9 @@ import {
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const registeredExportCommand = () => {
-  const commands = new Map<string, { run(input: unknown): Promise<unknown> }>();
-  const cli = {
-    command: (
-      name: string,
-      definition: { run(input: unknown): Promise<unknown> },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as Parameters<typeof registerWebScriptCommands>[0];
+  const cli = createCommandCli();
   registerWebScriptCommands(cli, pino({ enabled: false }));
-  return commands.get(cliCommandFor("export_web_scripts"))!;
+  return cliCommand(cli, cliCommandFor("export_web_scripts"))!.definition;
 };
 
 it("forwards an interrupt into the export workflow and reports cancellation", async () => {
@@ -47,6 +40,8 @@ it("forwards an interrupt into the export workflow and reports cancellation", as
   const previousExitCode = process.exitCode;
   try {
     const output = await command.run({
+      formatExplicit: false,
+      options: {},
       args: {
         capturePath: "/unused/capture.json",
         outputDirectory: "/unused/out",
@@ -78,6 +73,8 @@ it.each(["cleanup failure", "cancellation during cleanup"] as const)(
     const previousExitCode = process.exitCode;
     try {
       const output = await command.run({
+        formatExplicit: false,
+        options: {},
         args: {
           capturePath: "/unused/capture.json",
           outputDirectory: "/unused/out",
@@ -108,6 +105,8 @@ it("closes export resources when the operation throws", async () => {
     .mockResolvedValue();
   try {
     const output = await command.run({
+      formatExplicit: false,
+      options: {},
       args: {
         capturePath: "/unused/capture.json",
         outputDirectory: "/unused/out",

@@ -1,10 +1,12 @@
+import { explicitValuesOccurIn } from "../domain/explicitSensitiveValues.js";
 import { recordCliEvidencePublication } from "./cliEvidencePublication.js";
+import { recordCliDeliveredEvidence } from "./cliResultControls.js";
 import {
   analysisEvidenceSources,
   undeliveredSourceClosure,
 } from "../application/AnalysisEvidenceSources.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
-import { z } from "incur";
+import { z } from "zod";
 import {
   isImmutableEvidence,
   parseEvidence,
@@ -133,14 +135,16 @@ export const deliverCliAnalysisEvidence = async (
       undefined,
       { redactFailure },
     ).then(projectCliAnalysisResult);
+  const callerInputPath =
+    input.callerInputPath === undefined ||
+    revealsSensitiveValue(input.callerInputPath, input)
+      ? undefined
+      : input.callerInputPath;
+  const callerInputPaths = safeCallerInputPaths(input);
   const complete = await finishAnalysisCommand(
-    input.callerInputPath === undefined
+    callerInputPath === undefined && callerInputPaths === undefined
       ? run
-      : bindCliEvidenceCallerPath(
-          input.callerInputPath,
-          run,
-          input.callerInputPaths,
-        ),
+      : bindCliEvidenceCallerPath(callerInputPath, run, callerInputPaths),
     service,
     providerId,
     operation,
@@ -215,6 +219,8 @@ export const publishCliAnalysisEvidence = async (
           closureInput,
         );
   const complete = parseEvidence(result.value);
+  // A summary delivery wraps the view; controls are read from this Evidence.
+  recordCliDeliveredEvidence(complete);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
     inputError.retainPartialObservation(complete);
@@ -311,18 +317,36 @@ const publishDeliveredEvidence = async (
   return ok({ delivered: published.value.delivered, receipt });
 };
 
+/** Whether a caller-selected path contains an excluded sensitive literal. */
+const revealsSensitiveValue = (
+  path: string,
+  input: Pick<CliEvidenceDelivery, "sensitiveValues">,
+): boolean => explicitValuesOccurIn(path, input.sensitiveValues ?? []);
+
+/**
+ * The named caller paths the Evidence may retain: a choice that contains an
+ * excluded sensitive literal is omitted whole, so a repeated option never
+ * loses its order.
+ */
+const safeCallerInputPaths = (
+  input: Pick<CliEvidenceDelivery, "callerInputPaths" | "sensitiveValues">,
+): CallerInputPaths | undefined => {
+  if (input.callerInputPaths === undefined) return undefined;
+  const kept = Object.entries(input.callerInputPaths).filter(([, value]) =>
+    (typeof value === "string" ? [value] : value).every(
+      (path) => !revealsSensitiveValue(path, input),
+    ),
+  );
+  return kept.length === 0 ? undefined : Object.fromEntries(kept);
+};
+
 /** A receipt omits a path that contains an excluded sensitive literal. */
 const bundleReceipt = <Bytes extends JsonValue>(
   path: string | undefined,
   bytes: Bytes,
   input: Pick<CliEvidencePublication, "sensitiveValues">,
 ): { readonly path?: string; readonly bytes: Bytes } => ({
-  ...(path === undefined ||
-  input.sensitiveValues?.some(
-    (literal) => literal !== "" && path.includes(literal),
-  )
-    ? {}
-    : { path }),
+  ...(path === undefined || revealsSensitiveValue(path, input) ? {} : { path }),
   bytes,
 });
 
@@ -357,6 +381,10 @@ const publishFailurePartialEvidence = async (
   } catch {
     return withUndeliveredSourceClosure(failure, input);
   }
+  // Publication replaces the inline partial with its delivery; controls
+  // are read from the partial Evidence of this operation.
+  if (partial.operation === input.operation)
+    recordCliDeliveredEvidence(partial);
   const published = await publishDeliveredEvidence(
     partial,
     evidenceOutput,

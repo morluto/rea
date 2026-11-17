@@ -10,7 +10,7 @@ import {
   type NativeCommandCapture,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { createTestBinarySession } from "../../../fixtures/binarySession.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";

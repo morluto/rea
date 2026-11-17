@@ -29,8 +29,11 @@ import {
   bufferedJsonParts,
   canonicalJsonParts,
 } from "../domain/jsonSerialization.js";
-import { readJsonFile, writeTextParts } from "./JsonFiles.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { readJsonFile } from "./JsonFiles.js";
+import {
+  writeTextParts,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 
 type EvidenceBundleFileFailure =
   | EvidenceFileError
@@ -157,8 +160,9 @@ export const authenticateEvidenceBundleValue = (
           path: absoluteCallerPath(path),
           cause: failure.cause,
           detectedKind: "analysis-snapshot",
+          related: { operations: ["open_binary", "export_evidence_bundle"] },
           userMessage:
-            "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated. To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file, or pass --snapshot to a compatible CLI analysis command (which loads and updates the snapshot). Alternatively, supply a bundle from export_evidence_bundle.",
+            "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated. To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file to load the snapshot, and close_binary with snapshot_path to save updated state. Alternatively, supply a bundle from export_evidence_bundle.",
         }),
       );
     return err(

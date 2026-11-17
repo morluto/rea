@@ -17,6 +17,7 @@ import {
   SqliteInspectionFailure,
   sqlitePrimaryResultCode,
 } from "./SqliteDatabaseLimits.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** SQLite's generic SQL error, raised while compiling or evaluating an expression. */
 const SQLITE_ERROR = 1;
@@ -192,7 +193,7 @@ const decodeSchemaText = (
   } catch (cause: unknown) {
     throw new SqliteInspectionFailure(
       "format",
-      `SQLite schema ${label} contains malformed ${encoding} text: ${cause instanceof Error ? cause.message : String(cause)}`,
+      `SQLite schema ${label} contains malformed ${encoding} text: ${errorMessage(cause)}`,
     );
   }
 };
@@ -749,9 +750,9 @@ const resultColumnLimitFailure = (
   )
     return undefined;
   return new SqliteColumnLimitFailure(
-    `SQLite cannot return ${String(selectedColumns)} selected result columns; this connection permits at most ${String(engineColumnLimit)}: ${
-      cause instanceof Error ? cause.message : String(cause)
-    }`,
+    `SQLite cannot return ${String(selectedColumns)} selected result columns; this connection permits at most ${String(engineColumnLimit)}: ${errorMessage(
+      cause,
+    )}`,
     selectedColumns,
     engineColumnLimit,
   );
@@ -784,7 +785,7 @@ const rowEvaluationFailure = (
   if (sqlitePrimaryResultCode(cause) !== SQLITE_ERROR) return cause;
   const unavailable = new SqliteInspectionFailure(
     "row-evaluation",
-    `SQLite cannot prepare or evaluate rows of table ${JSON.stringify(table.name)} on REA's read-only connection: ${cause instanceof Error ? cause.message : String(cause)}`,
+    `SQLite cannot prepare or evaluate rows of table ${JSON.stringify(table.name)} on REA's read-only connection: ${errorMessage(cause)}`,
   );
   const generated = new Set(
     table.columns
@@ -845,7 +846,7 @@ const rowEvaluationFailure = (
     ]
       .map(
         ([name, failure]) =>
-          `${JSON.stringify(name)}: ${failure instanceof Error ? failure.message : String(failure)}`,
+          `${JSON.stringify(name)}: ${errorMessage(failure)}`,
       )
       .join("; ")}`,
     remaining.length > 0 ? remaining : readableStoredColumns(),
@@ -1080,7 +1081,7 @@ export const inspectSqliteDatabaseSnapshot = (
       "SQLite reports current schema and selected committed rows from its valid database/WAL state. Deleted records, uncommitted or invalid WAL tails, encrypted databases, forensic recovery, and full integrity verification are outside this profile.",
       "Stored CREATE statements preserve index/view/trigger definitions. Views, triggers, and virtual/shadow table rows are not executed; virtual-table column expansion is unsupported.",
       "Selected rows are a bounded sample; rows.order names the order they were read in, and rows.next_row_offset is null either when the window reaches the end or when rows.order is unspecified, so a truncated sample with no stated order cannot be paged further. Text display may replace invalid sequences; bytes_hex and encoding preserve SQLite's text byte representation, not original on-disk page offsets.",
-      "Resource boundaries: at most two concurrent inspections per provider; combined input 256 MiB per inspection, complete worker JSON 16 MiB, native SQLite value/record and SQL statement lengths 16 MiB, owned-worker JavaScript heap 256 MiB. The parent applies a separate supervised worker deadline, reported in worker_timeout_ms. These are distinct from total resident memory; an overall native SQLite heap cap is not claimed. Failures return no partial success.",
+      `Resource boundaries: at most two concurrent inspections per provider; combined input 256 MiB per inspection, complete worker JSON 16 MiB, native SQLite value/record and SQL statement lengths 16 MiB, owned-worker JavaScript heap ${String(SQLITE_DATABASE_LIMITS.workerHeapMiB)} MiB. The parent applies a separate supervised worker deadline, reported in worker_timeout_ms. These are distinct from total resident memory; an overall native SQLite heap cap is not claimed. Failures return no partial success.`,
     ];
     const budget = new OutputBudget();
     const { schema, selectedTable } = readSchema(db, input, {

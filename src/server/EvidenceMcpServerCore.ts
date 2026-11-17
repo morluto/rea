@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
@@ -27,7 +28,7 @@ import {
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import {
@@ -35,13 +36,7 @@ import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
-import {
-  advertisedToolPresentation,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "../config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import type { createCatalogIdentity } from "../catalogIdentity.js";
+import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -68,7 +63,7 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
-import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";
@@ -80,7 +75,7 @@ import {
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
 
-/** Capture structured issues from the canonical validation the SDK already performs. */
+/** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
@@ -101,6 +96,8 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
               issues: result.issues as readonly z.core.$ZodIssue[],
               input: value,
             };
+          if (result.issues === undefined)
+            context?.captureCallerParameters(tool, value, result.value);
           return result;
         };
         const result = standard.validate(value);
@@ -279,7 +276,13 @@ export const forgetPendingMcpRequest = (
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
+import {
+  advertisedToolPresentation,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Standard-schema registration boundary shared with deferred SDK bindings. */
 export interface StandardToolRegistration {
@@ -938,7 +941,7 @@ class ErrorEvidenceTransport implements Transport {
     // The SDK error contains its rendered issue, not a separate argument bag;
     // transport authentication and caller arguments are never added here.
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("unsupported-subject"),
       { id: "rea-mcp", name: "REA MCP delivery", version: "1" },
       {
         operation: "mcp_tool_error",

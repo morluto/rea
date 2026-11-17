@@ -374,7 +374,7 @@ async function assertProviderCacheCallers(
   for (const name of [
     "sqlite-runtime",
     "nativeaot",
-    "ghidra_bridge",
+    "android_metadata",
     "website",
   ])
     expect(jobs[name]?.secrets, name).toBeUndefined();
@@ -430,6 +430,8 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "agentenv",
     "packet_capture",
     "signal_recording",
+    "go_binary",
+    "ghidra_bridge",
   ];
   const buildTerms = z
     .string()
@@ -807,6 +809,7 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
   expect(selected?.env).toEqual({
     MATRIX_SHARD: "${{ matrix.shard }}",
     CI_TEST_SELECTION: "${{ needs.changes.outputs.test_selection }}",
+    REA_CI_TEST_HISTORY: ".cache/ci-test-history/test-results.json",
   });
 
   const flags = await scopeFlags();
@@ -927,8 +930,10 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
         "web_runtime",
         "web_source_map",
         "agentenv",
+        "go_binary",
         "nativeaot",
         "ghidra_bridge",
+        "android_metadata",
         "website",
       ].map((name) => [name, { fast: [name], full: [name] }]),
     ),

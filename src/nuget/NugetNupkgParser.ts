@@ -1,5 +1,6 @@
-import { accountZipMemberRegion } from "../artifacts/ZipMemberRegion.js";
+import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
 import {
+  decodeLimit,
   malformedInput,
   ParseFailureError,
   unsupportedInput,
@@ -13,27 +14,26 @@ import {
 } from "@zip.js/zip.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   decodeZipEntryText,
   typedZipFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
-} from "../artifacts/ZipArtifactReader.js";
+} from "../resources/index.js";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import {
+  NUGET_NUPKG_FORMAT,
   nugetNupkgEntryRole,
   nugetNupkgLogicalPath,
   type InspectNugetNupkgInput,
   type NugetNupkg,
 } from "../domain/nuget/nupkg.js";
-import {
-  NugetNupkgCapacityFailure,
-  NUGET_NUPKG_FORMAT,
-} from "./NugetNupkg.errors.js";
+import { redactRecordedTransportUrl } from "../domain/recordedTransportUrl.js";
+import { Budget } from "../domain/budget.js";
 
 /** Limitation wording owned by the parser; tests assert delivery through these. */
 export const NUPKG_LIMITATIONS = {
@@ -115,8 +115,7 @@ const wrapZipFailure = (
     });
   if (
     cause instanceof ArtifactReaderFailure ||
-    cause instanceof ParseFailureError ||
-    cause instanceof NugetNupkgCapacityFailure
+    cause instanceof ParseFailureError
   )
     throw cause;
   // The shared ZIP reader owns ZIP failure classification, including native
@@ -134,41 +133,32 @@ const wrapZipFailure = (
       { cause: typed },
     );
   if (typed instanceof ArtifactReaderFailure && typed.reason === "format")
-    throw malformedInput(
-      NUGET_NUPKG_FORMAT,
-      `NuGet package ZIP is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      { cause: typed },
-    );
-  if (cause instanceof Error)
-    throw malformedInput(
-      NUGET_NUPKG_FORMAT,
-      `NuGet package ZIP is malformed: ${cause.message}`,
-    );
-  throw malformedInput(
-    NUGET_NUPKG_FORMAT,
-    "NuGet package ZIP could not be read.",
-  );
+    throw malformedInput(NUGET_NUPKG_FORMAT, typed.message, { cause: typed });
+  throw cause;
 };
 
 /** Refuse expansion past the metadata budget before buffering more output. */
 class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
-  #written = 0;
+  readonly #budget: Budget;
 
   constructor(
-    private readonly maximum: number,
-    private readonly exceeded: () => Error,
+    maximum: number,
+    private readonly exceeded: (required: number) => Error,
   ) {
     super();
+    this.#budget = new Budget(maximum);
   }
 
   override async init(size?: number): Promise<void> {
-    if (size !== undefined && size > this.maximum) throw this.exceeded();
+    if (size !== undefined && size > this.#budget.maximum)
+      throw this.exceeded(size);
     await super.init?.(size);
   }
 
   override async writeUint8Array(array: Uint8Array): Promise<void> {
-    this.#written += array.length;
-    if (this.#written > this.maximum) throw this.exceeded();
+    this.#budget.charge(array.length, () =>
+      this.exceeded(this.#budget.used + array.length),
+    );
     await super.writeUint8Array(array);
   }
 }
@@ -180,14 +170,14 @@ const readMemberBytes = async (
   maximum: number,
   label: string,
 ): Promise<Uint8Array> => {
-  const exceeded = () =>
-    new NugetNupkgCapacityFailure(
-      "max_nuspec_bytes",
-      maximum,
+  const exceeded = (required: number) =>
+    decodeLimit(
+      NUGET_NUPKG_FORMAT,
       `${label} exceeds the ${String(maximum)}-byte budget.`,
+      { name: "max_nuspec_bytes", maximum, required },
     );
   const declared = zipSize(entry.uncompressedSize);
-  if (declared !== null && declared > maximum) throw exceeded();
+  if (declared !== null && declared > maximum) throw exceeded(declared);
   try {
     return await entry.getData(new BoundedUint8ArrayWriter(maximum, exceeded), {
       checkSignature: true,
@@ -215,7 +205,18 @@ const resolvePackageTarget = (target: string): string | undefined => {
   return segments.length === 0 ? undefined : segments.join("/");
 };
 
-const opcManifestTargets = (xml: string, limitations: string[]): string[] => {
+interface OpcManifestTarget {
+  readonly lookup: string;
+  readonly display: string | null;
+}
+
+const targetLabel = (display: string | null): string =>
+  display === null ? "[URL withheld]" : JSON.stringify(display);
+
+const opcManifestTargets = (
+  xml: string,
+  limitations: string[],
+): OpcManifestTarget[] => {
   const parsed = parseXmlDocument(xml, {
     doctype: "reject",
     lineEndings: "preserve",
@@ -235,35 +236,37 @@ const opcManifestTargets = (xml: string, limitations: string[]): string[] => {
     );
     return [];
   }
-  const targets: string[] = [];
+  const targets = new Map<string, OpcManifestTarget>();
   for (const relationship of childrenNamed(root, "Relationship")) {
     const type = attribute(relationship, "Type");
     if (type === null || !type.toLowerCase().endsWith("/manifest")) continue;
     const target = attribute(relationship, "Target");
     if (target === null) continue;
+    const displayedTarget = redactRecordedTransportUrl(target).url;
     // OPC external targets may be relative, so the mode decides, not the URI shape.
     if (attribute(relationship, "TargetMode")?.toLowerCase() === "external") {
       limitations.push(
-        `OPC manifest relationship Target ${JSON.stringify(target)} is external and was not followed.`,
+        `OPC manifest relationship Target ${targetLabel(displayedTarget)} is external and was not followed.`,
       );
       continue;
     }
-    if (/^[a-z][a-z0-9+.-]*:/iu.test(target)) {
+    if (/^[a-z][a-z0-9+.-]*:/iu.test(target) || target.startsWith("//")) {
       limitations.push(
-        `OPC manifest relationship Target ${JSON.stringify(target)} is an absolute URI and was not followed.`,
+        `OPC manifest relationship Target ${targetLabel(displayedTarget)} has a URI scheme or authority and was not followed.`,
       );
       continue;
     }
     const logical = resolvePackageTarget(target);
     if (logical === undefined) {
       limitations.push(
-        `OPC manifest relationship Target ${JSON.stringify(target)} leaves the package and was not followed.`,
+        `OPC manifest relationship Target ${targetLabel(displayedTarget)} leaves the package and was not followed.`,
       );
       continue;
     }
-    targets.push(logical);
+    if (!targets.has(logical))
+      targets.set(logical, { lookup: logical, display: displayedTarget });
   }
-  return [...new Set(targets)];
+  return [...targets.values()];
 };
 
 const parseBooleanAttribute = (value: string | null): boolean | null => {
@@ -383,7 +386,7 @@ const parseNuspecDocument = (
         ? null
         : {
             type: attribute(repositoryElement, "type"),
-            url: attribute(repositoryElement, "url"),
+            ...redactRecordedTransportUrl(attribute(repositoryElement, "url")),
             commit: attribute(repositoryElement, "commit"),
             branch: attribute(repositoryElement, "branch"),
           },
@@ -438,7 +441,10 @@ const findNuspec = (
     exactNames.get(target) ?? foldedNames.get(target.toLowerCase()) ?? [];
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
-    const resolved = distinctTargetMatches(targets, matchTarget);
+    const resolved = distinctTargetMatches(
+      targets.map((target) => target.lookup),
+      matchTarget,
+    );
     if (resolved.length > 1) {
       limitations.push(
         "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
@@ -447,7 +453,7 @@ const findNuspec = (
     }
     if (resolved.length === 1) {
       const member = resolved[0]!;
-      if (!targets.includes(member.name))
+      if (!targets.some((target) => target.lookup === member.name))
         limitations.push(
           "The OPC manifest relationship matched a .nuspec member by case-insensitive ZIP name.",
         );
@@ -455,7 +461,7 @@ const findNuspec = (
     }
     if (targets.length === 1)
       limitations.push(
-        `OPC manifest relationship Target ${JSON.stringify(targets[0])} is missing from the package; identity was not decoded from that path.`,
+        `OPC manifest relationship Target ${targetLabel(targets[0]!.display)} is missing from the package; identity was not decoded from that path.`,
       );
   }
   const rootNuspecs = files.filter(
@@ -501,10 +507,14 @@ export const parseNugetNupkg = async (
         ...(signal === undefined ? {} : { signal }),
       })) {
         if (entries.length >= input.max_entries)
-          throw new NugetNupkgCapacityFailure(
-            "max_entries",
-            input.max_entries,
+          throw decodeLimit(
+            NUGET_NUPKG_FORMAT,
             `NuGet package ZIP exceeds the ${String(input.max_entries)}-entry budget.`,
+            {
+              name: "max_entries",
+              maximum: input.max_entries,
+              required: entries.length + 1,
+            },
           );
         entries.push(entry);
       }

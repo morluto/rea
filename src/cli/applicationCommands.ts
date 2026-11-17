@@ -1,9 +1,9 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
 import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
-import { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 
-import { cliCommandFor } from "../cliCommandNames.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -21,8 +21,6 @@ import {
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
 
-type CliInstance = ReturnType<typeof Cli.create>;
-
 /** Application workflows whose CLI input is one Evidence-carrying JSON document. */
 type EvidenceWorkflowOperation =
   | "trace_application_feature"
@@ -37,7 +35,7 @@ const workflowJsonDescription = "Inline workflow JSON or JSON file path";
 
 /** Register CLI equivalents of provider-neutral application graph workflows. */
 export const registerApplicationCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
 ): void => {
   registerEvidenceJsonCommand({

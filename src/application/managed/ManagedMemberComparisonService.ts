@@ -1,8 +1,9 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 
 import {
   compareManagedMembers,
@@ -16,6 +17,8 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
+import type { InvestigationWorkflowExecution } from "../investigation/InvestigationWorkflows.js";
+import { workflowUnknownInput } from "../investigation/WorkflowUnknown.js";
 
 export interface ManagedMemberComparisonExecution {
   readonly evidence: Evidence;
@@ -87,38 +90,78 @@ export const executeManagedMemberComparison = (
   });
 };
 
+/**
+ * Compare session-held inspections and keep members that remain unmatched or
+ * ambiguous as the comparison's residual unknown.
+ */
+export const compareManagedMembersExecution = (
+  input: unknown,
+  lookup: EvidenceLookup,
+  options: Pick<ExecutionOptions, "signal">,
+): Result<InvestigationWorkflowExecution, AnalysisError> => {
+  const compared = executeManagedMemberComparison(input, lookup, options);
+  if (!compared.ok) return compared;
+  const { evidence, sources, summary } = compared.value;
+  if (summary.unknown === 0)
+    return ok({ evidence, sources, unknown: undefined });
+  const unknown = workflowUnknownInput(evidence.evidence_id, {
+    question:
+      "Which managed members remain unmatched or ambiguous across these versions?",
+    severity: "medium",
+    domain: "managed-member-comparison",
+    required_authority: "shipped-artifact",
+    required_confidence: "observed",
+    required_environment: null,
+    recommended_probes: [
+      {
+        operation: "inspect_managed_members",
+        rationale:
+          "Review the inspection Evidence coverage and limit diagnostics; this operation has no page override, so unresolved members must remain unknown.",
+      },
+    ],
+    relationships: [],
+  });
+  return unknown.ok
+    ? ok({ evidence, sources, unknown: unknown.value })
+    : unknown;
+};
+
 const createManagedMemberComparisonEvidence = (
   left: Evidence,
   right: Evidence,
   result: ManagedMemberComparisonResult,
   selection?: ManagedMemberComparisonSelection,
 ): Evidence =>
-  createEvidence(undefined, MANAGED_WORKFLOW_PROVIDER, {
-    predicateType: "rea.managed-member-comparison",
-    operation: "compare_managed_members",
-    parameters: {
-      left_evidence_id: left.evidence_id,
-      right_evidence_id: right.evidence_id,
-      ...(selection === undefined
-        ? {}
-        : {
-            left_path: selection.leftPath,
-            right_path: selection.rightPath,
-            ...selection.inspection,
-          }),
+  createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    MANAGED_WORKFLOW_PROVIDER,
+    {
+      predicateType: "rea.managed-member-comparison",
+      operation: "compare_managed_members",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+        ...(selection === undefined
+          ? {}
+          : {
+              left_path: selection.leftPath,
+              right_path: selection.rightPath,
+              ...selection.inspection,
+            }),
+      },
+      result,
+      rawResult: null,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      environment: null,
+      limitations: result.limitations,
+      locations:
+        selection === undefined
+          ? []
+          : [
+              { kind: "artifact-path", path: selection.leftPath },
+              { kind: "artifact-path", path: selection.rightPath },
+            ],
+      evidenceLinks: result.evidence_links,
     },
-    result,
-    rawResult: null,
-    confidence: "inferred",
-    authority: "analyst-inference",
-    environment: null,
-    limitations: result.limitations,
-    locations:
-      selection === undefined
-        ? []
-        : [
-            { kind: "artifact-path", path: selection.leftPath },
-            { kind: "artifact-path", path: selection.rightPath },
-          ],
-    evidenceLinks: result.evidence_links,
-  });
+  );

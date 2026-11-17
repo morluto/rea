@@ -1,8 +1,10 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import type { Uf2Metadata } from "../artifactFormatMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";
 import { UF2_FAMILY_REGISTRY, uf2FamilyName } from "./uf2Families.js";
+import { byteToHex } from "../../kernel/byteToHex.js";
 
 /** Every UF2 block is 512 bytes: a 32-byte header, 476 data bytes, an end magic. */
 export const UF2_BLOCK_BYTES = 512;
@@ -105,7 +107,7 @@ const familyText = (familyId: number | null): string => {
 
 /** At most NAMED_GROUPS descriptions, then a count of the rest. */
 const named = (items: readonly string[]): string =>
-  `${items.slice(0, NAMED_GROUPS).join("; ")}${items.length > NAMED_GROUPS ? `; and ${String(items.length - NAMED_GROUPS)} more` : ""}`;
+  describeBoundedList(boundedList(items, NAMED_GROUPS), "; ");
 
 /** Recognize a file only by a complete first block with all three magic numbers. */
 export const hasUf2Block = (prefix: Uint8Array): boolean =>
@@ -475,5 +477,5 @@ const conflict = ({
   incoming,
 }: RunConflict<BlockRun>): RegionDecodeFailure => ({
   kind: "format",
-  message: `${familyText(run.familyId)} address ${hex32(address)} is written with different values by ${blockSpan(writer)} (0x${existing.toString(16).padStart(2, "0")}) and ${blockSpan(run)} (0x${incoming.toString(16).padStart(2, "0")})`,
+  message: `${familyText(run.familyId)} address ${hex32(address)} is written with different values by ${blockSpan(writer)} (0x${byteToHex(existing)}) and ${blockSpan(run)} (0x${byteToHex(incoming)})`,
 });

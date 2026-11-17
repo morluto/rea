@@ -1,8 +1,11 @@
 import { registerManagedCommands } from "../../src/cli/managedCommands.js";
-import { cliCommandFor } from "../../src/cliCommandNames.js";
+import { cliCommand } from "../../src/cli/commandRegistry.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import { createDirectAnalysis } from "../../src/composition/directAnalysis.js";
 import type { DirectAnalysis } from "../../src/composition/directAnalysis.js";
 import { silentLogger } from "../../src/logger.js";
+import { isRecord } from "../../src/kernel/isRecord.js";
+import { createCommandCli } from "../support/cli/commandCli.js";
 
 type ManagedEvidenceRunner = DirectAnalysis["runManagedProviderEvidence"];
 
@@ -14,33 +17,32 @@ export const managedComparisonCommand = (
   runManagedProviderEvidence: ManagedEvidenceRunner = createDirectAnalysis({})
     .runManagedProviderEvidence,
 ) => {
-  let registered:
-    | { run(input: unknown): Promise<Record<string, unknown>> }
-    | undefined;
-  const cli = {
-    command: (
-      name: string,
-      definition: { run(input: unknown): Promise<Record<string, unknown>> },
-    ) => {
-      if (name === cliCommandFor("compare_managed_members"))
-        registered = definition;
-      return cli;
-    },
-  } as unknown as Parameters<typeof registerManagedCommands>[0];
+  const cli = createCommandCli();
   registerManagedCommands(cli, silentLogger, {
     runProviderAnalysis: () => {
       throw new Error("Comparison runs only managed Evidence");
     },
     runManagedProviderEvidence,
   });
-  const command = registered;
+  const command = cliCommand(
+    cli,
+    cliCommandFor("compare_managed_members"),
+  )?.definition;
   if (command === undefined)
     throw new Error("compare-managed-members is not registered");
   /** Run the command as argv would select it, returning its JSON output. */
-  return (
+  return async (
     leftPath: string,
     rightPath: string,
     options: Readonly<Record<string, unknown>> = {},
-  ): Promise<Record<string, unknown>> =>
-    command.run({ args: { leftPath, rightPath }, options });
+  ): Promise<Record<string, unknown>> => {
+    const value = await command.run({
+      args: { leftPath, rightPath },
+      options,
+      formatExplicit: false,
+    });
+    if (!isRecord(value))
+      throw new Error("Managed comparison did not return a document");
+    return value;
+  };
 };

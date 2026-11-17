@@ -1,10 +1,14 @@
+import { EVIDENCE_FORMAT_REVISION } from "../../../src/domain/evidenceFormat.js";
 import { beforeAll, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
-import { CLI_COMMANDS, cliCommandFor } from "../../../src/cliCommandNames.js";
+import {
+  CLI_COMMANDS,
+  cliCommandFor,
+} from "../../../src/contracts/cliCommandNames.js";
 import { artifactComparisonInputSchema } from "../../../src/contracts/artifactComparisonContracts.js";
 import {
   compareApplicationVersionsRequestSchema,
@@ -37,7 +41,7 @@ import {
   jsonInputContentSchema,
 } from "../../../src/cli/jsonInputArgument.js";
 import { cliJsonCallerPathSchema } from "../../../src/cli/cliJsonInput.js";
-import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
 import type { CliInstance } from "../../../src/cli/types.js";
 
 const frame = (schema: z.ZodType): z.ZodType =>
@@ -181,7 +185,7 @@ interface InputJsonSchema {
 
 const jsonInputCommands = (cli: CliInstance): string[] => {
   const names: string[] = [];
-  visitRegisteredCommands(cli, (command, path) => {
+  cliCommands(cli).forEach(({ definition: command, name: path }) => {
     if (
       command.args instanceof z.ZodObject &&
       Object.hasOwn(command.args.shape, "inputJson")
@@ -337,7 +341,7 @@ it("validates representative parsed documents with the advertised schema", async
     validateFormats: false,
   }).compile(input.contentSchema as AnySchema);
   const evidence_bundle = {
-    evidence_format: 1,
+    evidence_format: EVIDENCE_FORMAT_REVISION,
     artifacts: [],
     providers: [],
     environments: [],

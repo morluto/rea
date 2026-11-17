@@ -28,6 +28,7 @@ const report: NugetNupkg = {
   repository: {
     type: "git",
     url: "https://example.invalid/demo",
+    url_credentials_redacted: false,
     commit: null,
     branch: null,
   },
@@ -86,7 +87,7 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains completed Evidence and caller selections on late cancellation", async () => {
   const controller = new AbortController();
   const reason = { source: "caller-request", operation: "cancel" };
   const service = new NugetNupkgService({
@@ -105,5 +106,28 @@ it("discards an observation if the caller cancels while the provider completes",
   if (!result.ok) {
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cause).toBe(reason);
+    expect(result.error.partialObservation).toMatchObject({
+      operation: "inspect_nuget_nupkg",
+      parameters: { path: report.artifact.path },
+      normalized_result: report,
+    });
   }
 });
+
+it.each([undefined, 67108864, 128])(
+  "preserves the caller's selected file budget %s",
+  async (maximum) => {
+    const input = {
+      path: report.artifact.path,
+      ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
+    };
+    const service = new NugetNupkgService({
+      close: async () => {},
+      identity,
+      inspect: async () => ok(report),
+    });
+    const result = await service.inspect(input);
+    if (!result.ok) throw result.error;
+    expect(result.value.parameters).toEqual(input);
+  },
+);

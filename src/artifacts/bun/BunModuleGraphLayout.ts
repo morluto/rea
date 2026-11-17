@@ -14,9 +14,11 @@ import {
   DEFAULT_BUN_READER_LIMITS,
   type BunReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
-import { artifactReaderLimitFailure } from "../ArtifactReaderLimits.js";
-import { abortIfNeeded } from "../ArtifactHash.js";
-import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  abortIfNeeded,
+  artifactReaderLimitFailure,
+} from "../../resources/index.js";
 
 /** Exact trailer written by Bun's standalone module graph serializer. */
 const BUN_TRAILER = Buffer.from("\n---- Bun! ----\n");

@@ -1,60 +1,44 @@
 import { NUGET_NUPKG_PROVIDER_IDENTITY } from "./NugetNupkgProviderIdentity.js";
 import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  artifactFilePrimaryFacts,
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
+  projectOwnedArtifactInputFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  type StableArtifactSnapshot,
   readStableArtifact,
-} from "../artifacts/readStableArtifact.js";
-import {
-  artifactFilePrimaryFacts,
+  translateArtifactFailure,
   type ArtifactFilePrimaryFacts,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactOperationError } from "../domain/artifactOperationError.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+  type StableArtifactSnapshot,
+} from "../resources/index.js";
 import {
-  MAX_INSPECT_NUGET_NUPKG_ENTRIES,
-  MAX_INSPECT_NUGET_NUPKG_FILE_BYTES,
-  MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES,
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../domain/parseFailure.js";
+import { fixedCeilingConstraint } from "../domain/analysisErrorCore.js";
+import { ArtifactOperationError } from "../domain/artifactOperationError.js";
+import {
+  NUGET_NUPKG_FORMAT,
+  NUGET_NUPKG_LIMIT_MAXIMA,
   type InspectNugetNupkgInput,
 } from "../domain/nuget/nupkg.js";
 import { err, ok } from "../domain/result.js";
-import { NugetNupkgCapacityFailure } from "./NugetNupkg.errors.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { parseNugetNupkg } from "./NugetNupkgParser.js";
 
 const OPERATION = "inspect_nuget_nupkg";
 
-const inputBudgetRemediation = (
-  cause: ArtifactReaderFailure,
-  input: InspectNugetNupkgInput,
-): string | undefined => {
-  if (cause.boundary === "file-size")
-    return input.max_file_bytes >= MAX_INSPECT_NUGET_NUPKG_FILE_BYTES
-      ? `The file exceeds the ${String(MAX_INSPECT_NUGET_NUPKG_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-      : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-  if (!(cause instanceof NugetNupkgCapacityFailure)) return undefined;
-  switch (cause.resource) {
-    case "max_entries":
-      return cause.maximum >= MAX_INSPECT_NUGET_NUPKG_ENTRIES
-        ? `The file exceeds the ${String(MAX_INSPECT_NUGET_NUPKG_ENTRIES)}-entry ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_entries above ${String(cause.maximum)} or select a smaller artifact; the limit is the caller-selected entry budget.`;
-    case "max_nuspec_bytes":
-      return cause.maximum >= MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES
-        ? `The .nuspec exceeds the ${String(MAX_INSPECT_NUGET_NUPKG_NUSPEC_BYTES)}-byte ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_nuspec_bytes above ${String(cause.maximum)} or select a smaller artifact; the limit is the caller-selected .nuspec budget.`;
-    case "max_file_bytes":
-      return input.max_file_bytes >= MAX_INSPECT_NUGET_NUPKG_FILE_BYTES
-        ? `The file exceeds the ${String(MAX_INSPECT_NUGET_NUPKG_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
-        : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
-  }
-};
+const budgetRecovery = (
+  parameter: keyof typeof NUGET_NUPKG_LIMIT_MAXIMA,
+  selected: number,
+): string =>
+  selected >= NUGET_NUPKG_LIMIT_MAXIMA[parameter]
+    ? `${parameter} is at this operation's maximum of ${String(NUGET_NUPKG_LIMIT_MAXIMA[parameter])}; select a complete artifact within that bound.`
+    : `Raise ${parameter} above ${String(selected)}, up to ${String(NUGET_NUPKG_LIMIT_MAXIMA[parameter])}, or select a smaller artifact. The budget applies on the next call; repeating the unchanged request does not raise it.`;
 
 const nupkgFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -67,45 +51,69 @@ const nupkgFailurePrimary = (
     input.path,
   );
   if (identityFailure !== undefined) return identityFailure;
+  if (isParseLimit(cause, NUGET_NUPKG_FORMAT)) {
+    const parameter = (
+      Object.keys(
+        NUGET_NUPKG_LIMIT_MAXIMA,
+      ) as (keyof typeof NUGET_NUPKG_LIMIT_MAXIMA)[]
+    ).find((name) => name === cause.failure.limit.name);
+    return parseLimitConstraint(
+      OPERATION,
+      cause.failure.limit.name === "max_entries" ? "capacity" : "memory",
+      cause,
+      {
+        path: input.path,
+        retryable: false,
+        ...(parameter === undefined
+          ? {}
+          : {
+              remediationAction: budgetRecovery(
+                parameter,
+                cause.failure.limit.maximum,
+              ),
+            }),
+      },
+    );
+  }
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
+  const inputFailure = projectOwnedArtifactInputFailure(
+    facts,
+    OPERATION,
+    input.path,
+  );
+  if (inputFailure !== undefined) return inputFailure;
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
   ) {
-    if (cause.reason === "limit") {
-      const limits = {
-        max_file_bytes: input.max_file_bytes,
-        max_entries: input.max_entries,
-        max_nuspec_bytes: input.max_nuspec_bytes,
-      };
-      // A reader limit with a typed fixed allowance (such as the ZIP Zstandard
-      // window) cannot be lifted by worker or host memory, so carry that
-      // recovery instead of a memory retry.
-      if (cause.fixedAllowance !== undefined)
-        return new AnalysisResourceConstraintError(
-          OPERATION,
-          cause.boundary ?? "memory",
-          cause.message,
-          limits,
-          { cause, retryable: false, fixedAllowance: cause.fixedAllowance },
-        );
-      const remediationAction = inputBudgetRemediation(cause, input);
-      return new AnalysisResourceConstraintError(
+    if (cause.reason === "limit" && cause.fixedAllowance !== undefined)
+      return fixedCeilingConstraint(
         OPERATION,
         cause.boundary ?? "memory",
         cause.message,
-        limits,
+        cause.fixedAllowance,
+        { cause },
+      );
+    if (cause.reason === "limit" && cause.boundary === "file-size")
+      return parseLimitConstraint(
+        OPERATION,
+        "file-size",
+        decodeLimit(
+          NUGET_NUPKG_FORMAT,
+          cause.message,
+          { name: "max_file_bytes", maximum: input.max_file_bytes },
+          { cause },
+        ),
         {
-          cause,
-          ...(remediationAction === undefined
-            ? {}
-            : { retryable: false, remediationAction }),
+          retryable: false,
+          remediationAction: budgetRecovery(
+            "max_file_bytes",
+            input.max_file_bytes,
+          ),
         },
       );
-    }
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
+    return translateArtifactFailure(OPERATION, cause);
   }
   const fileFailure = projectSelectedArtifactFileFailure(
     cause,
@@ -116,11 +124,9 @@ const nupkgFailurePrimary = (
   if (fileFailure !== undefined) return fileFailure;
   return new ArtifactOperationError(
     OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
+    "io",
     undefined,
-    cause instanceof Error ? cause.message : "NuGet package inspection failed.",
+    errorMessage(cause),
     { cause },
   );
 };
@@ -129,23 +135,17 @@ const nupkgFailure = (
   cause: unknown,
   input: InspectNugetNupkgInput,
   snapshot?: StableArtifactSnapshot,
-) => {
-  const primary = nupkgFailurePrimary(artifactFilePrimaryFacts(cause), input);
-  return projectStableArtifactFailure(
+) =>
+  projectStableArtifactFailure(
     cause,
-    primary,
+    nupkgFailurePrimary(artifactFilePrimaryFacts(cause), input),
     input.path,
     NUGET_NUPKG_PROVIDER_IDENTITY.id,
     OPERATION,
     snapshot,
   );
-};
 
 /** Portable parser over one bounded, identity-checked regular file. */
-/**
- * Satisfies the application's NugetNupkgPort structurally; composition checks
- * the fit, so this provider does not import the application layer.
- */
 export class NugetNupkgProvider {
   readonly identity = NUGET_NUPKG_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();

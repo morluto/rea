@@ -1,7 +1,7 @@
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import type { GpuKernel } from "../domain/gpu/gpuCodeObjects.js";
 import { GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
 interface Token {

@@ -3,7 +3,7 @@ import {
   nugetNupkgSchema,
 } from "../../domain/nuget/nupkg.js";
 import type { ToolContract } from "../toolContractTypes.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { evidenceEffects, toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 
 /** Static NuGet package inspection is independent of restore, feeds, and active native providers. */
@@ -12,7 +12,7 @@ export const NUGET_NUPKG_TOOL_CONTRACTS = [
     name: "inspect_nuget_nupkg",
     availability: "standalone",
     cli: true,
-    ...toolContractMetadata("inspect_nuget_nupkg"),
+    ...toolContractMetadata("inspect_nuget_nupkg", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

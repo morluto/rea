@@ -1,4 +1,9 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
   apiSurfaceHar,
   environmentManifestHar,
 } from "../../fixtures/historicalHar.js";
@@ -7,10 +12,8 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 import { expect } from "vitest";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -132,7 +135,7 @@ cliTest(
     const path = join(root, "bundle.json");
     const body = "int main(void) { return 0; }";
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "batch_decompile",
@@ -528,7 +531,10 @@ cliTest(
         parent_evidence_id: parent.evidence_id,
         kind: "inventory",
         source_complete: true,
-        artifact: { path: archive, sha256: parent.subject?.digest.sha256 },
+        artifact: {
+          path: archive,
+          sha256: fileIdentity(parent.subject).sha256,
+        },
         items: [expect.objectContaining({ logical_path: "main.js" })],
         coverage: { total: 1, exhausted: true, next_offset: null },
       },
@@ -556,12 +562,12 @@ cliTest(
     ).substeps[0]!.evidence;
     const path = join(root, "view.json");
     const reseal = (carrier: Evidence, result: JsonValue) => {
-      const subject = carrier.subject!;
+      const subject = carrier.subject;
       return createEvidence(
         {
-          path: subject.local_path,
-          sha256: subject.digest.sha256,
-          format: subject.format,
+          path: fileSubjectDisplay(subject).local_path,
+          sha256: fileIdentity(subject).sha256,
+          format: fileIdentity(subject).format,
         },
         carrier.provider,
         { operation: carrier.operation, parameters: {}, result },
@@ -771,7 +777,6 @@ cliTest(
         JSON.stringify({ path, ...options }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     const expected = inspectEvidenceBundle(bundle, options);
@@ -784,7 +789,6 @@ cliTest(
         JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(records.exitCode).toBe(0);
     expect(records.json).toMatchObject({
@@ -801,7 +805,6 @@ cliTest(
         JSON.stringify({ path }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(complete.exitCode).toBe(0);
     expect(complete.json).toEqual(bundle);
@@ -815,7 +818,7 @@ cliTest(
     const path = join(root, "partial.json");
     const absent = analysisViewLayoutEvidence();
     const linked = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "trace_feature",
@@ -836,7 +839,6 @@ cliTest(
         JSON.stringify({ path, ...options }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     const expected = inspectEvidenceBundle(bundle, options);
@@ -959,11 +961,6 @@ cliTest(
     await writeFile(input, JSON.stringify(request));
     const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
-      environment: {
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_CACHE_HOME: root,
-      },
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -980,7 +977,6 @@ cliTest(
 cliTest(
   "reports empty retained layout collections without invented index bounds",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-empty-layout-view-cli-");
     const empty = analysisViewLayoutEvidence(binaryLayoutFixture());
     for (const collection of ["sections", "symbols"] as const) {
       const result = await cli.run({
@@ -992,11 +988,6 @@ cliTest(
           }),
           "--json",
         ],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -1027,11 +1018,6 @@ cliTest(
         }),
         "--json",
       ],
-      environment: {
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_CACHE_HOME: root,
-      },
     });
     expect(populated.exitCode).toBe(1);
     expect(populated.json).toMatchObject({
@@ -1073,7 +1059,6 @@ cliTest(
     );
     const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -1135,14 +1120,8 @@ cliTest(
 );
 
 cliTest("rejects malformed JSON before projection", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-analysis-view-cli-bad-");
   const result = await cli.run({
     arguments: ["inspect-analysis-view", "{", "--json"],
-    environment: {
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_CACHE_HOME: root,
-    },
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
@@ -1158,11 +1137,6 @@ cliTest("rejects a request that omits source", async ({ cli }) => {
   await writeFile(input, JSON.stringify({ view: { kind: "summary" } }));
   const result = await cli.run({
     arguments: ["inspect-analysis-view", input, "--json"],
-    environment: {
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_CACHE_HOME: root,
-    },
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
@@ -1193,11 +1167,6 @@ for (const [view, reason] of [
       );
       const result = await cli.run({
         arguments: ["inspect-analysis-view", input, "--json"],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -1250,7 +1219,7 @@ cliTest(
     });
     expect(capture.exitCode, capture.stdout).toBe(0);
     const parent = parseEvidence(capture.json);
-    expect(parent.subject?.digest.sha256).toBe(
+    expect(fileIdentity(parent.subject).sha256).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
     expect(JSON.stringify(parent)).not.toContain("password");
@@ -1559,7 +1528,10 @@ cliTest(
         name: "grafana-example",
         templated_groups: 6,
         coverage: { total: 22, exhausted: true },
-        artifact: { path: capturePath, sha256: parent.subject?.digest.sha256 },
+        artifact: {
+          path: capturePath,
+          sha256: fileIdentity(parent.subject).sha256,
+        },
         records: expect.arrayContaining([
           {
             ordinal: 3,

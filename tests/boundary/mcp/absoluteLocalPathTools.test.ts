@@ -13,6 +13,7 @@ import { PYTHON_PYC_TOOL_CONTRACTS } from "../../../src/contracts/python/pythonP
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const CONTRACTS = [
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
@@ -28,6 +29,7 @@ const CONTRACTS = [
 const PATH_FIELDS = {
   inspect_apple_ips: ["path"],
   inspect_elf_notes: ["path"],
+  inspect_elf_debug_link: ["path", "candidate_path"],
   inspect_elf_unwind_ranges: ["path"],
   inspect_kernel_module: ["path"],
   inspect_byte_entropy: ["path"],
@@ -95,7 +97,10 @@ it("rejects one relative path field at a time on tools/list", async () => {
       () => ({ content: [] }),
     );
   }
-  const client = new Client({ name: "absolute-path-client", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
@@ -129,6 +134,8 @@ it("rejects one relative path field at a time on tools/list", async () => {
   expect(checked).toEqual([
     "inspect_apple_ips.path",
     "inspect_elf_notes.path",
+    "inspect_elf_debug_link.path",
+    "inspect_elf_debug_link.candidate_path",
     "inspect_elf_unwind_ranges.path",
     "inspect_kernel_module.path",
     "inspect_byte_entropy.path",

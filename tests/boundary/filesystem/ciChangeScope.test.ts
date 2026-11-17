@@ -193,6 +193,27 @@ const classifyPackage = (before: string, after: string) =>
   classifyCommit(["package.json"], "pull_request", false, { before, after });
 
 it.each([
+  // Shared resource owners moved from src/artifacts keep their lanes.
+  ["src/resources/AnalysisCleanupLease.ts", "apk_signature"],
+  ["src/resources/readStableArtifact.ts", "sqlite"],
+  ["src/resources/readStableArtifact.ts", "browser"],
+  ["src/resources/readStableArtifact.ts", "binary_layout"],
+  ["src/resources/readStableArtifact.ts", "evm"],
+  ["src/resources/readStableArtifact.ts", "recorded_crash"],
+  ["src/resources/readStableArtifact.ts", "web_network"],
+  ["src/resources/readStableArtifact.ts", "web_source_map"],
+  ["src/resources/ArtifactResourceScope.ts", "sqlite"],
+  ["src/resources/ArtifactResourceScope.ts", "agentenv"],
+  ["src/resources/ArtifactReader.ts", "sqlite"],
+  ["src/resources/ArtifactReader.ts", "binary_layout"],
+  ["src/resources/ArtifactReader.ts", "evm"],
+  ["src/resources/ArtifactReader.ts", "web_network"],
+  // Hopper launcher discovery moved out of config; the packaged Hopper
+  // baseline still checks the launcher it selects.
+  ["src/hopperPaths/HopperLauncherDiscovery.ts", "package"],
+  // The pwntools input bound moved from src/native/pwntools to src/config.
+  ["src/config/pwntoolsInputLimit.ts", "binary_layout"],
+  ["src/config/pwntoolsInputLimit.ts", "recorded_crash"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
@@ -227,6 +248,27 @@ it.each([
   ["src/process/LinuxResourceLimits.ts", "signal_recording"],
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+  // Provider ports moved from src/application keep their provider lanes.
+  ["src/ports/sqlite/SqliteDatabasePort.ts", "sqlite"],
+  ["src/ports/BrowserScenarioCapturePort.ts", "browser"],
+  ["src/ports/WebModulePorts.ts", "browser"],
+  ["src/ports/binaryDiagnostics/ElfNotesPort.ts", "binary_layout"],
+  ["src/ports/binaryDiagnostics/RecordedCrashPort.ts", "recorded_crash"],
+  ["src/ports/evm/EvmInterfacePort.ts", "evm"],
+  ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
+  ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
+  ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/go/GoBinaryProvider.ts", "go_binary"],
+  ["scripts/verify-go-binary.mjs", "go_binary"],
+  ["bridge/android/ReaJadxBridge.java", "android_metadata"],
+  ["src/android/JadxRelease.ts", "android_metadata"],
+  [
+    "tests/conformance/android/ReaJadxMetadataRegression.java",
+    "android_metadata",
+  ],
+  ["src/ports/WebSourceLocationPorts.ts", "web_source_map"],
+  ["src/ports/captures/PacketCapturePort.ts", "packet_capture"],
+  ["src/ports/signals/SignalRecordingPort.ts", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
   expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
@@ -424,7 +466,7 @@ it("selects the tests a pull request affects and runs everything when it cannot 
     "tests/conformance/named.test.ts",
   ];
   expect(await runPlanScript(directory, base, head)).toMatchObject({
-    testSelection: { version: 2, mode: "selected", groups: [selected] },
+    testSelection: { version: 3, mode: "selected", files: selected, shards: 1 },
     testShards: ["1/1"],
   });
   const output = await readFile(join(directory, "scope-output"), "utf8");
@@ -435,8 +477,8 @@ it("selects the tests a pull request affects and runs everything when it cannot 
   expect(
     await runPlanScript(directory, base, head, "pull_request", true),
   ).toMatchObject({
-    testSelection: { mode: "full", groups: [] },
-    testShards: ["1/6", "2/6", "3/6", "4/6", "5/6", "6/6"],
+    testSelection: { version: 3, mode: "full" },
+    testShards: expect.arrayContaining(["12/12"]),
   });
   expect(await classify(directory, base, head, "push")).toMatchObject({
     testSelection: { mode: "full" },
@@ -472,20 +514,80 @@ it("selects the tests a pull request affects and runs everything when it cannot 
   });
   // Above the cap, selection gives way to the complete suite.
   const many = Array.from(
-    { length: 151 },
+    { length: 401 },
     (_, index) => `tests/composition/many${String(index)}.test.ts`,
   );
   const wide = await change(directory, many);
   expect(await classify(directory, isolated, wide)).toMatchObject({
     testSelection: {
       mode: "full",
-      reason: "151 affected test files exceed the 150-file selection cap",
+      reason: "401 affected test files exceed the 400-file selection cap",
     },
   });
-  const capped = await change(directory, many.slice(0, 81), "// edited\n");
+  const capped = await change(directory, many.slice(0, 101), "// edited\n");
   expect(await classify(directory, wide, capped)).toMatchObject({
     testSelection: { mode: "selected" },
     testShards: ["1/3", "2/3", "3/3"],
+  });
+});
+
+it("routes license inventories to docs checks and keeps blame-ignore edits formatting-only", async () => {
+  expect(await classifyPaths([".git-blame-ignore-revs"])).toMatchObject({
+    code: false,
+    docs: false,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["licenses/npm-dependencies.txt"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["THIRD_PARTY_NOTICES.md"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["LICENSE"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  for (const staticOnly of [
+    "scripts/lib/module-layers.baseline.json",
+    "scripts/verify/architecture-guards.mjs",
+    "scripts/verify/baselines/incur-import.json",
+    "tsconfig.scripts.json",
+  ]) {
+    expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
+      code: true,
+      docs: false,
+      runtime: false,
+      package: false,
+    });
+  }
+  for (const docsAndCode of [
+    "scripts/check-doc-facts.mjs",
+    "scripts/lib/product-catalog.mjs",
+  ]) {
+    expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
+      code: true,
+      docs: true,
+      runtime: false,
+      package: false,
+    });
+  }
+  expect(
+    await classifyPaths([
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+    ]),
+  ).toMatchObject({
+    docs: true,
+    runtime: true,
+    package: false,
   });
 });
 
@@ -1099,7 +1201,7 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
-  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  ["src/hopper/HopperErrors.ts", { code: true, apple: true }],
   [
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
     { code: true, apple: true },
@@ -1334,6 +1436,29 @@ it.each([
       browser: false,
     },
   ],
+  // One lane names it; others reach it only through `src/process/**`.
+  [
+    "src/process/RegularFileRead.ts",
+    {
+      code: true,
+      runtime: true,
+      agentenv: true,
+      javascript_recovery: false,
+      recorded_crash: false,
+      web_source_map: false,
+      package: false,
+    },
+  ],
+  [
+    "src/process/ownedDebuggerSession.ts",
+    {
+      code: true,
+      runtime: true,
+      reverse_tools: true,
+      javascript_recovery: false,
+      package: false,
+    },
+  ],
   [
     "src/server/createServer.ts",
     {
@@ -1389,7 +1514,7 @@ it.each([
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
-    "src/artifacts/SafeOutputTree.ts",
+    "src/resources/SafeOutputTree.ts",
     { code: true, agentenv: true, runtime: true },
   ],
   [

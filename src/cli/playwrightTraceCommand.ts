@@ -1,7 +1,9 @@
 import type { Logger } from "pino";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { projectArtifactCloseFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  ArtifactResourceScope,
+  projectArtifactCloseFailure,
+} from "../resources/index.js";
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "../contracts/playwrightTraceToolContracts.js";
 import {
   PLAYWRIGHT_TRACE_OPERATION as operation,

@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { CutterBridgeSource } from "../domain/cutterDiscovery.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const PACKAGED_PLUGIN = new URL(
   "../../bridge/cutter/rea_bridge.py",
@@ -53,7 +53,7 @@ const packagedCutterPluginDigest = (operation: string, plugin: URL): string => {
       { cause, remediationAction: remediation, userMessage: remediation },
     );
   }
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  const digest = sha256Hex(bytes);
   packagedDigests.set(plugin.href, digest);
   return digest;
 };

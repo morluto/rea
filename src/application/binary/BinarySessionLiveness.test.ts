@@ -16,7 +16,7 @@ import {
   type ProviderAvailability,
   type ProviderIdentity,
   type ProviderTargetSupport,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
@@ -141,7 +141,9 @@ it("keeps unbound observations out of persisted target snapshots", async () => {
   expect(session.exportEvidenceBundle().records).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
-        subject: null,
+        subject: expect.objectContaining({
+          identity: { kind: "unknown", reason: "not-observed" },
+        }),
         normalized_result: "unbound observation",
       }),
     ]),

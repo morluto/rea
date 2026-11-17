@@ -10,21 +10,18 @@ import {
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { advertisedInputJsonSchema } from "../../../src/contracts/toolSchemaMetadata.js";
 import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
-import { advertisedToolPresentation } from "../../../src/config/mcpOutputSchemaProfile.js";
-import { createCatalogDigests } from "../../../src/catalogIdentity.js";
-import {
-  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-  parseMcpInputSchemaProfile,
-} from "../../../src/config/mcpInputSchemaProfile.js";
+import { createCatalogDigests } from "../../../src/contracts/catalog/catalogIdentity.js";
+import { parseMcpInputSchemaProfile } from "../../../src/config/mcpInputSchemaProfile.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
+import { arrayItemSchemaError } from "../../fixtures/mcpClientSchemaConstraints.js";
 import {
-  arrayItemSchemaError,
-  unsupportedInputLiteralSchemaError,
-} from "../../fixtures/mcpClientSchemaConstraints.js";
+  advertisedToolPresentation,
+  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+} from "../../../src/contracts/mcpSchemaPresentation.js";
 
 interface AdvertisedTool {
   readonly name: string;
@@ -200,9 +197,8 @@ it("keeps SDK-converted and canonical schemas valid and accepting canonical exam
         arrayItemSchemaError(tool.inputSchema, tool.name),
         `${profile} profile: ${tool.name}`,
       ).toBeUndefined();
-      expect(
-        unsupportedInputLiteralSchemaError(tool.inputSchema, tool.name),
-      ).toBeUndefined();
+      // Literal portability of the listed schemas is checked with every
+      // other dialect rule in advertisedDialect.test.ts.
       expect(
         ajv.validateSchema(tool.inputSchema),
         `${profile} profile, ${tool.name}: ${ajv.errorsText(ajv.errors)}`,
@@ -295,26 +291,28 @@ it("keeps SDK-converted and canonical schemas valid and accepting canonical exam
   expect(checkedCanonicalRestrictions).toBe(true);
 });
 
-it("states dependency keywords as prose in the canonical and compact schemas", async () => {
+it("states dependency keywords as prose in the listed tool description", async () => {
   const compact = compactServer();
   registerCatalog(compact);
   const compactTools = await listToolsThroughTransport(compact);
   const sqlite = canonicalTools().find(
     ({ name }) => name === "inspect_sqlite_database",
   );
-  expect(sqlite?.inputSchema.description).toContain(
-    "When row_limit is provided, also provide table.",
+  // The registered schema keeps the canonical keyword.
+  expect(sqlite?.inputSchema).toHaveProperty(
+    ["dependentRequired", "row_limit"],
+    ["table"],
   );
-  expect(sqlite?.inputSchema.description).toContain(
-    "When schema_scope is selected_table, also provide table.",
-  );
-  // Compact moves the sentence to the tool description, which Codex keeps
+  // The listed tool description carries the sentences, which Codex keeps
   // when it strips descriptions inside a schema above 5,000 bytes.
   const compactSqlite = compactTools.find(
     ({ name }) => name === "inspect_sqlite_database",
   );
   expect(compactSqlite?.description).toContain(
     "When schema_scope is selected_table, also provide table.",
+  );
+  expect(compactSqlite?.description).toContain(
+    "When row_limit is provided, also provide table.",
   );
   expect(JSON.stringify(compactSqlite?.inputSchema)).not.toContain(
     "also provide",

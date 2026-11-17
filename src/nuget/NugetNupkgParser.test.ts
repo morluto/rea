@@ -19,13 +19,12 @@ import {
   nugetNupkgMissingNuspecFixture,
   ungroupedNuspec,
 } from "./NugetNupkg.fixture.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import {
   NUPKG_LIMITATIONS,
   distinctTargetMatches,
   parseNugetNupkg,
 } from "./NugetNupkgParser.js";
-import { NugetNupkgCapacityFailure } from "./NugetNupkg.errors.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
   path: "/artifacts/Demo.Package.nupkg",
@@ -36,6 +35,51 @@ const artifactOf = (bytes: Uint8Array) => ({
   sha256: createHash("sha256").update(bytes).digest("hex"),
   bytes: bytes.length,
 });
+
+it("redacts an unfollowed authority manifest target before package-path normalization", async () => {
+  const bytes = await nugetNupkgFixture({
+    relsTarget: "//user:password@feed.invalid/missing.nuspec?token=visible",
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(JSON.stringify(result)).not.toContain("user:password");
+  expect(result.limitations.join(" ")).toContain(
+    "//feed.invalid/missing.nuspec?token=visible",
+  );
+  expect(result.nuspec?.source).toBe("root-nuspec");
+});
+
+it("keeps missing manifest target provenance separate from its normalized lookup", async () => {
+  const bytes = await nugetNupkgFixture({
+    relsTarget: "./part/../missing.nuspec",
+  });
+  const result = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(result.limitations).toContain(
+    'OPC manifest relationship Target "./part/../missing.nuspec" is missing from the package; identity was not decoded from that path.',
+  );
+  expect(result.nuspec?.source).toBe("root-nuspec");
+});
+
+it.each([
+  new Error("controlled opaque decoder failure"),
+  { failure: "opaque" },
+])(
+  "preserves an unclassified ZIP failure without claiming malformed bytes: %j",
+  async (cause) => {
+    const bytes = await nugetNupkgFixture();
+    const enumeration = vi
+      .spyOn(ZipReader.prototype, "getEntriesGenerator")
+      .mockImplementation(async function* () {
+        throw cause;
+      });
+    try {
+      await expect(
+        parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+      ).rejects.toBe(cause);
+    } finally {
+      enumeration.mockRestore();
+    }
+  },
+);
 
 it("reads identity, license, repository, dependency groups and folder roles", async () => {
   const bytes = await nugetNupkgFixture();
@@ -52,6 +96,7 @@ it("reads identity, license, repository, dependency groups and folder roles", as
   expect(report.repository).toEqual({
     type: "git",
     url: "https://example.invalid/demo",
+    url_credentials_redacted: false,
     commit: "deadbeef",
     branch: "main",
   });
@@ -210,9 +255,11 @@ it("stops ZIP enumeration as soon as the entry budget is exceeded", async () => 
         max_entries: 2,
       }),
     ).rejects.toMatchObject({
-      constructor: NugetNupkgCapacityFailure,
-      resource: "max_entries",
-      maximum: 2,
+      constructor: ParseFailureError,
+      failure: {
+        kind: "limit",
+        limit: { name: "max_entries", maximum: 2, required: 3 },
+      },
     });
     expect(yielded).toBe(3);
   } finally {
@@ -263,9 +310,11 @@ it("refuses an OPC relationships member larger than the metadata budget before r
       max_nuspec_bytes: 1024,
     }),
   ).rejects.toMatchObject({
-    constructor: NugetNupkgCapacityFailure,
-    resource: "max_nuspec_bytes",
-    maximum: 1024,
+    constructor: ParseFailureError,
+    failure: {
+      kind: "limit",
+      limit: { name: "max_nuspec_bytes", maximum: 1024 },
+    },
   });
 });
 
@@ -288,9 +337,11 @@ it("stops expanding an OPC relationships member at the budget when its declared 
         max_nuspec_bytes: 1024,
       }),
     ).rejects.toMatchObject({
-      constructor: NugetNupkgCapacityFailure,
-      resource: "max_nuspec_bytes",
-      maximum: 1024,
+      constructor: ParseFailureError,
+      failure: {
+        kind: "limit",
+        limit: { name: "max_nuspec_bytes", maximum: 1024 },
+      },
     });
   } finally {
     enumeration.mockRestore();

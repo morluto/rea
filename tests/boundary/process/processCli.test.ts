@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,10 +18,8 @@ import { parseProcessCaptureEvidence } from "../../../src/application/process/Pr
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { observeProcessStartIdentity } from "../../../src/process/ProcessOwnershipObservation.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 const execFileAsync = promisify(execFile);
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
@@ -423,7 +422,7 @@ describe("process CLI evidence validation", () => {
     await writeFile(
       invalidCapture,
       JSON.stringify(
-        createEvidence(undefined, PROCESS_PROVIDER, {
+        createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
           predicateType: "rea.process-capture/other",
           operation: "capture_process_scenario",
           parameters: {},
@@ -434,7 +433,7 @@ describe("process CLI evidence validation", () => {
     await writeFile(
       unrelated,
       JSON.stringify(
-        createEvidence(undefined, PROCESS_PROVIDER, {
+        createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
           predicateType: "unrelated/v1",
           operation: "other",
           parameters: {},

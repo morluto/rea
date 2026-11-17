@@ -8,7 +8,7 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
-import { macHopperUserApplicationPath } from "./MacHopperPaths.js";
+import { macHopperUserApplicationPath } from "../hopperPaths/MacHopperPaths.js";
 import type {
   ClientConfigurationInspection,
   SetupAction,

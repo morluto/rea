@@ -3,7 +3,7 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { cutterDiscoverySchema } from "../domain/cutterDiscovery.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, toolEffects } from "./toolEffects.js";
 
 /** List live Cutter plugin bridge sessions. */
 export const cutterListInputSchema = z.strictObject({});
@@ -25,6 +25,7 @@ export const cutterCommandInputSchema = z.strictObject({
 export const cutterCommandResultSchema = z.strictObject({
   command: z.string(),
   output: jsonValueSchema.nullable(),
+  // lifecycle-state: how far the bridge command ran, not coverage of its output.
   execution_state: z.enum(["not_started", "complete", "failed", "unknown"]),
   error: z.string().nullable(),
   message: z.string().nullable(),
@@ -42,7 +43,10 @@ export const CUTTER_TOOL_CONTRACTS = [
   {
     name: "list_cutter_sessions",
     cli: true,
-    ...toolContractMetadata("list_cutter_sessions"),
+    ...toolContractMetadata(
+      "list_cutter_sessions",
+      toolEffects({ accessesNetwork: true }),
+    ),
     kind: "native-provider",
     description:
       "Find live REA bridge sessions in Cutter and return document identity and bridge-directory security status. Examines at most 256 descriptors with up to eight concurrent probes; excess capacity returns bridge_directory_capacity_exceeded, not an empty session list. The fixed discovery budget is separate from REA_BRIDGE_MAX_REQUEST_BYTES and cannot be raised at runtime.",
@@ -53,7 +57,19 @@ export const CUTTER_TOOL_CONTRACTS = [
   {
     name: "cutter_command",
     cli: true,
-    ...toolContractMetadata("cutter_command"),
+    ...toolContractMetadata(
+      "cutter_command",
+      toolEffects({
+        mutatesTarget: true,
+        executesForeignCode: true,
+        mutatesSession: true,
+        writesFilesystem: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        changesUiState: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Run one arbitrary Rizin command in a selected Cutter session; it may persist edits or execute plugin effects. Reports completion uncertainty as Evidence; do not retry automatically. An admitted command retires shared binary analysis: close active Ghidra explicitly first, then reopen with open_binary after command effects settle. Supply session_id and expected_generation from discovery. REA_BRIDGE_MAX_REQUEST_BYTES bounds authenticated request/response payloads excluding LF (default 16777216, range 7464..536870887); mismatched client/Cutter budgets refuse dispatch. An out-of-band Cutter without this setting uses the default.",

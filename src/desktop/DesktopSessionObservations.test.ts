@@ -11,7 +11,7 @@ import {
   trackProcess,
   type SessionProcfs,
 } from "./DesktopSessionObservations.js";
-import type { ObservedWindow } from "./X11WindowObserver.js";
+import type { ObservedWindow } from "../ports/DesktopApplicationSession.js";
 
 interface FakeProcess {
   readonly parentPid: number;

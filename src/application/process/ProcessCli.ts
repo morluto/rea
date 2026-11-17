@@ -21,7 +21,7 @@ import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.j
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { unsupportedProcessCaptureProvider } from "./ProcessComparisonService.js";
-import { createProgressReporter } from "../ProgressReporter.js";
+import { createProgressReporter } from "../../ports/ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
@@ -36,13 +36,15 @@ import { readJsonFile, jsonFileReadCleanupLeases } from "../JsonFiles.js";
 import {
   ArtifactReaderFailure,
   artifactPrimaryCleanupLeases,
-} from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+  bindArtifactFileCleanup,
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { unsupportedEvidenceFormatError } from "../../domain/evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../../domain/evidenceFormat.js";
 
 /** Preserve the owning reader's facts when retaining a different cause. */
 const artifactFailureFacts = (failure: ArtifactReaderFailure) => ({
@@ -211,6 +213,8 @@ export const projectCaptureFileFailure = (
 ): AnalysisError => {
   switch (failure.kind) {
     case "invalid-evidence":
+      if (isUnsupportedEvidenceFormat(failure.cause))
+        return unsupportedEvidenceFormatError(failure.cause, side);
       return analysisInputErrorFromIssues(
         "compare_process_captures",
         failure.cause.issues,

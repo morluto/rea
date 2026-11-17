@@ -41,7 +41,7 @@ const artifactConsumers = {
   "artifacts:skills": [
     "tests/boundary/cli/guidanceCli.test.ts",
     "tests/boundary/guidanceSearch.test.ts",
-    "tests/boundary/mcp/registerGuidanceTools.test.ts",
+    "tests/boundary/mcp/guidanceMcp.test.ts",
   ],
   "artifacts:mcp-catalog": [
     "tests/boundary/mcp/deferredRuntime.test.ts",

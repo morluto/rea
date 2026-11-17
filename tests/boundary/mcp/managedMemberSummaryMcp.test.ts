@@ -1,4 +1,8 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -90,7 +94,7 @@ const verifyProjection = async ({
           },
         },
       },
-      { toolDefinition: viewDefinition },
+      { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
     );
     expect(projectedReply.isError).not.toBe(true);
     const projected = analysisViewResultSchema.parse(
@@ -124,7 +128,7 @@ const verifyProjection = async ({
   ).toBe(true);
   const selectedReply = await client.callTool(
     { name: "inspect_analysis_view", arguments: selectedRequest },
-    { toolDefinition: viewDefinition },
+    { toolDefinition: withCanonicalOutputSchema(viewDefinition) },
   );
   expect(selectedReply.isError).not.toBe(true);
   const selectedEvidence = parseEvidence(selectedReply.structuredContent);
@@ -220,7 +224,7 @@ it("summarizes selected members and pages every original collection after the fi
       name: "inspect_managed_members",
       arguments: { path, type_names, detail: "summary" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(reply.isError).not.toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
@@ -335,13 +339,17 @@ it("keeps collections that member Evidence never examined unknown", async () => 
     call_edges: [],
     field_accesses: [],
   };
-  const unexamined = createEvidence(undefined, parent.provider, {
-    operation: parent.operation,
-    parameters: parent.parameters,
-    result: recorded,
-    limitations: parent.limitations,
-    authority: parent.authority,
-  });
+  const unexamined = createEvidence(
+    unknownTarget("not-observed"),
+    parent.provider,
+    {
+      operation: parent.operation,
+      parameters: parent.parameters,
+      result: recorded,
+      limitations: parent.limitations,
+      authority: parent.authority,
+    },
+  );
   const summary = await inspectAnalysisView({
     source: { kind: "inline", evidence: unexamined },
     view: { kind: "summary" },
@@ -441,7 +449,7 @@ it("binds managed member views to their recorded token scope", async () => {
               format: "pe",
               sha256: report.artifact.sha256,
             }
-          : undefined,
+          : unknownTarget("not-observed"),
         original.provider,
         {
           operation: original.operation,
@@ -515,17 +523,21 @@ it("rejects a contradictory managed token scope through MCP for inline and retai
   const report = managedMemberInspectionSchema.parse(
     original.normalized_result,
   );
-  const evidence = createEvidence(undefined, original.provider, {
-    operation: original.operation,
-    parameters: original.parameters,
-    result: {
-      ...report,
-      identity_scope: {
-        ...report.identity_scope,
-        requires_artifact_sha256: "f".repeat(64),
+  const evidence = createEvidence(
+    unknownTarget("not-observed"),
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: original.parameters,
+      result: {
+        ...report,
+        identity_scope: {
+          ...report.identity_scope,
+          requires_artifact_sha256: "f".repeat(64),
+        },
       },
     },
-  });
+  );
   const { client, session } = await createHarness();
   expect(session.recordEvidence(evidence).ok).toBe(true);
   for (const source of [

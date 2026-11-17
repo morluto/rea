@@ -3,12 +3,12 @@ import type { Writable } from "node:stream";
 import {
   cliCompletionShell,
   isProjectScopedAmpRegistration,
-  normalizeCliArguments,
-  splitIncurBuiltinArguments,
+  parseCliGlobalArguments,
 } from "./cliBuiltinArguments.js";
 import {
   cliConfigurationError,
   parseCliOutputArguments,
+  readCliOutputArguments,
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
   renderVersionReport,
@@ -38,9 +38,9 @@ export interface OneShotCliHost {
   ownCliResources(close: () => Promise<void>): void;
   /**
    * The command asked to end the process with `code`. The host owns that
-   * exit and must call `finishOutput` with the status it reports.
+   * exit and must drain `finishOutput` after closing the owned resources.
    */
-  exit(code: number, finishOutput: (status: number) => Promise<void>): void;
+  exit(code: number, finishOutput: () => Promise<void>): void;
   /** Whether `exit` has run. Its host then owns the pending result write. */
   exitRequested(): boolean;
 }
@@ -57,17 +57,19 @@ export const runOneShotCli = async (
   arguments_: readonly string[],
   host: OneShotCliHost,
 ): Promise<void> => {
-  const isShellCompletion = cliCompletionShell(host.environment) !== undefined;
-  const cliArguments = isShellCompletion
-    ? [...arguments_]
-    : normalizeCliArguments([...arguments_]);
   // Completion words are transport data, including partial output flags.
-  const outputOptions = parseCliOutputArguments(
-    isShellCompletion ? [] : cliArguments,
-  );
+  const global =
+    cliCompletionShell(host.environment) === undefined
+      ? parseCliGlobalArguments(arguments_)
+      : undefined;
+  const cliArguments = global?.arguments ?? arguments_;
+  const outputOptions =
+    global === undefined
+      ? parseCliOutputArguments([])
+      : readCliOutputArguments(global);
   const outputArguments = outputOptions.validation;
   // `--version` with an explicit format reports the runtime as a document;
-  // plain `--version` stays Incur's bare version string.
+  // plain `--version` stays a bare version string.
   const versionOutput = renderVersionReport(
     outputOptions,
     host.runtime,
@@ -78,8 +80,7 @@ export const runOneShotCli = async (
   // here so they do not run with an unusable log level.
   if (
     configurationError !== undefined &&
-    (isShellCompletion ||
-      splitIncurBuiltinArguments(cliArguments).command[0] !== "doctor")
+    (global === undefined || global.command[0] !== "doctor")
   ) {
     host.writeStderr(`${configurationError}\n`);
     host.setExitCode(1);
@@ -94,7 +95,7 @@ export const runOneShotCli = async (
     host.writeStdout(versionOutput);
     return;
   }
-  if (!isShellCompletion && isProjectScopedAmpRegistration(cliArguments)) {
+  if (global !== undefined && isProjectScopedAmpRegistration(global)) {
     // Amp has global settings only. Share the parsed scope fact with the
     // registration workflow and refuse before loading the command runtime.
     //
@@ -123,7 +124,7 @@ export const runOneShotCli = async (
 
   // Loaded only now: the documents above answer without the command catalog.
   const { loadCliRuntime } = await import("./cli/cliLoader.js");
-  const runtime = await loadCliRuntime(cliArguments, host.environment);
+  const runtime = await loadCliRuntime(global, host.environment);
   host.ownCliResources(runtime.closeCliResources);
   const { createCliResultOutput } = await import("./cli/cliResultOutput.js");
   let wroteOutput = false;
@@ -132,7 +133,7 @@ export const runOneShotCli = async (
     host.resultDestination,
   );
   try {
-    await runtime.createCli(resultOutput).serve(cliArguments, {
+    await runtime.createCli(resultOutput).serve([...cliArguments], {
       stdout: (output) => {
         if (resultOutput?.handled) {
           if (resultOutput.failed && !host.stdoutClosed())
@@ -140,12 +141,11 @@ export const runOneShotCli = async (
           return;
         }
         if (output.length > 0) wroteOutput = true;
-        if (resultOutput?.captureSdkOutput(output)) return;
         host.writeStdout(output);
       },
       exit: (code) => {
-        host.exit(typeof code === "number" ? code : 0, async (status) =>
-          resultOutput?.finishSdkOutput(status),
+        host.exit(typeof code === "number" ? code : 0, async () =>
+          resultOutput?.finish(),
         );
       },
     });
@@ -154,7 +154,7 @@ export const runOneShotCli = async (
     const recovered = await resultOutput
       ?.recoverFormattingFailure(cause)
       .catch((writeFailure: unknown) => {
-        // Recovery writes outside Incur's command boundary. A reader that
+        // Recovery writes outside the command boundary. A reader that
         // declined this document keeps the same quiet closed-pipe outcome.
         if (!host.stdoutClosed()) throw writeFailure;
         return true;
@@ -165,6 +165,5 @@ export const runOneShotCli = async (
   if (!wroteOutput && !resultOutput?.handled)
     host.writeStdout(renderEmptyFilteredCliOutput(outputOptions) ?? "");
   // A requested exit is finished by the host, which owns its pending write.
-  if (!host.exitRequested())
-    await resultOutput?.finishSdkOutput(host.exitCode());
+  if (!host.exitRequested()) await resultOutput?.finish();
 };

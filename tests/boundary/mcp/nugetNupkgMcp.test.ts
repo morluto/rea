@@ -5,8 +5,7 @@ import { ZipReader } from "@zip.js/zip.js";
 import { expect, vi } from "vitest";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../../src/contracts/nuget/nupkgToolContracts.js";
 import { contractNamed } from "../../../src/cli/contractCliDescription.js";
-import { ZIP_ZSTANDARD_WINDOW_FIXED_ALLOWANCE } from "../../../src/artifacts/ZipZstandardWindow.js";
-import { fixedAllowanceRemediation } from "../../../src/domain/fixedAllowanceRemediation.js";
+import { ZIP_ZSTANDARD_WINDOW_CEILING } from "../../../src/resources/index.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -114,12 +113,14 @@ mcpTest(
         code: "resource_constraint",
         retryable: false,
       });
-      expect(error.remediation.action).toBe(
-        fixedAllowanceRemediation(
-          ZIP_ZSTANDARD_WINDOW_FIXED_ALLOWANCE,
-          "parser",
-        ),
+      expect(error.remediation.action).toContain(
+        ZIP_ZSTANDARD_WINDOW_CEILING.name,
       );
+      expect(error.details?.refusal).toMatchObject({
+        kind: "fixed_ceiling",
+        limit: ZIP_ZSTANDARD_WINDOW_CEILING.limit,
+        unit: "bytes",
+      });
     } finally {
       enumeration.mockRestore();
       await session.close();

@@ -1,11 +1,13 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { ContractCommandContext } from "./contractCommand.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
 import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../domain/investigationProviders.js";
-import { createProgressReporter } from "../application/ProgressReporter.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { createProgressReporter } from "../ports/ProgressReporter.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { completeProviderEvidence } from "../application/ProviderOperationExecution.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -114,8 +116,11 @@ export const runCliJavaScriptApplicationAnalysis = async (
   },
   host: CliJavaScriptAnalysisHost = processJavaScriptAnalysis,
 ): Promise<JsonValue> => {
-  const { analyzeJavaScriptApplication } =
-    await import("../application/javascript/JavaScriptApplicationService.js");
+  const [{ analyzeJavaScriptApplication }, { javascriptSourceAnalysis }] =
+    await Promise.all([
+      import("../application/javascript/JavaScriptApplicationService.js"),
+      import("../composition/javascriptSourceAnalysis.js"),
+    ]);
   const progress = createProgressReporter(
     async (update) => {
       writeCliProgressLine(update);
@@ -124,6 +129,7 @@ export const runCliJavaScriptApplicationAnalysis = async (
   );
   const resources = host.scope();
   const result = await analyzeJavaScriptApplication(input, resources, {
+    sourceAnalysis: javascriptSourceAnalysis,
     environment,
     progress,
     ...(signal === undefined ? {} : { signal }),

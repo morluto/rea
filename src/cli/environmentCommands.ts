@@ -8,13 +8,13 @@ import type {
 } from "../application/environment/environmentExport.js";
 import type { EnvironmentSource } from "../application/environment/environmentSource.js";
 import type { ServedState } from "../application/environment/environmentState.js";
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import {
   CLI_COMMANDS,
   DEFAULT_INFO_LOGGING_COMMANDS,
-} from "../cliCommandNames.js";
+} from "../contracts/cliCommandNames.js";
 import { parseCliJsonInput } from "./cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
@@ -25,7 +25,7 @@ import {
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import type { StreamableHttpListenError } from "../server/http/streamableHttpListenError.js";
 import {
   AnalysisInputError,
@@ -39,7 +39,8 @@ import { createLogger } from "../logger.js";
 import { TEMPLATE_RULES } from "../domain/analysisView/environmentManifestRules.js";
 import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture.js";
 import { withCommandCancellation } from "./commandCancellation.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField, publishArgvInput } from "./options.js";
 
@@ -241,11 +242,11 @@ const serveEnvironmentCommand = async (
     if (!(cause instanceof AnalysisError)) throw cause;
     if (listenerError !== undefined)
       return cliError(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           listenerError,
           cause,
           CLI_COMMANDS.environmentServe,
-        ).bindCleanupDependencies([cause]),
+        ),
       );
     cause.retainDiagnostics({
       shutdown_observation: { status: "shutdown_requested", ...observation },
@@ -352,7 +353,8 @@ const inspectBuildHar = async (
   const { ENVIRONMENT_BUILD_OPERATION } =
     await import("../application/environment/environmentBuild.js");
   const service = createWebNetworkCaptureService(environment);
-  const inspected = await finishAnalysisCommand(
+  const inspected = await finishCliEvidenceCommand(
+    callerInputPath,
     () =>
       service.inspect(
         {
@@ -363,7 +365,6 @@ const inspectBuildHar = async (
             : { capture_timeout_ms: captureTimeoutMs }),
         },
         { signal },
-        { capture: callerInputPath },
       ),
     service,
     "web-network-capture",
@@ -482,71 +483,94 @@ const registerBuildCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  cli.command(CLI_COMMANDS.environmentBuild, {
-    description:
-      "Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes",
-    args: z.object({
-      capture: localPathStringSchema.describe(
-        "A .har file, or capture Evidence JSON from inspect-web-network-capture (HAR) or capture-browser-scenario",
-      ),
-      directory: localPathStringSchema
-        .optional()
-        .describe(
-          "Bundle directory to create; must be absent or empty, nothing is overwritten; omit only with --dry-run",
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.environmentBuild,
+    {
+      description:
+        "Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes",
+      args: z.object({
+        capture: localPathStringSchema.describe(
+          "A .har file, or capture Evidence JSON from inspect-web-network-capture (HAR) or capture-browser-scenario",
         ),
-    }),
-    options: z.object({
-      name: z
-        .string()
-        .optional()
-        .describe(
-          "Env folder and env id (kebab-case); default the manifest's name, or the capture file's name when the origin is a loopback or IP address",
+        directory: localPathStringSchema
+          .optional()
+          .describe(
+            "Bundle directory to create; must be absent or empty, nothing is overwritten; omit only with --dry-run",
+          ),
+      }),
+      options: z.object({
+        name: z
+          .string()
+          .optional()
+          .describe(
+            "Env folder and env id (kebab-case); default the manifest's name, or the capture file's name when the origin is a loopback or IP address",
+          ),
+        templateRule: z
+          .array(z.enum(TEMPLATE_RULES))
+          .optional()
+          .describe(
+            "Opt-in template rule; repeat to select several. Replaces the default after-uid-literal, opaque-token, sibling-variance and prefix-variance",
+          ),
+        formatRulesOnly: z
+          .boolean()
+          .default(false)
+          .describe("Apply only the four format rules, the views' own default"),
+        packageTarball: localPathStringSchema
+          .optional()
+          .describe(
+            "Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version",
+          ),
+        dryRun: z
+          .boolean()
+          .default(false)
+          .describe("Run every stage and report, but write nothing"),
+        // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+        captureTimeoutMs: cliDecimalField(
+          inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
         ),
-      templateRule: z
-        .array(z.enum(TEMPLATE_RULES))
-        .optional()
-        .describe(
-          "Opt-in template rule; repeat to select several. Replaces the default after-uid-literal, opaque-token, sibling-variance and prefix-variance",
-        ),
-      formatRulesOnly: z
-        .boolean()
-        .default(false)
-        .describe("Apply only the four format rules, the views' own default"),
-      packageTarball: localPathStringSchema
-        .optional()
-        .describe(
-          "Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version",
-        ),
-      dryRun: z
-        .boolean()
-        .default(false)
-        .describe("Run every stage and report, but write nothing"),
-      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
-      captureTimeoutMs: cliDecimalField(
-        inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
-      ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.environmentBuild, () =>
-          buildEnvironmentCommand(
-            {
-              capture: args.capture,
-              directory: args.directory,
-              name: options.name,
-              templateRule: options.templateRule,
-              formatRulesOnly: options.formatRulesOnly,
-              packageTarball: options.packageTarball,
-              dryRun: options.dryRun,
-              captureTimeoutMs: options.captureTimeoutMs,
-            },
-            environment,
-            logger,
-            signal,
+      }),
+      run: ({ args, options }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, CLI_COMMANDS.environmentBuild, () =>
+            buildEnvironmentCommand(
+              {
+                capture: args.capture,
+                directory: args.directory,
+                name: options.name,
+                templateRule: options.templateRule,
+                formatRulesOnly: options.formatRulesOnly,
+                packageTarball: options.packageTarball,
+                dryRun: options.dryRun,
+                captureTimeoutMs: options.captureTimeoutMs,
+              },
+              environment,
+              logger,
+              signal,
+            ),
           ),
         ),
-      ),
-  });
+    },
+    {
+      operations: [
+        {
+          name: "export_environment_bundle",
+          flags: {
+            name: "--name",
+            template_rules: "--template-rule",
+            package_tarball: "--package-tarball",
+            dry_run: "--dry-run",
+          },
+        },
+        {
+          name: "inspect_web_network_capture",
+          flags: {
+            capture_timeout_ms: "--capture-timeout-ms",
+          },
+        },
+      ],
+    },
+  );
 };
 
 const manifestArgument = z
@@ -607,7 +631,7 @@ const compareEnvironmentCommand = async (
 
 /** Register the comparison of an environment with probe captures of its application. */
 const registerCompareCommand = (cli: CliInstance, logger: Logger): void => {
-  cli.command(CLI_COMMANDS.environmentCompare, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentCompare, {
     description:
       "Compare an environment with probe captures of the application it was captured from: each probe is one call sequence recorded against a freshly reset application, answered by the environment from a reset state, with agreement reported per step, tool and probe",
     args: z.object({ manifest: manifestArgument }),
@@ -633,7 +657,7 @@ const registerCompareCommand = (cli: CliInstance, logger: Logger): void => {
 
 /** Register the one-shot bundle export command. */
 const registerExportCommand = (cli: CliInstance, logger: Logger): void => {
-  cli.command(CLI_COMMANDS.environmentExport, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentExport, {
     description:
       "Export an environment manifest and its capture Evidence as an agent environment bundle folder the agentenv framework runs with agent-env run",
     args: z.object({
@@ -678,7 +702,7 @@ export const registerEnvironmentCommands = (
   registerBuildCommand(cli, logger, environment);
   registerExportCommand(cli, logger);
   registerCompareCommand(cli, logger);
-  cli.command(CLI_COMMANDS.environmentServe, {
+  registerCliCommand(cli, CLI_COMMANDS.environmentServe, {
     description:
       "Serve an environment manifest as an agent environment over streamable HTTP until SIGINT or SIGTERM: read tools, and write tools whose effect the capture confirmed, answer from the state the capture observed, derived at startup, or every tool replays retained capture records with --replay-only or when the state is unavailable",
     args: z.object({ manifest: manifestArgument }),

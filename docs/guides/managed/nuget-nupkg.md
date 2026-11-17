@@ -36,6 +36,10 @@ selected, `identity` is `null`.
 `file` when that attribute is present, otherwise `null`, and `value` is the
 element text. `repository` reports `type`, `url`, `commit`, and `branch`
 attributes when a repository element is present. Absent elements stay `null`.
+Transport URL userinfo is excluded, with `url_credentials_redacted` marking
+that exclusion; a URL whose credential span cannot be located is `null` with
+that flag set. Other URL spelling and query values are preserved. OPC
+relationship diagnostics apply the same exclusion.
 
 `dependency_groups` lists each `.nuspec` dependency group with its
 `target_framework` and dependencies (`id`, `version` range as spelled,
@@ -72,3 +76,5 @@ verify signatures, or select assets the way `dotnet restore` would. Member
 roles are folder conventions in ZIP names. Package identity, license,
 repository, and dependency metadata are publisher-provided and do not establish
 package safety.
+
+Evidence parameters retain only caller-selected controls; execution resolves omitted budgets from the documented defaults.

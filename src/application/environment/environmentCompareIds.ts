@@ -4,7 +4,7 @@ import type { BodyAddress } from "../../domain/analysisView/environmentStateWrit
 import { isUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProbeToolCall } from "./environmentCompareMatch.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Field names that hold an identifier: `id`, `uuid`, `guid`, or names ending in `id` or `_id`. */
 export const ID_FIELD = /^(id|uuid|guid)$|(_id|Id|ID|_uuid|Uuid)$/u;

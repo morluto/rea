@@ -1,4 +1,4 @@
-import type { NugetNupkgPort } from "../application/nuget/NugetNupkgPort.js";
+import type { NugetNupkgPort } from "../ports/nuget/NugetNupkgPort.js";
 import { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import { NugetNupkgProvider } from "../nuget/NugetNupkgProvider.js";
 

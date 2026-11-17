@@ -1,5 +1,5 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type {
   TOOL_CONTRACTS,
   ToolContractGroupId,
@@ -31,6 +31,9 @@ import {
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
+  DWARF_UNITS_PROVIDER,
+  ELF_DEBUG_LINK_PROVIDER,
+  ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
   ELF_UNWIND_RANGES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
@@ -240,6 +243,9 @@ export const CAPABILITY_DECLARATIONS = {
   devicetree: {
     providers: [providerBinding(DEVICETREE_PROVIDER, ["inspect_devicetree"])],
   },
+  dwarfUnits: {
+    providers: [providerBinding(DWARF_UNITS_PROVIDER, ["inspect_dwarf_units"])],
+  },
   electronActiveObservation: {
     providers: [
       providerBinding(PLAYWRIGHT_ELECTRON_ACTIVE_PROVIDER_IDENTITY, [
@@ -262,8 +268,18 @@ export const CAPABILITY_DECLARATIONS = {
       ]),
     ],
   },
+  elfDependencies: {
+    providers: [
+      providerBinding(ELF_DEPENDENCIES_PROVIDER, ["inspect_elf_dependencies"]),
+    ],
+  },
   elfNotes: {
     providers: [providerBinding(ELF_NOTES_PROVIDER, ["inspect_elf_notes"])],
+  },
+  elfDebugLink: {
+    providers: [
+      providerBinding(ELF_DEBUG_LINK_PROVIDER, ["inspect_elf_debug_link"]),
+    ],
   },
   nativeInitializers: {
     providers: [

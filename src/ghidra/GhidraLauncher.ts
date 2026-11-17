@@ -8,7 +8,7 @@ import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
 import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
 import { constants as fsConstants } from "node:fs";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
   snapshotGhidraAnalysisSeeds,
@@ -74,6 +74,7 @@ import {
   inspectGhidraPspExtension,
   type GhidraPspExtension,
 } from "./GhidraPspExtension.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface GhidraLaunchSession {
   readonly runtimeRoot: string;
@@ -650,7 +651,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         const primaryMessage =
           cancellation !== undefined
             ? cancellation.message
-            : `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+            : `Ghidra headless launch failed: ${errorMessage(cause)}`;
         return err(
           new GhidraLaunchError(
             `${primaryMessage}; process cleanup remains incomplete`,

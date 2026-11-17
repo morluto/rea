@@ -496,9 +496,9 @@ TypeSpec owners and unresolved MethodSpec instantiations retain unknown target
 equivalence. The exception is a target the left and right sides reach under the
 same caller and target tokens of the same authenticated artifact, with both
 producers reporting `target_row_resolved: true`: those parsed facts establish
-the same metadata row without a nominal identity. Missing historical row
-resolution, malformed or wrong-kind references, undecoded signatures and
-unresolved TypeSpec operands stay unknown. This fact describes metadata
+the same metadata row without a nominal identity. Malformed or wrong-kind
+references, undecoded signatures and unresolved TypeSpec operands stay
+unknown. This fact describes metadata
 resolution, not runtime binding. Valid
 MethodSpecs combine the base member identity with the resolved instantiation
 signature, preserving generic argument distinctions.
@@ -677,6 +677,11 @@ signature has the other member kind is malformed and cannot establish an
 unchanged signature. Comparison retains exact byte-based pairs for malformed
 signatures, including empty, truncated, or invalid headers, but reports them as
 unknown with a `signature-malformed` limitation when no change is observed.
+Each method and field comparison item states its limitations as
+`{code, side?, message}` objects: `code` names the reason, `side` names the
+other inventory when the reason concerns it (for example
+`unknown-within-incomplete-metadata` with `side: "right"`), and `message`
+explains it. Read the code rather than the message text.
 Runtime-provided methods have the Runtime code type or the InternalCall
 implementation flag, as core library FCalls do. They are counted separately in
 `native_implementations.runtime_provided`; they have no file-backed native body

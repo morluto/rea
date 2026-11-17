@@ -1,7 +1,10 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import canonicalize from "canonicalize";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
@@ -16,27 +19,26 @@ import {
   createCatalogDigests,
   createCatalogIdentity,
   CLI_COMMAND_NAMES,
-} from "../../../src/catalogIdentity.js";
-import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
+  digestPresentedCatalogs,
+} from "../../../src/contracts/catalog/catalogIdentity.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import {
-  annotationsFromEffects,
-  toolSessionEffects,
-} from "../../../src/contracts/toolEffects.js";
+import { annotationsFromEffects } from "../../../src/contracts/toolEffects.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { createServerIdentity } from "../../../src/serverIdentity.js";
+import { createServerIdentity } from "../../../src/process/ServerIdentity.js";
 import { normalizeEntrypointPath } from "../../../src/process/CurrentEntrypointPath.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import type {
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const availabilityProvider = (
   operations: readonly CapabilityDescriptor["operation"][] = [
@@ -184,6 +186,9 @@ describe("server and catalog identity", () => {
     });
     expect(unknown.alignment.state).toBe("unknown");
     expect(unknown.server.command_path).toBeNull();
+    expect(unknown.package.root_path).toBe(
+      resolve(fileURLToPath(import.meta.url), "../../../.."),
+    );
     const aligned = createServerIdentity({
       catalog: DEFAULT_CATALOG_IDENTITY,
       startedAt: "2026-07-13T00:00:00.000Z",
@@ -378,6 +383,7 @@ describe("live server identity over MCP", () => {
     const client = new Client(
       { name: "identity-test", version: "9" },
       {
+        jsonSchemaValidator: createMcpSchemaValidation(),
         capabilities: {
           elicitation: { form: {} },
         },
@@ -420,7 +426,10 @@ describe("live server identity over MCP", () => {
       { kind: "session", session },
       { environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" } },
     );
-    const client = new Client({ name: "compact-identity-test", version: "1" });
+    const client = new Client(
+      { name: "compact-identity-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -471,7 +480,10 @@ describe("active-target availability over MCP", () => {
       { kind: "session", session },
       { environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
     );
-    const client = new Client({ name: "availability-test", version: "1" });
+    const client = new Client(
+      { name: "availability-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const directory = await createTestTempDirectory("rea-target-availability-");
@@ -572,7 +584,7 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
     TOOL_CONTRACTS.map(({ name }) => name).sort(),
   );
   for (const contract of TOOL_CONTRACTS) {
-    const effects = toolSessionEffects(contract.name);
+    const effects = contract.sessionEffects;
     const annotations = annotationsFromEffects(effects);
     expect(availability).toContainEqual(
       expect.objectContaining({
@@ -675,3 +687,40 @@ const assertSessionIdentity = async (client: Client): Promise<void> => {
     },
   });
 };
+
+it("composes the combined digest exactly as whole-document canonicalization", () => {
+  const sha256 = (value: unknown) =>
+    createHash("sha256")
+      .update(canonicalize(value) ?? "")
+      .digest("hex");
+  // Escapes, non-ASCII text, key order and empty catalogs must all agree.
+  const escaped = [
+    {
+      name: 'quote " slash \\ line\u2028 é 😀',
+      z_last: [1.5, null, true, { b: 2, a: "\n" }],
+      a_first: {},
+    },
+  ];
+  const prompts = [{ name: "p", steps: ["tab\t", ""], arguments: [] }];
+  for (const [catalog, promptCatalog, profile] of [
+    [escaped, prompts, "off"],
+    [[], [], "off"],
+    [[], [], "compact"],
+  ] as const) {
+    const digests = digestPresentedCatalogs(
+      catalog as unknown as Parameters<typeof digestPresentedCatalogs>[0],
+      promptCatalog as unknown as Parameters<typeof digestPresentedCatalogs>[1],
+      profile,
+    );
+    const tools = { output_schema_profile: profile, catalog };
+    expect(digests).toEqual({
+      tools_sha256: sha256(tools),
+      prompts_sha256: sha256(promptCatalog),
+      combined_sha256: sha256({
+        cli: CLI_COMMAND_NAMES,
+        tools,
+        prompts: promptCatalog,
+      }),
+    });
+  }
+});

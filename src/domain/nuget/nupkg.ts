@@ -4,6 +4,9 @@ import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { coverageStatusSchema } from "../coverage.js";
 
+/** Format identity for typed NuGet package parse failures. */
+export const NUGET_NUPKG_FORMAT = "nuget-nupkg";
+
 const uint = z.number().int().min(0).max(0xffffffff);
 
 /** Hard ceiling on the caller-selected input read budget. */
@@ -156,6 +159,7 @@ export const nugetNupkgSchema = z.strictObject({
     .strictObject({
       type: nullableText,
       url: nullableText,
+      url_credentials_redacted: z.boolean(),
       commit: nullableText,
       branch: nullableText,
     })

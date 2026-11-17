@@ -1,5 +1,5 @@
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
-import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
 import {
   inspectWindowsNativeReadiness,
   type WindowsNativeReadiness,
@@ -8,6 +8,15 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
+import {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+} from "./GhidraAdmission.js";
+
+export {
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+};
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
@@ -295,14 +304,6 @@ export const checkpointCapabilities = (): readonly CapabilityDescriptor[] =>
     ...capability,
     limitations: limitationsFor(capability.operation, "owned-checkpoint"),
   }));
-
-/** The selected database mode is not part of Windows P0 authority. */
-export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
-  "An existing Ghidra project cannot be opened on the Windows launch path.";
-
-/** Windows P0 imports targets into ephemeral projects only. */
-export const EXISTING_PROJECT_WINDOWS_REMEDIATION =
-  "Unset REA_GHIDRA_PROJECT_PATH in the environment that starts REA to import targets into an ephemeral project, or open the existing project on a supported Linux or macOS host; restart REA after changing the environment.";
 
 /** Read-only project mode retains precise unavailable mutation capabilities. */
 export const existingProjectCapabilities = (

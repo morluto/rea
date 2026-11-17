@@ -7,12 +7,13 @@ import { createGhApiRequest } from "./github-api.mjs";
 const OUTPUT_DIRECTORY = join(".cache", "ci-pr-health");
 const PAGE_SIZE = 100;
 const MAX_PULL_REQUEST_PAGES = 3;
-const MAX_WORKFLOW_RUN_PAGES = 5;
+const MAX_WORKFLOW_RUN_PAGES = 10;
 const MAX_PULL_REQUEST_DETAILS = 40;
 const MAX_API_REQUESTS =
   MAX_PULL_REQUEST_PAGES + MAX_WORKFLOW_RUN_PAGES + MAX_PULL_REQUEST_DETAILS;
-const LOOKBACK_DAYS = 14;
+const LOOKBACK_HOURS = 12;
 const MAX_LOOKBACK_DAYS = 30;
+const MAX_LOOKBACK_HOURS = MAX_LOOKBACK_DAYS * 24;
 const MAX_TOTAL_TIME_MS = 60_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 const COMPLETED_CATEGORIES = new Map([
@@ -27,7 +28,8 @@ export async function collectPrCiHealth({
   repository,
   repositoryId,
   defaultBranch,
-  lookbackDays = LOOKBACK_DAYS,
+  lookbackDays,
+  lookbackHours,
   now = Date.now(),
   apiRequest = createGhApiRequest(),
 }) {
@@ -36,10 +38,11 @@ export async function collectPrCiHealth({
     repositoryId,
     defaultBranch,
     lookbackDays,
+    lookbackHours,
     now,
   });
   const observedAt = new Date(now).toISOString();
-  const cutoff = now - identity.lookbackDays * 24 * 60 * 60 * 1_000;
+  const cutoff = now - identity.lookbackHours * 60 * 60 * 1_000;
   const snapshot = await collectApiSnapshot({ apiRequest, identity, cutoff });
   const classified = classifyPullRequests(snapshot);
   const { pulls, runs, budget } = snapshot;
@@ -53,6 +56,7 @@ export async function collectPrCiHealth({
     repositoryId: identity.repositoryId,
     defaultBranch: identity.defaultBranch,
     lookbackDays: identity.lookbackDays,
+    lookbackHours: identity.lookbackHours,
     scan: {
       status:
         errors.length === 0 && pulls.complete && runs.complete
@@ -518,8 +522,8 @@ async function listRecentWorkflowRuns({ requestGet, identity, cutoff }) {
   let error = null;
   for (let page = 1; page <= MAX_WORKFLOW_RUN_PAGES; page += 1) {
     try {
-      const cutoffDate = new Date(cutoff).toISOString().slice(0, 10);
-      const endpoint = `repos/${identity.repository}/actions/workflows/ci.yml/runs?event=pull_request&created=%3E%3D${cutoffDate}&per_page=${PAGE_SIZE}&page=${page}`;
+      const cutoffIso = new Date(cutoff).toISOString();
+      const endpoint = `repos/${identity.repository}/actions/workflows/ci.yml/runs?event=pull_request&created=%3E%3D${encodeURIComponent(cutoffIso)}&per_page=${PAGE_SIZE}&page=${page}`;
       const response = await requestGet(endpoint);
       if (!isRecord(response) || !Array.isArray(response.workflow_runs))
         throw new Error("workflow_run_page_malformed");
@@ -576,6 +580,7 @@ function validateInputs({
   repositoryId,
   defaultBranch,
   lookbackDays,
+  lookbackHours,
   now,
 }) {
   if (
@@ -603,19 +608,33 @@ function validateInputs({
   )
     throw new Error("CI_REPOSITORY_ID must be a positive safe integer");
   if (
-    !Number.isInteger(lookbackDays) ||
-    lookbackDays < 1 ||
-    lookbackDays > MAX_LOOKBACK_DAYS
+    lookbackDays !== undefined &&
+    (!Number.isInteger(lookbackDays) ||
+      lookbackDays < 1 ||
+      lookbackDays > MAX_LOOKBACK_DAYS)
   )
     throw new Error(
       `lookbackDays must be an integer from 1 to ${String(MAX_LOOKBACK_DAYS)}`,
     );
+  if (
+    lookbackHours !== undefined &&
+    (!Number.isInteger(lookbackHours) ||
+      lookbackHours < 1 ||
+      lookbackHours > MAX_LOOKBACK_HOURS)
+  )
+    throw new Error(
+      `lookbackHours must be an integer from 1 to ${String(MAX_LOOKBACK_HOURS)}`,
+    );
+  const resolvedHours =
+    lookbackHours ??
+    (lookbackDays !== undefined ? lookbackDays * 24 : LOOKBACK_HOURS);
   if (!Number.isFinite(now)) throw new Error("now must be a finite timestamp");
   return {
     repository,
     repositoryId: parsedRepositoryId,
     defaultBranch,
-    lookbackDays,
+    lookbackDays: resolvedHours / 24,
+    lookbackHours: resolvedHours,
   };
 }
 
@@ -664,7 +683,7 @@ function renderMarkdownSummary(report) {
   return [
     "# Pull request CI health snapshot",
     "",
-    `Observed ${report.observedAt} for \`${report.repository}\`, target branch \`${escapeCell(report.defaultBranch)}\`; recent window ${String(report.lookbackDays)} days. Scan: **${report.scan.status}**.`,
+    `Observed ${report.observedAt} for \`${report.repository}\`, target branch \`${escapeCell(report.defaultBranch)}\`; recent window ${String(report.lookbackHours ?? report.lookbackDays * 24)} hours. Scan: **${report.scan.status}**.`,
     "",
     "This is read-only point-in-time telemetry. Missing is reported only when PR and workflow-run inventories are complete and the current immutable PR head identity is unambiguous. Incomplete lookups remain deferred or unknown.",
     "",

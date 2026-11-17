@@ -30,7 +30,7 @@ cliTest(
     const evidence = completeNupkgEvidenceSchema.parse(result.json);
     expect(evidence).toMatchObject({
       confidence: "observed",
-      subject: { local_path: path, format: "file" },
+      subject: { local_path: path, identity: { format: "file" } },
     });
     expect(evidence.normalized_result.identity).toEqual({
       id: "Demo.Package",
@@ -98,3 +98,75 @@ cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
     },
   });
 });
+
+cliTest(
+  "preserves selected budgets and redacts transport userinfo through CLI, MCP and retained views",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-nupkg-provenance-");
+    const path = join(root, "pkg.nupkg");
+    const nuspec = `<package><metadata><id>Credentials.Package</id><version>1</version><repository type="git" url="HTTPS://user:password@Example.invalid/a/../b?token=visible#hash" /></metadata></package>`;
+    const rels = `<Relationships><Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" TargetMode="External" Target="https://user:password@feed.invalid/package?token=visible" /><Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="//user:password@feed.invalid/missing.nuspec?token=visible" /></Relationships>`;
+    await writeFile(
+      path,
+      await nugetNupkgFixture({
+        nuspec,
+        includeRels: false,
+        extraMembers: { "_rels/.rels": rels },
+      }),
+    );
+    const { call } = await connectLocalToolsMcp();
+    for (const maximum of [undefined, 67108864, 8192]) {
+      const input = {
+        path,
+        ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
+      };
+      const output = await cli.run({
+        arguments: [
+          "inspect-nuget-nupkg",
+          "./pkg.nupkg",
+          "--json",
+          ...(maximum === undefined
+            ? []
+            : ["--max-file-bytes", String(maximum)]),
+        ],
+        cwd: root,
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      const cliEvidence = completeNupkgEvidenceSchema.parse(output.json);
+      expect(cliEvidence.caller_input_path).toBe("./pkg.nupkg");
+      expect(cliEvidence.parameters).toEqual(input);
+      const reply = await call("inspect_nuget_nupkg", input);
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      const evidence = completeNupkgEvidenceSchema.parse(
+        reply.structuredContent,
+      );
+      expect(evidence.parameters).toEqual(input);
+      expect(evidence.normalized_result).toEqual(cliEvidence.normalized_result);
+      expect(evidence.normalized_result.repository).toMatchObject({
+        url: "HTTPS://Example.invalid/a/../b?token=visible#hash",
+        url_credentials_redacted: true,
+      });
+      expect(JSON.stringify(evidence)).not.toContain("user:password");
+      expect(evidence.normalized_result.limitations.join(" ")).toContain(
+        "https://feed.invalid/package?token=visible",
+      );
+      expect(evidence.normalized_result.limitations.join(" ")).toContain(
+        "//feed.invalid/missing.nuspec?token=visible",
+      );
+      const view = await call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: evidence.evidence_id,
+        },
+        view: { kind: "summary" },
+      });
+      expect(view.isError, JSON.stringify(view)).not.toBe(true);
+      expect(JSON.stringify(view.structuredContent)).not.toContain(
+        "user:password",
+      );
+      expect(JSON.stringify(view.structuredContent)).toContain(
+        "HTTPS://Example.invalid/a/../b?token=visible#hash",
+      );
+    }
+  },
+);

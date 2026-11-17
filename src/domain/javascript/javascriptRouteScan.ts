@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { Budget } from "../budget.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import type { JsonValue } from "../jsonValue.js";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "./javascriptAnalysisResourceControls.js";
@@ -31,6 +32,7 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { semanticProjectedSourcesAtRead } from "./javascriptSemanticProjectedSources.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import { semanticMemberWriteNodes } from "./javascriptSemanticEffectLog.js";
 import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import {
   semanticObjectPropertyReferences,
@@ -275,7 +277,8 @@ export class JavaScriptRouteScan {
   >();
   readonly #routeChildren: t.ObjectExpression[] = [];
   #nextRuntime = false;
-  #factBytes: number;
+  /** Coverage metadata, facts and queued work share one allowance. */
+  readonly #bytes: Budget;
   #workBytes = 0;
 
   private constructor(
@@ -283,7 +286,7 @@ export class JavaScriptRouteScan {
     readonly onLegacyRoute?: (fact: LegacyRoute) => void,
     readonly factByteBudget = JAVASCRIPT_STATIC_FACT_BYTES,
   ) {
-    this.#factBytes = jsonValueByteLength({
+    const metadataBytes = jsonValueByteLength({
       candidates: [],
       unresolved: [],
       capacity: {
@@ -293,13 +296,12 @@ export class JavaScriptRouteScan {
         accounted_work_bytes: factByteBudget,
       },
     });
-    if (
-      !Number.isSafeInteger(factByteBudget) ||
-      factByteBudget < this.#factBytes
-    )
+    if (!Number.isSafeInteger(factByteBudget) || factByteBudget < metadataBytes)
       throw new RangeError(
         "Route accounting budget must fit its coverage metadata",
       );
+    this.#bytes = new Budget(factByteBudget);
+    this.#bytes.tryCharge(metadataBytes);
   }
 
   /** Establish navigation data ownership before either adapter interprets syntax. */
@@ -1100,11 +1102,8 @@ export class JavaScriptRouteScan {
     // selected-source list. Repeated reads share cached object field parsing.
     for (const sources of [binding.initializers, binding.referenceInitializers])
       for (const source of sources) if (!this.#queue(source.node)) return;
-    for (const write of binding.memberWrites) {
-      if (!this.#queue(write.node ?? node)) return;
-      for (const source of write.assignedSources ?? [])
-        if (!this.#queue(source.node)) return;
-    }
+    for (const site of semanticMemberWriteNodes(binding))
+      if (!this.#queue(site ?? node)) return;
     // Value flow excludes proven replacements; lifetime identity eligibility
     // would keep them and incorrectly hide otherwise independent routes.
     const sources = semanticProjectedSourcesAtRead(
@@ -1673,25 +1672,24 @@ export class JavaScriptRouteScan {
     }
   }
   #remaining(): number {
-    return this.factByteBudget - this.#factBytes - this.#workBytes;
+    return this.#bytes.remaining;
   }
   #capacity(): void {
     this.#result.capacity ??= {
       kind: "route-work-or-facts",
       limit_bytes: this.factByteBudget,
-      accounted_fact_bytes: this.#factBytes,
+      accounted_fact_bytes: this.#bytes.used - this.#workBytes,
       accounted_work_bytes: this.#workBytes,
     };
   }
   #reserve(kind: "fact" | "work", value: JsonValue): boolean {
     if (this.#result.capacity !== null) return false;
     const bytes = jsonValueByteLength(value, this.#remaining()) + 1;
-    if (bytes > this.#remaining()) {
+    if (!this.#bytes.tryCharge(bytes)) {
       this.#capacity();
       return false;
     }
-    if (kind === "fact") this.#factBytes += bytes;
-    else this.#workBytes += bytes;
+    if (kind === "work") this.#workBytes += bytes;
     return true;
   }
   #queue(node: t.Node, value: string | null = null): boolean {

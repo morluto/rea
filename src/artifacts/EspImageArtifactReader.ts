@@ -16,7 +16,7 @@ import {
   ESP_SIGNATURE_BLOCK_BYTES,
   offsetText,
 } from "../domain/firmware/espImageStructures.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import { readEspFlashRange } from "./EspFlashRegionReads.js";
 import {
   PositionalArtifactReader,

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
-import { cliCommandFor } from "../../src/cliCommandNames.js";
+import { cliCommandFor } from "../../src/contracts/cliCommandNames.js";
 import * as composition from "../../src/composition/binaryDiagnostics.js";
 import { BinaryLayoutService } from "../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { RecordedCrashService } from "../../src/application/binaryDiagnostics/RecordedCrashService.js";
