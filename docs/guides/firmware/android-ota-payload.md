@@ -46,6 +46,11 @@ and `estimate_cow_size`. Operation types include REPLACE, ZERO,
 REPLACE_BZ/XZ/ZSTD, SOURCE_COPY, BSDIFF family, PUFFDIFF, ZUCCHINI and
 LZ4DIFF.
 
+Repeated encodings of the singular old/new `PartitionInfo` messages merge
+their fields under Protobuf rules. A later size-only or empty message does
+not erase an earlier declared hash; a repeated scalar field keeps its last
+value. The resulting size and hash feed both inventory and extraction.
+
 Metadata and payload signature blobs are counted from the `Signatures`
 protobuf. `signatures_verified` is always `false`: sizes and counts are
 facts, not a cryptographic check. `payload_properties.txt` and
