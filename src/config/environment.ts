@@ -172,11 +172,12 @@ export type Environment = Omit<
   readonly referenceSecretPatterns: readonly string[];
 };
 
-/** Parse individual settings before layered registration fragments are merged. */
-export const parseEnvironmentValues = (
+/** Check OS environment representability before semantic parsing or diagnostics.
+ * Rejected values must never reach a child-process error message. */
+export const validateEnvironmentEntries = (
   environment: Readonly<Record<string, string | undefined>>,
   unresolvedSettings: ReadonlySet<string> = new Set(),
-): Result<Environment, ConfigurationError> => {
+): Result<null, ConfigurationError> => {
   // Unknown client-specific entries are preserved by registration owners and
   // still cross the child-process boundary. Check names and byte admission before
   // the known-setting schema strips them; never include rejected values.
@@ -201,6 +202,16 @@ export const parseEnvironmentValues = (
         settings: invalidEntries,
       }),
     );
+  return ok(null);
+};
+
+/** Parse individual settings before layered registration fragments are merged. */
+export const parseEnvironmentValues = (
+  environment: Readonly<Record<string, string | undefined>>,
+  unresolvedSettings: ReadonlySet<string> = new Set(),
+): Result<Environment, ConfigurationError> => {
+  const entries = validateEnvironmentEntries(environment, unresolvedSettings);
+  if (!entries.ok) return entries;
   // An expression has no known runtime value to validate or default. Its
   // original text was checked for invalid bytes above and remains with its owner.
   const literals = Object.fromEntries(

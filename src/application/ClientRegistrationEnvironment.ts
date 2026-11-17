@@ -10,7 +10,10 @@ import {
 import type { SetupClient } from "./SupportedClients.js";
 
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
-import type { Environment } from "../config/environment.js";
+import {
+  validateEnvironmentEntries,
+  type Environment,
+} from "../config/environment.js";
 import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -133,7 +136,12 @@ export const clientRegistrationEnvironmentDetails = (
         platform,
       );
       return observed.ok
-        ? ok({ ...observed.value, timeoutInputs: undefined })
+        ? validatedDetails(
+            observed.value.values,
+            validation,
+            platform,
+            observed.value.unresolvedSettings,
+          )
         : observed;
     }
     const environment = dshDocument(parsed.document).environment(
@@ -316,12 +324,15 @@ const validatedDetails = (
   platform: NodeJS.Platform,
   expressionSettings: ReadonlySet<string>,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
-  if (validation === "diagnostic")
+  if (validation === "diagnostic") {
+    const entries = validateEnvironmentEntries(environment, expressionSettings);
+    if (!entries.ok) return entries;
     return ok({
       values: environment,
       unresolvedSettings: expressionSettings,
       timeoutInputs: undefined,
     });
+  }
   const validated = validateRegistrationEnvironment(
     environment,
     expressionSettings,

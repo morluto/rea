@@ -125,3 +125,28 @@ it("diagnoses readable invalid settings without admitting them for setup", async
     ).ok,
   ).toBe(false);
 });
+
+it.each([
+  { CALLER_SETTING: "rejected-value\0tail" },
+  { ["CALLER\0SETTING"]: "rejected-value" },
+  { ["CALLER=SETTING"]: "rejected-value" },
+])(
+  "refuses unrepresentable environment entries even in diagnostic mode: %j",
+  (values) => {
+    const document = parseClientConfiguration(
+      JSON.stringify({ mcp: { rea: kilo(values) } }),
+      "opencode",
+    );
+    const observed = clientRegistrationEnvironmentDetails(
+      document,
+      undefined,
+      "linux",
+      {},
+      "diagnostic",
+    );
+    expect(observed.ok).toBe(false);
+    if (observed.ok) throw new Error("Expected environment-entry refusal");
+    expect(observed.error.settings).toHaveLength(1);
+    expect(JSON.stringify(observed.error)).not.toContain("rejected-value");
+  },
+);
