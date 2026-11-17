@@ -449,11 +449,23 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
             secondary,
           })
         : null;
+    const documentsBeforeSwitch = await call("list_documents");
+    assert.ok(
+      documentsBeforeSwitch.includes(firstDocument),
+      "list_documents omitted the current native document",
+    );
     await call("open_binary", { path: secondary });
     const secondDocument = await call("current_document");
-    assert.notEqual(firstDocument, secondDocument);
+    // REA opens an owned copy of each target under a fixed image name, so
+    // document names cannot tell targets apart; disposal shows in the count.
+    const documentsAfterSwitch = await call("list_documents");
     assert.ok(
-      !(await call("list_documents")).includes(firstDocument),
+      documentsAfterSwitch.includes(secondDocument),
+      "list_documents omitted the switched native document",
+    );
+    assert.equal(
+      documentsAfterSwitch.length,
+      documentsBeforeSwitch.length,
       "target switching retained the old native document",
     );
     const procedures = await call("list_procedures");
@@ -571,8 +583,9 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
     assert.match(failure.message, /usable unsigned 64-bit range/u);
 
     await call("open_binary", { path: primary });
-    assert.ok(
-      !(await call("list_documents")).includes(secondDocument),
+    assert.equal(
+      (await call("list_documents")).length,
+      documentsAfterSwitch.length,
       "MCP or CLI cleanup retained the closed native document",
     );
     await call("close_binary");
