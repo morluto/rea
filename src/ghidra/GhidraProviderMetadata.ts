@@ -1,4 +1,4 @@
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 

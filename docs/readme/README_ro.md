@@ -92,16 +92,14 @@ Programul de configurare acceptă Claude Code, Codex, Cursor, Gemini CLI, Grok B
 [instalarea și configurarea](../getting-started/installation.md) pentru configurarea motoarelor
 de analiză și înregistrarea manuală a serverului MCP.
 
-MCP folosește implicit scheme de intrare compacte, pentru a reduce spațiul ocupat
-în context. Setează `REA_MCP_INPUT_SCHEMA_PROFILE=full` în înregistrarea MCP când
-ai nevoie de îndrumările complete pentru câmpurile expuse și de detaliile
-validării structurilor imbricate. Ambele profiluri păstrează toate uneltele și
-validarea canonică a serverului. Consultă secțiunea „Compact input schema profile”
+MCP anunță scheme de intrare compacte, pentru a reduce spațiul ocupat în
+context; îndrumările omise de o schemă compactă urmează descrierea uneltei.
+Toate uneltele și validarea canonică a serverului rămân neschimbate. Consultă secțiunea „Compact input schema profile”
 din ghidul contractelor MCP.
 
 Configurarea înregistrează direct mediul de execuție ales și scriptul de intrare REA. Dacă folosești un executor de pachete, păstrează intrarea sa din cache și mediul de execuție; obține pachetul dintr-un director de încredere din afara proiectului țintă. Consultă ghidul de instalare.
 
-Schemele complete de ieșire sunt anunțate implicit. Dacă clientul limitează `tools/list`, setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` sau `off` în înregistrarea MCP. Validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
+Schemele de ieșire sunt omise implicit din `tools/list`: niciun API de model nu le citește, iar REA validează singur fiecare rezultat. Setează `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` în înregistrarea MCP pentru a anunța fiecare schemă de ieșire în limita a 4096 de octeți. În toate setările, validarea serverului și rezultatele structurate rămân complete. Consultă „Output schemas” din ghidul contractelor MCP.
 
 ### Cere-i agentului
 
@@ -205,6 +203,8 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Importuri PE                        | Numele DLL-urilor importate și încărcate întârziat, ordinale, RVA-uri ale IAT și hash-ul importurilor calculat de pefile      | Inspectare statică integrată a fișierelor PE; [importuri PE](../pe-imports.md)                                                                                    |
 | Scurtături Windows                  | Țintă Shell Link, argumente, director de lucru, ExtraData și identificatori Tracker                                           | Inspectare statică integrată a fișierelor LNK; [scurtături Windows](../guides/native/windows-shortcut.md)                                                         |
 | Note ELF                            | Proprietari și tipuri PT_NOTE/SHT_NOTE, câmpuri GNU build-id și ABI-tag                                                       | Inspectare statică integrată a fișierelor ELF; [note ELF](../elf-notes.md)                                                                                        |
+| DWARF compile units                 | Compile-unit name, directory, producer, language, and dwo_name                                                                | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                            |
+| Dependențe ELF                      | Biblioteci DT_NEEDED, SONAME, căi RPATH/RUNPATH, versiuni GNU și importuri nedefinite                                         | Inspectare statică integrată a fișierelor ELF; [dependențe ELF](../elf-dependencies.md)                                                                           |
 | Întărire binară                     | PIE, NX, RELRO, CFG și indicatori de antet pentru ELF, PE și Mach-O                                                           | Inspecție statică integrată a antetelor; [întărire binară](../binary-hardening.md)                                                                                |
 | Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                                                         |
 | Module de kernel Linux              | Chei .modinfo, CRC-uri din __versions, prezența this_module și structura semnăturii de la sfârșitul fișierului                | Inspectare statică integrată a fișierelor ELF; [module de kernel](../kernel-modules.md)                                                                           |

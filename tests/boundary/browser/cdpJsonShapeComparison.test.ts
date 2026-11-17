@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { compareWebCaptureEvidence } from "../../../src/application/BrowserObservationService.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { CdpCaptureEvents } from "../../../src/browser/CdpCaptureEvents.js";
+import { CdpTargetDocument } from "../../../src/browser/CdpTargetDocument.js";
 import { browserCaptureComparisonInputSchema } from "../../../src/domain/browserCaptureComparison.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import {
@@ -12,6 +13,7 @@ import {
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webCaptureDiffSchema } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { passiveNetworkCapture } from "../../fixtures/passiveNetworkCapture.js";
+import { receiveCdpEvent } from "../../../src/browser/CdpConnection.js";
 
 const ORIGIN = "https://example.test";
 const CAPTURE_TIME = "2026-01-01T00:00:00.000Z";
@@ -429,36 +431,42 @@ const captureBody = (
     }),
     new Set([ORIGIN]),
   );
-  events.beginAuthorizedFrame("main");
-  events.ingest({
-    method: "Network.requestWillBeSent",
-    params: {
-      requestId: "request-1",
-      type: "Fetch",
-      request: { url: `${ORIGIN}/api`, ...request },
-      initiator: { type: "script" },
-    },
-  });
-  const responseBody = source === "request" ? "{}" : body;
-  events.ingest({
-    method: "Network.responseReceived",
-    params: {
-      requestId: "request-1",
-      response: {
-        url: `${ORIGIN}/api`,
-        status: 200,
-        mimeType: "application/json",
-        headers: {},
+  events.beginAuthorizedFrame(new CdpTargetDocument({ frameId: "main" }));
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.requestWillBeSent",
+      params: {
+        requestId: "request-1",
+        type: "Fetch",
+        request: { url: `${ORIGIN}/api`, ...request },
+        initiator: { type: "script" },
       },
-    },
-  });
-  events.ingest({
-    method: "Network.loadingFinished",
-    params: {
-      requestId: "request-1",
-      encodedDataLength: Buffer.byteLength(responseBody),
-    },
-  });
+    }),
+  );
+  const responseBody = source === "request" ? "{}" : body;
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.responseReceived",
+      params: {
+        requestId: "request-1",
+        response: {
+          url: `${ORIGIN}/api`,
+          status: 200,
+          mimeType: "application/json",
+          headers: {},
+        },
+      },
+    }),
+  );
+  events.ingest(
+    receiveCdpEvent({
+      method: "Network.loadingFinished",
+      params: {
+        requestId: "request-1",
+        encodedDataLength: Buffer.byteLength(responseBody),
+      },
+    }),
+  );
   const candidate = events.responseBodyRequests()[0];
   expect(candidate?.requestId).toBe("request-1");
   expect(candidate).toBeDefined();
@@ -494,7 +502,11 @@ const captureBody = (
     },
     completeness: events.completeness.snapshot(),
     frames: [],
-    dom: { total_nodes: 0, nodes: [] },
+    dom: {
+      total_nodes: 0,
+      node_value_length_unit: "utf16-code-units",
+      nodes: [],
+    },
     accessibility: {
       total_nodes: 0,
       text_capture: {
@@ -533,6 +545,9 @@ const captureBody = (
       session_storage_keys: [],
       indexed_db_names: [],
       cache_names: [],
+      content_fingerprints: [],
+      fingerprint_algorithm: "sha256",
+      fingerprints_complete: false,
       values_redacted: true,
     },
     limitations: [],

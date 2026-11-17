@@ -193,6 +193,12 @@ and response transport capacity still apply.
   Launcher startup, ownership preparation, signal termination and incomplete
   output collection remain provider failures; they do not establish that the
   selected APK is unsupported.
+- When Apktool's JVM reports `java.lang.OutOfMemoryError`, the decode surfaces
+  as `resource_constraint` for memory, or for capacity when it could not
+  create a native thread. This holds even if the stack trace overflows the
+  capture budget, because REA watches for the report while output streams.
+  REA does not set Apktool's heap; raise the launcher JVM's `-Xmx` or decode a
+  smaller APK.
 
 ## Real verification
 

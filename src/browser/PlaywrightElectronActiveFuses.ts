@@ -1,6 +1,9 @@
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
 import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { basename, dirname } from "node:path";
 
@@ -70,7 +73,9 @@ export const assertNodeCliInspectArgumentsSupported = async (
     });
     if (image.slices.length === 0) return;
 
-    const hostArchitecture = process.arch === "x64" ? "x86_64" : process.arch;
+    // The fuses that matter are the ones in the slice this host launches.
+    const { architecture } = HOST_PLATFORM;
+    const hostArchitecture = architecture === "x64" ? "x86_64" : architecture;
     const targetSlice =
       image.slices.find((slice) => slice.architecture === hostArchitecture) ??
       image.slices[0];

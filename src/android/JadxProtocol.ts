@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import {
@@ -10,11 +11,6 @@ import {
   dexDescriptorSchema,
   dexTypeSchema,
 } from "../domain/android/dexTypes.js";
-import { androidNativeDeclarationsSchema } from "../domain/android/androidNativeDeclarations.js";
-
-/** Native-only raw DEX facts authored before decompiler deduplication. */
-export const jadxNativeDeclarationsSchema = androidNativeDeclarationsSchema;
-
 const count = z.int().nonnegative();
 /** Typed allocation failures authored before upstream erases the JVM exception. */
 const jadxMemoryFailureSchema = z.strictObject({
@@ -41,17 +37,26 @@ const bridgeFailureSchema = z.discriminatedUnion("kind", [
   jadxReferenceLimitSchema,
 ]);
 
+/**
+ * HotSpot's heap-exhaustion `OutOfMemoryError` reasons. Before the bridge
+ * answers there is no named failure, so a launcher's retained stderr is the
+ * only evidence. Other reasons (metaspace, direct buffers, native threads) are
+ * not remedied by the worker heap setting.
+ */
+const JADX_HEAP_EXHAUSTION =
+  /java\.lang\.OutOfMemoryError: (?:Java heap space|GC overhead limit exceeded)/u;
+
+/** Whether a launcher's retained stderr reports JVM heap exhaustion. */
+export const jadxHeapExhausted = (text: string): boolean =>
+  JADX_HEAP_EXHAUSTION.test(text);
+
 /** Arbitrary upstream failure text stays text unless it matches a named bridge contract. */
 export const parseJadxFailure = (
   text: string,
 ): z.infer<typeof bridgeFailureSchema> | undefined => {
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  const parsed = bridgeFailureSchema.safeParse(candidate);
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) return undefined;
+  const parsed = bridgeFailureSchema.safeParse(decoded.value);
   return parsed.success ? parsed.data : undefined;
 };
 /** Values observed inside the exact JVM producing the analysis. */
@@ -211,8 +216,21 @@ export const parseJadxJson = (
   text: string,
   operation: AndroidOperation,
 ): z.infer<typeof jsonValueSchema> => {
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw new AnalysisOutputError(
+        operation,
+        `JADX returned JSON with duplicate member ${JSON.stringify(decoded.duplicate.name)}`,
+      );
+    throw new AnalysisOutputError(
+      operation,
+      "JADX returned malformed JSON text",
+      { cause: decoded.cause },
+    );
+  }
   try {
-    return jsonValueSchema.parse(JSON.parse(text));
+    return jsonValueSchema.parse(decoded.value);
   } catch (cause) {
     throw new AnalysisOutputError(
       operation,

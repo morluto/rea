@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import {
   DEBUGGER_COMMAND_DEADLINE_SETTING,
@@ -7,10 +8,28 @@ import {
 } from "../config/debuggerSessionLimits.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import type { AnalysisSettingId } from "../domain/analysisSettings.js";
-import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+  cancelledBy,
+  type AnalysisTimeoutRecovery,
+} from "../domain/analysisErrorCore.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type {
+  DebuggerCleanupIncomplete,
+  DebuggerCleanupIncompleteCode,
+} from "../domain/debuggerSessionErrors.js";
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
-import { OwnedDebuggerCleanupError } from "./ownedDebuggerCleanupError.js";
+import {
+  OwnedDebuggerCleanupError,
+  OwnedDebuggerStopFailure,
+} from "./ownedDebuggerCleanupError.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Result of terminating one debugger process owned by this application. */
 export type OwnedDebuggerStopResult =
@@ -23,7 +42,28 @@ export type OwnedDebuggerStopResult =
       readonly status: "stopped_inferior_unknown";
       readonly reason: string;
     }
-  | { readonly status: "incomplete"; readonly reason: string };
+  | ({ readonly status: "incomplete" } & DebuggerCleanupIncomplete);
+
+/**
+ * A provider's refusal or failure to detach its inferior, naming why. Other
+ * detach errors are reported as `detach-failed`.
+ */
+export class OwnedDebuggerDetachFailure extends Error {
+  constructor(
+    readonly code: Extract<
+      DebuggerCleanupIncompleteCode,
+      | "inferior-state-unknown"
+      | "multiple-inferiors"
+      | "no-durable-output-sink"
+      | "inferior-tty-changed"
+      | "detach-failed"
+    >,
+    message: string,
+  ) {
+    super(message);
+    this.name = "OwnedDebuggerDetachFailure";
+  }
+}
 
 const RUNTIME_DEBUGGER_SETTINGS = {
   [DEBUGGER_COMMAND_DEADLINE_SETTING]: "debugger.command_deadline_ms",
@@ -88,7 +128,7 @@ export const debuggerAdmissionRecovery = (
 export const fixedDeadlineGuidance = (
   what: string,
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): AnalysisTimeoutRecovery => ({
   userMessage: `${what} reached its ${String(timeoutMs)} ms deadline (deadlineExpired). This release has no runtime override.`,
   remediationAction: `This ${String(timeoutMs)} ms deadline has no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
@@ -97,11 +137,7 @@ export const fixedDeadlineGuidance = (
 export const configurableDeadlineGuidance = (
   what: string,
   admission: DebuggerAdmissionLimit,
-): {
-  readonly userMessage: string;
-  readonly remediationAction: string;
-  readonly diagnostics: ReturnType<typeof debuggerAdmissionDiagnostics>;
-} => {
+): AnalysisTimeoutRecovery => {
   const recovery = debuggerAdmissionRecovery(admission);
   const limit = debuggerAnalysisLimit(admission);
   return {
@@ -137,6 +173,63 @@ export const debuggerResourceConstraintError = (
   );
 };
 
+/**
+ * Failure a debugger session keeps while its process is not confirmed stopped.
+ * A later cleanup retry reports it again, so it keeps the primary outcome: a
+ * cancellation stays a cancellation with the caller's reason instead of
+ * becoming a capability refusal for the target.
+ */
+/**
+ * The cleanup observation and diagnostic an incomplete stop adds to any error
+ * that reports it. The code projects as `details.diagnostics.debugger_cleanup`.
+ */
+export const incompleteStopFacts = (
+  { code, reason }: DebuggerCleanupIncomplete,
+  resources: readonly string[],
+): {
+  readonly cleanup: { readonly reason: string; readonly resources: string[] };
+  readonly diagnostics: {
+    readonly debugger_cleanup: DebuggerCleanupIncompleteCode;
+  };
+} => ({
+  cleanup: { reason, resources: [...resources] },
+  diagnostics: { debugger_cleanup: code },
+});
+
+export const retainedDebuggerCleanupFailure = (
+  debugger_: { readonly provider: string; readonly displayName: string },
+  operation: string,
+  { code, reason }: DebuggerCleanupIncomplete,
+  resources: readonly string[],
+  callerOptions: AnalysisErrorOptions = {},
+): AnalysisError => {
+  const { cleanup, diagnostics } = incompleteStopFacts(
+    { code, reason },
+    resources,
+  );
+  const options: AnalysisErrorOptions = {
+    ...callerOptions,
+    diagnostics: { ...callerOptions.diagnostics, ...diagnostics },
+  };
+  const primary = options.cause;
+  if (primary instanceof AnalysisCancelledError) {
+    const { cause: _, ...cancelledOptions } = options;
+    return cancelledBy(operation, primary, {
+      ...cancelledOptions,
+      capturedOutput: options.capturedOutput ?? primary.capturedOutput,
+      partialObservation:
+        options.partialObservation ?? primary.partialObservation,
+      cleanup,
+    });
+  }
+  return new AnalysisCapabilityUnavailableError(
+    debugger_.provider,
+    operation,
+    `The owned ${debugger_.displayName} process could not be confirmed stopped: ${reason}`,
+    { ...options, cleanup },
+  );
+};
+
 const DETACH_TIMEOUT_MS = 1_000;
 const MAX_LATE_DEBUGGER_OUTPUT_BYTES = 64 * 1024;
 export type OwnedDebuggerDetachResult =
@@ -163,7 +256,7 @@ export type ProcessStartTimeReader = (pid: string) => Promise<string | null>;
 export const readLinuxProcessStartTime: ProcessStartTimeReader = async (
   pid,
 ) => {
-  if (process.platform !== "linux")
+  if (HOST_PLATFORM.platform !== "linux")
     throw new Error(
       "Inferior process identity verification requires Linux /proc.",
     );
@@ -306,6 +399,7 @@ const finishExitedDebuggerSession = async (
     if (!(await session.supervisor.waitForOutputClose(1_000))) {
       return {
         status: "incomplete",
+        code: "output-unsettled",
         reason:
           platform === "win32"
             ? `Owned ${debuggerName} process leader exited, but its Windows Job Object still has active descendants or has not reported settlement.`
@@ -315,10 +409,11 @@ const finishExitedDebuggerSession = async (
   } catch (cause: unknown) {
     return {
       status: "incomplete",
+      code: "output-unsettled",
       reason:
         platform === "win32"
-          ? `Owned ${debuggerName} Windows Job Object settlement could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`
-          : `Owned ${debuggerName} inherited output stream settlement could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ? `Owned ${debuggerName} Windows Job Object settlement could not be verified: ${errorMessage(cause)}`
+          : `Owned ${debuggerName} inherited output stream settlement could not be verified: ${errorMessage(cause)}`,
     };
   }
   if (platform !== "win32") session.supervisor.unrefOutputStreams();
@@ -346,11 +441,12 @@ export const stopOwnedDebuggerProcess = async (
   debuggerName: string,
   options: { readonly platform?: NodeJS.Platform } = {},
 ): Promise<OwnedDebuggerStopResult> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   if (session.exited) {
     if (detachAttempts.has(session))
       return {
         status: "incomplete",
+        code: "detach-pending",
         reason: `Owned ${debuggerName} inferior detach is still pending after the process exited.`,
       };
     const detachOutcome = detachOutcomes.get(session);
@@ -362,13 +458,15 @@ export const stopOwnedDebuggerProcess = async (
         if ((await session.verifyInferiorsEndedAfterExit?.()) !== true)
           return {
             status: "incomplete",
+            code: "inferior-disposition-unverified",
             reason: `Owned ${debuggerName} inferior disposition was not verified before the debugger exited, and no owner proof confirms the identified inferior processes have ended.`,
           };
         detachOutcomes.set(session, { kind: "inferior-ended" });
       } catch (cause: unknown) {
         return {
           status: "incomplete",
-          reason: `Owned ${debuggerName} inferior process identity could not be verified after debugger exit: ${cause instanceof Error ? cause.message : String(cause)}`,
+          code: "inferior-identity-unverified",
+          reason: `Owned ${debuggerName} inferior process identity could not be verified after debugger exit: ${errorMessage(cause)}`,
         };
       }
     }
@@ -387,54 +485,20 @@ export const stopOwnedDebuggerProcess = async (
   if (platform === "win32")
     return {
       status: "incomplete",
+      code: "windows-stop-unsafe",
       reason: `Owned ${debuggerName} process cannot be stopped safely on Windows because job termination can also terminate its inferior processes.`,
     };
   // Admission remains closed once cleanup starts. A verified detach is an
   // owned completion fact, even when terminating the debugger later fails.
   // Retrying the command transport can no longer improve that fact and may
   // block termination if shutdown already made the transport unavailable.
-  // An `unavailable` declaration is equally final: serialized detach cannot
-  // be performed now, so only terminating the owned process completes
-  // cleanup, with the inferior's disposition left unknown.
-  let unverifiedTerminationReason: string | undefined;
-  const detachOutcome = detachOutcomes.get(session);
-  if (detachOutcome?.kind !== "confirmed") {
-    if (detachOutcome?.kind === "unavailable") {
-      unverifiedTerminationReason = detachOutcome.reason;
-    } else {
-      try {
-        if (session.detachInferior === undefined) {
-          detachOutcomes.set(session, { kind: "unconfirmed" });
-          return {
-            status: "incomplete",
-            reason: `Owned ${debuggerName} inferior detach cannot be verified because the provider has no detach capability.`,
-          };
-        }
-        const detached = await waitForInferiorDetach(
-          session,
-          session.detachInferior,
-        );
-        if (detached === undefined)
-          return {
-            status: "incomplete",
-            reason: `Owned ${debuggerName} inferior detach was not verified within ${String(DETACH_TIMEOUT_MS)} ms. This release has no runtime override.`,
-          };
-        if (detached.status === "unavailable") {
-          unverifiedTerminationReason = detached.reason;
-        } else if (!isVerifiedDetachResult(detached)) {
-          detachOutcomes.set(session, { kind: "unconfirmed" });
-          return {
-            status: "incomplete",
-            reason: `Owned ${debuggerName} provider did not confirm no inferior or detachment with a durable output sink.`,
-          };
-        } else detachOutcomes.set(session, { kind: "confirmed" });
-      } catch (cause: unknown) {
-        return {
-          status: "incomplete",
-          reason: `Owned ${debuggerName} inferior detach could not be verified: ${cause instanceof Error ? cause.message : String(cause)}`,
+          code:
+            cause instanceof OwnedDebuggerDetachFailure
+              ? cause.code
+              : "detach-failed",
+          reason: `Owned ${debuggerName} inferior detach could not be verified: ${errorMessage(cause)}`,
         };
       }
-    }
   }
   session.launched.process.kill("SIGTERM");
   if (!(await session.supervisor.waitForExit(300))) {
@@ -452,6 +516,7 @@ export const stopOwnedDebuggerProcess = async (
       );
     return {
       status: "incomplete",
+      code: "process-did-not-exit",
       reason: `Owned ${debuggerName} process did not exit after direct termination.`,
     };
   }
@@ -509,7 +574,7 @@ export const closeOwnedDebuggerSessions = async <
       );
       retained.push(session);
     } else if (settled.value.status === "incomplete") {
-      failures.push(new Error(settled.value.reason));
+      failures.push(new OwnedDebuggerStopFailure(settled.value));
       retained.push(session);
     } else if (sessions.get(key) === session) sessions.delete(key);
   }

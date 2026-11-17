@@ -1,11 +1,12 @@
+import { deadlineParameterLimit } from "./analysisResourceLimits.js";
 import {
   localSourceMapLimitsSchema,
   WEB_SOURCE_MAP_LIMITS,
 } from "./sourceMapLimits.js";
-export { WEB_SOURCE_MAP_LIMITS } from "./sourceMapLimits.js";
 import { z } from "zod";
 import {
   browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
   browserDeadlineRetry,
   optionalBrowserDeadlineMs,
 } from "./browserDeadline.js";
@@ -134,9 +135,14 @@ export const DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS =
 /** Source-map decode deadlineExpired text for trace_web_source_location. */
 export const webSourceMapDecodeTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `trace_web_source_location reached its ${String(timeoutMs)} ms source-map decode deadline (deadlineExpired) for decode_timeout_ms. No partial mapping is returned. This is not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("decode_timeout_ms", timeoutMs, DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS, "--decode-timeout-ms")} ${browserDeadlineRetry} Byte, record and heap admission are separate per-call source_map_limits fields; changing the deadline does not raise them.`,
+  limit: deadlineParameterLimit(
+    "decode_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("decode_timeout_ms", timeoutMs, DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS)} ${browserDeadlineRetry} Byte, record and heap admission are separate per-call source_map_limits fields; changing the deadline does not raise them.`,
 });
 export type WebSourceMapReport = z.output<typeof webSourceMapReportSchema>;
 

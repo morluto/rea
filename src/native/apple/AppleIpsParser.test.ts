@@ -9,10 +9,8 @@ import {
   appleIpsMetadataLine,
   appleIpsReport,
 } from "../../../tests/fixtures/binaryDiagnostics/appleIps.js";
-import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
-} from "./AppleIps.errors.js";
+import { AppleIpsResourceFailure } from "./AppleIps.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 
 const input = inspectAppleIpsInputSchema.parse({
@@ -45,7 +43,7 @@ it.each(
           : `${metadata}\n${body}${character}`,
     );
     expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-      AppleIpsFormatFailure,
+      ParseFailureError,
     );
   },
 );
@@ -57,6 +55,30 @@ it("accepts only JSON whitespace around each object", () => {
   expect(parseAppleIps(bytes, artifact(bytes), input).coverage.status).toBe(
     "complete",
   );
+});
+
+it("accepts previously recorded rows that omit newly added unknown-key fields", () => {
+  const bytes = appleIpsBytes();
+  const current = parseAppleIps(bytes, artifact(bytes), input);
+  expect(current.threads.length).toBeGreaterThan(0);
+  expect(current.threads[0]?.frames.length).toBeGreaterThan(0);
+  expect(current.images.length).toBeGreaterThan(0);
+  const historical = {
+    ...current,
+    threads: current.threads.map(
+      ({ unlisted_keys: _threadKeys, ...thread }) => ({
+        ...thread,
+        frames: thread.frames.map(
+          ({ unlisted_keys: _frameKeys, ...frame }) => frame,
+        ),
+      }),
+    ),
+    images: current.images.map(
+      ({ unlisted_keys: _imageKeys, ...image }) => image,
+    ),
+  };
+  expect(appleIpsSchema.safeParse(historical).success).toBe(true);
+  expect(appleIpsSchema.safeParse(current).success).toBe(true);
 });
 
 it.each([
@@ -176,17 +198,20 @@ it("refuses a stackshot bug_type without a crash body", () => {
   } catch (cause) {
     failure = cause;
   }
-  expect(failure).toBeInstanceOf(AppleIpsFormatFailure);
+  expect(failure).toBeInstanceOf(ParseFailureError);
   expect(failure).toMatchObject({
-    kind: "unsupported",
-    message: expect.stringContaining("288"),
+    failure: {
+      kind: "unsupported",
+      format: "apple-ips",
+      detail: expect.stringContaining("288"),
+    },
   });
 });
 
 it("fails closed on a truncated crash body", () => {
   const bytes = appleIpsBytes({ truncateBody: true });
   expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
+    ParseFailureError,
   );
 });
 

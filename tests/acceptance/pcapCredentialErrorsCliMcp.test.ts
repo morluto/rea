@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
-import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { pcapResultSchemas } from "../../src/domain/pcap/pcapAnalysis.js";
@@ -39,6 +39,11 @@ const verifyOriginalError = (document: unknown) => {
       reported_limits: z.object({
         max_output_bytes: z.literal(8 * 1024 * 1024),
       }),
+      refusal: z.object({
+        kind: z.literal("fixed_ceiling"),
+        limit: z.literal(8 * 1024 * 1024),
+        unit: z.literal("bytes"),
+      }),
       captured_output: z.object({
         stdout: z.string(),
         stdout_bytes: z.literal(8 * 1024 * 1024),
@@ -60,7 +65,6 @@ cliTest.skipIf(missingNative)(
     const success = await cli.run({
       arguments: ["inspect-pcap-capture", single, "--json"],
       environment: environmentFor(root),
-      timeoutMs: 60_000,
     });
     expect(success.exitCode, success.stderr).toBe(0);
     expect(success.stdout.includes(credential)).toBe(false);
@@ -78,7 +82,6 @@ cliTest.skipIf(missingNative)(
     const failed = await cli.run({
       arguments: ["inspect-pcap-capture", many, "--json"],
       environment: environmentFor(root),
-      timeoutMs: 60_000,
     });
     expect(failed.exitCode, failed.stderr).toBe(1);
     expect(failed.stdout.includes(credential)).toBe(false);
@@ -89,7 +92,6 @@ cliTest.skipIf(missingNative)(
         .digest("hex"),
     ).toBe(before);
   },
-  120_000,
 );
 
 it.skipIf(missingNative)(
@@ -141,5 +143,4 @@ it.skipIf(missingNative)(
       }
     }
   },
-  120_000,
 );

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -14,6 +13,7 @@ import {
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.argv.length !== 2 || process.platform !== "linux")
   throw new Error("Run this ELF verifier on Linux without arguments.");
@@ -22,7 +22,12 @@ if (!process.env.GHIDRA_INSTALL_DIR)
 const exec = promisify(execFile);
 const run = createVerifierRun();
 const root = fileURLToPath(new URL("..", import.meta.url));
-const workspace = await mkdtemp(join(tmpdir(), "rea-address-context-"));
+// Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-address-context-",
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const path = join(workspace, "pie.elf");
@@ -77,7 +82,7 @@ try {
   connected = true;
   await call("open_binary", { path, provider_id: "ghidra" });
   const overview = parseEvidence(await call("binary_overview"));
-  assert.equal(overview.subject.digest.sha256, sha256);
+  assert.equal(overview.subject.identity.sha256, sha256);
   const base = overview.normalized_result.image_base;
   assert.match(base, /^0x[0-9a-f]+$/u);
   assert.notEqual(base, "0x0");
@@ -302,47 +307,34 @@ try {
 
 const cleanupFailures = [];
 // Await provider-owned cleanup before the SDK can terminate its MCP parent.
-if (connected) {
-  try {
-    await call("close_binary");
-  } catch (cause) {
-    cleanupFailures.push(cause);
-  }
-}
-try {
-  await client.close();
-} catch (cause) {
-  cleanupFailures.push(cause);
-}
-try {
-  await transport.close();
-} catch (cause) {
-  cleanupFailures.push(cause);
-}
-try {
+// The workspace is removed only after every cleanup and check confirms.
+if (connected) workspaceFixture.releaseAfter(() => call("close_binary"));
+workspaceFixture.releaseAfter(() => client.close());
+workspaceFixture.releaseAfter(() => transport.close());
+workspaceFixture.releaseAfter(async () => {
   assert.deepEqual(await readdir(runtime), []);
   verifierRun = await completeVerifierRun(run);
   assert.equal(verifierRun.process_lineage.status, "verified");
   assert.deepEqual(verifierRun.process_lineage.descendants, []);
+});
+try {
+  await workspaceFixture.release();
 } catch (cause) {
   cleanupFailures.push(cause);
-}
-if (cleanupFailures.length === 0) {
-  try {
-    await rm(workspace, { recursive: true, force: true });
-  } catch (cause) {
-    cleanupFailures.push(cause);
-  }
 }
 if (cleanupFailures.length > 0) {
   process.stderr.write(
     `Retained verifier workspace after cleanup failure: ${workspace}\n`,
   );
-  throw new AggregateError(
-    primaryFailure === undefined
-      ? cleanupFailures
-      : [primaryFailure.cause, ...cleanupFailures],
-    "Ghidra address-context verifier cleanup failed",
+  throw Object.assign(
+    new AggregateError(
+      primaryFailure === undefined
+        ? cleanupFailures
+        : [primaryFailure.cause, ...cleanupFailures],
+      "Ghidra address-context verifier cleanup failed",
+    ),
+    // The caller can retry the retained workspace from the final failure.
+    workspaceFixture.released ? {} : { cleanupLeases: [workspaceFixture] },
   );
 }
 if (primaryFailure !== undefined) throw primaryFailure.cause;
