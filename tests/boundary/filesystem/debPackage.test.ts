@@ -88,7 +88,7 @@ it("reports a fixed reader allowance as a limit with the partial report", async 
     retryable: false,
   });
   expect(result.error).toMatchObject({
-    reportedLimits: { relationship_alternatives: 65_536 },
+    reportedLimits: { boundary: "relationship_alternatives", maximum: 65_536 },
     recovery: {
       fixedAllowance: {
         name: "The control relationship alternatives allowance",

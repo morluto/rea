@@ -27,6 +27,7 @@ import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -98,6 +99,23 @@ export const createContractToolHandler =
       withAdmittedAnalysis,
     )(contract);
 
+/** Input admission owns whether inspection receives defaults or caller selections. */
+export type RetainedSummaryOperation<Input> =
+  | {
+      readonly admission: "sdk";
+      readonly summary: (
+        input: Omit<Input, "detail" | "view">,
+        options: ExecutionOptions,
+      ) => Promise<Result<Evidence, AnalysisError>>;
+    }
+  | {
+      readonly admission: "application";
+      readonly summary: (
+        input: unknown,
+        options: ExecutionOptions,
+      ) => Promise<Result<Evidence, AnalysisError>>;
+    };
+
 /** Validate delivery selection before inspection and retain its complete source for summaries. */
 export const createRetainedSummaryToolHandler = <
   Name extends string,
@@ -110,10 +128,7 @@ export const createRetainedSummaryToolHandler = <
 >(
   server: EvidenceMcpServer,
   contract: ToolContract<Name, InputSchema>,
-  inspect: (
-    input: Omit<z.output<InputSchema>, "detail" | "view">,
-    options: ExecutionOptions,
-  ) => Promise<Result<Evidence, AnalysisError>>,
+  operation: RetainedSummaryOperation<z.output<InputSchema>>,
   logger: Logger,
   retention: AnalysisViewRetention,
   withAdmittedAnalysis?: WithAdmittedAnalysis,
@@ -136,7 +151,18 @@ export const createRetainedSummaryToolHandler = <
         const ready = requireAnalysisViewRetention(contract.name, retention);
         if (!ready.ok) return ready;
       }
-      const inspected = await inspect(input, options);
+      const inspected = await (operation.admission === "sdk"
+        ? operation.summary(input, options)
+        : operation.summary(
+            isRecord(rawInput)
+              ? Object.fromEntries(
+                  Object.entries(rawInput).filter(
+                    ([field]) => field !== "detail" && field !== "view",
+                  ),
+                )
+              : rawInput,
+            options,
+          ));
       return detail === "summary" && inspected.ok
         ? projectRetainedAnalysis(
             inspected.value,

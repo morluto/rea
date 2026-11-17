@@ -209,6 +209,52 @@ absence of those declarations, not proof the image never carried notes in
 another container. See
 [ELF note tables](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
 
+## DWARF compile units
+
+Use `inspect_dwarf_units` for an explicit local ELF, Mach-O, or PE image when
+the question concerns compile-unit source file, compilation directory,
+producer, language, or split-DWARF `dwo_name`. No `open_binary` or target
+execution is required. The CLI equivalent is `inspect-dwarf-units PATH`. For a
+`.dSYM` bundle, pass the DWARF file inside the bundle; the bundle itself is
+not opened. Universal Mach-O requires `architecture`. Preserve artifact
+SHA-256, section file ranges, and per-unit issues. Absent `.debug_info`
+describes this file only and does not establish that a separate debug file is
+absent. Partial coverage includes a declared `.debug_info` that was not read,
+such as an undecodable section or a `.dwo` object. A present `.gnu_debuglink` is named and not decoded. Child DIEs,
+types, line tables, and location expressions are not read. See
+[DWARF compile units](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
+
+## ELF debug files
+
+Use `inspect_elf_debug_link` for an explicit local ELF32/ELF64 image when the
+question concerns `.gnu_debuglink`, `.gnu_debugaltlink`, the GNU build-id, or
+whether one selected file matches that linkage. No `open_binary` or target
+execution is required. The CLI equivalent is `inspect-elf-debug-link PATH`,
+with optional `--candidate-path`. Preserve artifact SHA-256, debuglink CRC32,
+build-id hex, and the returned lookup path strings. Those strings are not
+opened, and a same-directory path is not listed. Pass `candidate_path` only
+for a file you already chose. The verdict compares debuglink CRC32 and GNU
+build-id; the alt-file build-id is not that comparison. A missing named
+section is observed absence only when section names are complete. The
+`.gnu_debugdata` xz payload is not decoded. See
+[ELF debug files](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-debug-link.md).
+
+## ELF dynamic dependencies
+
+Use `inspect_elf_dependencies` for an explicit local ELF32/ELF64 `ET_EXEC` or
+`ET_DYN` image when the question concerns needed libraries, SONAME, rpath /
+runpath, GNU symbol versions, or undefined dynamic imports. No `open_binary`,
+dynamic loader, or `ldd` is required. The CLI equivalent is
+`inspect-elf-dependencies PATH`. Preserve artifact SHA-256, `DT_NEEDED` order
+and duplicates, search-path tokens as written, decoded `DT_FLAGS` /
+`DT_FLAGS_1`, `PT_INTERP`, GNU version names, and `library@version` joins when
+`.gnu.version` names a verneed record. `$ORIGIN`, `$LIB`, and `$PLATFORM` are
+not expanded. A missing `PT_DYNAMIC` is observed absence of that inventory,
+not proof the image never needed libraries in another container. Relocatable
+objects use `inspect_kernel_module`. Core dumps use `inspect_recorded_crash`.
+See
+[ELF dynamic dependencies](https://github.com/morluto/rea/blob/main/docs/elf-dependencies.md).
+
 ## ELF and Mach-O initializer functions
 
 Use `inspect_native_initializers` for an explicit local ELF or Mach-O image
