@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -427,12 +427,22 @@ const publishInstalledPrefix = (staging, prefix) => {
 };
 
 /**
- * Signal the installer's whole process group on POSIX. npm runs lifecycle
- * scripts (for example the Frida install script) as children and signalling
- * npm alone leaves them running after the launcher exits.
+ * Signal the installer's whole process group on POSIX, or its process tree on
+ * Windows. npm runs lifecycle scripts (for example the Frida install script)
+ * as children; stopping npm alone leaves them running after the launcher exits
+ * and can overlap a retry while staging is removed.
  */
 const signalInstaller = (child, signal) => {
-  if (process.platform !== "win32" && child.pid !== undefined) {
+  if (process.platform === "win32") {
+    if (child.pid === undefined) return;
+    // taskkill /T waits for the tree; child.kill() would leave npm's children.
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    return;
+  }
+  if (child.pid !== undefined) {
     try {
       process.kill(-child.pid, signal);
       return;

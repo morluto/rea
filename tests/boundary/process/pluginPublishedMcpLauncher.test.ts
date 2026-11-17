@@ -1120,6 +1120,12 @@ process.stdin.on("end", () => { process.exitCode = 0; });
   expect(result.stdout).toBe(handshake);
 });
 
+it("owns Windows installer cancellation through taskkill process trees", async () => {
+  const source = await readFile(launcher, "utf8");
+  expect(source).toMatch(/taskkill[\s\S]*?\/PID[\s\S]*?\/T[\s\S]*?\/F/u);
+  expect(source).toMatch(/spawnSync\s*\(\s*["']taskkill["']/u);
+});
+
 describe.skipIf(process.platform === "win32")("installer cancellation", () => {
   it.each([
     ["terminates an in-flight npm install and its child on SIGTERM", false],
@@ -1200,3 +1206,60 @@ ${holdOpen}
     await rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
   });
 });
+
+describe.skipIf(process.platform !== "win32")(
+  "Windows installer cancellation",
+  () => {
+    it("terminates an in-flight npm install tree before releasing the lock", async () => {
+      const version = "6.8.0-published-install-taskkill";
+      const temp = await createLauncherTemp();
+      const prefix = installPrefix(version, temp.temporaryRoot);
+      const lockPath = lockPathFor(version, temp.temporaryRoot);
+      await rm(prefix, { recursive: true, force: true });
+      const workspace = await createTestTempDirectory(
+        "rea-published-install-taskkill-",
+      );
+      const bin = join(workspace, "bin");
+      await mkdir(bin);
+      const npmEntry = join(bin, "npm-cli.cjs");
+      const pidPath = join(workspace, "npm.pid");
+      const childPidPath = join(workspace, "npm-child.pid");
+      await writeFile(
+        npmEntry,
+        `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+const { spawn } = require("node:child_process");
+const lifecycle = spawn(
+  process.execPath,
+  ["-e", "setInterval(() => {}, 1000);"],
+  { stdio: "ignore", detached: true, windowsHide: true },
+);
+lifecycle.unref();
+writeFileSync(${JSON.stringify(childPidPath)}, String(lifecycle.pid));
+writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+setInterval(() => {}, 1000);
+`,
+      );
+      const { child, closed } = start([version], {
+        ...process.env,
+        ...temp.env,
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        npm_execpath: npmEntry,
+      });
+      const npmPid = Number.parseInt((await waitForFile(pidPath)).trim(), 10);
+      const lifecyclePid = Number.parseInt(
+        (await waitForFile(childPidPath)).trim(),
+        10,
+      );
+      expect(npmPid).toBeGreaterThan(0);
+      expect(lifecyclePid).toBeGreaterThan(0);
+      child.kill("SIGTERM");
+      const result = await closed;
+      expect(result.code).toBe(143);
+      expect(result.stdout).toBe("");
+      await waitForProcessExit(npmPid, "npm installer");
+      await waitForProcessExit(lifecyclePid, "npm lifecycle child");
+      await expect(access(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  },
+);
