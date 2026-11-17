@@ -171,11 +171,23 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "src/adb/AdbProvider.test.ts",
           "reports cancellation arriving during the version probe",
         ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "asks a cancelled device command to stop with SIGTERM before its group is killed",
+        ),
       ),
       cleanup: covered(
         test(
           "src/adb/AdbProvider.test.ts",
           "retains failed snapshot cleanup with completed push Evidence until close retries",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "stops a descendant a device command leaves behind with the command's cleanup",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "starts the adb server explicitly before device commands and never stops it",
         ),
       ),
       retry: covered(
@@ -1270,6 +1282,46 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "stops resolving retained managed sources when the caller cancels mid-request",
       ),
     ),
+  ),
+  "rea-dwarf-units": inProcess(
+    covered(
+      test(
+        "tests/acceptance/dwarfUnitsCli.test.ts",
+        "reports a compile unit through the public CLI",
+      ),
+      test(
+        "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+        "advertises inspect_dwarf_units and reads a compile unit",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/dwarfUnits.test.ts"),
+  ),
+  "rea-elf-debug-link": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDebugLinkCli.test.ts",
+        "verifies a matching debug file from absolute and relative paths",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "returns typed resource and cancellation failures",
+      ),
+      test(
+        "src/native/elf/ElfDebugLinkProvider.test.ts",
+        "keeps a completed candidate stream's identity when cancellation arrives during close",
+      ),
+    ),
+  ),
+  "rea-elf-dependencies": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDependenciesCli.test.ts",
+        "reports needed libraries, RUNPATH tokens, and versioned imports through the public CLI",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/elfDependencies.test.ts"),
   ),
   "rea-elf-notes": inProcess(
     covered(

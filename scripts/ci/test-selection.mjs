@@ -9,12 +9,12 @@ import { SHARED_BOUNDARY } from "./scopes.mjs";
 // Selection falls back to the complete suite whenever it cannot decide.
 
 /** More selected files than this run the complete suite instead. */
-const SELECTION_CAP = 150;
+const SELECTION_CAP = 400;
 // Selected files per test job, and the most jobs one selection uses. Each job
 // runs one `--shard` of the selection; the CI sequencer balances the shards by
 // main's recorded per-file durations when that history is available.
-const FILES_PER_SHARD = 40;
-const MAX_SHARDS = 4;
+const FILES_PER_SHARD = 50;
+const MAX_SHARDS = 8;
 
 // Leaf adapters whose tests also reach their sources through the built CLI,
 // MCP server or a fake provider process rather than an import. An adapter
@@ -51,13 +51,33 @@ const isPresentationOwner = (path) =>
 // paths (package subpaths such as `ajv/dist/2020.js`, fixture apps) are not.
 const LAUNCHES_BUILT_RUNTIME =
   /scripts\/rea\.mjs|\bdist\/(?:main|cli)\.js|["'`]dist["'`]\s*,\s*["'`](?:main|cli)\.js/u;
-// Inputs that only a non-test check reads: declarations (typecheck), guard
-// baselines (architecture guards, static job) and the advertised-schema
-// summaries (build job). They select no tests.
+// Inputs that only a non-test check reads: declarations (typecheck), guard and
+// layer baselines (architecture/boundary guards, static job), git-blame ignore
+// revisions, and the advertised-schema summaries (build job). Any test that
+// directly names one by path still runs via `names`.
 const isCheckerInput = (path) =>
   /\.d\.m?ts$/u.test(path) ||
+  path === "scripts/lib/module-layers.baseline.json" ||
+  path === ".git-blame-ignore-revs" ||
+  path === "scripts/run-python-tests.py" ||
+  /^tests\/support\/analysis-efficiency\/.+\.py$/u.test(path) ||
   /^scripts\/verify\/baselines\/[^/]+\.json$/u.test(path) ||
   /^scripts\/verify\/advertised-schemas\/tools\/[^/]+\.json$/u.test(path);
+// Non-module fixtures with a single known owning test suite.
+const EXPLICIT_FIXTURE_OWNERS = [
+  [
+    "tests/fixtures/cli-parity/*.txt",
+    "tests/boundary/cli/cliParityGoldens.test.ts",
+  ],
+  [
+    "tests/boundary/cli/cliContractSchemaParity.uncomparable.json",
+    "tests/boundary/cli/cliContractSchemaParity.test.ts",
+  ],
+];
+const explicitFixtureOwners = (path) =>
+  EXPLICIT_FIXTURE_OWNERS.filter(([pattern]) => matchesGlob(path, pattern)).map(
+    ([, owner]) => owner,
+  );
 // Verifier scripts are imported by their tests like source modules.
 const isVerifier = (path) =>
   /^scripts\/(verify-[^/]+|verify\/.+)\.mjs$/u.test(path);
@@ -80,24 +100,40 @@ const isHelper = (path) =>
     /^src\/.+\.fixture[^/]*\.ts$/u.test(path) ||
     isVerifier(path) ||
     isScriptLibrary(path));
+const STATIC_CHECKER_CONFIG =
+  /^(?:tsconfig(?:\..+)?\.json|\.oxlintrc\.json|\.oxfmtrc\.json|\.jscpd\.json|knip\.json|stryker(?:\..+)?\.config\.mjs)$/u;
 // Files outside src/ and tests/ that can run or load a shared script module:
-// other scripts, root configuration, package metadata, hooks and workflows.
+// other scripts, runtime/test configuration, package metadata, hooks and workflows.
 const isScriptConsumer = (path) =>
   !isHelper(path) &&
   !isCheckerInput(path) &&
+  !STATIC_CHECKER_CONFIG.test(path) &&
+  !path.startsWith(".github/ISSUE_TEMPLATE/") &&
   (/^scripts\/.+\.(?:m?[jt]s|cjs)$/u.test(path) ||
     (/^[^/]+\.(?:m?[jt]s|cjs|json)$/u.test(path) &&
       path !== "package-lock.json") ||
     /^\.github\/.+\.ya?ml$/u.test(path) ||
     /^\.husky\/[^/]+$/u.test(path));
-// Prose that tests may read by path. Other non-module inputs (fixtures, data,
-// scripts, workflows, package metadata) are not traced, so they run everything.
-const isProse = (path) => path.endsWith(".md") && !/^(src|tests)\//u.test(path);
+const DOCS_CODE = /\.(?:[cm]?[jt]s|[jt]sx)$/u;
+// Prose and documentation/license metadata that tests may read by path. Other
+// non-module inputs (unmapped fixtures, data, scripts, workflows, package
+// metadata) are not traced, so they run everything.
+const isProse = (path) =>
+  path === "LICENSE" ||
+  path.startsWith(".github/ISSUE_TEMPLATE/") ||
+  (path.endsWith(".md") && !/^(src|tests)\//u.test(path)) ||
+  (path.startsWith("docs/") &&
+    !DOCS_CODE.test(path) &&
+    !path.endsWith("/package.json")) ||
+  path.startsWith("licenses/");
 /** Why a changed path cannot be traced to tests, if it cannot. */
 const untracedInput = (path) =>
-  SHARED_BOUNDARY.test(path)
+  !isTest(path) && SHARED_BOUNDARY.test(path)
     ? `Shared boundary: ${path}`
-    : !isModule(path) && !isProse(path) && !isCheckerInput(path)
+    : !isModule(path) &&
+        !isProse(path) &&
+        !isCheckerInput(path) &&
+        explicitFixtureOwners(path).length === 0
       ? `Input is not traced to tests: ${path}`
       : undefined;
 
@@ -145,7 +181,14 @@ export function traceAffectedTests({ files, snapshot }) {
   const changedModules = files.filter(
     (path) => isModule(path) && !isTest(path),
   );
-  for (const path of files) if (isTest(path)) select(path, "changed");
+  for (const path of files) {
+    if (isTest(path)) select(path, "changed");
+    for (const owner of explicitFixtureOwners(path)) {
+      if (!trackedSet.has(owner))
+        untraced.push(`Missing test owner ${owner} for ${path}`);
+      else select(owner, "owner");
+    }
+  }
 
   // A seed and every helper that imports it, directly or through another.
   const throughHelpers = (seed) => {
@@ -196,7 +239,15 @@ export function traceAffectedTests({ files, snapshot }) {
   }
 
   // A shared script module that another script, configuration file, hook or
-  // workflow imports or names by file name can shape every run.
+  // workflow imports or names as a standalone file name can shape every run.
+  // Require a token boundary before the basename so `verify-module-boundaries.mjs`
+  // in package.json does not falsely match `scripts/lib/module-boundaries.mjs`.
+  const namesScriptBasename = (source, libraryPath) => {
+    const escaped = posix
+      .basename(libraryPath)
+      .replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w.-])`, "u").test(source);
+  };
   const libraries = [...affected].filter(isScriptLibrary);
   if (libraries.length) {
     const consumers = tracked.filter(isScriptConsumer);
@@ -205,7 +256,10 @@ export function traceAffectedTests({ files, snapshot }) {
       const source = consumerSources.get(consumer) ?? "";
       const targets = new Set(importsOf(consumer, source));
       const library = libraries.find(
-        (path) => targets.has(path) || source.includes(posix.basename(path)),
+        (path) =>
+          targets.has(path) ||
+          (consumer !== "scripts/ci/scopes.mjs" &&
+            namesScriptBasename(source, path)),
       );
       if (library !== undefined)
         untraced.push(
@@ -336,15 +390,14 @@ export function parseTestSelection(value) {
   return plan;
 }
 
-// Fast feedback uses one source group and twelve built groups. Shards are
-// balanced by recorded duration, but hosted runner speed varies, so the
-// slowest shard sets the critical path: at eight shards it ran 24% above the
-// mean shard. Smaller shards bound that excess at a few percent more runner
-// time. Full qualification retains six complete shards with coverage. A
-// selection runs its own shard count.
+// Fast feedback uses one source group and twelve built groups; full
+// qualification uses twelve complete shards with coverage. Shards are balanced
+// by recorded duration, and twelve shards halve the full-qualification critical
+// path (~14.5m -> ~7.5m) while bounding runner-speed variance at negligible
+// extra setup (~22s/shard). A selection runs its own shard count.
 const shardsOf = (count) =>
   Array.from({ length: count }, (_, index) => `${index + 1}/${count}`);
 
 /** The `test-shard` matrix labels for a tier and its test selection. */
-export const testShards = (tier, plan) =>
-  shardsOf(plan.mode === "selected" ? plan.shards : tier === "full" ? 6 : 12);
+export const testShards = (_tier, plan) =>
+  shardsOf(plan.mode === "selected" ? plan.shards : 12);

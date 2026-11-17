@@ -83,6 +83,11 @@ import {
   nativeExportsViewItemsSchema,
   nativeExportsSummarySchema,
 } from "./nativeExportsView.js";
+import {
+  elfDependenciesViewRequestSchema,
+  elfDependenciesViewItemsSchema,
+  elfDependenciesSummarySchema,
+} from "./elfDependenciesView.js";
 import { procedurePseudocodeSummarySchema } from "./procedurePseudocodeSchemas.js";
 import { byteEntropySummarySchema } from "./byteEntropyView.js";
 import {
@@ -159,6 +164,11 @@ import {
   rustBinarySummarySchema,
   rustBinaryViewContextSchema,
 } from "./rustBinaryView.js";
+import {
+  cycloneDxDocumentSchema,
+  cycloneDxSourceCoverageSchema,
+  cycloneDxViewRequestSchema,
+} from "./cyclonedxView.js";
 import {
   nativeFunctionMatchingViewRequestSchema,
   nativeFunctionMatchingViewItemsSchema,
@@ -370,6 +380,7 @@ const viewResultBase = {
     "inspect_devicetree",
     "inspect_byte_entropy",
     "inspect_native_exports",
+    "inspect_elf_dependencies",
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
@@ -542,6 +553,12 @@ export const byteEntropySummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("inspect_byte_entropy"),
 });
 
+export const elfDependenciesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_elf_dependencies"),
+  summary: elfDependenciesSummarySchema,
+});
+
 export const nativeExportsSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_native_exports"),
@@ -639,6 +656,16 @@ export const rustBinaryPageViewResultSchema = z.strictObject({
   view: rustBinaryViewRequestSchema,
   rust: rustBinarySummarySchema,
   page: rustBinaryViewPageSchema,
+});
+
+/** One CycloneDX 1.6 document. This view does not page. */
+export const cycloneDxViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("cyclonedx"),
+  parent_operation: z.enum(["inspect_go_binary", "inspect_rust_binary"]),
+  view: cycloneDxViewRequestSchema,
+  source_coverage: cycloneDxSourceCoverageSchema,
+  document: cycloneDxDocumentSchema,
 });
 
 /** Summary `inspect_binary_layout` detail returns; no other view kind. */
@@ -1383,6 +1410,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     warcArchiveSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
+    elfDependenciesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
@@ -1444,6 +1472,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: nativeExportsViewRequestSchema,
     exports: nativeExportsSummarySchema,
     items: nativeExportsViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("elf-dependencies"),
+    parent_operation: z.literal("inspect_elf_dependencies"),
+    view: elfDependenciesViewRequestSchema,
+    dependencies: elfDependenciesSummarySchema,
+    items: elfDependenciesViewItemsSchema,
   }),
   z.strictObject({
     ...viewResultBase,
@@ -1524,6 +1560,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     page: goBinaryViewPageSchema,
   }),
   rustBinaryPageViewResultSchema,
+  cycloneDxViewResultSchema,
   z.strictObject({
     kind: z.literal("item"),
     view: itemViewSchema,

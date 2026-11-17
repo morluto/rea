@@ -275,6 +275,19 @@ The shared CLI/MCP workflow reports compiler version, modules, replacements,
 build settings, original bytes and SHA-256. See [Go binaries](../guides/native/go-binaries.md)
 for supported containers and absent or malformed metadata.
 
+Project that Evidence, or Rust dependency Evidence, as CycloneDX. The command
+prints JSON on stdout:
+
+```bash
+rea inspect-go-binary /absolute/path/to/program --json > go-evidence.json
+cat > cyclonedx-view.json <<'JSON'
+{"source":{"kind":"evidence-file","path":"go-evidence.json"},"view":{"kind":"cyclonedx"}}
+JSON
+rea inspect-analysis-view cyclonedx-view.json --json | jq '.normalized_result.document' > sbom.cdx.json
+```
+
+See [CycloneDX dependencies](../guides/native/cyclonedx-view.md).
+
 Inspect a Godot PCK without running the game:
 
 ```sh
@@ -477,6 +490,44 @@ rea inspect-elf-notes /absolute/path/to/program --json
 The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
+
+Inspect DWARF compile units without executing the image:
+
+```bash
+rea inspect-dwarf-units /absolute/path/to/program --json
+```
+
+The workflow reads DWARF 2 through 5 unit headers and the unit DIE from an
+ELF, Mach-O, or PE file, including compressed ELF debug sections. Rows report
+the source file, compilation directory, producer, language, and `dwo_name`.
+`offset` and `limit` page the units. Absent `.debug_info` describes this file
+only, and a declared section that could not be decoded is partial coverage. Pass `--architecture` for a universal Mach-O. A `.dSYM` bundle is not
+opened; pass the DWARF file inside it. See
+[DWARF compile units](../guides/native/dwarf-units.md).
+
+Inspect ELF separate debug-file linkage without executing the image:
+
+```bash
+rea inspect-elf-debug-link /absolute/path/to/program --json
+rea inspect-elf-debug-link /absolute/path/to/program --candidate-path /absolute/path/to/program.debug --json
+```
+
+The workflow reports `.gnu_debuglink` name and CRC32, `.gnu_debugaltlink`
+name and build-id, the GNU build-id, conventional lookup path strings, and
+`.gnu_debugdata` presence, offset, and size. Lookup paths are not opened. An
+optional candidate is verified by CRC32 and build-id equality. A missing
+section is observed absence only when section names are complete. See
+[ELF debug files](../guides/native/elf-debug-link.md).
+
+Inspect ELF needed libraries and required symbol versions without executing
+the image or invoking the dynamic loader:
+
+```bash
+rea inspect-elf-dependencies /absolute/path/to/program --json
+```
+
+The fields, coverage rules and delivery options are documented in
+[ELF dynamic dependencies](../elf-dependencies.md).
 
 List ELF and Mach-O initializer and finalizer functions without executing the
 image:
