@@ -835,6 +835,7 @@
 * **mcp:** open stdio clients through the shared local-tools fixture ([#10411](https://github.com/morluto/rea/issues/10411)) ([71712f2](https://github.com/morluto/rea/commit/71712f27f7b6e532767ec2ac6cc415187d4d27a9))
 * **mcp:** record the advertised-schema summary per tool ([#11192](https://github.com/morluto/rea/issues/11192)) ([b4cc1c9](https://github.com/morluto/rea/commit/b4cc1c998b65625c18a42c8e92bda8f67d7d778d)), closes [#11189](https://github.com/morluto/rea/issues/11189)
 * **mcp:** verify compact package catalog in the reordered client case ([#11873](https://github.com/morluto/rea/issues/11873)) ([0a69cca](https://github.com/morluto/rea/commit/0a69cca605cb89b22b656412af7b6b1892996941))
+* **mcp:** verify prompt context and scope through rendered messages ([#11882](https://github.com/morluto/rea/issues/11882)) ([bc115af](https://github.com/morluto/rea/commit/bc115af119e63a59712d3cc65183e97dfcacf1c9))
 * model open -W in the UI lane and drop the pyc wall-clock bound ([2343e56](https://github.com/morluto/rea/commit/2343e5692595ae9c08ce7de5bb91460118e67ed2))
 * name tests after the behavior they check, not a removed limit ([#11618](https://github.com/morluto/rea/issues/11618)) ([d6af08e](https://github.com/morluto/rea/commit/d6af08e4be3b4d20cb13aead7fa4322a44e81a86))
 * **native:** assert the null-symbol note by its facts ([79097f5](https://github.com/morluto/rea/commit/79097f52b2522c4badace060700edb4fae53d8e6)), closes [#9700](https://github.com/morluto/rea/issues/9700)
