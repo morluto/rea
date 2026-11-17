@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { OTLP_TRACE_MAX_FILE_BYTES } from "./otlpTrace.js";
 
 export const inspectOtlpTraceInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to one caller-supplied OTLP JSON trace export",
   ),
   format: z.enum(["otlp-json"]).default("otlp-json"),
