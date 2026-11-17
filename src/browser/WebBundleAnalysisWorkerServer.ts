@@ -180,6 +180,12 @@ const analyzeJob = async (
       throw new WebBundleWorkerOutputError(
         "Web bundle analyzer did not produce a completed per-script result",
       );
+    if (result.status === "analyzed")
+      result = fitWebBundleEndpointLiteralCandidates(
+        result,
+        request.result_budget_bytes,
+        literalAdmission,
+      );
     if (result.status === "analyzed" && result.route_facts != null) {
       const { route_facts, ...existing } = result;
       const available =
@@ -195,12 +201,6 @@ const analyzeJob = async (
           ? existing
           : { ...existing, route_facts: admitted };
     }
-    if (result.status === "analyzed")
-      result = fitWebBundleEndpointLiteralCandidates(
-        result,
-        request.result_budget_bytes,
-        literalAdmission,
-      );
     const resultPath = join(root, `${request.id}.result`);
     const file = await open(resultPath, "wx", 0o600);
     const hash = createHash("sha256");
