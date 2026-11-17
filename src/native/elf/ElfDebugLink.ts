@@ -1,5 +1,6 @@
 import { crc32 } from "node:zlib";
 
+import { isParseLimit } from "../../domain/parseFailureAnalysisError.js";
 import { ArtifactReaderFailure } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
@@ -26,11 +27,7 @@ import {
   BinaryResourceFailure,
 } from "../../domain/binaryContainer.js";
 import { readElfImage } from "../../domain/native/elfImage.js";
-import {
-  assertElfSectionNameBudget,
-  elfNoteSectionNameBudget,
-  parseElfNotes,
-} from "./ElfNoteParser.js";
+import { assertElfSectionNameBudget, parseElfNotes } from "./ElfNoteParser.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = ElfDebugLink;
@@ -106,9 +103,9 @@ export const gnuDebuglinkCrc32Hex = (bytes: Buffer): string =>
   crc32Hex(gnuDebuglinkCrc32(bytes));
 
 const isRethrownBudget = (cause: unknown): boolean =>
-  elfNoteSectionNameBudget(cause) !== undefined ||
-  cause instanceof BinaryResourceFailure ||
-  (cause instanceof ArtifactReaderFailure && cause.reason === "limit");
+  isParseLimit(cause, "elf") ||
+  isParseLimit(cause, "elf-notes") ||
+  cause instanceof BinaryResourceFailure;
 
 interface LocatedSection {
   readonly status: SectionStatus;

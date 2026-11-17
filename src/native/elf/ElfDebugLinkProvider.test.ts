@@ -1,3 +1,4 @@
+import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import { expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
@@ -6,8 +7,9 @@ import { completedStableArtifactObservation } from "../../resources/StableArtifa
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  MAX_ELF_DEBUG_CANDIDATE_BYTES,
   inspectElfDebugLinkInputSchema,
-  type ElfDebugLink,
+  elfDebugLinkSchema,
 } from "../../domain/native/elfDebugLink.js";
 import { elfDebugLinkFixture } from "./ElfDebugLink.fixture.js";
 
@@ -64,6 +66,18 @@ it("keeps a failed candidate close visible after an integrity or limit refusal",
       ),
     );
     expect(result.ok).toBe(false);
+    if (!result.ok && reason === "limit")
+      expect(primaryAnalysisError(result.error)).toMatchObject({
+        reportedLimits: {
+          boundary: "candidate_bytes",
+          maximum: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+        },
+        fixedAllowance: {
+          kind: "input",
+          limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+          unit: "bytes",
+        },
+      });
   }
 });
 
@@ -79,9 +93,8 @@ it("degrades a candidate data-read EIO to candidate_unreadable", async () => {
 });
 
 const retainedReport = (error: { partialObservation?: unknown }) => {
-  const evidence = error.partialObservation as
-    { normalized_result?: ElfDebugLink } | undefined;
-  return evidence?.normalized_result;
+  const report = elfDebugLinkSchema.safeParse(error.partialObservation);
+  return report.success ? report.data : undefined;
 };
 
 it("retains the decoded image report when the candidate read is cancelled", async () => {

@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { gnuDebuglinkCrc32 } from "../../../src/native/elf/ElfDebugLink.js";
 import {
@@ -14,6 +15,11 @@ import {
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+
+const debugLinkContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_elf_debug_link",
+);
 
 const connect = async (mcp: TestMcp) => {
   const session = createTestBinarySession(() => {
@@ -46,9 +52,9 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const evidence = toolContract(
-        "inspect_elf_debug_link",
-      ).outputSchema.parse(response.structuredContent);
+      const evidence = debugLinkContract.outputSchema.parse(
+        response.structuredContent,
+      );
       expect(evidence.normalized_result).toMatchObject({
         format: "elf32",
         byte_order: "big",
@@ -68,6 +74,18 @@ mcpTest(
       if (identity.kind === "file")
         expect(identity.architecture).toBe("powerpc");
       expect(evidence.normalized_result.verification).toBeNull();
+      expect(evidence.parameters).toEqual({ path });
+      const explicit = await client.callTool({
+        name: "inspect_elf_debug_link",
+        arguments: { path, max_entries: 32 },
+      });
+      expect(explicit.isError).not.toBe(true);
+      const selected = debugLinkContract.outputSchema.parse(
+        explicit.structuredContent,
+      );
+      expect(selected.parameters).toEqual({ path, max_entries: 32 });
+      expect(selected.normalized_result).toEqual(evidence.normalized_result);
+      expect(selected.evidence_id).not.toBe(evidence.evidence_id);
     } finally {
       await session.close();
     }
@@ -97,7 +115,7 @@ mcpTest("verifies one caller-selected debug file", async ({ mcp }) => {
       arguments: { path: imagePath, candidate_path: candidatePath },
     });
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-    const evidence = toolContract("inspect_elf_debug_link").outputSchema.parse(
+    const evidence = debugLinkContract.outputSchema.parse(
       response.structuredContent,
     );
     expect(evidence.normalized_result.verification?.status).toBe("matches");

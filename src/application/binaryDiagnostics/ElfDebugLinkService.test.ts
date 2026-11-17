@@ -4,11 +4,12 @@ import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js"
 import {
   deriveDebugFileLookupPaths,
   ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_LIMITATIONS,
   type ElfDebugLink,
 } from "../../domain/native/elfDebugLink.js";
-import { ok } from "../../domain/result.js";
+import { err, ok } from "../../domain/result.js";
 import { parseEvidence } from "../../domain/evidence.js";
 import {
   AnalysisCancelledError,
@@ -279,5 +280,66 @@ it("retains a completed observation if the caller cancels while the provider com
     confidence: "observed",
     subject: { identity: { format: "elf", architecture: "x86_64" } },
     normalized_result: report,
+  });
+});
+
+it("keeps omitted and explicitly selected defaults distinct in complete and partial Evidence", async () => {
+  for (const failure of [false, true]) {
+    const service = new ElfDebugLinkService({
+      identity,
+      inspect: () =>
+        Promise.resolve(
+          failure
+            ? err(
+                new AnalysisCancelledError("inspect_elf_debug_link", {
+                  partialObservation: report,
+                }),
+              )
+            : ok(report),
+        ),
+    });
+    const observations = [];
+    for (const parameters of [
+      { path: report.artifact.path },
+      { path: report.artifact.path, max_entries: 32 },
+    ]) {
+      const result = await service.inspect(parameters);
+      const evidence = parseEvidence(
+        result.ok ? result.value : result.error.partialObservation,
+      );
+      expect(evidence.parameters).toEqual(parameters);
+      expect(evidence.normalized_result).toEqual(report);
+      observations.push(evidence);
+    }
+    expect(observations[0]!.evidence_id).not.toBe(observations[1]!.evidence_id);
+  }
+});
+
+it("retains the selected candidate when cancellation leaves only the completed image report", async () => {
+  const partial = {
+    ...report,
+    limitations: [
+      ...report.limitations,
+      ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+    ],
+  };
+  const error = new AnalysisCancelledError("inspect_elf_debug_link", {
+    partialObservation: partial,
+  });
+  const service = new ElfDebugLinkService({
+    identity,
+    inspect: () => Promise.resolve(err(error)),
+  });
+  const parameters = {
+    path: report.artifact.path,
+    candidate_path: "/artifacts/prog.debug",
+  };
+  const result = await service.inspect(parameters);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected candidate cancellation");
+  expect(result.error).toBe(error);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    parameters,
+    normalized_result: partial,
   });
 });

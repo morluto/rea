@@ -1,7 +1,7 @@
 import { crc32 } from "node:zlib";
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
@@ -290,7 +290,7 @@ it("fails the note entry budget instead of returning a partial build-id", () => 
       { path: artifactPath, sha256: digest, bytes: 1 },
       inputFor({ max_entries: 1 }),
     ),
-  ).toThrow(ArtifactReaderFailure);
+  ).toThrow(ParseFailureError);
 });
 
 it("preserves parent-directory segments and omits a slash name", () => {

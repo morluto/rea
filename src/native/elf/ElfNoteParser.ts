@@ -9,7 +9,6 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import {
   ArtifactReaderFailure,
   assertArtifactReadActive,
-  type ArtifactFixedLimit,
 } from "../../resources/index.js";
 import {
   readElfFixedHeader,
@@ -52,12 +51,15 @@ const isLinuxCoreProfile = (header: ElfFixedHeader): boolean =>
  * The note text, hash, and scan ceiling. It equals the admitted image length
  * plus decoded section names, so host memory cannot raise it.
  */
-const noteTextAllowance = (budget: TextBudget): ArtifactFixedLimit => ({
-  name: "The ELF note text, hash, and scan allowance (derived from the image length and section names)",
-  kind: "parser",
-  limit: budget.limit,
-  unit: "bytes",
-});
+export const ELF_NOTE_TEXT_ALLOWANCE =
+  "The ELF note text, hash, and scan allowance (derived from the image length and section names)";
+
+const noteTextLimit = (budget: TextBudget): ParseFailureError<"limit"> =>
+  decodeLimit(
+    "elf-notes",
+    `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
+    { name: "note_text_bytes", maximum: budget.limit },
+  );
 
 interface TextBudget {
   limit: number;
@@ -174,11 +176,7 @@ const chargeText = (
     bytes < 0 ||
     bytes > budget.limit - budget[field]
   )
-    throw new ArtifactReaderFailure(
-      "limit",
-      `ELF note text exceeds the ${String(budget.limit)}-byte budget.`,
-      { boundary: "memory", fixedAllowance: noteTextAllowance(budget) },
-    );
+    throw noteTextLimit(budget);
   budget[field] += bytes;
 };
 
@@ -284,10 +282,10 @@ const parseNoteStream = (
     assertArtifactReadActive(signal);
     examined.count += 1;
     if (examined.count > maxEntries)
-      throw new ArtifactReaderFailure(
-        "limit",
+      throw decodeLimit(
+        "elf-notes",
         `ELF note tables exceed the ${String(maxEntries)}-entry budget.`,
-        { boundary: "capacity" },
+        { name: "max_entries", maximum: maxEntries, required: examined.count },
       );
     const header = offset + at;
     const parsedHeader = readElfNoteHeader(
@@ -519,11 +517,7 @@ const decodeCoreFile = (
 
   const rowBytes = count * (wide ? 54 : 30);
   if (rowBytes > text.limit - text.used) {
-    throw new ArtifactReaderFailure(
-      "limit",
-      `ELF note text exceeds the ${String(text.limit)}-byte budget.`,
-      { boundary: "memory", fixedAllowance: noteTextAllowance(text) },
-    );
+    throw noteTextLimit(text);
   }
 
   const scanKey = `file:${String(descriptor.byteOffset)}:${String(descriptor.length)}`;

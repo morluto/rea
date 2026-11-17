@@ -9,7 +9,7 @@ import type {
 } from "../../domain/native/elfDebugLink.js";
 import type { Result } from "../../domain/result.js";
 
-/** Stable read and separate-debug linkage decoding, independent of a disassembler session. */
+/** Decoded linkage facts, including partial reports on failure; the application owns Evidence. */
 export interface ElfDebugLinkPort {
   readonly identity: ProviderIdentity;
   close?(): Promise<void>;

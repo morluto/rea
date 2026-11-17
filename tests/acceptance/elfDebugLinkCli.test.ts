@@ -1,7 +1,8 @@
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { expect } from "vitest";
-import { toolContract } from "../../src/contracts/toolContracts.js";
+import { contractNamed } from "../../src/cli/contractCliDescription.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import {
   gnuDebuglinkCrc32,
   gnuDebuglinkCrc32Hex,
@@ -15,6 +16,11 @@ import {
 } from "../../src/native/elf/ElfDebugLink.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
+
+const debugLinkContract = contractNamed(
+  BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  "inspect_elf_debug_link",
+);
 
 cliTest(
   "verifies a matching debug file from absolute and relative paths",
@@ -42,9 +48,11 @@ cliTest(
       ],
     });
     expect(absolute.exitCode, absolute.stderr).toBe(0);
-    const evidence = toolContract("inspect_elf_debug_link").outputSchema.parse(
-      absolute.json,
-    );
+    const evidence = debugLinkContract.outputSchema.parse(absolute.json);
+    expect(evidence.parameters).toEqual({
+      path: imagePath,
+      candidate_path: candidatePath,
+    });
     expect(evidence.normalized_result.verification?.status).toBe("matches");
     expect(evidence.normalized_result.candidate).toMatchObject({
       debug_info: "present",
@@ -91,9 +99,9 @@ cliTest(
       cwd: root,
     });
     expect(relative.exitCode, relative.stderr).toBe(0);
-    const relativeEvidence = toolContract(
-      "inspect_elf_debug_link",
-    ).outputSchema.parse(relative.json);
+    const relativeEvidence = debugLinkContract.outputSchema.parse(
+      relative.json,
+    );
     expect(relativeEvidence.normalized_result.verification?.status).toBe(
       "matches",
     );
@@ -134,9 +142,7 @@ cliTest(
       ],
     });
     expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_elf_debug_link").outputSchema.parse(
-      result.json,
-    );
+    const evidence = debugLinkContract.outputSchema.parse(result.json);
     expect(evidence.normalized_result.verification?.status).toBe(
       "does_not_match",
     );

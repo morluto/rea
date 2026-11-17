@@ -25,7 +25,7 @@ export const elfDebugLinkRanges = (report: ElfDebugLink): ElfDebugLinkRange[] =>
 export const createElfDebugLinkEvidence = (
   report: ElfDebugLink,
   provider: EvidenceProvider,
-  parameters: InspectElfDebugLinkInput,
+  parameters: Partial<InspectElfDebugLinkInput>,
 ): Evidence => {
   const architecture = BINARY_ARCHITECTURES.find(
     (supported) => supported === elfArchitecture(report.machine),

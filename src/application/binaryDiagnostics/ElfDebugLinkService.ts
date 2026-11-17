@@ -9,6 +9,7 @@ import {
   deriveDebugFileLookupPaths,
   elfDebugLinkSchema,
   ELF_DEBUG_LINK_CANDIDATE_PREFIX_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_LIMITATIONS,
@@ -26,7 +27,10 @@ import {
 } from "../../domain/native/elfDebugLinkEvidence.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_elf_debug_link";
 
@@ -49,8 +53,32 @@ export class ElfDebugLinkService {
       options?.signal,
     );
     if (!input.ok) return input;
+    const parameters = callerAnalysisParameters(rawInput)(input.value);
     const result = await this.provider.inspect(input.value, options);
-    if (!result.ok) return result;
+    if (!result.ok) {
+      const partial = elfDebugLinkSchema.safeParse(
+        result.error.partialObservation,
+      );
+      if (partial.success) {
+        const partialInput =
+          partial.data.verification === null &&
+          partial.data.limitations.includes(
+            ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+          )
+            ? { ...input.value, candidate_path: undefined }
+            : input.value;
+        if (
+          partial.data.artifact.path === input.value.path &&
+          validReport(partial.data, partialInput)
+        )
+          result.error.partialObservation = createElfDebugLinkEvidence(
+            partial.data,
+            this.provider.identity,
+            parameters,
+          );
+      }
+      return result;
+    }
     const report = elfDebugLinkSchema.safeParse(result.value);
     if (
       !report.success ||
@@ -67,7 +95,7 @@ export class ElfDebugLinkService {
       createElfDebugLinkEvidence(
         report.data,
         this.provider.identity,
-        input.value,
+        parameters,
       ),
       options?.signal,
     );

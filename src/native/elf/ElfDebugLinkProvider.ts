@@ -1,4 +1,9 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
 import {
   projectArtifactCloseFailure,
   projectOwnedArtifactIdentityFailure,
@@ -18,7 +23,6 @@ import {
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { ElfDebugLinkPort } from "../../ports/binaryDiagnostics/ElfDebugLinkPort.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
@@ -30,16 +34,21 @@ import {
 } from "../../domain/native/elfDebugLink.js";
 import { err, ok } from "../../domain/result.js";
 import type { AnalysisPartialObservation } from "../../domain/analysisErrorBase.js";
-import { createElfDebugLinkEvidence } from "../../domain/native/elfDebugLinkEvidence.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
-import { BinaryResourceFailure } from "../../domain/binaryContainer.js";
+import {
+  binaryResourceCeiling,
+  BinaryResourceFailure,
+} from "../../domain/binaryContainer.js";
 import {
   continueGnuDebuglinkCrc32,
   parseElfDebugLink,
   unreadableElfDebugCandidate,
   verifyElfDebugCandidate,
 } from "./ElfDebugLink.js";
-import { elfNoteSectionNameBudget } from "./ElfNoteParser.js";
+import {
+  ELF_NOTE_TEXT_ALLOWANCE,
+  elfNoteSectionNameBudget,
+} from "./ElfNoteParser.js";
 
 const OPERATION = "inspect_elf_debug_link";
 
@@ -127,7 +136,6 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
                   cause,
                   crc32,
                   input,
-                  this.identity,
                 ),
               },
         ),
@@ -166,22 +174,17 @@ const candidatePhaseObservation = (
   cause: unknown,
   crc32: number,
   input: InspectElfDebugLinkInput,
-  provider: typeof ELF_DEBUG_LINK_PROVIDER,
 ): AnalysisPartialObservation => {
   const completed = completedStableArtifactStream(cause);
-  return createElfDebugLinkEvidence(
-    completed === undefined
-      ? {
-          ...phase.report,
-          limitations: [
-            ...phase.report.limitations,
-            ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-          ],
-        }
-      : verifiedCandidate(phase, completed, crc32, input),
-    provider,
-    input,
-  );
+  return completed === undefined
+    ? {
+        ...phase.report,
+        limitations: [
+          ...phase.report.limitations,
+          ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+        ],
+      }
+    : verifiedCandidate(phase, completed, crc32, input);
 };
 
 /** Enough retained bytes for an ELF32 or ELF64 fixed header. */
@@ -210,9 +213,6 @@ const candidateUnreadable = (cause: unknown): boolean => {
     cause.code === "EIO"
   );
 };
-
-const TEXT_BUDGET =
-  "The ELF note text, hash, and scan budget fixed by the admitted image length plus decoded section names";
 
 const inputLabel = (field: SelectedField): string =>
   field === "candidate_path" ? "candidate" : "image";
@@ -258,38 +258,42 @@ const elfDebugLinkFailurePrimary = (
   const { cause, origin } = facts;
   const path = selectedPath(input, field);
   const sectionNameBudget = elfNoteSectionNameBudget(cause);
-  if (sectionNameBudget !== undefined)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "memory",
-      sectionNameBudget.detail,
-      {
-        max_file_bytes: sectionNameBudget.selected,
-        minimum_required_bytes: sectionNameBudget.required.toString(),
-      },
-      {
-        cause,
-        retryable: false,
-        remediationAction: sectionNameBudgetRemediation(
-          sectionNameBudget.required,
-          field,
-        ),
-      },
-    );
+  if (isParseLimit(cause, "elf") && sectionNameBudget !== undefined)
+    return parseLimitConstraint(OPERATION, "memory", cause, {
+      retryable: false,
+      remediationAction: sectionNameBudgetRemediation(
+        sectionNameBudget.required,
+        field,
+      ),
+    });
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
+    return parseLimitConstraint(
       OPERATION,
       "memory",
-      cause.message,
-      { boundary: cause.boundary, maximum_bytes: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The ELF structural decoding allowance",
-          "parser",
-        ),
-      },
+      cause,
+      fixedAllowanceOptions(
+        "The ELF structural decoding allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
     );
+  if (isParseLimit(cause, "elf-notes")) {
+    const entryBudget = cause.failure.limit.name === "max_entries";
+    return parseLimitConstraint(
+      OPERATION,
+      entryBudget ? "capacity" : "memory",
+      cause,
+      entryBudget
+        ? {
+            retryable: false,
+            remediationAction: inputBudgetRemediation("capacity", input, field),
+          }
+        : fixedAllowanceOptions(ELF_NOTE_TEXT_ALLOWANCE, "parser", {
+            limit: cause.failure.limit.maximum,
+            unit: "bytes",
+          }),
+    );
+  }
   const formatFailure = parseFailureAnalysisError(
     OPERATION,
     path,
@@ -308,30 +312,38 @@ const elfDebugLinkFailurePrimary = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "limit") {
-      const textBudget = cause.boundary === "memory";
-      return new AnalysisResourceConstraintError(
+      const candidate = field === "candidate_path";
+      return parseLimitConstraint(
         OPERATION,
-        cause.boundary ?? "memory",
-        cause.message,
-        {
-          max_file_bytes: input.max_file_bytes,
-          max_entries: input.max_entries,
-        },
-        {
-          cause,
-          ...(cause.boundary === undefined
-            ? {}
-            : textBudget
-              ? fixedAllowanceOptions(TEXT_BUDGET, "parser")
-              : {
-                  retryable: false as const,
-                  remediationAction: inputBudgetRemediation(
-                    cause.boundary,
-                    input,
-                    field,
-                  ),
-                }),
-        },
+        "file-size",
+        decodeLimit(
+          "elf-debug-link",
+          cause.message,
+          {
+            name: candidate ? "candidate_bytes" : "max_file_bytes",
+            maximum: candidate
+              ? MAX_ELF_DEBUG_CANDIDATE_BYTES
+              : input.max_file_bytes,
+          },
+          { cause },
+        ),
+        candidate
+          ? fixedAllowanceOptions(
+              "The whole-file debug candidate read allowance",
+              "input",
+              {
+                limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+                unit: "bytes",
+              },
+            )
+          : {
+              retryable: false,
+              remediationAction: inputBudgetRemediation(
+                "file-size",
+                input,
+                field,
+              ),
+            },
       );
     }
     if (cause.reason === "path" || cause.reason === "format")

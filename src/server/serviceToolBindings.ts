@@ -496,7 +496,7 @@ const SERVICE_TOOL_BINDINGS = {
   })) satisfies Bind<ElfNotesService>,
   elfDebugLink: ((service) => ({
     inspect_elf_debug_link: {
-      admission: "sdk",
+      admission: "application",
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfDebugLinkService>,
