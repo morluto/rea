@@ -117,7 +117,7 @@ describe("Radare2SessionManager lifecycle", () => {
     });
     const manager = new Radare2SessionManager(
       { REA_R2_COMMAND: "/selected/r2" },
-      { spawnProcess },
+      { spawnProcess, platform: "linux" },
     );
 
     try {
