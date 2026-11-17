@@ -69,8 +69,7 @@ it("recognizes CrAU v2 and refuses any other readable major version", () => {
 it("inventories a full payload with REPLACE, ZERO, dynamic groups and apex_info", () => {
   const bytes = fullAndroidOtaPayload();
   const parsed = parse(bytes);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   expect(parsed.value).toMatchObject({
     header: { magic: "CrAU", majorVersion: 2 },
     payloadKind: "full",
@@ -120,8 +119,7 @@ it("inventories a full payload with REPLACE, ZERO, dynamic groups and apex_info"
 it("reconstructs REPLACE and ZERO partitions against the declared hash", () => {
   const bytes = fullAndroidOtaPayload();
   const parsed = parse(bytes);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   for (const partition of parsed.value.partitions) {
     const reconstructed = reconstructAndroidOtaPartition(
@@ -129,8 +127,7 @@ it("reconstructs REPLACE and ZERO partitions against the declared hash", () => {
       parsed.value.blockSize,
       (offset, length) => blob.subarray(offset, offset + length),
     );
-    expect(reconstructed.ok).toBe(true);
-    if (!reconstructed.ok) return;
+    if (!reconstructed.ok) throw reconstructed.error;
     expect(createHash("sha256").update(reconstructed.value).digest("hex")).toBe(
       partition.newPartitionInfo.hashHex,
     );
@@ -139,8 +136,7 @@ it("reconstructs REPLACE and ZERO partitions against the declared hash", () => {
 
 it("inventories a delta payload without applying SOURCE_COPY or BROTLI_BSDIFF", () => {
   const parsed = parse(deltaAndroidOtaPayload());
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   expect(parsed.value.payloadKind).toBe("delta");
   expect(parsed.value.minorVersion).toBe(4);
   expect(parsed.value.partitions[0]).toMatchObject({
@@ -165,8 +161,7 @@ it("inventories a delta payload without applying SOURCE_COPY or BROTLI_BSDIFF", 
 
 it("counts an unknown InstallOperation type as unknown", () => {
   const parsed = parse(unknownOperationAndroidOtaPayload());
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   expect(parsed.value.partitions[0]?.operationCounts).toEqual([
     { type: "unknown", type_code: 99, count: 1 },
   ]);
@@ -189,8 +184,7 @@ it("reconstructs REPLACE_ZSTD payloads", () => {
     ],
   });
   const parsed = parse(bytes);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   expect(parsed.value.partitions[0]?.extractable).toBe(true);
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   const reconstructed = reconstructAndroidOtaPartition(
@@ -198,8 +192,7 @@ it("reconstructs REPLACE_ZSTD payloads", () => {
     parsed.value.blockSize,
     (offset, length) => blob.subarray(offset, offset + length),
   );
-  expect(reconstructed.ok).toBe(true);
-  if (!reconstructed.ok) return;
+  if (!reconstructed.ok) throw reconstructed.error;
   expect(
     Buffer.from(reconstructed.value.subarray(0, plain.length)).equals(plain),
   ).toBe(true);
@@ -223,8 +216,7 @@ it("refuses REPLACE_ZSTD output past destination extents as a capacity limit", (
     ],
   });
   const parsed = parse(bytes);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   expect(
     reconstructAndroidOtaPartition(
@@ -291,8 +283,7 @@ it("refuses a bad magic, truncated header, and a truncated manifest", () => {
   });
   const full = fullAndroidOtaPayload();
   const parsed = parse(full);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const cut = full.subarray(
     0,
     parsed.value.header.manifestOffset +
@@ -307,12 +298,10 @@ it("refuses a bad magic, truncated header, and a truncated manifest", () => {
 it("keeps a complete manifest when the blob is truncated", () => {
   const full = fullAndroidOtaPayload();
   const parsed = parse(full);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const truncated = full.subarray(0, parsed.value.header.blobOffset + 1);
   const kept = parse(truncated);
-  expect(kept.ok).toBe(true);
-  if (!kept.ok) return;
+  if (!kept.ok) throw kept.error;
   expect(kept.value.blobTruncated).toBe(true);
   expect(kept.value.partitions.map((partition) => partition.name)).toEqual([
     "boot",
@@ -354,8 +343,7 @@ it("names the extraction ceiling, not unsupported operations, for a large REPLAC
       ],
     }),
   );
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const [partition] = parsed.value.partitions;
   expect(partition).toMatchObject({
     extractable: false,
@@ -554,8 +542,7 @@ it("reports a reconstructed hash mismatch without inventing a matching digest", 
     ],
   });
   const parsed = parse(bytes);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   expect(
     reconstructAndroidOtaPartition(
@@ -591,8 +578,7 @@ it("charges repeated operations on one blob against the reconstruction budget", 
     ],
   });
   const parsed = parse(bytes);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const [partition] = parsed.value.partitions;
   const [operation] = partition!.operations;
   const repeats = ANDROID_OTA_MAX_EXTRACT_BYTES / blockSize + 1;
@@ -635,8 +621,7 @@ it("refuses destination extents outside the image and short operation data", () 
       ],
     });
     const parsed = parse(bytes);
-    expect(parsed.ok).toBe(true);
-    if (!parsed.ok) return parsed;
+    if (!parsed.ok) throw parsed.error;
     const blob = bytes.subarray(parsed.value.header.blobOffset);
     return reconstructAndroidOtaPartition(
       parsed.value.partitions[0]!,
@@ -691,8 +676,7 @@ it("refuses reconstruction when destination extents leave blocks unwritten", () 
     ],
   });
   const parsed = parse(bytes);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const blob = bytes.subarray(parsed.value.header.blobOffset);
   expect(
     reconstructAndroidOtaPartition(
@@ -716,8 +700,7 @@ it("names duplicate partitions with a per-name suffix that skips taken names", (
       })),
     }),
   );
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   expect(parsed.value.partitions.map((partition) => partition.path)).toEqual([
     "boot.img",
     "boot-2.img",
@@ -740,8 +723,7 @@ it("keeps duplicate partition naming linear at the partition count limit", () =>
   // This parse takes tens of milliseconds; restarting the suffix search at 1
   // for every collision took over 4 seconds.
   expect(performance.now() - started).toBeLessThan(1000);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
+  if (!parsed.ok) throw parsed.error;
   const paths = parsed.value.partitions.map((partition) => partition.path);
   expect(new Set(paths).size).toBe(ANDROID_OTA_MAX_PARTITIONS);
   expect(paths.at(-1)).toBe(
