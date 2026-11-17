@@ -16,10 +16,14 @@ import {
 } from "../../domain/native/elfPointerRelocations.js";
 import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import type { InitializerNotes } from "./initializerNotes.js";
+import {
+  withheldInitializerSymbolName,
+  type InitializerSymbolName,
+} from "./initializerReport.js";
 
 /** One symbol-table row. `section` 0 is an undefined import. */
 export interface ElfInitializerSymbol {
-  readonly name: string | null;
+  readonly name: InitializerSymbolName | null;
   readonly value: bigint;
   readonly section: number;
   readonly type: number;
@@ -29,9 +33,9 @@ export interface ElfInitializerSymbol {
 
 /** Defined exact-address names plus per-section symbol arrays. */
 export interface ElfSymbolIndex {
-  readonly defined: ReadonlyMap<bigint, string>;
+  readonly defined: ReadonlyMap<bigint, InitializerSymbolName>;
   /** Relocatable objects: names keyed by `section:value`, since every section starts at 0. */
-  readonly definedInSection: ReadonlyMap<string, string>;
+  readonly definedInSection: ReadonlyMap<string, InitializerSymbolName>;
   readonly tables: ReadonlyMap<number, readonly ElfInitializerSymbol[]>;
   /** A table was truncated by a budget or could not be read. */
   readonly incomplete: boolean;
@@ -41,8 +45,8 @@ export interface ElfSymbolIndex {
 export interface SlotRelocation {
   readonly method: NativeInitializerResolution;
   readonly value: bigint | null;
-  readonly importName: string | null;
-  readonly definedName: string | null;
+  readonly importName: InitializerSymbolName | null;
+  readonly definedName: InitializerSymbolName | null;
   /** Section index of the relocation symbol, used for relocatable objects. */
   readonly sectionIndex?: number;
 }
@@ -98,7 +102,10 @@ const stringAt = (
   table: Buffer | null,
   offset: number,
   notes: InitializerNotes,
-): { readonly name: string | null; readonly missing: boolean } => {
+): {
+  readonly name: InitializerSymbolName | null;
+  readonly missing: boolean;
+} => {
   if (offset === 0) return { name: null, missing: false };
   if (table === null) {
     notes.tally("unreadable-symbol-name");
@@ -110,7 +117,12 @@ const stringAt = (
     MAX_NATIVE_INITIALIZER_NAME_BYTES + 1,
   );
   if (observed.state === "truncated") {
-    notes.tally("long-symbol-name");
+    // The table's last NUL establishes a terminator beyond the name window.
+    if (table.at(-1) === 0) {
+      notes.tally("long-symbol-name");
+      return { name: withheldInitializerSymbolName, missing: false };
+    }
+    notes.tally("unverified-symbol-terminator");
     return { name: null, missing: true };
   }
   if (observed.state === "outside") {
@@ -207,23 +219,26 @@ export const loadElfSymbolIndex = (
   notes: InitializerNotes,
 ): ElfSymbolIndex => {
   const tables = new Map<number, readonly ElfInitializerSymbol[]>();
-  const ranked = new Map<
-    bigint,
-    { readonly name: string; readonly func: boolean }
-  >();
-  const inSection = new Map<
-    string,
-    { readonly name: string; readonly func: boolean }
-  >();
+  type RankedName = {
+    readonly name: InitializerSymbolName;
+    readonly func: boolean;
+  };
+  const ranked = new Map<bigint, RankedName>();
+  const inSection = new Map<string, RankedName>();
   let truncated = false;
   const rank = <K>(
-    map: Map<K, { readonly name: string; readonly func: boolean }>,
+    map: Map<K, RankedName>,
     key: K,
-    name: string,
+    name: InitializerSymbolName,
     func: boolean,
   ): void => {
     const previous = map.get(key);
-    if (previous === undefined || (!previous.func && func))
+    if (
+      previous === undefined ||
+      (typeof name === "string" &&
+        (previous.name === withheldInitializerSymbolName ||
+          (!previous.func && func)))
+    )
       map.set(key, { name, func });
   };
   const consider = (symbol: ElfInitializerSymbol): void => {

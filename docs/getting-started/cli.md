@@ -146,8 +146,8 @@ still emit metadata; an empty top-level array emits no lines. Bare top-level
 arrays have no synthetic coverage record.
 
 Command and output-validation failures emit `{"$rea":"jsonl/v1","type":"error","ok":false,"result":…}`
-and retain the original diagnostic payload. SDK validation/sentinel errors use
-the SDK's exit status rather than guessing from data fields. `$rea` is reserved
+and retain the original diagnostic payload. The command owner reports failure
+status; error-shaped caller data remains ordinary data. `$rea` is reserved
 at the top level of a data record, so control records are unambiguous; collisions
 are refused before rows are written. Nested `$rea` values are ordinary data.
 A missing final metadata record or nonzero exit can indicate an interrupted
@@ -162,9 +162,7 @@ needs its normal resources. A single record must fit the runtime string limit
 for token estimation; remove `--token-count` to stream a larger record.
 
 Standalone version and MCP doctor diagnostics remain single JSON documents
-in JSON Lines mode. Incur's streaming generator events and successful sentinel
-responses retain their SDK protocol. MCP application results and Evidence
-contracts are unchanged.
+in JSON Lines mode. MCP application results and Evidence contracts are unchanged.
 
 ## Shell completion
 
@@ -276,6 +274,19 @@ rea inspect-go-binary /absolute/path/to/program --json
 The shared CLI/MCP workflow reports compiler version, modules, replacements,
 build settings, original bytes and SHA-256. See [Go binaries](../guides/native/go-binaries.md)
 for supported containers and absent or malformed metadata.
+
+Project that Evidence, or Rust dependency Evidence, as CycloneDX. The command
+prints JSON on stdout:
+
+```bash
+rea inspect-go-binary /absolute/path/to/program --json > go-evidence.json
+cat > cyclonedx-view.json <<'JSON'
+{"source":{"kind":"evidence-file","path":"go-evidence.json"},"view":{"kind":"cyclonedx"}}
+JSON
+rea inspect-analysis-view cyclonedx-view.json --json | jq '.normalized_result.document' > sbom.cdx.json
+```
+
+See [CycloneDX dependencies](../guides/native/cyclonedx-view.md).
 
 Inspect a Godot PCK without running the game:
 
@@ -479,6 +490,44 @@ rea inspect-elf-notes /absolute/path/to/program --json
 The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
+
+Inspect DWARF compile units without executing the image:
+
+```bash
+rea inspect-dwarf-units /absolute/path/to/program --json
+```
+
+The workflow reads DWARF 2 through 5 unit headers and the unit DIE from an
+ELF, Mach-O, or PE file, including compressed ELF debug sections. Rows report
+the source file, compilation directory, producer, language, and `dwo_name`.
+`offset` and `limit` page the units. Absent `.debug_info` describes this file
+only, and a declared section that could not be decoded is partial coverage. Pass `--architecture` for a universal Mach-O. A `.dSYM` bundle is not
+opened; pass the DWARF file inside it. See
+[DWARF compile units](../guides/native/dwarf-units.md).
+
+Inspect ELF separate debug-file linkage without executing the image:
+
+```bash
+rea inspect-elf-debug-link /absolute/path/to/program --json
+rea inspect-elf-debug-link /absolute/path/to/program --candidate-path /absolute/path/to/program.debug --json
+```
+
+The workflow reports `.gnu_debuglink` name and CRC32, `.gnu_debugaltlink`
+name and build-id, the GNU build-id, conventional lookup path strings, and
+`.gnu_debugdata` presence, offset, and size. Lookup paths are not opened. An
+optional candidate is verified by CRC32 and build-id equality. A missing
+section is observed absence only when section names are complete. See
+[ELF debug files](../guides/native/elf-debug-link.md).
+
+Inspect ELF needed libraries and required symbol versions without executing
+the image or invoking the dynamic loader:
+
+```bash
+rea inspect-elf-dependencies /absolute/path/to/program --json
+```
+
+The fields, coverage rules and delivery options are documented in
+[ELF dynamic dependencies](../elf-dependencies.md).
 
 List ELF and Mach-O initializer and finalizer functions without executing the
 image:
@@ -685,7 +734,13 @@ For one-shot commands, `details.limit` reports `scope: "rea-invocation"` and
 deadline names `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS`.
 
 `rea debug-with-gdb` and `rea debug-with-rizin` hold their debugger only for the
-command's own process. If cleanup cannot confirm the debugger stopped, they print
+command's own process. GDB's optional `--executable ./program` hashes and loads
+that initial file before running the caller's console command, without starting
+the inferior automatically. The Evidence target retains this initial file
+selection; later console loads do not rebind it. Without the option, the session
+target remains unknown. `--inferior-tty` still selects the durable output terminal.
+
+If cleanup cannot confirm the debugger stopped, they print
 `cleanup_incomplete` and exit nonzero without stopping it. `remediation.action`
 names the process, as does `retained_debugger_pids` in `details.diagnostics`, or
 in `details.diagnostics.cleanup_error.details.diagnostics` when the command also
@@ -1084,6 +1139,12 @@ Choose the guide for the target and intended interaction:
 
 Runtime requests name the target and actions. Launched targets run with your
 user permissions; consult the chosen guide for host requirements and effects.
+
+## Start the MCP server
+
+Start REA's MCP server with `rea mcp` (or `rea --mcp`). The per-command
+`rea <command> --mcp` entry has been removed; it returns `MCP_MODE_REMOVED`
+and points to `rea mcp`. This is a breaking change from the earlier CLI.
 
 ## Serve MCP over streamable HTTP
 

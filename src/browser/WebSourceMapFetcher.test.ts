@@ -425,7 +425,12 @@ it.each([
       if (trigger === "caller-abort") expect(result.error.cause).toBe(reason);
       else {
         expect(result.error.cause).toMatchObject({
-          name: "SourceMapSizeLimitError",
+          name: "ParseFailureError",
+          failure: {
+            kind: "limit",
+            format: "source-map",
+            limit: { name: "fetch_bytes", maximum: 1 },
+          },
         });
         expect(
           result.error.secondaryFailures.some(
