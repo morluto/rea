@@ -1,9 +1,9 @@
+import { decodeLimit } from "../../domain/parseFailure.js";
+import { isRecord } from "../../kernel/isRecord.js";
 import { OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN } from "../../domain/otlpTrace/otlpTrace.js";
 
 /** Bound retained source-coordinate metadata independently of input byte size. */
 export const OTLP_MAX_LOSSY_FIELDS = 16_384;
-export class OtlpNumberScanLimitError extends Error {}
-
 type JsonObject = Record<string, unknown>;
 type Plan =
   | { readonly kind: "object"; readonly fields: Readonly<Record<string, Plan>> }
@@ -47,8 +47,7 @@ const root: Plan = {
   fields: { resourceSpans: { kind: "array", item: group } },
 };
 
-const record = (value: unknown): value is JsonObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const record = (value: unknown): value is JsonObject => isRecord(value);
 
 /** Scan source coordinates only for numeric values that the OTLP inventory may read.
  * The native parser has already validated the JSON. Unselected values are skipped
@@ -143,8 +142,13 @@ export const scanOtlpNumbers = (
             (end - from > 256 || !exact(current, text.slice(from, end)))
           ) {
             if (marked >= OTLP_MAX_LOSSY_FIELDS)
-              throw new OtlpNumberScanLimitError(
+              throw decodeLimit(
+                "otlp-trace",
                 "Too many imprecise numeric fields to retain source coordinates.",
+                {
+                  name: "max_lossy_fields",
+                  maximum: OTLP_MAX_LOSSY_FIELDS,
+                },
               );
             marked++;
             const fields = lossy.get(node) ?? new Set<string>();

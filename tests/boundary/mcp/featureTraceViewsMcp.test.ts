@@ -68,10 +68,7 @@ contextBridge.exposeInMainWorld("api",{${CHANNELS.map(
   return root;
 };
 
-const connect = async (
-  profile: "full" | "compact",
-  maximumResponseBytes?: number,
-) => {
+const connect = async (maximumResponseBytes?: number) => {
   const application = await analyzeJavaScriptApplication({
     input_path: await writeApplication(),
   });
@@ -84,7 +81,6 @@ const connect = async (
     clientIdentity: { name: "feature-trace-view", version: "1" },
     schemaValidator: schemaValidation,
     serverOptions: {
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
       ...(maximumResponseBytes === undefined
         ? {}
         : { delivery: createToolResultDelivery(maximumResponseBytes) }),
@@ -117,10 +113,8 @@ const bytes = (value: unknown): number =>
 
 type Harness = Awaited<ReturnType<typeof connect>>;
 
-it.each(["full", "compact"] as const)(
-  "returns selected feature-trace facts and retains the complete trace (%s)",
-  async (profile) => {
-    const harness = await connect(profile);
+it("returns selected feature-trace facts and retains the complete trace", async () => {
+    const harness = await connect();
     const { client, session, inputs, call } = harness;
     // Select first: the view call alone must retain the complete parent.
     const summary = await call("trace_application_feature", {
@@ -341,7 +335,7 @@ const assertRetainedTracePages = async (
 };
 
 it("keeps a no-match trace's discovery and empty collections explicit", async () => {
-  const { inputs, call } = await connect("full");
+  const { inputs, call } = await connect();
   const missing = {
     ...inputs,
     seed: { kind: "string", value: "absent-literal", match: "exact" },
@@ -374,7 +368,10 @@ it("refuses a selected view before tracing when the server retains no Evidence",
     throw new Error("No deep provider");
   });
   const server = createServer({ kind: "fixed", analysis: session });
-  const client = new Client({ name: "feature-trace-fixed", version: "1" });
+  const client = new Client(
+    { name: "feature-trace-fixed", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {
@@ -408,7 +405,7 @@ it("refuses a selected view before tracing when the server retains no Evidence",
 
 it("recovers an oversized completed trace through its retained paths page", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, call, reply } = await connect("full", budget);
+  const { session, inputs, call, reply } = await connect(budget);
   const failed = await reply("trace_application_feature", inputs);
   const error = parseMcpToolError(failed).error;
   expect(error.code).toBe("resource_constraint");
@@ -460,7 +457,7 @@ it("recovers an oversized completed trace through its retained paths page", asyn
 
 it("names the retained trace and a smaller page when a selected page is oversized", async () => {
   const budget = 64 * 1024;
-  const { session, inputs, reply } = await connect("full", budget);
+  const { session, inputs, reply } = await connect(budget);
   const selection = {
     kind: "feature-trace",
     collection: "nodes",

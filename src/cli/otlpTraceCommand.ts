@@ -30,7 +30,12 @@ export const registerOtlpTraceCommand = (
         "Inventory spans, parent links and timing in a saved OTLP JSON trace export offline without contacting a collector",
       positionals: ["path"],
       callerPaths: ["path"],
-      fields: { path: { description: "Local OTLP JSON trace export path" } },
+      fields: {
+        path: { description: "Local OTLP JSON trace export path" },
+        format: {
+          description: "Input trace encoding: OTLP JSON",
+        },
+      },
     },
     inspectWithService(createOtlpTraceService, OTLP_TRACE_PROVIDER.id, "path"),
   );

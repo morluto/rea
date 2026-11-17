@@ -1,23 +1,26 @@
 import { isAbsolute } from "node:path";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import { isHostLimitFailure } from "../../domain/parseFailure.js";
+import { isParseLimit, parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { constants } from "node:buffer";
-import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
-import { readStableArtifact } from "../../resources/readStableArtifact.js";
-import {
   projectStableArtifactFailure,
+  readStableArtifact,
   stableArtifactInputRecovery,
-} from "../../resources/StableArtifactFailure.js";
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  carriedReason,
+  cancelledBy,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import {
@@ -28,7 +31,7 @@ import {
 } from "../../domain/otlpTrace/otlpTrace.js";
 import {
   inspectOtlpTraceInputSchema,
-  type InspectOtlpTraceInput,
+  type InspectOtlpTraceInput as OtlpInput,
 } from "../../domain/otlpTrace/otlpTraceQuery.js";
 import { parseOtlpTrace } from "../../domain/otlpTrace/parseOtlpTrace.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -38,9 +41,11 @@ import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import {
   OTLP_MAX_LOSSY_FIELDS,
-  OtlpNumberScanLimitError,
   scanOtlpNumbers,
 } from "./scanOtlpNumbers.js";
+
+/** The one accepted encoding, after the contract applies its default. */
+type InspectOtlpTraceInput = OtlpInput;
 
 const inputFailure = (message: string, cause?: unknown) =>
   new AnalysisInputError(
@@ -61,7 +66,6 @@ const inputFailure = (message: string, cause?: unknown) =>
     [{ path: ["path"], reason: "invalid_format", message }],
   );
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 /** Check the source number, not only its already-rounded JavaScript value. */
 const isExactIntegerNumber = (value: number, source: unknown): boolean => {
@@ -110,7 +114,7 @@ const decodeExport = (
     );
   let text: string;
   try {
-    text = UTF8.decode(bytes);
+    text = decodeStrictUtf8(bytes, "strip-signature");
   } catch (cause: unknown) {
     return err(
       inputFailure(`Export at ${path} is not valid UTF-8 JSON text.`, cause),
@@ -142,24 +146,19 @@ const decodeExport = (
       },
     };
   } catch (cause: unknown) {
-    if (cause instanceof OtlpNumberScanLimitError)
+    if (isParseLimit(cause, "otlp-trace"))
       return err(
-        new AnalysisResourceConstraintError(
-          operation,
-          "memory",
-          cause.message,
-          { max_lossy_fields: OTLP_MAX_LOSSY_FIELDS },
-          {
-            cause,
-            retryable: false,
-            remediationAction:
-              "Inspect a smaller export or preserve integer values as OTLP decimal strings.",
-          },
-        ),
+        parseLimitConstraint(operation, "memory", cause, {
+          ...fixedAllowanceOptions(
+            "The OTLP imprecise-numeric-field allowance",
+            "parser",
+            { limit: OTLP_MAX_LOSSY_FIELDS, unit: "fields" },
+          ),
+        }),
       );
     return err(
       inputFailure(
-        cause instanceof RangeError
+        isHostLimitFailure(cause)
           ? "The export exceeds the JSON decoder's nesting capacity."
           : "Export is not valid JSON.",
         cause,
@@ -179,9 +178,10 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(
+        operation,
+        carriedReason(artifactFileCancellationCause(cause)),
+      );
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(
         operation,
@@ -192,14 +192,15 @@ const readFailure = (
     if (cause.reason === "limit")
       return new AnalysisResourceConstraintError(
         operation,
-        cause.boundary ?? "file-size",
+        "file-size",
         cause.message,
         { max_file_bytes: input.max_file_bytes },
         {
           cause,
-          retryable: false,
-          remediationAction:
-            "Select an export within max_file_bytes; paging does not change this file admission.",
+          ...fixedAllowanceOptions("The OTLP export file allowance", "input", {
+            limit: input.max_file_bytes,
+            unit: "bytes",
+          }),
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
@@ -315,7 +316,7 @@ export const inspectOtlpTraceEvidence = async (
         predicateType: "rea.otlp-trace-inventory",
         parameters: {
           path: input.path,
-          format: input.format,
+          format: input.format ?? "otlp-json",
           max_file_bytes: input.max_file_bytes,
         },
         result,

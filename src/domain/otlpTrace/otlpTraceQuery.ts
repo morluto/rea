@@ -6,7 +6,7 @@ export const inspectOtlpTraceInputSchema = z.strictObject({
   path: localPathStringSchema.describe(
     "Absolute path to one caller-supplied OTLP JSON trace export",
   ),
-  format: z.literal("otlp-json").default("otlp-json"),
+  format: z.enum(["otlp-json"]).default("otlp-json"),
   max_file_bytes: z
     .int()
     .positive()

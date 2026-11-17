@@ -1,3 +1,5 @@
+import { boundedList } from "../boundedList.js";
+import { isRecord } from "../../kernel/isRecord.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   jsonValueSchema,
@@ -20,9 +22,6 @@ import {
 } from "./otlpTrace.js";
 
 type Json = unknown;
-
-const isRecord = (value: Json): value is Record<string, Json> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 interface RawCapture {
   readonly pointer: string;
@@ -392,16 +391,16 @@ const parseSpan = (
   const rawAttributes = Array.isArray(record.attributes)
     ? record.attributes
     : [];
-  const retained = rawAttributes
-    .filter((entry) => isRecord(entry) && typeof entry.key === "string")
-    .slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
-  const attributes = spanAttributes(retained, capture);
-  if (capture.problem !== undefined)
-    return { ok: false, problems: [], fatalProblem: capture.problem };
-  const attributesDropped =
+  const bounded = boundedList(
     rawAttributes.filter(
       (entry) => isRecord(entry) && typeof entry.key === "string",
-    ).length - retained.length;
+    ),
+    OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN,
+  );
+  const attributes = spanAttributes(bounded.items, capture);
+  if (capture.problem !== undefined)
+    return { ok: false, problems: [], fatalProblem: capture.problem };
+  const attributesDropped = bounded.omitted;
   if (attributesDropped > 0)
     problems.push({
       code: "attribute-limit-exceeded",
@@ -465,10 +464,10 @@ const resourceAttributes = (
   const candidates = resource.attributes.filter(
     (entry) => !isServiceName(entry) || !isStringServiceName(entry),
   );
-  const retained = candidates.slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
+  const bounded = boundedList(candidates, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
   return {
-    attributes: spanAttributes(retained, capture),
-    dropped: candidates.length - retained.length,
+    attributes: spanAttributes(bounded.items, capture),
+    dropped: bounded.omitted,
   };
 };
 
