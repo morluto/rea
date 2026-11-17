@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
@@ -21,10 +22,7 @@ it("admits a checked JSON input through its check only, and the rest through the
     }),
   };
   const received: unknown[] = [];
-  const cli = Cli.create("rea-checked-json-input", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   registerContractCommand(
     cli as unknown as CliInstance,
     silentLogger,
@@ -43,7 +41,7 @@ it("admits a checked JSON input through its check only, and the rest through the
       return {};
     },
   );
-  const command = Cli.toCommands.get(cli)?.get("compare-checked-fixture");
+  const command = cliCommand(cli, "compare-checked-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
     (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);

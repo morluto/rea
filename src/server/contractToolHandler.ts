@@ -27,6 +27,7 @@ import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -39,10 +40,7 @@ import type { InvestigationWorkflowExecution } from "../application/investigatio
 import { withAdmittedAnalysis as sessionAdmission } from "./analysisAdmission.js";
 import { deliverInvestigationWorkflow } from "./deliverInvestigationWorkflow.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
-import {
-  reportOperationEnd,
-  reportOperationStart,
-} from "./operationProgress.js";
+import { createOperationProgress } from "./operationProgress.js";
 import {
   deliverApplicationExecution,
   type ApplicationExecutionRecords,
@@ -101,6 +99,23 @@ export const createContractToolHandler =
       withAdmittedAnalysis,
     )(contract);
 
+/** Input admission owns whether inspection receives defaults or caller selections. */
+export type RetainedSummaryOperation<Input> =
+  | {
+      readonly admission: "sdk";
+      readonly summary: (
+        input: Omit<Input, "detail" | "view">,
+        options: ExecutionOptions,
+      ) => Promise<Result<Evidence, AnalysisError>>;
+    }
+  | {
+      readonly admission: "application";
+      readonly summary: (
+        input: unknown,
+        options: ExecutionOptions,
+      ) => Promise<Result<Evidence, AnalysisError>>;
+    };
+
 /** Validate delivery selection before inspection and retain its complete source for summaries. */
 export const createRetainedSummaryToolHandler = <
   Name extends string,
@@ -113,10 +128,7 @@ export const createRetainedSummaryToolHandler = <
 >(
   server: EvidenceMcpServer,
   contract: ToolContract<Name, InputSchema>,
-  inspect: (
-    input: Omit<z.output<InputSchema>, "detail" | "view">,
-    options: ExecutionOptions,
-  ) => Promise<Result<Evidence, AnalysisError>>,
+  operation: RetainedSummaryOperation<z.output<InputSchema>>,
   logger: Logger,
   retention: AnalysisViewRetention,
   withAdmittedAnalysis?: WithAdmittedAnalysis,
@@ -139,7 +151,18 @@ export const createRetainedSummaryToolHandler = <
         const ready = requireAnalysisViewRetention(contract.name, retention);
         if (!ready.ok) return ready;
       }
-      const inspected = await inspect(input, options);
+      const inspected = await (operation.admission === "sdk"
+        ? operation.summary(input, options)
+        : operation.summary(
+            isRecord(rawInput)
+              ? Object.fromEntries(
+                  Object.entries(rawInput).filter(
+                    ([field]) => field !== "detail" && field !== "view",
+                  ),
+                )
+              : rawInput,
+            options,
+          ));
       return detail === "summary" && inspected.ok
         ? projectRetainedAnalysis(
             inspected.value,
@@ -533,6 +556,12 @@ export type AnalysisWorkflow = (
   request: ApplicationWorkflowRequest,
 ) => Promise<Result<AnalysisWorkflowOutcome, AnalysisError>>;
 
+/** Delivery controls and the owner of this complete workflow's terminal progress. */
+export interface AnalysisWorkflowOptions {
+  readonly detail?: "delivery" | undefined;
+  readonly completionProgress?: "workflow" | undefined;
+}
+
 /**
  * Run a provider-backed workflow on the analysis that admission grants for
  * the call, reporting its start and terminal disposition, and deliver its
@@ -548,16 +577,17 @@ export const createAnalysisToolHandler =
     logger: Logger,
     retention: AnalysisViewRetention,
     withAdmittedAnalysis: WithAdmittedAnalysis,
-    selectsDetail: boolean,
+    options: AnalysisWorkflowOptions,
   ) =>
   (contract: ToolContract) =>
   async (
     rawInput: unknown,
     context: ServerContext,
   ): Promise<CallToolResult> => {
-    const { detail, input } = selectsDetail
-      ? deliveryDetail(rawInput)
-      : { detail: undefined, input: rawInput };
+    const { detail, input } =
+      options.detail === "delivery"
+        ? deliveryDetail(rawInput)
+        : { detail: undefined, input: rawInput };
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(contract.name, retention);
       if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
@@ -567,8 +597,12 @@ export const createAnalysisToolHandler =
       contract.name,
       signal,
       async (analysis) => {
-        const progress = mcpProgressReporter(context);
-        await reportOperationStart(progress, contract.name);
+        const progress = createOperationProgress(
+          mcpProgressReporter(context),
+          contract.name,
+          options.completionProgress,
+        );
+        await progress.start();
         const analyzed = await logToolExecution(logger, contract.name, () =>
           analyze(input, analysis, { signal, progress }),
         );
@@ -597,12 +631,7 @@ export const createAnalysisToolHandler =
                   contract,
                   analyzed.value.recorded,
                 );
-        await reportOperationEnd(
-          progress,
-          contract.name,
-          response.isError !== true,
-        );
-        return response;
+        return progress.complete(response);
       },
     );
     return admitted.ok

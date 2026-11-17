@@ -6,6 +6,7 @@ import type {
   DesktopWindow,
 } from "../domain/desktop/desktopCapture.js";
 import { isWithinAny } from "../domain/desktop/desktopStateDiff.js";
+import { ellipsisExcerpt } from "../domain/excerpt.js";
 import {
   readLinuxChildren,
   readLinuxProcessStat,
@@ -93,7 +94,10 @@ const systemProcfs: SessionProcfs = {
     const text = await readFile(`/proc/${String(pid)}/cmdline`, "utf8").catch(
       () => "",
     );
-    return text.replaceAll("\0", " ").trim().slice(0, COMMAND_TEXT_LIMIT);
+    return ellipsisExcerpt(
+      text.replaceAll("\0", " ").trim(),
+      COMMAND_TEXT_LIMIT,
+    );
   },
   tokenCarriers: (runId, signal) =>
     readRunTokenCarriers(systemProcessOwnershipHost, runId, signal).then(

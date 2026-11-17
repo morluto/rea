@@ -101,8 +101,8 @@ it("advertises the optional integrity policy without an undefined union", async 
   expect(policy).toMatchObject({
     type: "string",
     enum: ["fail", "record-and-continue"],
-    description:
-      "Behavior when declared application integrity does not match (default: fail)",
+    default: "fail",
+    description: "Behavior when declared application integrity does not match",
   });
   expect(JSON.stringify(policy)).not.toContain("undefined");
 });

@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { expect, it } from "vitest";
 
 import { registerAnalysisViewCommands } from "../../../src/cli/analysisViewCommands.js";
@@ -49,7 +49,7 @@ const manifest = async (
       }),
     },
   });
-  const cli = Cli.create("scenario-coverage", { sync: false });
+  const cli = createCommandCli();
   registerAnalysisViewCommands(cli, silentLogger);
   let stdout = "";
   let exitCode = 0;
@@ -144,7 +144,7 @@ it("does not derive a tool from conflicting header-only MIME evidence through th
         })),
       },
     ]);
-    const cli = Cli.create("scenario-mime", { sync: false });
+    const cli = createCommandCli();
     registerAnalysisViewCommands(cli, silentLogger);
     let stdout = "";
     let exitCode = 0;

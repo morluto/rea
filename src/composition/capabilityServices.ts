@@ -80,6 +80,7 @@ import {
   createElfUnwindRangesService,
   createAppleIpsService,
   createKernelModuleService,
+  createElfDependenciesService,
   createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
@@ -377,6 +378,7 @@ const modules = {
   elfUnwindRanges: service(() => createElfUnwindRangesService()),
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
+  elfDependencies: service(() => createElfDependenciesService()),
   kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
   binaryHardening: service(() => createBinaryHardeningService()),
@@ -709,6 +711,10 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign({}, ...failureObservers.map((observe) => observe())),
     observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
       Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
+    createManagedBinarySession: async () => {
+      const { createManagedBinarySession } = await import("./binary.js");
+      return createManagedBinarySession();
+    },
     close: () => scope.close(),
   };
 };

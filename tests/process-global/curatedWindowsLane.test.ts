@@ -213,4 +213,21 @@ it("checks the complete source with the fallback compiler before Windows build r
   const built = steps.findIndex((step) => step.run === "npm run build:cached");
   expect(checked).toBeGreaterThan(-1);
   expect(built).toBeGreaterThan(checked);
+  const vitestRuns = steps
+    .map((step) => step.run)
+    .filter((value) => value?.includes("npx vitest run"));
+  // One Node 24 curated run and one Node 22 path-boundary run; both cover the
+  // three native directory-identity suites without booting a second Node 24 Vitest process.
+  expect(vitestRuns).toHaveLength(2);
+  for (const run of vitestRuns) {
+    expect(run).toContain(
+      "tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptPackagePrecedence.test.ts",
+    );
+    expect(run).toContain(
+      "tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts",
+    );
+  }
 });
