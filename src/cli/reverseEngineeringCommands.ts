@@ -276,6 +276,12 @@ export const registerReverseEngineeringCommands = (
     {
       description: "Compare two local artifacts with radiff2",
       positionals: ["path_a", "path_b"],
+      fields: {
+        operation: {
+          description:
+            "Comparison granularity: functions returns the -Cj -A function-level JSON diff, bytes returns the -A byte-level diff text.",
+        },
+      },
     },
     async (input, { signal }) =>
       projectCliAnalysisResult(
