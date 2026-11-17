@@ -22,6 +22,7 @@ import {
   createCliCommandSession,
   type CliCommandSession,
 } from "./cliCommandSession.js";
+import { REGISTRATION_GUARD_NODE_OPTIONS_ENV } from "./registrationEnvironment.js";
 import { terminalStdoutInvocation } from "./terminalStdout.js";
 
 /** Caller-controlled values for one compiled REA CLI invocation. */
@@ -314,7 +315,9 @@ const sharedProcessCanServe = ({
   input === undefined &&
   timeoutMs === undefined &&
   !isDirectMcpLauncherEntry(arguments_, environment) &&
-  environment?.NODE_OPTIONS === undefined &&
+  (environment?.NODE_OPTIONS === undefined ||
+    environment.NODE_OPTIONS ===
+      environment[REGISTRATION_GUARD_NODE_OPTIONS_ENV]) &&
   !enablesLogging(environment?.REA_LOG_LEVEL) &&
   !logsByDefault(arguments_, environment?.REA_LOG_LEVEL);
 
