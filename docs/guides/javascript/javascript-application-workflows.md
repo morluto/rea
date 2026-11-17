@@ -268,9 +268,9 @@ For literal `fetch` headers, an invalid record key only rules out the request
 when no source-visible change or escape may replace the inherited iterator before
 construction. A retained request remains a static candidate, not proof that it
 was sent.
-For WebSocket protocol arrays, source-visible changes to the inherited array
-iterator likewise retain the candidate. Non-string protocol values are not
-used to rule out a candidate.
+For WebSocket protocol arrays, a source-visible change to the inherited array
+iterator prevents protocol literals alone from ruling out a candidate.
+Non-string protocol values are not used to rule out a candidate.
 
 Local callback candidates do not establish a complete target set when a
 conditional write may leave a parameter, catch binding, or uninitialized
