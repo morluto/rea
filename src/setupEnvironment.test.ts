@@ -398,7 +398,11 @@ it("registers the selected Windows package runner after canonicalizing environme
 });
 
 it("wires the injected DesktopBuildSetupHost factory with environment, platform, registrations, and shared resources", async () => {
-  const doctor = createDoctorHostFixture({ platform: "linux" });
+  const clientRegistrations = vi.fn().mockResolvedValue([]);
+  const doctor = createDoctorHostFixture({
+    platform: "linux",
+    clientRegistrations,
+  });
   const environment = { REA_AGENT_ENV_COMMAND: "/custom/agent-env" };
   let released = false;
   let capturedRegistrations: unknown;
@@ -432,7 +436,7 @@ it("wires the injected DesktopBuildSetupHost factory with environment, platform,
   const host = systemSetupHost(doctor, environment, factory);
   try {
     expect(factory).toHaveBeenCalledTimes(1);
-    expect(capturedRegistrations).toBe(doctor.clientRegistrations);
+    expect(capturedRegistrations).toBe(clientRegistrations);
     expect(host.desktopBuild).toBe(stubDesktopBuild);
   } finally {
     await host.close?.();
