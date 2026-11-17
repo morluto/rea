@@ -1,8 +1,14 @@
 import { readFile } from "node:fs/promises";
 
+import { Generic } from "release-please/build/src/updaters/generic.js";
 import { GenericJson } from "release-please/build/src/updaters/generic-json.js";
 import { Version } from "release-please/build/src/version.js";
 import { describe, expect, it } from "vitest";
+
+const nextReleaseVersion = (current: string): string => {
+  const parsed = Version.parse(current);
+  return `${parsed.major}.${parsed.minor + 1}.0`;
+};
 
 import { SUPPORTED_NODE_VERSION_RANGE } from "../../src/domain/runtimeVersion.js";
 import { MCP_STARTUP_POLICY } from "../../src/config/mcpStartupPolicy.js";
@@ -18,6 +24,8 @@ const versionedDocumentation = [
     examples: ["doctor --provider ghidra --json", '"command": "npx"'],
   },
 ] as const;
+const versionedCursorSkill =
+  ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md";
 const pluginManifests = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
@@ -88,6 +96,10 @@ const releaseExtraFiles = [
     type: "json",
     path: ".claude-plugin/marketplace.json",
     jsonpath: "$.plugins[0].mcpServers.rea.args[1]",
+  },
+  {
+    type: "generic",
+    path: versionedCursorSkill,
   },
 ];
 
@@ -285,8 +297,7 @@ describe("plugin release pins", () => {
     const packageJson = (await readJson("package.json")) as {
       version: string;
     };
-    const currentVersion = Version.parse(packageJson.version);
-    const nextVersion = `${currentVersion.major}.${currentVersion.minor + 1}.0`;
+    const nextVersion = nextReleaseVersion(packageJson.version);
     const version = Version.parse(nextVersion);
     const config = (await readJson("release-please-config.json")) as {
       packages: {
@@ -433,5 +444,33 @@ describe("plugin release pins", () => {
         },
       },
     });
+  });
+});
+
+describe("Cursor skill release pin", () => {
+  it("advances the committed skill pin through Release Please markers", async () => {
+    const packageJson = (await readJson("package.json")) as {
+      version: string;
+    };
+    const nextVersion = nextReleaseVersion(packageJson.version);
+    const content = await readFile(versionedCursorSkill, "utf8");
+    const versionBlocks = [
+      ...content.matchAll(
+        /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/gu,
+      ),
+    ].map(([block]) => block);
+    expect(versionBlocks).toHaveLength(1);
+    expect(versionBlocks[0]).toContain(`rea-agents@${packageJson.version}`);
+    expect(content).toMatch(
+      new RegExp(
+        String.raw`rea-agents@${packageJson.version.replaceAll(".", String.raw`\.`)}[^\n]*x-release-please-version`,
+        "u",
+      ),
+    );
+    const updated = new Generic({
+      version: Version.parse(nextVersion),
+    }).updateContent(content);
+    expect(updated).toContain(`rea-agents@${nextVersion}`);
+    expect(updated).not.toContain(`rea-agents@${packageJson.version}`);
   });
 });
