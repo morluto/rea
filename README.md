@@ -278,8 +278,9 @@ real entrypoints, flags unreferenced decoys, and reports truncated or unverified
 state as a first-class result rather than guessing. It bounds its own memory and
 work so an inflated input cannot exhaust the pass itself.
 
-Run it from the terminal with `rea antidote <path>` (optionally `--format wasm`,
-`asar` or `json`), or call the `canonicalize_artifact` MCP tool.
+Run it from the terminal with `rea antidote <path>` (optionally
+`--antidoteFormat wasm`, `asar` or `json`), or call the `canonicalize_artifact`
+MCP tool.
 
 ## Showcases
 

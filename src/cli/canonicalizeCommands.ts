@@ -38,8 +38,13 @@ export const registerCanonicalizeCommands = (
             "Local artifact to canonicalize (WASM, Electron .asar or structured JSON)",
         },
         format: {
+          // The global CLI `--format` selects output rendering, so the input
+          // normalizer needs its own flag or `antidote --format wasm` would be
+          // parsed as an output-format choice and fail. Mirror apiContract's
+          // `contractFormat` rename rather than overload the shared option.
+          name: "antidoteFormat",
           description:
-            "Normalizer selection: auto (default, recognize from bytes), wasm, asar or json",
+            "Input normalizer selection: auto (default, recognize from bytes), wasm, asar or json",
         },
         max_file_bytes: {
           description:

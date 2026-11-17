@@ -112,8 +112,9 @@ unpacked member) are modeled as non-negative safe integers, not 32-bit extents.
 - MCP tool `canonicalize_artifact` (native family, `native-provider` kind),
   returning a canonical Evidence record. Results carry REA's untrusted-content
   marker, because facts derive from a potentially adversarial target.
-- CLI `rea antidote <path> [--format auto|wasm|asar|json] [--max-file-bytes]
-  [--max-facts] [--max-depth] --json`.
+- CLI `rea antidote <path> [--antidoteFormat auto|wasm|asar|json]
+  [--max-file-bytes] [--max-facts] [--max-depth] --json`. The input normalizer
+  uses `--antidoteFormat`, distinct from the global `--format` output control.
 
 ## Safety
 

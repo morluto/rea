@@ -95,23 +95,46 @@ const hasUnsafeIntegerLiteral = (text: string): boolean => {
       index += 1;
       continue;
     }
+    // Consume the whole JSON number token (optional '-', integer digits, optional
+    // fraction, optional exponent) in one pass. Consuming it fully is what keeps
+    // a fraction's digits from being rescanned as a second integer, so an exact
+    // decimal like 0.5000000000000000 cannot draw a false precision warning.
     const start = index;
     if (code === 0x2d) index += 1;
-    let digits = 0;
+    let integerDigits = 0;
     while (index < length) {
       const digit = text.charCodeAt(index);
       if (digit < 0x30 || digit > 0x39) break;
-      digits += 1;
+      integerDigits += 1;
       index += 1;
     }
-    const after = index < length ? text.charCodeAt(index) : -1;
-    const isPlainInteger =
-      after !== 0x2e /* . */ &&
-      after !== 0x65 /* e */ &&
-      after !== 0x45; /* E */
+    let plainInteger = true;
+    if (index < length && text.charCodeAt(index) === 0x2e /* . */) {
+      plainInteger = false;
+      index += 1;
+      while (index < length) {
+        const digit = text.charCodeAt(index);
+        if (digit < 0x30 || digit > 0x39) break;
+        index += 1;
+      }
+    }
+    if (index < length) {
+      const exponent = text.charCodeAt(index);
+      if (exponent === 0x65 /* e */ || exponent === 0x45 /* E */) {
+        plainInteger = false;
+        index += 1;
+        const sign = index < length ? text.charCodeAt(index) : -1;
+        if (sign === 0x2b /* + */ || sign === 0x2d /* - */) index += 1;
+        while (index < length) {
+          const digit = text.charCodeAt(index);
+          if (digit < 0x30 || digit > 0x39) break;
+          index += 1;
+        }
+      }
+    }
     if (
-      isPlainInteger &&
-      digits >= 16 &&
+      plainInteger &&
+      integerDigits >= 16 &&
       !Number.isSafeInteger(Number(text.slice(start, index)))
     )
       return true;

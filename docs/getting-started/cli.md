@@ -534,11 +534,12 @@ executing it:
 
 ```bash
 rea antidote /absolute/path/to/app.asar --json
-rea antidote /absolute/path/to/core.wasm --format wasm --json
+rea antidote /absolute/path/to/core.wasm --antidoteFormat wasm --json
 ```
 
-The antidote pass recognizes WASM, Electron `.asar` or structured JSON (`--format`
-defaults to `auto`), drops non-semantic padding and unreferenced decoys to an
+The antidote pass recognizes WASM, Electron `.asar` or structured JSON
+(`--antidoteFormat` defaults to `auto`; it is distinct from the global `--format`
+output control), drops non-semantic padding and unreferenced decoys to an
 exemplar, a count and a digest, keeps behavior-relevant and link-relevant
 structure, and reports truncated or unverified state explicitly. It is lossless
 for behavior-relevant data and bounds its own work with `--max-file-bytes`,

@@ -519,6 +519,19 @@ describe("json-structure source fidelity", () => {
     expect(facts.limitations.join(" ")).not.toMatch(/safe-integer precision/iu);
   });
 
+  it("does not flag an intact decimal's fractional digits as an unsafe integer", () => {
+    // 0.5 is represented exactly; its long fractional digit run must not be
+    // rescanned as a separate integer literal and draw a false precision
+    // warning. A real exponential value must likewise stay unflagged.
+    const facts = canonicalizeArtifactFacts(
+      Buffer.from('{"ratio":0.50000000000000000,"scaled":1.5e300}', "utf8"),
+      "json",
+      budget(),
+    );
+    expect(facts.coverage.status).toBe("complete");
+    expect(facts.limitations.join(" ")).not.toMatch(/safe-integer precision/iu);
+  });
+
   it("bounds the duplicate scan on deeply nested input", () => {
     let nested = "1";
     for (let depth = 0; depth < 40; depth += 1) nested = `{"k":${nested}}`;
