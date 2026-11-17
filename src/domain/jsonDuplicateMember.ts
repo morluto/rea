@@ -15,9 +15,17 @@ export type ParsedJsonWithPolicy =
   | {
       readonly ok: true;
       readonly value: unknown;
-      readonly duplicate?: JsonDuplicateMember;
     }
-  | { readonly ok: false; readonly cause: unknown };
+  | {
+      readonly ok: false;
+      readonly duplicate: JsonDuplicateMember;
+      readonly cause?: undefined;
+    }
+  | {
+      readonly ok: false;
+      readonly cause: unknown;
+      readonly duplicate?: undefined;
+    };
 
 /** A member name that occurs more than once in one JSON object. */
 export interface JsonDuplicateMember {
@@ -63,7 +71,7 @@ export const parseJsonWithDuplicatePolicy = (
     policy === "reject" ? findDuplicateJsonMember(text) : undefined;
   return duplicate === undefined
     ? { ok: true, value }
-    : { ok: true, value, duplicate };
+    : { ok: false, duplicate };
 };
 
 /**

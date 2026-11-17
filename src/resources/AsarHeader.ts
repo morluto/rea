@@ -446,11 +446,13 @@ export const readAsarHeader = async (
     );
   }
   const parsed = parseJsonWithDuplicatePolicy(json, "reject");
-  if (!parsed.ok) throw parsed.cause;
-  if (parsed.duplicate !== undefined)
-    throw new ArtifactReaderFailure(
-      "format",
-      `ASAR JSON header declares member ${JSON.stringify(parsed.duplicate.name)} more than once in one object (offset ${String(parsed.duplicate.offset)})`,
-    );
+  if (!parsed.ok) {
+    if (parsed.duplicate !== undefined)
+      throw new ArtifactReaderFailure(
+        "format",
+        `ASAR JSON header declares member ${JSON.stringify(parsed.duplicate.name)} more than once in one object (offset ${String(parsed.duplicate.offset)})`,
+      );
+    throw parsed.cause;
+  }
   return parsed.value;
 };

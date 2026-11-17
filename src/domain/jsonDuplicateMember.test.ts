@@ -35,8 +35,7 @@ it("scans nesting deeper than the call stack allows", () => {
 
 it("parses JSON with an explicit duplicate-member policy and string-literal helper", () => {
   expect(parseJsonWithDuplicatePolicy('{"a":1,"a":2}', "reject")).toEqual({
-    ok: true,
-    value: { a: 2 },
+    ok: false,
     duplicate: { name: "a", offset: 7 },
   });
   expect(parseJsonWithDuplicatePolicy('{"a":1,"a":2}', "last-wins")).toEqual({

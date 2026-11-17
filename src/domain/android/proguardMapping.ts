@@ -559,7 +559,8 @@ const metadataObject = (
   | undefined => {
   if (!body.startsWith("{")) return undefined;
   const parsed = parseJsonWithDuplicatePolicy(body, "reject");
-  if (!parsed.ok) return undefined;
+  if (!parsed.ok)
+    return parsed.duplicate === undefined ? undefined : { kind: "duplicate" };
   const value = parsed.value;
   if (
     value === null ||
@@ -569,7 +570,6 @@ const metadataObject = (
     typeof value.id !== "string"
   )
     return undefined;
-  if (parsed.duplicate !== undefined) return { kind: "duplicate" };
   return { kind: "valid", record: value as Record<string, unknown> };
 };
 

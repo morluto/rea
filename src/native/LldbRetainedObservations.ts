@@ -135,7 +135,7 @@ const parseLldbObservationJournal = (bytes: Uint8Array): ParsedLldbJournal => {
       continue;
     }
     const parsed = parseJsonWithDuplicatePolicy(text, "reject");
-    if (!parsed.ok || parsed.duplicate !== undefined) {
+    if (!parsed.ok) {
       markMalformed();
       continue;
     }

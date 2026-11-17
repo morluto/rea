@@ -404,11 +404,13 @@ const decodeJson = (bytes: Buffer, scope: string): unknown => {
   const text = decodeStrict(bytes, jsonDecoder);
   if (text === undefined) throw denoFormatFailure(`${scope} is invalid`);
   const parsed = parseJsonWithDuplicatePolicy(text, "reject");
-  if (!parsed.ok) throw denoFormatFailure(`${scope} is invalid`);
-  if (parsed.duplicate !== undefined)
-    throw denoFormatFailure(
-      `${scope} declares member ${JSON.stringify(parsed.duplicate.name)} more than once`,
-    );
+  if (!parsed.ok) {
+    if (parsed.duplicate !== undefined)
+      throw denoFormatFailure(
+        `${scope} declares member ${JSON.stringify(parsed.duplicate.name)} more than once`,
+      );
+    throw denoFormatFailure(`${scope} is invalid`);
+  }
   return parsed.value;
 };
 

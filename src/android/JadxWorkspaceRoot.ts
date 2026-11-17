@@ -146,9 +146,7 @@ class WindowsJadxWorkspaceRoot implements JadxWorkspaceRoot {
         "Android workspace guardian startup timed out",
       );
       const decoded = parseJsonWithDuplicatePolicy(line, "reject");
-      const observation = readySchema.parse(
-        decoded.ok && decoded.duplicate === undefined ? decoded.value : null,
-      );
+      const observation = readySchema.parse(decoded.ok ? decoded.value : null);
       if (
         win32.dirname(localDrivePath(observation.path)).toLowerCase() !==
           localDrivePath(win32.resolve(parent)).toLowerCase() ||

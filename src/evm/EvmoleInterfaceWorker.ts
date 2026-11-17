@@ -31,12 +31,13 @@ const main = async (): Promise<void> => {
   if (requestPath === undefined)
     throw new EvmAdmissionError("request_path_missing");
   const requestJson = parseJsonWithDuplicatePolicy(
-    await readFile(requestPath, "utf8"),
+    (await readStableArtifact(requestPath, 64 * 1024)).bytes.toString("utf8"),
     "reject",
   );
-  if (!requestJson.ok) throw requestJson.cause;
+  if (!requestJson.ok && requestJson.cause !== undefined)
+    throw requestJson.cause;
   const request = requestSchema.parse(
-    requestJson.duplicate === undefined ? requestJson.value : null,
+    requestJson.ok ? requestJson.value : null,
   );
   const limits = selectedEvmProducerLimits(request.producer_limits);
   let reply: unknown;

@@ -233,13 +233,14 @@ const parseDocument = (
   assertDepth(text);
   // JSON.parse keeps the last of a repeated field; the format allows one.
   const decoded = parseJsonWithDuplicatePolicy(text, "reject");
-  if (!decoded.ok)
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
+        `Dependency JSON contains duplicate field ${JSON.stringify(decoded.duplicate.name)}`,
+      );
     throw malformedSection("Dependency section JSON is invalid", decoded.cause);
-  if (decoded.duplicate !== undefined)
-    throw malformedInput(
-      RUST_AUDITABLE_FORMAT,
-      `Dependency JSON contains duplicate field ${JSON.stringify(decoded.duplicate.name)}`,
-    );
+  }
   const value = decoded.value;
   const version = documentVersionSchema.safeParse(value);
   if (!version.success)

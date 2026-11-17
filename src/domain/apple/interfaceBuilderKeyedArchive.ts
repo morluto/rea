@@ -650,7 +650,7 @@ const jsonSafeRecord = (value: Record<string, unknown>) =>
         const serialized = JSON.stringify(item);
         if (serialized === undefined) return [];
         const decoded = parseJsonWithDuplicatePolicy(serialized, "reject");
-        if (!decoded.ok || decoded.duplicate !== undefined) return [];
+        if (!decoded.ok) return [];
         const parsed = jsonValueSchema.safeParse(decoded.value);
         return parsed.success ? [[key, parsed.data]] : [];
       } catch (cause: unknown) {
