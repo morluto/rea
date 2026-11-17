@@ -1,3 +1,4 @@
+import { RpmPackageMaterialization } from "./RpmPackageMaterialization.js";
 import { rpmPackageSchema } from "../domain/rpm/package.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
@@ -103,6 +104,7 @@ interface IndexEntry {
 }
 
 interface DecodedHeader {
+  readonly materialization: RpmPackageMaterialization;
   readonly label: "signature" | "main";
   readonly location: { readonly offset: number; readonly bytes: number };
   readonly indexEntries: number;
@@ -155,7 +157,6 @@ const observing = <T>(observed: JsonValue, read: () => T): T => {
   } catch (cause) {
     if (
       !(cause instanceof ParseFailureError) ||
-      cause.kind === "limit" ||
       cause.failure.observed !== undefined
     )
       throw cause;
@@ -254,20 +255,22 @@ const headerText = (
   raw: Buffer,
   index?: number,
 ): string => {
-  try {
-    return decodeStrictUtf8(raw, "preserve");
-  } catch {
-    const quoted = raw.subarray(0, MAX_QUOTED_RAW_BYTES);
-    const position = index === undefined ? "" : `[${String(index)}]`;
-    const extent =
-      quoted.length < raw.length
-        ? `first ${String(quoted.length)} of ${String(raw.length)} raw bytes`
-        : `raw bytes`;
-    return fail(
-      `RPM ${header.label} header tag ${String(tag)}${position} is not valid UTF-8, so its text cannot be reported without replacing source bytes (${extent}: ${hex(quoted)}).`,
-      { field: `${header.label} tag ${String(tag)}` },
-    );
-  }
+  return header.materialization.text(raw, () => {
+    try {
+      return decodeStrictUtf8(raw, "preserve");
+    } catch {
+      const quoted = raw.subarray(0, MAX_QUOTED_RAW_BYTES);
+      const position = index === undefined ? "" : `[${String(index)}]`;
+      const extent =
+        quoted.length < raw.length
+          ? `first ${String(quoted.length)} of ${String(raw.length)} raw bytes`
+          : `raw bytes`;
+      return fail(
+        `RPM ${header.label} header tag ${String(tag)}${position} is not valid UTF-8, so its text cannot be reported without replacing source bytes (${extent}: ${hex(quoted)}).`,
+        { field: `${header.label} tag ${String(tag)}` },
+      );
+    }
+  });
 };
 
 const readInts = (
@@ -652,6 +655,7 @@ const parseHeader = (
   start: number,
   budget: { readonly maxIndex: number; readonly maxFiles?: number },
   label: "signature" | "main",
+  materialization: RpmPackageMaterialization,
 ): DecodedHeader => {
   const { maxIndex, maxFiles = Number.POSITIVE_INFINITY } = budget;
   reader.range(start, 16, `RPM ${label} header`);
@@ -729,15 +733,14 @@ const parseHeader = (
         `RPM ${label} header repeats tag ${String(entry.tag)}, so its value is ambiguous.`,
         { offset: at, field: `${label} tag ${String(entry.tag)}` },
       );
-    if (label === "main") {
-      // Placement and impossible stored extents are malformed input, so they
-      // are refused before the file budget, which only guards allocation.
-      checkStoredExtent(store, entry);
-      checkPerFileCount(entry, maxFiles);
-    }
+    // Impossible stored extents are malformed before either allocation budget.
+    checkStoredExtent(store, entry);
+    if (label === "main") checkPerFileCount(entry, maxFiles);
+    materialization.values(entry.type === RPM_TYPE.bin ? 1 : entry.count);
     values.set(entry.tag, decodeEntry(store, entry));
   }
   return {
+    materialization,
     label,
     location: { offset: start, bytes: 16 + indexBytes + storeBytes },
     indexEntries,
@@ -1259,6 +1262,7 @@ export const parseRpmPackage = (
   signal?: AbortSignal,
 ): RpmPackage => {
   signal?.throwIfAborted();
+  const materialization = new RpmPackageMaterialization();
   const reader = new BinaryReader(bytes, false, FORMAT);
   const lead = parseLead(reader);
   const observed = leadObserved(lead);
@@ -1278,6 +1282,7 @@ export const parseRpmPackage = (
       RPM_LEAD_SIZE,
       { maxIndex: input.max_header_index_entries },
       "signature",
+      materialization,
     ),
   );
   const padBytes = pad8(signatureHeader.location.bytes);
@@ -1305,6 +1310,7 @@ export const parseRpmPackage = (
         maxFiles: input.max_files,
       },
       "main",
+      materialization,
     );
     const payloadOffset =
       mainHeader.location.offset + mainHeader.location.bytes;

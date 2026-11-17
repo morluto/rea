@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { RpmPackageMaterialization } from "./RpmPackageMaterialization.js";
 import {
   inspectRpmPackageInputSchema,
   rpmPackageSchema,
@@ -807,4 +808,171 @@ it("redacts only transport userinfo from the recorded package URL", () => {
   expect(report.scriptlets?.[0]?.text).toBe(
     "token=visible password=source-data",
   );
+});
+
+it.each([
+  { tag: RPM_TAG.requireName, type: RPM_TYPE.stringArray, strings: ["a", "b"] },
+  { tag: RPM_TAG.summary, type: RPM_TYPE.i18nString, strings: ["a", "b"] },
+  { tag: RPM_TAG.preinProg, type: RPM_TYPE.stringArray, strings: ["a", "b"] },
+  { tag: RPM_TAG.requireFlags, type: RPM_TYPE.int32, int32: [1, 2] },
+])("admits every known vector before allocating its values: $tag", (tag) => {
+  const quota = new RpmPackageMaterialization({ values: 1, textBytes: 8 });
+  const reserve = quota.values.bind(quota);
+  const admission = vi
+    .spyOn(RpmPackageMaterialization.prototype, "values")
+    .mockImplementation(reserve);
+  try {
+    expect(() =>
+      parse(encodeRpmPackage({ signatureTags: [], headerTags: [tag] })),
+    ).toThrowError(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "materialized_values", maximum: 1, required: 2 },
+        }),
+      }),
+    );
+  } finally {
+    admission.mockRestore();
+  }
+});
+
+it("uses one vector allowance across signature and main headers", () => {
+  const quota = new RpmPackageMaterialization({ values: 2, textBytes: 8 });
+  const reserve = quota.values.bind(quota);
+  const admission = vi
+    .spyOn(RpmPackageMaterialization.prototype, "values")
+    .mockImplementation(reserve);
+  try {
+    expect(() =>
+      parse(
+        encodeRpmPackage({
+          signatureTags: [
+            { tag: RPM_SIG_TAG.sha1Header, type: RPM_TYPE.string, string: "s" },
+          ],
+          headerTags: [
+            {
+              tag: RPM_TAG.requireName,
+              type: RPM_TYPE.stringArray,
+              strings: ["a", "b"],
+            },
+          ],
+        }),
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "materialized_values", maximum: 2, required: 3 },
+        }),
+      }),
+    );
+  } finally {
+    admission.mockRestore();
+  }
+});
+
+it("checks impossible known-vector extents before materialization admission", () => {
+  const quota = new RpmPackageMaterialization({ values: 0, textBytes: 0 });
+  const reserve = quota.values.bind(quota);
+  const admission = vi
+    .spyOn(RpmPackageMaterialization.prototype, "values")
+    .mockImplementation(reserve);
+  try {
+    expect(() =>
+      parse(
+        encodeRpmPackage({
+          signatureTags: [],
+          headerTags: [
+            {
+              tag: RPM_TAG.requireFlags,
+              type: RPM_TYPE.int32,
+              int32: [1],
+              count: 2,
+            },
+          ],
+        }),
+      ),
+    ).toThrowError(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+      }),
+    );
+    expect(admission).not.toHaveBeenCalled();
+  } finally {
+    admission.mockRestore();
+  }
+});
+
+it("bounds decoded text from repeated known extents while preserving source spelling", () => {
+  const quota = new RpmPackageMaterialization({ values: 8, textBytes: 3 });
+  const decode = quota.text.bind(quota);
+  const admission = vi
+    .spyOn(RpmPackageMaterialization.prototype, "text")
+    .mockImplementation(decode);
+  const bytes = encodeRpmPackage({
+    signatureTags: [],
+    headerTags: [
+      {
+        tag: RPM_TAG.requireName,
+        type: RPM_TYPE.stringArray,
+        strings: ["AbC"],
+      },
+      {
+        tag: RPM_TAG.requireVersion,
+        type: RPM_TYPE.stringArray,
+        offset: 0,
+        count: 1,
+      },
+    ],
+  });
+  try {
+    expect(() => parse(bytes)).toThrowError(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "decoded_text_bytes", maximum: 3, required: 6 },
+        }),
+      }),
+    );
+  } finally {
+    admission.mockRestore();
+  }
+  expect(parse(bytes).requires?.[0]).toMatchObject({
+    name: "AbC",
+    version: "AbC",
+  });
+});
+
+it("charges script source text only when it is included", () => {
+  const quota = new RpmPackageMaterialization({ values: 8, textBytes: 0 });
+  const decode = quota.text.bind(quota);
+  const admission = vi
+    .spyOn(RpmPackageMaterialization.prototype, "text")
+    .mockImplementation(decode);
+  const bytes = encodeRpmPackage({
+    signatureTags: [],
+    headerTags: [
+      { tag: RPM_TAG.prein, type: RPM_TYPE.string, string: "source" },
+    ],
+  });
+  try {
+    expect(parse(bytes).scriptlets?.[0]).toMatchObject({
+      bytes: 6,
+      text: null,
+    });
+    expect(admission).not.toHaveBeenCalled();
+    expect(() =>
+      parse(bytes, { ...defaults, include_script_text: true }),
+    ).toThrowError(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          kind: "limit",
+          limit: { name: "decoded_text_bytes", maximum: 0, required: 6 },
+        }),
+      }),
+    );
+  } finally {
+    admission.mockRestore();
+  }
 });

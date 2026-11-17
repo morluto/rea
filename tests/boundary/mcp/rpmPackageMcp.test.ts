@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
+import { RpmPackageMaterialization } from "../../../src/rpm/RpmPackageMaterialization.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { RPM_PACKAGE_TOOL_CONTRACTS } from "../../../src/contracts/rpm/rpmPackageToolContracts.js";
 import { rpmPackageSchema } from "../../../src/domain/rpm/package.js";
 import {
+  encodeRpmPackage,
+  RPM_TAG,
+  RPM_TYPE,
   rpmBinaryPackageFixture,
   rpmTruncatedHeaderFixture,
 } from "../../../src/rpm/RpmPackage.fixture.js";
@@ -168,3 +172,75 @@ mcpTest(
     }
   },
 );
+
+for (const kind of ["values", "text"] as const) {
+  mcpTest(
+    `reports the fixed known-${kind} allowance through the registered MCP binding`,
+    async ({ mcp }) => {
+      const { client, session } = await connect(mcp);
+      const quota = new RpmPackageMaterialization({ values: 1, textBytes: 3 });
+      const reserveValues = quota.values.bind(quota);
+      const decodeText = quota.text.bind(quota);
+      const admission =
+        kind === "values"
+          ? vi
+              .spyOn(RpmPackageMaterialization.prototype, "values")
+              .mockImplementation(reserveValues)
+          : vi
+              .spyOn(RpmPackageMaterialization.prototype, "text")
+              .mockImplementation(decodeText);
+      try {
+        const root = await createTestTempDirectory("rea-rpm-fixed-");
+        const path = join(root, "small.rpm");
+        const bytes = encodeRpmPackage({
+          signatureTags: [],
+          headerTags: [
+            {
+              tag: RPM_TAG.summary,
+              type: RPM_TYPE.i18nString,
+              strings: kind === "values" ? ["a", "b"] : ["AbCd"],
+            },
+          ],
+        });
+        await writeFile(path, bytes);
+        const response = await client.callTool({
+          name: "inspect_rpm_package",
+          arguments: { path },
+        });
+        expect(response.isError).toBe(true);
+        const error = parseMcpToolError(response).error;
+        expect(error).toMatchObject({
+          code: "resource_constraint",
+          retryable: false,
+          details: {
+            resource: "memory",
+            reported_limits: {
+              boundary:
+                kind === "values"
+                  ? "materialized_values"
+                  : "decoded_text_bytes",
+              maximum: kind === "values" ? 1 : 3,
+              required: kind === "values" ? 2 : 4,
+            },
+            diagnostics: { observed: { lead: { magic: "edabeedb" } } },
+            partial_observation: {
+              kind: "file-snapshot-hash",
+              path,
+              bytes: bytes.length,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            },
+          },
+        });
+        expect(error.details?.refusal).toMatchObject({
+          kind: "fixed_ceiling",
+          allowance_kind: "parser",
+          limit: kind === "values" ? 1 : 3,
+        });
+        expect(error.remediation?.action).not.toMatch(/Raise max_/u);
+      } finally {
+        admission.mockRestore();
+        await session.close();
+      }
+    },
+  );
+}

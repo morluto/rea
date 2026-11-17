@@ -75,6 +75,13 @@ that parser memory refusal names `expanded_path_bytes`, while physical file
 admission reports the `file-size` resource. Evidence records only caller-selected
 parameters; omitted defaults still apply to execution.
 
+Both headers together have a fixed allowance of 1048576 known value elements
+(numeric values and stored string views) and 64 MiB of decoded UTF-8 source
+bytes. Counts are admitted before vector allocation, and each stored value is
+decoded once only when needed. Distinct values sharing stored bytes still count
+toward the text allowance. These parser allowances have no runtime override;
+a refusal preserves file identity and header facts already established.
+
 Malformed or truncated headers fail with typed refusals. A tag the report reads
 that is stored with another type or a different fixed count (for example a
 `PREIN` stored as `INT32`, or a two-value `EPOCH`) is refused as malformed

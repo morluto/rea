@@ -42,6 +42,17 @@ const inputBudgetRemediation = (input: InspectRpmPackageInput): string =>
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
 const parserBudgetRecovery = (name: string, maximum: number) => {
+  if (name === "materialized_values" || name === "decoded_text_bytes")
+    return fixedAllowanceOptions(
+      name === "materialized_values"
+        ? "The RPM known header-value allowance"
+        : "The RPM decoded header-text allowance",
+      "parser",
+      {
+        limit: maximum,
+        unit: name === "materialized_values" ? "elements" : "source bytes",
+      },
+    );
   const budget =
     name === "max_header_index_entries"
       ? {
@@ -96,6 +107,9 @@ const rpmPackageFailurePrimary = (
     const { name, maximum } = cause.failure.limit;
     return parseLimitConstraint(OPERATION, "memory", cause, {
       path: input.path,
+      ...(cause.failure.observed === undefined
+        ? {}
+        : { diagnostics: { observed: cause.failure.observed } }),
       ...parserBudgetRecovery(name, maximum),
     });
   }
