@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b1020" />
+    <title>Centro REA</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#" aria-label="Centro REA, inicio">
+          <span class="brand-mark">R</span>
+          <span class="brand-copy"><strong>Centro REA</strong><small>Panel local</small></span>
+        </a>
+        <p class="nav-label">ESPACIO DE TRABAJO</p>
+        <nav class="navigation" aria-label="Navegación principal">
+          <button class="nav-item active" type="button" data-page="home" aria-current="page"><span class="nav-icon">01</span>Inicio</button>
+          <button class="nav-item" type="button" data-page="features"><span class="nav-icon">02</span>Capacidades de REA</button>
+          <button class="nav-item" type="button" data-page="connections"><span class="nav-icon">03</span>Conexiones</button>
+        </nav>
+        <div class="sidebar-foot">
+          <span class="status-dot"></span>
+          <span><strong>Prototipo local</strong><small>No ejecuta análisis</small></span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="breadcrumbs">Centro REA <span>/</span> <strong id="currentSection">Inicio</strong></div>
+          <span class="local-badge"><span class="status-dot"></span> Solo en este equipo</span>
+        </header>
+
+        <section class="page active" id="page-home" aria-labelledby="welcomeTitle">
+          <div class="welcome">
+            <div class="welcome-copy">
+              <p class="eyebrow">TU ESCRITORIO DE ANÁLISIS</p>
+              <h1 id="welcomeTitle">Todo tu espacio de trabajo,<br /><span>en un solo lugar.</span></h1>
+              <p class="lead">Abre REA, Claude y GitHub Copilot desde un panel sencillo. Cada servicio conserva su cuenta, conversación y límites de uso.</p>
+              <div class="welcome-actions">
+                <button class="button button-primary" type="button" data-link="rea">Explorar REA</button>
+                <button class="button button-secondary" type="button" data-page="connections">Ver conexiones</button>
+              </div>
+            </div>
+            <div class="welcome-art" aria-hidden="true">
+              <div class="orbit orbit-one"></div>
+              <div class="orbit orbit-two"></div>
+              <div class="core">REA</div>
+              <span class="orbit-node node-claude">C</span>
+              <span class="orbit-node node-copilot">G</span>
+              <span class="orbit-node node-rea">R</span>
+            </div>
+          </div>
+
+          <div class="section-heading">
+            <div><p class="eyebrow">TUS HERRAMIENTAS</p><h2>Accesos rápidos</h2></div>
+            <span class="quiet-label">Los clientes oficiales se abren por separado</span>
+          </div>
+
+          <div class="service-grid">
+            <article class="service-card service-rea">
+              <div class="service-top"><span class="service-icon">R</span><span class="service-state"><i></i>Herramientas</span></div>
+              <h3>REA</h3>
+              <p>Flujos de análisis, evidencia y proveedores. Este prototipo abre la documentación oficial.</p>
+              <button class="text-button" type="button" data-link="reaInstall">Ver instalación <span>→</span></button>
+            </article>
+            <article class="service-card service-claude">
+              <div class="service-top"><span class="service-icon">C</span><span class="service-state"><i></i>Cliente oficial</span></div>
+              <h3>Claude</h3>
+              <p>Abre Claude en la web o descarga Claude Desktop para conectar REA mediante MCP.</p>
+              <div class="button-row">
+                <button class="button button-small button-secondary" type="button" data-link="claude">Abrir Claude</button>
+                <button class="button button-small button-quiet" type="button" data-link="claudeDownload">Descargar</button>
+              </div>
+            </article>
+            <article class="service-card service-copilot">
+              <div class="service-top"><span class="service-icon">G</span><span class="service-state"><i></i>Cliente oficial</span></div>
+              <h3>GitHub Copilot</h3>
+              <p>Abre Copilot con tu cuenta de GitHub. REA ya está disponible en esta conversación de Copilot.</p>
+              <button class="text-button" type="button" data-link="copilot">Abrir Copilot <span>→</span></button>
+            </article>
+          </div>
+
+          <div class="notice">
+            <span class="notice-mark">i</span>
+            <p><strong>Importante:</strong> REA es una herramienta MCP, no un modelo de IA. Esta aplicación no combina chats ni elimina los límites de Claude o Copilot. La conexión MCP real debe configurarse en cada cliente.</p>
+          </div>
+          <div class="notice notice-warning">
+            <span class="notice-mark">G</span>
+            <p><strong>Memoria de video:</strong> Centro REA desactiva la aceleración gráfica para reducir su uso de VRAM. No es un límite global y no controla Claude, Copilot, el navegador ni otros procesos.</p>
+          </div>
+        </section>
+
+        <section class="page" id="page-features" aria-labelledby="featuresTitle" hidden>
+          <div class="page-intro">
+            <p class="eyebrow">CATÁLOGO DE FUNCIONES</p>
+            <h1 id="featuresTitle">Capacidades de REA</h1>
+            <p class="lead">REA ofrece análisis local con evidencia y límites explícitos. Explora el catálogo y la guía oficial desde aquí.</p>
+          </div>
+          <label class="search-box"><span>Buscar capacidades</span><input id="featureSearch" type="search" placeholder="Ej.: Android, binarios, web…" autocomplete="off" /></label>
+          <div class="feature-grid" id="featureGrid"></div>
+          <p class="prototype-note">El catálogo de esta versión es informativo. No invoca herramientas de REA ni accede a tus archivos.</p>
+        </section>
+
+        <section class="page" id="page-connections" aria-labelledby="connectionsTitle" hidden>
+          <div class="page-intro">
+            <p class="eyebrow">CONECTIVIDAD</p>
+            <h1 id="connectionsTitle">Configura tus clientes</h1>
+            <p class="lead">Conecta REA a Claude Desktop desde la instalación oficial de REA. Esta aplicación no cambia configuraciones ni guarda credenciales.</p>
+          </div>
+          <div class="connection-list">
+            <article class="connection-row">
+              <span class="connection-icon">R</span>
+              <div class="connection-copy"><h3>REA MCP</h3><p>El servidor MCP local entrega las herramientas de REA a cada cliente compatible.</p></div>
+              <span class="connection-pill">Configuración pendiente</span>
+              <button class="button button-small button-secondary" type="button" data-link="reaInstall">Guía de instalación</button>
+            </article>
+            <article class="connection-row">
+              <span class="connection-icon">C</span>
+              <div class="connection-copy"><h3>Claude Desktop</h3><p>La configuración se realiza con <code>rea setup</code> y requiere un Node.js compatible.</p></div>
+              <span class="connection-pill">Cuenta de Anthropic</span>
+              <button class="button button-small button-secondary" type="button" data-link="reaClaude">Guía de conexión</button>
+            </article>
+            <article class="connection-row">
+              <span class="connection-icon">G</span>
+              <div class="connection-copy"><h3>GitHub Copilot</h3><p>Usa el cliente oficial de GitHub. Sus permisos y cuotas siguen bajo tu cuenta.</p></div>
+              <span class="connection-pill">Cuenta de GitHub</span>
+              <button class="button button-small button-secondary" type="button" data-link="copilot">Abrir Copilot</button>
+            </article>
+          </div>
+          <div class="notice notice-warning">
+            <span class="notice-mark">!</span>
+            <p>El equipo detectado usa Node.js 24.11.0; la CLI de REA requiere 24.22.1 o posterior. Actualízalo antes de ejecutar <code>rea setup</code>. La app no lo instala ni actualiza.</p>
+          </div>
+        </section>
+
+        <footer class="footer"><span>Centro REA · Prototipo de escritorio</span><span>Las conversaciones y límites pertenecen a cada proveedor.</span></footer>
+      </main>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

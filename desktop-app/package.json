@@ -1,0 +1,39 @@
+{
+  "name": "rea-desktop-hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Panel de escritorio en español para REA, Claude y GitHub Copilot",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "45.3.3",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "io.github.morluto.rea.desktop-hub",
+    "productName": "Centro REA",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "index.html",
+      "styles.css",
+      "renderer.js"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "Centro-REA-${version}-${arch}.${ext}"
+    }
+  }
+}
