@@ -1,9 +1,17 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { createHash } from "node:crypto";
 
 import { expect } from "vitest";
 
 import { environmentManifestHar } from "../../fixtures/historicalHar.js";
+import {
+  analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
+} from "../../fixtures/analysisView.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { environmentBuildReportSchema } from "../../../src/domain/environmentBundleExport.js";
+import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -13,6 +21,84 @@ const RULES = [
   "sibling-variance",
   "prefix-variance",
 ];
+
+cliTest.for(["different-content", "wrong-role", "matching"] as const)(
+  "reports credential scan coverage for shipped HAR source bytes: %s",
+  async (mode, { cli }) => {
+    const root = await createTestTempDirectory("rea-environment-body-source-");
+    const retained = Buffer.from('{"token":"retained-only-secret"}');
+    const encoded = retained.toString("base64");
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: { method: "GET", url: "http://app.example/api/proof" },
+        response: {
+          status: 200,
+          content: {
+            mimeType: "application/json",
+            encoding: "base64",
+            text:
+              mode === "different-content"
+                ? Buffer.from('{"ok":true}').toString("base64")
+                : ` \t${encoded}\n`,
+          },
+        },
+      },
+    ]);
+    capture.records[0]!.binary_fields = [
+      {
+        pointer: "/response/content/text",
+        representation:
+          mode === "wrong-role" ? "producer-bytes" : "har-base64-content",
+        state: "retained",
+        content_base64: encoded,
+        bytes: retained.length,
+        sha256: createHash("sha256").update(retained).digest("hex"),
+      },
+    ];
+    const input = JSON.stringify(analysisViewCaptureEvidence(capture));
+    const path = join(root, "capture.json");
+    const output = join(root, "bundle");
+    await writeFile(path, input);
+    const result = await cli.run({
+      arguments: ["environment-build", path, output, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = environmentBuildReportSchema.parse(result.json);
+    const shipped = webNetworkCaptureSchema.parse(
+      parseEvidence(
+        JSON.parse(
+          await readFile(
+            join(output, "envs", report.name, "evidence.json"),
+            "utf8",
+          ),
+        ),
+      ).normalized_result,
+    );
+    expect(shipped.records[0]!.binary_fields).toEqual(
+      capture.records[0]!.binary_fields,
+    );
+    expect(shipped.records[0]!.reported).toEqual(capture.records[0]!.reported);
+    expect(await readFile(path, "utf8")).toBe(input);
+    const warnings = report.warnings.filter(({ code }) =>
+      code.startsWith("credential-"),
+    );
+    expect(warnings).toEqual([
+      expect.objectContaining({
+        code:
+          mode === "matching"
+            ? "credential-named-members"
+            : "credential-scan-incomplete",
+        pointers: [
+          mode === "matching"
+            ? "record 0 response /token"
+            : "record 0 response",
+        ],
+      }),
+    ]);
+    if (mode !== "matching") expect(warnings[0]?.message).toContain("source");
+    expect(JSON.stringify(report)).not.toContain("retained-only-secret");
+  },
+);
 
 const listFiles = async (root: string): Promise<string[]> =>
   (await readdir(root, { recursive: true, withFileTypes: true }))

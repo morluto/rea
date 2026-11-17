@@ -317,6 +317,7 @@ export type BinaryTarget =
           | "wxapkg"
           | "uimage"
           | "android-boot-image"
+          | "android-ota-payload"
           | "dmg"
           | "pkg"
           | "intel-hex"
@@ -374,6 +375,7 @@ export const BINARY_TARGET_FORMAT_KINDS = {
   wxapkg: "archive",
   uimage: "archive",
   "android-boot-image": "archive",
+  "android-ota-payload": "archive",
   dmg: "archive",
   pkg: "archive",
   "intel-hex": "archive",
