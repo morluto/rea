@@ -42,6 +42,7 @@ import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
 } from "./application/LinuxHopperPython.js";
+import { settleConcurrent } from "./application/settleConcurrent.js";
 
 /**
  * A selected client's own environment, when its registration records one.
@@ -366,44 +367,67 @@ export const createSystemDoctorHost = (
         environment,
         platform,
       );
-      return [
-        unresolvedProvider(
-          "ghidra",
-          selected,
-          inspectionEnvironment,
-          platform,
-        ) ??
-          (await inspectSystemGhidraProvider(
-            inspectionEnvironment,
-            resourceScope,
-            inspectionSignal,
-          )),
-        unresolvedProvider("ida", selected, inspectionEnvironment, platform) ??
-          (await inspectIdaRegistration(
-            inspectionEnvironment.REA_IDA_MCP_CONFIG,
-            resourceScope,
-            inspectionSignal,
-            inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
-              ? undefined
-              : readRegistration(
-                  inspectionEnvironment.REA_IDA_MCP_CONFIG,
-                  resourceScope,
-                  inspectionSignal,
-                ),
-          )),
-        unresolvedProvider("jadx", selected, inspectionEnvironment, platform) ??
-          (await inspectJadxProvider(
-            inspectionEnvironment,
-            resourceScope,
-            host,
-            inspectionSignal,
-          )),
-        unresolvedProvider("kuna", selected, inspectionEnvironment, platform) ??
-          (await inspectKunaProvider(inspectionEnvironment, platform, {
-            resourceScope,
-            signal: inspectionSignal,
-          })),
-      ] satisfies readonly DoctorProviderInspection[];
+      const ghidraUnresolved = unresolvedProvider(
+        "ghidra",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const idaUnresolved = unresolvedProvider(
+        "ida",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const jadxUnresolved = unresolvedProvider(
+        "jadx",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      const kunaUnresolved = unresolvedProvider(
+        "kuna",
+        selected,
+        inspectionEnvironment,
+        platform,
+      );
+      return await settleConcurrent([
+        ghidraUnresolved !== undefined
+          ? Promise.resolve(ghidraUnresolved)
+          : inspectSystemGhidraProvider(
+              inspectionEnvironment,
+              resourceScope,
+              inspectionSignal,
+            ),
+        idaUnresolved !== undefined
+          ? Promise.resolve(idaUnresolved)
+          : inspectIdaRegistration(
+              inspectionEnvironment.REA_IDA_MCP_CONFIG,
+              resourceScope,
+              inspectionSignal,
+              inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
+                ? undefined
+                : readRegistration(
+                    inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                    resourceScope,
+                    inspectionSignal,
+                  ),
+            ),
+        jadxUnresolved !== undefined
+          ? Promise.resolve(jadxUnresolved)
+          : inspectJadxProvider(
+              inspectionEnvironment,
+              resourceScope,
+              host,
+              inspectionSignal,
+            ),
+        kunaUnresolved !== undefined
+          ? Promise.resolve(kunaUnresolved)
+          : inspectKunaProvider(inspectionEnvironment, platform, {
+              resourceScope,
+              signal: inspectionSignal,
+            }),
+      ]);
     },
     desktopBuildFacts: readDesktopBuildFacts,
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>

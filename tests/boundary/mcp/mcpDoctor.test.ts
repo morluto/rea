@@ -88,10 +88,7 @@ const runCachedMcpDoctor = (
 ) =>
   runProductionMcpDoctor({
     ...options,
-    environment:
-      options.environment === undefined
-        ? undefined
-        : withCompileCache(options.environment),
+    environment: withCompileCache(options.environment),
   });
 
 const expectDoctorDeadline = (
