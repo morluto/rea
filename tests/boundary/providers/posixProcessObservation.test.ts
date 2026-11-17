@@ -1,6 +1,7 @@
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { chmod, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -88,21 +89,51 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "counts an exited descendant that waits to be reaped as stopped",
   async () => {
-    // The shell's background job exits at once, and the `sleep` that replaces
-    // the shell never waits for it, so the job stays a zombie like it would under
-    // a PID 1 that does not reap.
-    const parent = spawn("sh", ["-c", "true & echo $!; exec sleep 30"], {
-      stdio: ["ignore", "pipe", "ignore"],
+    // The parent forks a child that exits at once and does not wait for it
+    // until the test closes its stdin, so the child stays a zombie the way it
+    // would under a PID 1 that does not reap. The parent then calls waitpid, so
+    // the test leaves no zombie behind.
+    const parent = execFile(
+      "python3",
+      [
+        "-c",
+        `
+import os, sys
+pid = os.fork()
+if pid == 0:
+    os._exit(0)
+try:
+    print(pid, flush=True)
+    sys.stdin.buffer.read(1)
+finally:
+    os.waitpid(pid, 0)
+`,
+      ],
+      { timeout: 10_000 },
+    );
+    const finished = new Promise<void>((resolve, reject) => {
+      parent.once("error", reject);
+      parent.once("close", (code) =>
+        code === 0
+          ? resolve()
+          : reject(new Error(`Fixture parent exited with ${String(code)}`)),
+      );
+    });
+    // A rejection before the test awaits it would otherwise go unhandled.
+    finished.catch(() => undefined);
+    if (parent.stdout === null)
+      throw new Error("Fixture parent has no readiness pipe");
+    const lines = createInterface({ input: parent.stdout });
+    const ready = new Promise<number>((resolve, reject) => {
+      lines.once("line", (line) => {
+        lines.close();
+        resolve(Number(line.trim()));
+      });
+      finished.catch(reject);
     });
     try {
-      const zombie = await new Promise<number>((resolve, reject) => {
-        let output = "";
-        parent.once("error", reject);
-        parent.stdout.on("data", (chunk: Buffer) => {
-          output += chunk.toString("utf8");
-          if (output.includes("\n")) resolve(Number(output.trim()));
-        });
-      });
+      const zombie = await ready;
+      expect(Number.isSafeInteger(zombie)).toBe(true);
       await expect
         .poll(async () => (await observePosixProcess(zombie)).kind, {
           interval: 25,
@@ -113,11 +144,8 @@ it.skipIf(process.platform === "win32")(
       await expect(hasProcessStopped(zombie)).resolves.toBe(true);
       await expect(hasProcessStopped(parent.pid!)).resolves.toBe(false);
     } finally {
-      parent.kill("SIGKILL");
-      await new Promise<void>((resolve) => {
-        if (parent.exitCode !== null || parent.signalCode !== null) resolve();
-        else parent.once("close", () => resolve());
-      });
+      parent.stdin?.end("reap");
+      await finished;
     }
   },
 );
