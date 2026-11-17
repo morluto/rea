@@ -254,7 +254,7 @@ describe("CLI advertised input schemas", () => {
       "Usage: rea inspect-keyed-archive <path> [archive] [options]",
     );
     expect(help.stdout).toContain(
-      "archive  Relative archive path when the target is a bundle",
+      "archive  Relative archive path when the target is a bundle (default: .)",
     );
   });
 

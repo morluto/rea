@@ -92,6 +92,14 @@ const shownDefault = (field: z.ZodType, type: string): unknown => {
   return value;
 };
 
+const fieldDescription = (field: z.ZodType, type = typeName(field)): string => {
+  const defaultValue = shownDefault(field, type);
+  const description = field.description ?? "";
+  return defaultValue === undefined
+    ? description
+    : `${description} (default: ${String(defaultValue)})`;
+};
+
 const optionRows = (
   options: z.ZodObject,
   alias: Readonly<Record<string, string>> | undefined,
@@ -102,15 +110,7 @@ const optionRows = (
       const short = alias?.[key];
       const value = type === "boolean" ? "" : ` <${type}>`;
       const label = `--${optionFlagName(key)}${short === undefined ? "" : `, -${short}`}${value}`;
-      const defaultValue = shownDefault(field, type);
-      const description = field.description ?? "";
-      return {
-        label,
-        description:
-          defaultValue === undefined
-            ? description
-            : `${description} (default: ${String(defaultValue)})`,
-      };
+      return { label, description: fieldDescription(field, type) };
     },
   );
 
@@ -203,7 +203,7 @@ export const formatCommandHelp = (name: string, help: CommandHelp): string => {
     (help.args?.shape ?? {}) as Readonly<Record<string, z.ZodType>>,
   ).map(([key, field]) => ({
     label: key,
-    description: field.description ?? "",
+    description: fieldDescription(field),
   }));
   if (args.length > 0) lines.push("", "Arguments:", ...alignedRows(args));
   const options =
