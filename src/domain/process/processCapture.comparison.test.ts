@@ -281,6 +281,9 @@ it("does not report timing ignored by one terminal trace source", () => {
       dimension: "terminal",
       left_at_ms: 50,
       right_at_ms: 60,
+      // The trace made the raw at_ms part of the question, so the field list
+      // names exactly that timing value and nothing else.
+      fields: ["at_ms"],
       left: { kind: "raw" },
       right: { kind: "raw" },
     },
@@ -807,6 +810,156 @@ it("compares raw terminal and process observations while honoring normalization 
       },
     ),
   ).toMatchObject({ process: "changed", status: "changed" });
+});
+
+it("names the compared field that differed inside a filesystem checkpoint", () => {
+  const capture = (root: string) => {
+    const base = emptyCapture();
+    const file = {
+      path: `${root}:out.txt`,
+      type: "file" as const,
+      mode: 0o644,
+      size: 4,
+      sha256: "a".repeat(64),
+      symlink_target: null,
+    };
+    return {
+      ...base,
+      files_after: [file],
+      filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
+        ...checkpoint,
+        files: checkpoint.name === "before" ? [] : [file],
+      })),
+    };
+  };
+
+  expect(
+    compareFullyObserved(capture("root_0"), capture("root_1")),
+  ).toMatchObject({
+    filesystem: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "filesystem",
+      index: 1,
+      fields: ["files[0].path"],
+    },
+  });
+});
+
+it("names every differing field of one observation in sorted order", () => {
+  const capture = (side: "left" | "right") => ({
+    ...emptyCapture(),
+    process_samples: [
+      {
+        at_ms: 10,
+        pid: side === "left" ? 2 : 3,
+        parent_pid: side === "left" ? 1 : 4,
+        process_group_id: side === "left" ? 2 : 5,
+        session_id: side === "left" ? 2 : 6,
+        command: side === "left" ? "worker-a" : "worker-b",
+      },
+    ],
+  });
+
+  expect(compareFullyObserved(capture("left"), capture("right"))).toMatchObject(
+    {
+      process: "changed",
+      first_divergence: {
+        status: "found",
+        dimension: "process",
+        index: 0,
+        fields: [
+          "command",
+          "parent_pid",
+          "pid",
+          "process_group_id",
+          "session_id",
+        ],
+      },
+    },
+  );
+});
+
+it("bounds the field list when a wide observation differs throughout", () => {
+  const capture = (root: string) => {
+    const base = emptyCapture();
+    const files = Array.from({ length: 10 }, (_entry, index) => ({
+      path: `${root}:f${index}.txt`,
+      type: "file" as const,
+      mode: 0o644,
+      size: 1,
+      sha256: "a".repeat(64),
+      symlink_target: null,
+    }));
+    return {
+      ...base,
+      files_after: files,
+      filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
+        ...checkpoint,
+        files: checkpoint.name === "before" ? [] : files,
+      })),
+    };
+  };
+
+  const divergence = compareFullyObserved(
+    capture("root_0"),
+    capture("root_1"),
+  ).first_divergence;
+  if (divergence.status !== "found")
+    throw new Error("A differing file set must locate a divergence");
+  expect(divergence.fields).toStrictEqual(
+    Array.from({ length: 8 }, (_entry, index) => `files[${index}].path`),
+  );
+});
+
+it("reports an observation that is present on one side only as the whole field", () => {
+  const sample = {
+    at_ms: 10,
+    pid: 1,
+    parent_pid: 0,
+    process_group_id: 1,
+    session_id: 1,
+    command: "worker",
+  };
+  const withSample = { ...emptyCapture(), process_samples: [sample] };
+
+  expect(compareFullyObserved(withSample, emptyCapture())).toMatchObject({
+    process: "removed",
+    first_divergence: {
+      status: "found",
+      dimension: "process",
+      index: 0,
+      fields: ["$"],
+    },
+  });
+});
+
+it("accepts a divergence recorded before the compared field list existed", () => {
+  const capture = (pid: number) => ({
+    ...emptyCapture(),
+    process_samples: [
+      {
+        at_ms: 10,
+        pid,
+        parent_pid: 0,
+        process_group_id: 1,
+        session_id: 1,
+        command: "worker",
+      },
+    ],
+  });
+  const comparison = compareFullyObserved(capture(1), capture(2));
+  const divergence = comparison.first_divergence;
+  if (divergence.status !== "found")
+    throw new Error("A differing PID must locate a divergence");
+  const { fields: _compared, ...legacyDivergence } = divergence;
+
+  expect(
+    processCaptureComparisonSchema.parse({
+      ...comparison,
+      first_divergence: legacyDivergence,
+    }),
+  ).toMatchObject({ status: "changed", process: "changed" });
 });
 
 it("keeps filesystem comparison unknown without coverage and reports observed changes", () => {

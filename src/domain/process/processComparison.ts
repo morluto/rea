@@ -23,6 +23,12 @@ import {
 } from "./processTraceComparison.js";
 const OPERATION = "compare_process_captures";
 
+/**
+ * A divergence report names the fields that differed, not a second copy of the
+ * observations, so the list is bounded to keep the report readable.
+ */
+const DIFFERING_FIELD_LIMIT = 8;
+
 /** Comparison classification that never equates incomplete evidence. */
 export const comparisonStatusSchema = z.enum([
   "unchanged",
@@ -85,6 +91,15 @@ export const processCaptureComparisonSchema = z
         index: z.int().nonnegative(),
         left_at_ms: z.int().nonnegative().nullable(),
         right_at_ms: z.int().nonnegative().nullable(),
+        // Absent on records authenticated before the field list existed; the
+        // divergence itself is still fully described by `left` and `right`.
+        fields: z
+          .array(z.string().min(1))
+          .max(DIFFERING_FIELD_LIMIT)
+          .optional()
+          .describe(
+            "Sorted names of the fields the selected projection compared and that differ, with array positions as bracketed indices and `$` for a whole observation. Bounded to eight names; `left` and `right` retain the complete observations.",
+          ),
         left: jsonValueSchema.nullable(),
         right: jsonValueSchema.nullable(),
       }),
@@ -130,6 +145,50 @@ const terminalObservations = (capture: ProcessCapture): readonly unknown[] => [
 const sameJsonValue = (left: unknown, right: unknown): boolean => {
   const encodedLeft = canonicalize(left);
   return encodedLeft !== undefined && encodedLeft === canonicalize(right);
+};
+
+const containerEntries = (value: unknown): readonly string[] | null =>
+  Array.isArray(value)
+    ? value.map((_entry, index) => String(index))
+    : value !== null && typeof value === "object"
+      ? Object.keys(value)
+      : null;
+
+const differingFieldPaths = (
+  left: unknown,
+  right: unknown,
+): readonly string[] => {
+  const output: string[] = [];
+  const walk = (
+    leftValue: unknown,
+    rightValue: unknown,
+    path: string,
+  ): void => {
+    if (output.length >= DIFFERING_FIELD_LIMIT) return;
+    if (sameJsonValue(leftValue, rightValue)) return;
+    const leftKeys = containerEntries(leftValue);
+    const rightKeys = containerEntries(rightValue);
+    if (
+      leftKeys === null ||
+      rightKeys === null ||
+      Array.isArray(leftValue) !== Array.isArray(rightValue)
+    ) {
+      output.push(path.length === 0 ? "$" : path);
+      return;
+    }
+    for (const key of [...new Set([...leftKeys, ...rightKeys])].sort())
+      walk(
+        Reflect.get(leftValue as object, key),
+        Reflect.get(rightValue as object, key),
+        Array.isArray(leftValue)
+          ? `${path}[${key}]`
+          : path.length === 0
+            ? key
+            : `${path}.${key}`,
+      );
+  };
+  walk(left, right, "");
+  return output.sort();
 };
 
 /** Retained observations for diagnostics and explicit trace matching. */
@@ -357,6 +416,9 @@ const firstCollectionDivergence = (
       index,
       left_at_ms: eventTime(dimension, leftValue),
       right_at_ms: eventTime(dimension, rightValue),
+      fields: [
+        ...differingFieldPaths(leftComparisonValue, rightComparisonValue),
+      ],
       left: jsonValueSchema.parse(leftValue),
       right: jsonValueSchema.parse(rightValue),
     };
