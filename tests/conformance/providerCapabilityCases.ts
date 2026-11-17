@@ -54,12 +54,30 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
     cases: ["tests/boundary/cli/desktopApplicationCli.test.ts"],
   },
   devicetree: { cases: ["tests/acceptance/devicetreeCli.test.ts"] },
+  dwarfUnits: {
+    cases: [
+      "tests/acceptance/dwarfUnitsCli.test.ts",
+      "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+    ],
+  },
   electronActiveObservation: {
     cases: ["tests/acceptance/applications/electronBlankPathCli.test.ts"],
   },
   electronFuses: { cases: ["tests/acceptance/electronFusesCli.test.ts"] },
   electronObservation: { cases: ["tests/boundary/cli/electronCli.test.ts"] },
+  elfDebugLink: {
+    cases: [
+      "tests/acceptance/elfDebugLinkCli.test.ts",
+      "tests/boundary/mcp/elfDebugLinkMcp.test.ts",
+    ],
+  },
   elfNotes: { cases: ["tests/acceptance/elfNotesCli.test.ts"] },
+  elfDependencies: {
+    cases: [
+      "tests/acceptance/elfDependenciesCli.test.ts",
+      "tests/boundary/mcp/elfDependenciesMcp.test.ts",
+    ],
+  },
   elfUnwindRanges: { cases: ["tests/acceptance/elfUnwindRangesCli.test.ts"] },
   erlangBeam: { cases: ["tests/acceptance/erlangBeamCli.test.ts"] },
   evmInterface: { cases: ["tests/boundary/mcp/evmInterfaceMcp.test.ts"] },

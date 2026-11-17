@@ -31,6 +31,7 @@ import {
 } from "../ArtifactTraversalObservation.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
+import { parseJsonWithDuplicatePolicy } from "../../domain/jsonDuplicateMember.js";
 import {
   appleAssetCatalogInputSchema,
   appleResourceKeyFields,
@@ -396,16 +397,21 @@ const inspectAssetCatalogEntry = async (input: {
     signal: null,
   };
   const diagnostics = { catalog_path: entry.path };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch (cause: unknown) {
+  const decoded = parseJsonWithDuplicatePolicy(output, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw new AnalysisOutputError(
+        "inspect_asset_catalog",
+        `assetutil returned duplicate JSON member ${JSON.stringify(decoded.duplicate.name)} for ${entry.path}`,
+        { capturedOutput, diagnostics },
+      );
     throw new AnalysisOutputError(
       "inspect_asset_catalog",
       `assetutil returned invalid JSON for ${entry.path}`,
-      { cause, capturedOutput, diagnostics },
+      { cause: decoded.cause, capturedOutput, diagnostics },
     );
   }
+  const parsed = decoded.value;
   try {
     return {
       catalog: {

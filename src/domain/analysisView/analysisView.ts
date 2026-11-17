@@ -17,6 +17,7 @@ import { projectErlangBeamView } from "./erlangBeamView.js";
 import { projectPythonPycView } from "./pythonPycView.js";
 import { projectRpmPackageView } from "./rpmPackageView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
+import { projectElfDependenciesView } from "./elfDependenciesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
   parseAnalysisViewResult,
@@ -199,6 +200,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_erlang_beam", projectErlangBeamView),
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
+  retain("inspect_elf_dependencies", projectElfDependenciesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
   retain("inspect_rpm_package", projectRpmPackageView),
