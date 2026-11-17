@@ -44,3 +44,4 @@ for new work, roadmap granularity and producer-owned contracts.
 - [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))
 
 - [NuGet package inspection](artifacts/nuget-nupkg/spec.md) ([plan](artifacts/nuget-nupkg/plan.md), [tasks](artifacts/nuget-nupkg/tasks.md))
+- [Plugin-first client setup](setup/plugin-first-setup/spec.md) ([plan](setup/plugin-first-setup/plan.md), [tasks](setup/plugin-first-setup/tasks.md))
