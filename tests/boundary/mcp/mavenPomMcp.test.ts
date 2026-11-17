@@ -49,7 +49,11 @@ mcpTest(
         error: {
           code: "resource_constraint",
           details: {
-            reported_limits: { max_xml_nodes: MAVEN_POM_MAX_XML_NODES },
+            reported_limits: {
+              boundary: "xml-nodes",
+              maximum: MAVEN_POM_MAX_XML_NODES,
+              required: MAVEN_POM_MAX_XML_NODES + 1,
+            },
             partial_observation: {
               kind: "file-snapshot-hash",
               path,
