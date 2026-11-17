@@ -1060,12 +1060,16 @@ describe("windows java resolution without JAVA_HOME", () => {
     return { root, javaDir };
   };
 
-  // The win32 platform option makes appendCallerPath join with backslashes,
-  // so translate its separator back to the host's before touching the real
-  // filesystem; the tests must pass on POSIX hosts as well. Host fixture
-  // directories never contain literal backslashes, and Windows accepts
-  // forward slashes, so the translation is safe on both.
-  const hostPath = (candidate: string) => candidate.replaceAll("\\", "/");
+  // The win32 platform option makes appendCallerPath join with backslashes, and
+  // windowsPathCandidates resolves PATH entries with win32 semantics (adding a
+  // drive letter to a host-absolute fixture path), so translate both back to
+  // the host's spelling before touching the real filesystem. Host fixture
+  // directories never contain literal backslashes or drive letters, and Windows
+  // accepts forward slashes, so the translation is safe on both.
+  const hostPath = (candidate: string) =>
+    process.platform === "win32"
+      ? candidate
+      : candidate.replace(/^[A-Za-z]:/u, "").replaceAll("\\", "/");
   const inspectionHost = {
     readText: (path: string) => readFile(hostPath(path), "utf8"),
     executable: (path: string) =>
@@ -1127,11 +1131,13 @@ describe("windows java resolution without JAVA_HOME", () => {
       },
       inspectionHost,
     );
-    expect(observedProbeCommands).toEqual([join(javaDir, "java.exe")]);
+    expect(observedProbeCommands.map(hostPath)).toEqual([
+      join(javaDir, "java.exe"),
+    ]);
     expect(inspected.status).toBe("available");
     if (inspected.status !== "available")
       throw new Error("Expected selected installation");
-    expect(inspected.javaCommand).toBe(join(javaDir, "java.exe"));
+    expect(hostPath(inspected.javaCommand)).toBe(join(javaDir, "java.exe"));
   });
 
   it("keeps the bare probe command when java.exe is absent from Path", async () => {
@@ -1143,7 +1149,7 @@ describe("windows java resolution without JAVA_HOME", () => {
     await inspectGhidraInstallation(
       {
         installDir: intended,
-        environment: { Path: "C:\nowhere" },
+        environment: { Path: String.raw`C:\nowhere` },
         platform: "win32",
         architecture: "x64",
         resourceOwner: resources.owner,
@@ -1160,20 +1166,27 @@ describe("windows java resolution without JAVA_HOME", () => {
     const { resolveWindowsPathJava } =
       await import("../../../../src/ghidra/GhidraJavaPathResolution.js");
     const { javaDir } = await makeJavaDir("resolver");
-    const resolved = resolveWindowsPathJava({
-      Path: `C:\not-real;"${javaDir}"`,
-    });
-    expect(resolved).toBe(join(javaDir, "java.exe"));
-    // Relative entries are never selected, matching the darwin policy.
-    const relative = resolveWindowsPathJava(
-      { Path: "relativejdk\bin" },
-      (candidate) => candidate === join("relativejdk\bin", "java.exe"),
+    const resolved = resolveWindowsPathJava(
+      { Path: String.raw`C:\not-real;"${javaDir}"` },
+      inspectionHost.executable,
     );
-    expect(relative).toBeUndefined();
-    // Path (title-cased) is preferred over PATH; both are honoured.
-    expect(resolveWindowsPathJava({ PATH: `${javaDir};` })).toBe(
+    expect(resolved === undefined ? undefined : hostPath(resolved)).toBe(
       join(javaDir, "java.exe"),
     );
+    // Relative entries are never selected, matching the darwin policy.
+    const relative = resolveWindowsPathJava(
+      { Path: String.raw`relativejdk\bin` },
+      () => true,
+    );
+    expect(relative).toBeUndefined();
+    // Environment names match without case.
+    const fromLowercase = resolveWindowsPathJava(
+      { path: `${javaDir};` },
+      inspectionHost.executable,
+    );
+    expect(
+      fromLowercase === undefined ? undefined : hostPath(fromLowercase),
+    ).toBe(join(javaDir, "java.exe"));
   });
 
   it("rejects the launch with an actionable code instead of a bare fallback", async () => {
@@ -1185,7 +1198,7 @@ describe("windows java resolution without JAVA_HOME", () => {
       homeRoot: "C:home",
       tempRoot: "C:\temp",
       arguments: [],
-      environment: { Path: "C:\nowhere" },
+      environment: { Path: String.raw`C:\nowhere` },
       onStderr: () => undefined,
     }).then(
       () => {
@@ -1198,7 +1211,18 @@ describe("windows java resolution without JAVA_HOME", () => {
     expect(admission.code).toBe("java_command_unresolved");
     expect(admission.detail).toMatchObject({
       check: "path",
-      path: "C:\nowhere",
+      path: String.raw`C:\nowhere`,
     });
   });
+});
+
+it("keeps quoted PATH entries containing semicolons intact", async () => {
+  const { resolveWindowsPathJava } =
+    await import("../../../../src/ghidra/GhidraJavaPathResolution.js");
+  const quoted = String.raw`C:\Tools;Local\jdk\bin`;
+  const resolved = resolveWindowsPathJava(
+    { Path: String.raw`"${quoted}";C:\other\bin` },
+    (candidate) => candidate === String.raw`C:\Tools;Local\jdk\bin\java.exe`,
+  );
+  expect(resolved).toBe(String.raw`C:\Tools;Local\jdk\bin\java.exe`);
 });

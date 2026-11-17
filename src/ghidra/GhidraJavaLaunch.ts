@@ -111,7 +111,7 @@ export const ghidraJavaLaunch = async (options: {
       // unactionable Win32 87 launcher failure; report the search outcome
       // instead so the caller can extend Path or set JAVA_HOME.
       const searched =
-        options.environment.Path ?? options.environment.PATH ?? "";
+        snapshotEnvironment(options.environment, "win32").PATH ?? "";
       throw new GhidraAdmissionError("java_command_unresolved", {
         check: "path",
         ...(searched.length <= 1024
