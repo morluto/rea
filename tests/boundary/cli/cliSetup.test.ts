@@ -689,7 +689,7 @@ describe("interactive setup storage guidance", () => {
             name: "claude_desktop",
             configPathError: remediation,
           },
-          status: "invalid",
+          status: "unknown",
         },
       ],
     );
