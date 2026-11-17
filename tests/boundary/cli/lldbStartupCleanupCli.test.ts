@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import {
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
   symlink,
@@ -478,7 +480,7 @@ it("retains caller-selected launch facts, provenance, and hashes target file in 
     env: { TEST_ENV: "val" },
     launch_provenance: {
       caller_selected_path: "/bin/echo",
-      resolved_path: "/bin/echo",
+      resolved_path: await realpath("/bin/echo"),
       args: ["test-arg"],
       env: { TEST_ENV: "val" },
     },
@@ -547,8 +549,11 @@ it("resolves symlinked traversal paths so evidence hash and launch binary match 
     const linkPath = join(workDir, "link");
     await symlink(otherInnerDir, linkPath);
 
-    const callerSelected = join(workDir, "link", "..", "target");
-    const expectedResolved = await realpath(callerSelected);
+    const callerSelected = `${workDir}/link/../target`;
+    const expectedResolved = await realpath(otherTarget);
+    const expectedSha256 = createHash("sha256")
+      .update(await readFile(otherTarget))
+      .digest("hex");
 
     let launchedPath: string | undefined;
     const fakeBridge = new FakeLldbBridge();
@@ -592,6 +597,15 @@ it("resolves symlinked traversal paths so evidence hash and launch binary match 
     expect(evidence.parameters.launch_provenance).toEqual({
       caller_selected_path: callerSelected,
       resolved_path: expectedResolved,
+    });
+    expect(evidence.subject.identity).toMatchObject({
+      kind: "session",
+      session_kind: "lldb",
+      id: sessionId,
+      target: {
+        kind: "file",
+        sha256: expectedSha256,
+      },
     });
 
     await manager.close(sessionId);
