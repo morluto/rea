@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  cliCompletionShell,
   productionMcpDoctorArguments,
   parseCliGlobalArguments,
 } from "../../../src/cliBuiltinArguments.js";
@@ -273,6 +274,26 @@ export const cliCompileCacheEnvironment = (
 });
 
 /**
+ * Mirror `scripts/rea.mjs` entry routing for invocations handled outside
+ * `runOneShotCli` (`rea mcp` / `rea --mcp`, `rea mcp ... --http`, and
+ * production `rea mcp doctor ...`). Subcommands such as `rea mcp add` and
+ * `rea mcp --help` still dispatch through `runOneShotCli`.
+ */
+const isDirectMcpLauncherEntry = (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv | undefined,
+): boolean => {
+  if (cliCompletionShell(environment ?? {}) !== undefined) return false;
+  if (productionMcpDoctorArguments([...arguments_]) !== undefined) return true;
+  if (arguments_[0] !== "mcp" && arguments_[0] !== "--mcp") return false;
+  return (
+    arguments_.length === 1 ||
+    ((arguments_[1]?.startsWith("-") ?? false) &&
+      arguments_.slice(1).includes("--http"))
+  );
+};
+
+/**
  * Whether the file's shared process reports this command exactly as a fresh
  * `rea` process would. Stdin and deadlines belong to a process; the launcher
  * routes MCP and its doctor before the shared one-shot path; Node options
@@ -292,9 +313,7 @@ const sharedProcessCanServe = ({
   terminal !== true &&
   input === undefined &&
   timeoutMs === undefined &&
-  arguments_[0] !== "mcp" &&
-  arguments_[0] !== "--mcp" &&
-  productionMcpDoctorArguments([...arguments_]) === undefined &&
+  !isDirectMcpLauncherEntry(arguments_, environment) &&
   environment?.NODE_OPTIONS === undefined &&
   !enablesLogging(environment?.REA_LOG_LEVEL) &&
   !logsByDefault(arguments_, environment?.REA_LOG_LEVEL);
