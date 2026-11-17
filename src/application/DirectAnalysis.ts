@@ -308,7 +308,8 @@ export const runManagedProviderExecution = async (
       async () => {
         const opened = await session.open(path, { signal: operationSignal });
         if (!opened.ok) return opened;
-        return recoveryParameters === undefined
+        return recoveryParameters === undefined ||
+          session.executeForDirectObservation === undefined
           ? await session.execute(admitted.value.name, admitted.value.input, {
               signal: operationSignal,
             })

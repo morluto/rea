@@ -73,6 +73,20 @@ const KNOWN_DIFFERENCES: Readonly<Record<string, readonly string[]>> = {
       ["evidence.evidence_id", "evidence.parameters.input_path"],
     ]),
   ),
+  ...Object.fromEntries(
+    [
+      "inspect_managed_artifact",
+      "inspect_managed_members",
+      "inspect_managed_native_boundaries",
+    ].map((name) => [
+      name,
+      [
+        "evidence.evidence_id",
+        "evidence.parameters.input_path",
+        "evidence.parameters.path",
+      ],
+    ]),
+  ),
   // `DirectAnalysis` shapes CLI failures in the application layer and adds
   // an `error: "Analysis failed"` marker MCP does not send.
   trace_native_ui_action: ["failure.error"],
@@ -83,11 +97,6 @@ const KNOWN_DIFFERENCES: Readonly<Record<string, readonly string[]>> = {
   capture_native_ui_scenario: ["outcome"],
   inspect_artifact: ["outcome"],
   extract_artifact: ["outcome"],
-  // MCP runs managed operations in the composition's own managed session,
-  // not the session's provider route, so it never reaches this provider.
-  inspect_managed_artifact: ["outcome"],
-  inspect_managed_members: ["outcome"],
-  inspect_managed_native_boundaries: ["outcome"],
 };
 
 /** Inputs a one-shot CLI call needs that MCP takes from session state. */

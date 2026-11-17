@@ -1,3 +1,4 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { spawnFailure } from "../../support/process/spawnFailure.js";
 import {
   AnalysisOutputError,
@@ -24,7 +25,6 @@ import { createDeferred } from "../../fixtures/binarySession.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Cli } from "incur";
 import { registerSignalCommands } from "../../../src/cli/signalCommands.js";
 import { silentLogger } from "../../../src/logger.js";
 
@@ -579,7 +579,7 @@ it.each([
       "fixture: selected input format was not forwarded",
     );
 
-    const cli = Cli.create("signal-input-format-refusal-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     let commandExitCode: typeof process.exitCode;
@@ -743,7 +743,7 @@ it("projects sigrok's zero-exit missing-channel refusal through CLI and MCP with
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {
-    const cli = Cli.create("signal-channel-refusal-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     await cli.serve(
@@ -793,7 +793,7 @@ it("projects a missing bare channel target as invalid decoder input through the 
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {
-    const cli = Cli.create("signal-channel-target-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     await cli.serve(
@@ -956,7 +956,7 @@ it("reports an unknown decoder help selection as CLI invalid input", async () =>
   const previousExitCode = process.exitCode;
   process.exitCode = 0;
   try {
-    const cli = Cli.create("signal-refusal-test", { sync: false });
+    const cli = createCommandCli();
     registerSignalCommands(cli, silentLogger, {}, f.service);
     let stdout = "";
     await cli.serve(
@@ -1380,7 +1380,7 @@ it.each([
       _tag: "AnalysisResourceConstraintError",
       resource: "memory",
       reason: "Decoder discovery exceeds the 65,536-line representation budget",
-      reportedLimits: { line_budget: 65536 },
+      reportedLimits: { boundary: "line_budget", maximum: 65536 },
       fixedAllowance: { kind: "capture" },
     });
     expect(result.error.capturedOutput?.stdout).toBe(

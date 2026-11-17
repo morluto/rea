@@ -172,36 +172,6 @@ export const parseCliGlobalArguments = (
   };
 };
 
-/** Keep REA-owned delimited formats out of Incur's narrower formatter surface. */
-export const adaptCliOutputArgumentsForIncur = (
-  arguments_: readonly string[],
-): string[] => {
-  const adapted: string[] = [];
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index]!;
-    const value = arguments_[index + 1];
-    if (VALUED_OUTPUT_FLAGS.has(argument)) {
-      if (argument === "--columns") {
-        if (value !== undefined) index += 1;
-        continue;
-      }
-      if (argument === "--format" && (value === "csv" || value === "tsv")) {
-        adapted.push("--format", "json");
-        index += 1;
-        continue;
-      }
-      adapted.push(argument);
-      if (value) {
-        adapted.push(value);
-        index += 1;
-      }
-      continue;
-    }
-    adapted.push(argument);
-  }
-  return adapted;
-};
-
 type McpAddArgumentError =
   | {
       readonly kind: "missing_value";
@@ -311,7 +281,11 @@ export const productionMcpDoctorArguments = (
   | { readonly arguments: readonly string[]; readonly timings: boolean }
   | undefined => {
   const global = parseCliGlobalArguments(arguments_);
-  if (global.command[0] !== "mcp" || global.command[1] !== "doctor")
+  if (
+    global.command[0] !== "mcp" ||
+    global.command[1] !== "doctor" ||
+    global.flags.has("--mcp")
+  )
     return undefined;
   const removed = new Set([
     global.commandIndices[0]!,

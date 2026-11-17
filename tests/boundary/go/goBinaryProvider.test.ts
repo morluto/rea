@@ -70,11 +70,14 @@ it("preserves the actual build-info byte guard as a resource failure", async () 
   expect(result.error.reason).toContain(path);
   expect(result.error.reportedLimits).toEqual({
     boundary: "build-info",
-    maximum_bytes: 1024 * 1024,
+    maximum: 1024 * 1024,
+  });
+  const projected = projectAnalysisError(result.error);
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
     parameter: "max_build_info_bytes",
     unit: "bytes",
   });
-  const projected = projectAnalysisError(result.error);
   expect(projected.retryable).toBe(false);
   expect(projected.remediation.action).toContain(
     "Go build-info string allowance",
@@ -95,7 +98,7 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
       resource: "cpu",
       reported_limits: {
         boundary: "search",
-        maximum_bytes: 256 * 1024 * 1024,
+        maximum: 256 * 1024 * 1024,
       },
     },
   });
@@ -260,13 +263,23 @@ it("adjusts string_literals file offsets inside a universal Mach-O slice and rec
 });
 
 it.each([
-  ["max_input_bytes", 4095, 8192],
-  ["max_report_bytes", 1, 16384],
-  ["max_build_info_bytes", 1, 4096],
-  ["max_header_search_bytes", 1, 4096],
+  [
+    "max_input_bytes",
+    4095,
+    8192,
+    { maximum_input_bytes: 4095, parameter: "max_input_bytes", unit: "bytes" },
+  ],
+  [
+    "max_report_bytes",
+    1,
+    16384,
+    { maximum_output_bytes: 1, parameter: "max_report_bytes", unit: "bytes" },
+  ],
+  ["max_build_info_bytes", 1, 4096, { boundary: "build-info", maximum: 1 }],
+  ["max_header_search_bytes", 1, 4096, { boundary: "search", maximum: 1 }],
 ] as const)(
   "recovers the same Go artifact after increasing %s",
-  async (parameter, low, raised) => {
+  async (parameter, low, raised, reportedLimits) => {
     const root = await createTestTempDirectory("rea-go-budget-recovery-");
     const path = join(root, "application.elf");
     await writeFile(path, createGoBinaryFixture().bytes);
@@ -279,7 +292,14 @@ it.each([
         );
       expect(projectAnalysisError(refused.error)).toMatchObject({
         code: "resource_constraint",
-        details: { reported_limits: { parameter, unit: "bytes" } },
+        details: {
+          reported_limits: reportedLimits,
+          limit: {
+            control_kind: "parameter",
+            parameter,
+            unit: "bytes",
+          },
+        },
         remediation: { action: expect.stringContaining(parameter) },
       });
       const recovered = await service.inspect({ path, [parameter]: raised });

@@ -308,8 +308,8 @@ export const selectsRecordedLine = (
   return true;
 };
 
-/** Base64 characters, in whole groups, whose bytes fit the replay limit. */
-const BASE64_LIMIT_CHARS = Math.floor(REPLAY_BODY_LIMIT_BYTES / 3) * 4;
+/** Base64 bytes, in whole four-character groups, whose decoded bytes fit the replay limit. */
+const BASE64_LIMIT_BYTES = Math.floor(REPLAY_BODY_LIMIT_BYTES / 3) * 4;
 
 interface ReplayBody {
   readonly body: JsonValue;
@@ -325,7 +325,10 @@ const replayBody = (exchange: RecordedExchange): ReplayBody => {
     case "base64":
       return body.whole
         ? { body: body.encoded, truncated: false }
-        : { body: body.encoded.slice(0, BASE64_LIMIT_CHARS), truncated: true };
+        : {
+            body: utf8HeadExcerpt(body.encoded, BASE64_LIMIT_BYTES).text,
+            truncated: true,
+          };
     case "cut":
       return {
         body: utf8HeadExcerpt(body.text, REPLAY_BODY_LIMIT_BYTES).text,
