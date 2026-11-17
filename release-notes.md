@@ -44,6 +44,7 @@
 * **android:** require integrity_check on a JNI library integrity failure ([#11624](https://github.com/morluto/rea/issues/11624)) ([3f4953b](https://github.com/morluto/rea/commit/3f4953bfae3f8ed7caece0b7a1b8cbc09cb8eb88))
 * **artifacts:** inspect Android boot image components ([a88c0a5](https://github.com/morluto/rea/commit/a88c0a55544e16a710ddaad2feb5a2c6e7011f4e))
 * **artifacts:** inspect NuGet package metadata and dependencies ([43b9fa8](https://github.com/morluto/rea/commit/43b9fa87fbbaa74224731a1fe3a8e67a2d336ae3)), closes [#8144](https://github.com/morluto/rea/issues/8144)
+* **artifacts:** inventory Android OTA update payloads offline ([#11378](https://github.com/morluto/rea/issues/11378)) ([51459cf](https://github.com/morluto/rea/commit/51459cf203ae1eb6b586a95b21899eaa0f631823))
 * **artifacts:** name integrity checks for DMG, directory and release-exposure readers ([#11056](https://github.com/morluto/rea/issues/11056)) ([7134053](https://github.com/morluto/rea/commit/7134053d27268f7e1070c867047ec59bb7fe7497))
 * **artifacts:** name integrity checks for ZIP, PyInstaller and changed release files, and keep them through reader projections ([7134053](https://github.com/morluto/rea/commit/7134053d27268f7e1070c867047ec59bb7fe7497))
 * **artifacts:** name the integrity check for container readers' produced entries and layouts ([#11119](https://github.com/morluto/rea/issues/11119)) ([e38e339](https://github.com/morluto/rea/commit/e38e339e5f14c27069a46f2533ba70eb84858ace))
