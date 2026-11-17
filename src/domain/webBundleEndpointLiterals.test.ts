@@ -442,12 +442,47 @@ it("counts admitted literals from scripts that stayed under the ceiling", () => 
   });
 });
 
+it("keeps a result that already fits instead of reserving a record", () => {
+  const captured = createWebPageInspection([
+    {
+      source: `const routes = ["/a"];`,
+      scriptKey: `scr_${"e".repeat(64)}`,
+      url: "https://app.example.test/app.js",
+      origin: "https://app.example.test",
+      cdpHash: "hash",
+    },
+  ]);
+  const script = captured.scripts.items.find(isIncludedScript);
+  if (script === undefined) throw new Error("Missing included script");
+  const admission = { maximumCount: 8, source: "runtime" as const };
+  const full = analyzeCapturedWebScript(
+    script,
+    undefined,
+    undefined,
+    admission,
+  );
+  if (full.status !== "analyzed") throw new Error("Expected analyzed script");
+  const literals = full.inferences.filter(isLiteralEndpointCandidate);
+  expect(literals.length).toBe(1);
+  const whole = jsonValueByteLength(full as unknown as JsonValue);
+  // The omission record is wider than the single candidate it would replace, so
+  // reserving it first would reject a result that originally fit.
+  const fitted = fitWebBundleEndpointLiteralCandidates(full, whole, admission);
+  expect(fitted).toBe(full);
+  expect(fitted.endpoint_literal_candidates).toBeUndefined();
+});
+
 it("fits literals by cumulative bytes and keeps byte drops out of the count", () => {
+  // Each candidate is long enough that the literals, not the omission record,
+  // decide what fits; a short table already fits whole and is kept as it is.
+  const [first, second, third, fourth] = ["one", "two", "three", "four"].map(
+    (name) => `/api/${name}/${name.charAt(0).repeat(2_000)}`,
+  );
   const source = `const routes = ${JSON.stringify([
-    "/api/one",
-    "/api/two",
-    "/api/three",
-    "/api/four",
+    first,
+    second,
+    third,
+    fourth,
   ])};
 fetch("/api/kept");
 function vendor() { return "some-vendor-marker"; }`;
@@ -473,22 +508,9 @@ function vendor() { return "some-vendor-marker"; }`;
   const literals = full.inferences.filter(isLiteralEndpointCandidate);
   expect(literals.length).toBe(4);
   expect(full.endpoint_literal_candidates).toBeUndefined();
-  // The budget admits three of the four candidates once the omission record is
-  // counted, and the record itself is why the fourth does not fit.
-  const keepThree = {
-    ...full,
-    endpoint_literal_candidates: webBundleEndpointLiteralRecord(admission, 3, {
-      byCount: 0,
-      byCountExact: true,
-      byResultBudget: 1,
-    }),
-    inferences: full.inferences.filter(
-      (inference) =>
-        !isLiteralEndpointCandidate(inference) ||
-        literals.slice(0, 3).includes(inference),
-    ),
-  };
-  const budget = jsonValueByteLength(keepThree as unknown as JsonValue);
+  // One long candidate has to go: the budget sits below the untrimmed result but
+  // above it minus that literal plus the omission record.
+  const budget = jsonValueByteLength(full as unknown as JsonValue) - 1_700;
   const fitted = fitWebBundleEndpointLiteralCandidates(full, budget, admission);
   const retained = fitted.inferences.filter(isLiteralEndpointCandidate);
   expect(retained.length).toBeLessThan(literals.length);
