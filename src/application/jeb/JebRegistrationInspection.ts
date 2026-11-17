@@ -15,33 +15,51 @@ export const JEB_DOCTOR_SETTINGS = [
 /** Check selected JEB settings without launching the engine, retaining the validated endpoint independently of readiness. */
 export const inspectJebRegistration = (
   environment: Readonly<Record<string, string | undefined>>,
+  unresolvedSettings: ReadonlySet<string> = new Set(),
 ): DoctorProviderInspection => {
   const value = environment.REA_JEB_MCP_URL;
   const selected =
     (value !== undefined && value.length > 0) ||
-    environment.REA_JEB_MCP_TIMEOUT_MS !== undefined;
-  const parsed = parseJebMcpEndpoint(value);
-  const valid = parsed.ok;
-  const requestTimeout = parseJebMcpTimeoutMs(
-    environment.REA_JEB_MCP_TIMEOUT_MS,
-  );
-  const timeoutChecks: readonly DoctorProviderCheck[] = requestTimeout.ok
-    ? []
-    : [
-        {
-          name: "request-timeout",
-          ok: false,
-          code: "invalid_configuration",
-          detail: requestTimeout.error.settings
-            .map(({ setting, constraint }) => `${setting}: ${constraint}`)
-            .join("; "),
-          remediation:
-            "Fix REA_JEB_MCP_TIMEOUT_MS or unset it to use the default request budget; see docs/providers/jeb-analysis.md.",
-          classification: "config_drift",
-        },
-      ];
+    environment.REA_JEB_MCP_TIMEOUT_MS !== undefined ||
+    JEB_DOCTOR_SETTINGS.some((setting) => unresolvedSettings.has(setting));
+  const parsed = unresolvedSettings.has("REA_JEB_MCP_URL")
+    ? undefined
+    : parseJebMcpEndpoint(value);
+  const valid = parsed?.ok === true;
+  const requestTimeout = unresolvedSettings.has("REA_JEB_MCP_TIMEOUT_MS")
+    ? undefined
+    : parseJebMcpTimeoutMs(environment.REA_JEB_MCP_TIMEOUT_MS);
+  const unknownCheck = (
+    name: string,
+    setting: string,
+  ): DoctorProviderCheck => ({
+    name,
+    ok: false,
+    code: "registration_environment_unknown",
+    classification: "unknown",
+    detail: `Selected client setting ${setting} is an unresolved expression; its value cannot be inspected.`,
+    remediation: `Resolve ${setting} in the selected client registration before checking JEB readiness.`,
+  });
+  const timeoutChecks: readonly DoctorProviderCheck[] =
+    requestTimeout === undefined
+      ? [unknownCheck("request-timeout", "REA_JEB_MCP_TIMEOUT_MS")]
+      : requestTimeout.ok
+        ? []
+        : [
+            {
+              name: "request-timeout",
+              ok: false,
+              code: "invalid_configuration",
+              detail: requestTimeout.error.settings
+                .map(({ setting, constraint }) => `${setting}: ${constraint}`)
+                .join("; "),
+              remediation:
+                "Fix REA_JEB_MCP_TIMEOUT_MS or unset it to use the default request budget; see docs/providers/jeb-analysis.md.",
+              classification: "config_drift",
+            },
+          ];
   const availabilityChecks: readonly DoctorProviderCheck[] =
-    valid && requestTimeout.ok
+    valid && requestTimeout?.ok === true
       ? [
           {
             name: "availability",
@@ -61,25 +79,31 @@ export const inspectJebRegistration = (
     // mandatory full-audit check or suppressing first-run provider setup.
     configured: selected,
     // Valid registration is not proof that a compatible service is running.
-    available: valid && requestTimeout.ok ? null : false,
+    available:
+      (parsed !== undefined && !parsed.ok) ||
+      (requestTimeout !== undefined && !requestTimeout.ok)
+        ? false
+        : null,
     providerVersion: null,
     registrationEnvironment:
       valid && value !== undefined && value.length > 0
         ? { REA_JEB_MCP_URL: value }
         : {},
     checks: [
-      {
-        name: "registration",
-        ok: valid,
-        code: valid ? null : "invalid_configuration",
-        detail: parsed.ok
-          ? `JEB MCP endpoint ${parsed.value.href} is valid. Upstream availability, compatibility, and project binding are checked when analysis starts; no JEB process was launched.`
-          : `JEB MCP endpoint is invalid: ${endpointConstraint(parsed.error)}.`,
-        remediation: valid
-          ? null
-          : "Set REA_JEB_MCP_URL to your running JEB MCP endpoint; see docs/providers/jeb-analysis.md.",
-        classification: "config_drift",
-      },
+      parsed === undefined
+        ? unknownCheck("registration", "REA_JEB_MCP_URL")
+        : {
+            name: "registration",
+            ok: valid,
+            code: valid ? null : "invalid_configuration",
+            detail: parsed.ok
+              ? `JEB MCP endpoint ${parsed.value.href} is valid. Upstream availability, compatibility, and project binding are checked when analysis starts; no JEB process was launched.`
+              : `JEB MCP endpoint is invalid: ${endpointConstraint(parsed.error)}.`,
+            remediation: valid
+              ? null
+              : "Set REA_JEB_MCP_URL to your running JEB MCP endpoint; see docs/providers/jeb-analysis.md.",
+            classification: "config_drift",
+          },
       ...timeoutChecks,
       ...availabilityChecks,
     ],

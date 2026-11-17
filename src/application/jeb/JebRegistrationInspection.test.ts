@@ -62,3 +62,47 @@ it("reports invalid timeout settings as invalid rather than unprobed readiness",
     ]),
   });
 });
+
+it("retains the validated endpoint when only the selected timeout is unresolved", () => {
+  const endpoint = "http://127.0.0.1:9999/mcp";
+  const inspection = inspectJebRegistration(
+    { REA_JEB_MCP_URL: endpoint },
+    new Set(["REA_JEB_MCP_TIMEOUT_MS"]),
+  );
+  expect(inspection).toMatchObject({
+    configured: true,
+    available: null,
+    checks: [
+      expect.objectContaining({ name: "registration", ok: true }),
+      expect.objectContaining({
+        name: "request-timeout",
+        classification: "unknown",
+      }),
+    ],
+  });
+  expect(providerRegistrationEnvironment([inspection])).toEqual({
+    REA_JEB_MCP_URL: endpoint,
+  });
+});
+
+it("preserves a known endpoint error alongside an unresolved timeout", () => {
+  const inspection = inspectJebRegistration(
+    { REA_JEB_MCP_URL: "invalid" },
+    new Set(["REA_JEB_MCP_TIMEOUT_MS"]),
+  );
+  expect(inspection).toMatchObject({
+    configured: true,
+    available: false,
+    registrationEnvironment: {},
+    checks: [
+      expect.objectContaining({
+        name: "registration",
+        code: "invalid_configuration",
+      }),
+      expect.objectContaining({
+        name: "request-timeout",
+        classification: "unknown",
+      }),
+    ],
+  });
+});

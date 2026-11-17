@@ -260,6 +260,11 @@ const unresolvedProvider = (
       settingAffectsProbe(id, normalize(name), environment, platform),
   );
   if (selected.unknown !== true && unresolved.length === 0) return undefined;
+  if (id === "jeb" && selected.unknown !== true)
+    return inspectJebRegistration(
+      environment,
+      new Set(unresolved.map(normalize)),
+    );
   const configurationKeys: Readonly<Record<string, string>> = {
     ghidra: "GHIDRA_INSTALL_DIR",
     ida: "REA_IDA_MCP_CONFIG",

@@ -626,15 +626,18 @@ it.each(["REA_JEB_MCP_URL", "REA_JEB_MCP_TIMEOUT_MS"])(
     try {
       const inspections = await host.providerInspections?.(["qwen_code"]);
       expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
-        configured: null,
+        configured: true,
         available: null,
-        registrationEnvironment: {},
-        checks: [
+        registrationEnvironment:
+          setting === "REA_JEB_MCP_TIMEOUT_MS"
+            ? { REA_JEB_MCP_URL: "http://127.0.0.1:9999/mcp" }
+            : {},
+        checks: expect.arrayContaining([
           expect.objectContaining({
             code: "registration_environment_unknown",
             classification: "unknown",
           }),
-        ],
+        ]),
       });
     } finally {
       await host.close?.();
