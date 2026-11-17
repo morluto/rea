@@ -3,7 +3,7 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { afterAll, expect } from "vitest";
@@ -293,6 +293,32 @@ test("registers an unprobed JEB endpoint without advertising service readiness o
               code: "not_probed",
             }),
           ],
+        }),
+      ]),
+    });
+    const registration = workspace.path("codex/config.toml");
+    await writeFile(
+      registration,
+      (await readFile(registration, "utf8")).replace("900000", "1.5"),
+    );
+    const invalidSelected = await cli.run({
+      arguments: ["doctor", "--client", "codex", "--provider", "jeb", "--json"],
+      environment,
+    });
+    expect(invalidSelected.exitCode, invalidSelected.stderr).toBe(1);
+    expect(invalidSelected.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "jeb",
+          configured: true,
+          available: false,
+          registrationEnvironment: { REA_JEB_MCP_URL: endpoint },
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              name: "request-timeout",
+              code: "invalid_configuration",
+            }),
+          ]),
         }),
       ]),
     });

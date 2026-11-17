@@ -148,7 +148,12 @@ const readSelectedRegistration = async (
   // caller's scope so `close()` retries it instead of losing it.
   const configuration = await resourceScope
     .run(() =>
-      readEffectiveClientRegistrationConfiguration(client, undefined, platform),
+      readEffectiveClientRegistrationConfiguration(
+        client,
+        undefined,
+        platform,
+        "diagnostic",
+      ),
     )
     .catch((cause: unknown) => {
       if (cause instanceof RegularFileCleanupFailure) {
@@ -172,7 +177,7 @@ const readSelectedRegistration = async (
     client,
     platform,
     {},
-    "effective",
+    "diagnostic",
   );
   return details.ok
     ? {

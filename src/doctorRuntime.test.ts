@@ -649,6 +649,61 @@ it.each([
   },
 );
 
+it.each([
+  {
+    settings: { REA_JEB_MCP_URL: "invalid" },
+    available: false,
+    failedCheck: "registration",
+  },
+  {
+    settings: { REA_JEB_MCP_TIMEOUT_MS: "1.5" },
+    available: false,
+    failedCheck: "request-timeout",
+  },
+  {
+    settings: { REA_ANALYSIS_PROVIDER: "invalid" },
+    available: null,
+    failedCheck: "availability",
+  },
+])(
+  "retains readable JEB facts when selected registration settings fail validation: $settings",
+  async ({ settings, available, failedCheck }) => {
+    const home = await createTestTempDirectory("rea-jeb-invalid-registration-");
+    const endpoint = "http://127.0.0.1:9999/mcp";
+    await opencodeRegistration(home, {
+      REA_JEB_MCP_URL: endpoint,
+      ...settings,
+    });
+    const host = createSystemDoctorHost({ HOME: home });
+    try {
+      const inspections = await host.providerInspections?.(["opencode"]);
+      const jeb = inspections?.find(({ id }) => id === "jeb");
+      expect(jeb).toMatchObject({
+        configured: true,
+        available,
+        registrationEnvironment:
+          settings.REA_JEB_MCP_URL === "invalid"
+            ? {}
+            : { REA_JEB_MCP_URL: endpoint },
+        checks: expect.arrayContaining([
+          expect.objectContaining({
+            name: failedCheck,
+            code:
+              failedCheck === "availability"
+                ? "not_probed"
+                : "invalid_configuration",
+          }),
+        ]),
+      });
+      expect(jeb?.checks).not.toContainEqual(
+        expect.objectContaining({ code: "registration_environment_unknown" }),
+      );
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
 test("keeps reading this terminal when no client is selected", async () => {
   const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");
   await opencodeRegistration(home, { GHIDRA_INSTALL_DIR: "/opt/ghidra" });

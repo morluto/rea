@@ -121,12 +121,14 @@ export const readConfigurationFile = async (
   }
 };
 
-/** Read each layer; setup may validate its writable layer with proposed overrides. */
+/** Read each layer; setup validates launch settings, while doctor may observe
+ * readable values diagnostically and let individual setting owners report errors. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
   writeOverrides?: Readonly<Record<string, string>>,
+  environmentValidation: "strict" | "diagnostic" = "strict",
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -150,7 +152,8 @@ export const readClientConfigurationFiles = async (
     // A read-only lower layer's environment can be replaced as a whole map
     // by a later layer (Goose), so only the effective view is validated.
     const validatesLayer =
-      client.readOnlyLowerLayers !== true || path === client.configPath;
+      environmentValidation === "strict" &&
+      (client.readOnlyLowerLayers !== true || path === client.configPath);
     if (document.value !== undefined && !validatesLayer)
       documents.push({ ...document.value, sourcePath: path });
     else if (document.value !== undefined) {
@@ -180,6 +183,7 @@ export const readClientConfigurationFiles = async (
       ...client.inlineConfiguration.parsed,
       inlineOrigin: client.inlineConfiguration.origin,
     });
+  if (environmentValidation === "diagnostic") return ok(documents);
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
     client,
@@ -439,11 +443,13 @@ export const mergeClientConfigurationDocuments = (
   };
 };
 
-/** Read the configuration ZCode will load, preserving its same-scope fallback rule. */
+/** Read the configuration the client will load, preserving ZCode's fallback rule.
+ * Diagnostic reads preserve invalid literal settings, not launch admission. */
 export const readEffectiveClientRegistrationConfiguration = async (
   client: SetupClient,
   resources: ArtifactResourceScope | undefined,
   platform: NodeJS.Platform,
+  environmentValidation: "strict" | "diagnostic" = "strict",
 ): Promise<
   Result<
     {
@@ -457,6 +463,8 @@ export const readEffectiveClientRegistrationConfiguration = async (
     client,
     resources,
     platform,
+    undefined,
+    environmentValidation,
   );
   if (!nativeSources.ok) return nativeSources;
   const nativeDocument = effectiveClientConfiguration(
@@ -483,6 +491,8 @@ export const readEffectiveClientRegistrationConfiguration = async (
     fallbackClient,
     resources,
     platform,
+    undefined,
+    environmentValidation,
   );
   if (!fallbackSources.ok) return fallbackSources;
   const fallbackDocument = effectiveClientConfiguration(

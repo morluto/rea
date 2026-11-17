@@ -70,7 +70,7 @@ export const inspectJebRegistration = (
             detail:
               "JEB service availability is unverified: syntax-only inspection made no request. Compatibility and project binding are also unverified.",
             remediation:
-              "Run rea inspect-jeb-client for a read-only service query, or use MCP binary_session to probe operation availability. This doctor check does not contact JEB.",
+              "Use MCP binary_session through the selected client to probe its JEB endpoint. For a terminal query, first set REA_JEB_MCP_URL and REA_JEB_MCP_TIMEOUT_MS to the diagnosed settings, then run rea inspect-jeb-client. This doctor check does not contact JEB.",
             classification: "unknown",
           },
         ]

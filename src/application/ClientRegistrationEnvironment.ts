@@ -117,15 +117,25 @@ export const clientRegistrationEnvironment = (
   return details.ok ? ok(details.value.values) : details;
 };
 
-/** Retain original strings and the parser-owned timeout facts. */
+/** Retain original strings and parser-owned timeout facts. Diagnostic observation
+ * deliberately supplies no admitted timeout facts and never validates a launch. */
 export const clientRegistrationEnvironmentDetails = (
   parsed: ClientConfigurationDocument | undefined,
   client: Pick<SetupClient, "name" | "registrationProfile"> | undefined,
   platform: NodeJS.Platform,
   overrides: Readonly<Record<string, string>> = {},
-  validation: "fragment" | "effective" = "effective",
+  validation: "fragment" | "effective" | "diagnostic" = "effective",
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
   if (parsed?.dialect === "dsh") {
+    if (validation === "diagnostic") {
+      const observed = dshDocument(parsed.document).environmentValues(
+        overrides,
+        platform,
+      );
+      return observed.ok
+        ? ok({ ...observed.value, timeoutInputs: undefined })
+        : observed;
+    }
     const environment = dshDocument(parsed.document).environment(
       overrides,
       validation,
@@ -302,10 +312,16 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
 
 const validatedDetails = (
   environment: Readonly<Record<string, string>>,
-  validation: "fragment" | "effective",
+  validation: "fragment" | "effective" | "diagnostic",
   platform: NodeJS.Platform,
   expressionSettings: ReadonlySet<string>,
 ): Result<ClientRegistrationEnvironmentDetails, ConfigurationError> => {
+  if (validation === "diagnostic")
+    return ok({
+      values: environment,
+      unresolvedSettings: expressionSettings,
+      timeoutInputs: undefined,
+    });
   const validated = validateRegistrationEnvironment(
     environment,
     expressionSettings,
