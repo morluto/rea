@@ -1824,6 +1824,119 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/windowsShortcut.test.ts"),
   ),
+  radare2: {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/composition/reverseEngineering.test.ts",
+          "rejects multiline Radare2 command input before launching the provider",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/composition/reverseEngineering.test.ts",
+          "returns radare2 evidence for a successful command",
+        ),
+      ),
+      cancel: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "relays caller cancellation to the admitted provider signal",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "retains a capability failure when its injected owned runner also reports incomplete cleanup",
+        ),
+      ),
+      retry: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "releases a retained provider owner after cleanup succeeds",
+        ),
+      ),
+    },
+  },
+  "radare2.session": {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/boundary/providers/Radare2SessionManager.test.ts",
+          "starts a session after the first NUL frame and echoes the spawn profile",
+        ),
+      ),
+      handshake: covered(
+        test(
+          "tests/boundary/providers/Radare2SessionManager.test.ts",
+          "starts a session after the first NUL frame and echoes the spawn profile",
+        ),
+      ),
+      operation: covered(
+        test(
+          "tests/boundary/providers/Radare2SessionManager.test.ts",
+          "executes a command over the r2pipe2 protocol and maps the reply",
+        ),
+      ),
+      cancel: covered(
+        test(
+          "tests/boundary/providers/Radare2SessionManager.test.ts",
+          "stops and retires the session when a dispatched command is cancelled",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          "tests/boundary/providers/Radare2SessionManager.test.ts",
+          "retains a session whose stop cannot be verified and frees it on retry",
+        ),
+      ),
+      retry: covered(
+        test(
+          "tests/boundary/providers/Radare2SessionManager.test.ts",
+          "retains a session whose stop cannot be verified and frees it on retry",
+        ),
+      ),
+    },
+  },
+  radiff2: {
+    ownership: "process",
+    stages: {
+      launch: covered(
+        test(
+          "tests/composition/reverseEngineering.test.ts",
+          "rejects an unknown operation before launching the provider",
+        ),
+      ),
+      handshake: ONE_SHOT,
+      operation: covered(
+        test(
+          "tests/composition/reverseEngineering.test.ts",
+          "returns radiff2 evidence for a function-level comparison",
+        ),
+      ),
+      cancel: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "relays caller cancellation to the admitted provider signal",
+        ),
+      ),
+      cleanup: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "retains a capability failure when its injected owned runner also reports incomplete cleanup",
+        ),
+      ),
+      retry: covered(
+        test(
+          REVERSE_EDGE_CASES,
+          "releases a retained provider owner after cleanup succeeds",
+        ),
+      ),
+    },
+  },
   rizin: {
     ownership: "process",
     stages: {
