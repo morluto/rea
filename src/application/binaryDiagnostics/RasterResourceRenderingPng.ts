@@ -1,15 +1,5 @@
-import { crc32, deflateSync } from "node:zlib";
-function chunk(type: string, data: Uint8Array): Buffer {
-  const result = Buffer.alloc(data.length + 12);
-  result.writeUInt32BE(data.length);
-  result.write(type, 4, 4, "ascii");
-  result.set(data, 8);
-  result.writeUInt32BE(
-    crc32(result.subarray(4, data.length + 8)),
-    data.length + 8,
-  );
-  return result;
-}
+import { deflateSync } from "node:zlib";
+import { packRasterPng } from "./RasterPngContainer.js";
 const deflateBound = (bytes: number) =>
   bytes +
   Math.ceil(bytes / 4096) +
@@ -37,21 +27,13 @@ export function encodeRasterRgbaPng(
       rgba.subarray(y * rowBytes, (y + 1) * rowBytes),
       y * (rowBytes + 1) + 1,
     );
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  header[9] = 6;
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk("IHDR", header),
-    chunk(
-      "IDAT",
-      deflateSync(rows, {
-        level: 0,
-        maxOutputLength: deflateBound(rows.length),
-      }),
-    ),
-    chunk("IEND", new Uint8Array()),
-  ]);
+  return packRasterPng(
+    width,
+    height,
+    6,
+    deflateSync(rows, {
+      level: 0,
+      maxOutputLength: deflateBound(rows.length),
+    }),
+  );
 }

@@ -5,6 +5,7 @@ import { mkdir, writeFile, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { deflateSync } from "node:zlib";
+import { packRasterPng } from "../../src/application/binaryDiagnostics/RasterPngContainer.ts";
 import { admitRawRaster, decodeRawRaster } from "../../src/domain/rawRaster.ts";
 
 export const DEFAULT_MAX_MEMORY_MIB = 64;
@@ -68,41 +69,14 @@ export function admitPreview(sourceLength, input, options = {}) {
 }
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-function crc32(bytes) {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++)
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-function chunk(type, data) {
-  const tag = Buffer.from(type);
-  const length = Buffer.alloc(4);
-  const crc = Buffer.alloc(4);
-  length.writeUInt32BE(data.length);
-  crc.writeUInt32BE(crc32(Buffer.concat([tag, data])));
-  return Buffer.concat([length, tag, data, crc]);
-}
 function encodePng({ rgba, layout: { width, height } }) {
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  header[9] = 6;
   const rows = Buffer.alloc(height * (1 + width * 4));
   for (let y = 0; y < height; y++)
     rows.set(
       rgba.subarray(y * width * 4, (y + 1) * width * 4),
       y * (1 + width * 4) + 1,
     );
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk("IHDR", header),
-    chunk("IDAT", deflateSync(rows)),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
+  return packRasterPng(width, height, 6, deflateSync(rows));
 }
 
 export function previewRawRasterExperiment(source, input, options = {}) {

@@ -4,7 +4,8 @@ import {
   packedRasterIndex,
   diagnosticRasterGray,
 } from "../../domain/rasterSampling.js";
-import { crc32, deflateSync } from "node:zlib";
+import { deflateSync } from "node:zlib";
+import { packRasterPng } from "./RasterPngContainer.js";
 
 export interface IndexThumbnailLayout {
   width: number;
@@ -29,14 +30,6 @@ const boundedInteger = (
     throw new RangeError(`${label} must be an integer in ${min}..${max}`);
   return value;
 };
-function chunk(type: string, data: Uint8Array): Buffer {
-  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body));
-  return Buffer.concat([length, body, crc]);
-}
 /** Bounded nearest-neighbour diagnostic view of packed indices, not a color
  * decoder. The caller owns segment coverage; this helper also bounds every byte
  * access and allocates only the thumbnail, never a full source-size pixel array.
@@ -75,16 +68,7 @@ export function renderIndexThumbnail(
       const index = packedRasterIndex(packed, sourceX, bits, "msb-first");
       rows[y * (outputWidth + 1) + x + 1] = diagnosticRasterGray(index, bits);
     }
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(outputWidth, 0);
-  header.writeUInt32BE(outputHeight, 4);
-  header[8] = 8;
-  const png = Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk("IHDR", header),
-    chunk("IDAT", deflateSync(rows)),
-    chunk("IEND", new Uint8Array()),
-  ]);
+  const png = packRasterPng(outputWidth, outputHeight, 0, deflateSync(rows));
   return {
     kind: "index-only",
     width: outputWidth,
