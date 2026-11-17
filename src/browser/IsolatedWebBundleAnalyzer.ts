@@ -178,6 +178,7 @@ export class IsolatedWebBundleAnalyzer {
       input,
       signal,
       memberMutationAllowance,
+      endpointLiterals,
     ).finally(() => {
       this.#running = undefined;
       this.#controller = undefined;
