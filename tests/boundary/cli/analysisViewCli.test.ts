@@ -777,7 +777,6 @@ cliTest(
         JSON.stringify({ path, ...options }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     const expected = inspectEvidenceBundle(bundle, options);
@@ -790,7 +789,6 @@ cliTest(
         JSON.stringify({ path, ...options, detail: "records", limit: 1 }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(records.exitCode).toBe(0);
     expect(records.json).toMatchObject({
@@ -807,7 +805,6 @@ cliTest(
         JSON.stringify({ path }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(complete.exitCode).toBe(0);
     expect(complete.json).toEqual(bundle);
@@ -842,7 +839,6 @@ cliTest(
         JSON.stringify({ path, ...options }),
         "--json",
       ],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     const expected = inspectEvidenceBundle(bundle, options);
@@ -965,11 +961,6 @@ cliTest(
     await writeFile(input, JSON.stringify(request));
     const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
-      environment: {
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_CACHE_HOME: root,
-      },
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -986,7 +977,6 @@ cliTest(
 cliTest(
   "reports empty retained layout collections without invented index bounds",
   async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-empty-layout-view-cli-");
     const empty = analysisViewLayoutEvidence(binaryLayoutFixture());
     for (const collection of ["sections", "symbols"] as const) {
       const result = await cli.run({
@@ -998,11 +988,6 @@ cliTest(
           }),
           "--json",
         ],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
@@ -1033,11 +1018,6 @@ cliTest(
         }),
         "--json",
       ],
-      environment: {
-        HOME: root,
-        XDG_CONFIG_HOME: root,
-        XDG_CACHE_HOME: root,
-      },
     });
     expect(populated.exitCode).toBe(1);
     expect(populated.json).toMatchObject({
@@ -1079,7 +1059,6 @@ cliTest(
     );
     const result = await cli.run({
       arguments: ["inspect-analysis-view", input, "--json"],
-      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
     });
     expect(result.exitCode).toBe(0);
     expect(result.json).toMatchObject({
@@ -1141,14 +1120,8 @@ cliTest(
 );
 
 cliTest("rejects malformed JSON before projection", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-analysis-view-cli-bad-");
   const result = await cli.run({
     arguments: ["inspect-analysis-view", "{", "--json"],
-    environment: {
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_CACHE_HOME: root,
-    },
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
@@ -1164,11 +1137,6 @@ cliTest("rejects a request that omits source", async ({ cli }) => {
   await writeFile(input, JSON.stringify({ view: { kind: "summary" } }));
   const result = await cli.run({
     arguments: ["inspect-analysis-view", input, "--json"],
-    environment: {
-      HOME: root,
-      XDG_CONFIG_HOME: root,
-      XDG_CACHE_HOME: root,
-    },
   });
   expect(result.exitCode).toBe(1);
   expect(result.json).toMatchObject({
@@ -1199,11 +1167,6 @@ for (const [view, reason] of [
       );
       const result = await cli.run({
         arguments: ["inspect-analysis-view", input, "--json"],
-        environment: {
-          HOME: root,
-          XDG_CONFIG_HOME: root,
-          XDG_CACHE_HOME: root,
-        },
       });
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
