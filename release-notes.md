@@ -784,6 +784,7 @@
 * **elf:** verify debuglink checksums at the file boundary ([#11863](https://github.com/morluto/rea/issues/11863)) ([adaa04d](https://github.com/morluto/rea/commit/adaa04d9cef58eb23d665d211356b213bfc87e3b))
 * **environment:** bound create explanation by request-body reads instead of elapsed time ([#11657](https://github.com/morluto/rea/issues/11657)) ([9901e8d](https://github.com/morluto/rea/commit/9901e8dfcd7684d2bb5b025fe668f32b4c941297))
 * **environment:** read an omitted advertised required list as empty ([#11391](https://github.com/morluto/rea/issues/11391)) ([d810e11](https://github.com/morluto/rea/commit/d810e11241008b51973a403f58b4415c8e63bb25))
+* **environment:** verify registry pins in the exported bundle ([#11870](https://github.com/morluto/rea/issues/11870)) ([e9cc643](https://github.com/morluto/rea/commit/e9cc643198938c3d88f353c4dc0cf8f92f56ecce))
 * **errors:** assert recovery kind and retryability instead of remediation prose ([#10791](https://github.com/morluto/rea/issues/10791)) ([8d7eaf9](https://github.com/morluto/rea/commit/8d7eaf9693dcee5f400c8818a9575ee6cac29db6)), closes [#10508](https://github.com/morluto/rea/issues/10508)
 * **evidence:** assert the identity-named subject in the snapshot and kernel config tests ([#11650](https://github.com/morluto/rea/issues/11650)) ([9ecfb10](https://github.com/morluto/rea/commit/9ecfb109e8c40ac64ca637b381ba25eec7d08ec9))
 * **evidence:** consolidate completion receipt validation at its owner ([#11867](https://github.com/morluto/rea/issues/11867)) ([810f26b](https://github.com/morluto/rea/commit/810f26ba9097c0ee8fe00af4b29cc1543ddf1e75))
@@ -822,6 +823,7 @@
 * **mcp:** check advertised schemas against a portable dialect in every profile ([#10567](https://github.com/morluto/rea/issues/10567)) ([ef1b92b](https://github.com/morluto/rea/commit/ef1b92bf1eadadbe8f95dc5dab79d941d2e8c22e))
 * **mcp:** check whole replies against canonical output contracts at the remaining held listed definitions ([#11182](https://github.com/morluto/rea/issues/11182)) ([a4a8734](https://github.com/morluto/rea/commit/a4a8734452770b4609efd7f5e7d793b5d8429a3b))
 * **mcp:** compile advertised patterns with the regex engines clients run ([#10982](https://github.com/morluto/rea/issues/10982)) ([bd46f3c](https://github.com/morluto/rea/commit/bd46f3c1ee6eb4934e6ee9a066147418304fa2d0))
+* **mcp:** consolidate schema profile proof at server boundaries ([#11871](https://github.com/morluto/rea/issues/11871)) ([b7461b7](https://github.com/morluto/rea/commit/b7461b7b14dcc3ec47798b60ce06d63ae6324e06))
 * **mcp:** count the Evidence bundle format literal in the full-profile dialect baseline ([#10995](https://github.com/morluto/rea/issues/10995)) ([4600948](https://github.com/morluto/rea/commit/4600948f0b59eacd4c24b99187b18651b9f61dab))
 * **mcp:** drop the duplicate full-profile row from catalog input admission ([#11209](https://github.com/morluto/rea/issues/11209)) ([3d22f00](https://github.com/morluto/rea/commit/3d22f0041a8f8cca041e2c6010a35b5cc84de057))
 * **mcp:** guard portable pattern escapes in every schema profile ([3cb75d4](https://github.com/morluto/rea/commit/3cb75d46bf6ee0a44d846a4d3e2cc3196e9ba418))
@@ -876,6 +878,7 @@
 * **verify:** resolve the published-package verifier's fixture module in its npm-selection harness ([#11260](https://github.com/morluto/rea/issues/11260)) ([f60d842](https://github.com/morluto/rea/commit/f60d842718cd6352ddbe3fd8ee2d5f5b85d09bf7))
 * **web:** use valid script_key format in bundle capacity test ([34803c4](https://github.com/morluto/rea/commit/34803c45ae20917f2e97278a56ec616991a8a327)), closes [#10445](https://github.com/morluto/rea/issues/10445)
 * **windows:** select the Windows host through HOST_PLATFORM in the native-control capability test ([#11088](https://github.com/morluto/rea/issues/11088)) ([de7d4de](https://github.com/morluto/rea/commit/de7d4dec8319330f546945cc1c52ef9ef86a6f3d))
+* **zip:** consolidate filename provenance checks at consumer boundaries ([#11864](https://github.com/morluto/rea/issues/11864)) ([6f0f9a1](https://github.com/morluto/rea/commit/6f0f9a122d5ba6bc2ba9544cfd165a70e2d826f2))
 
 
 ### Continuous Integration
