@@ -825,6 +825,34 @@ it("shares the credential-name scan's value budget across the selected records",
   expect(skipped[0]).toContain("record 1 response");
 });
 
+it("reports a response body whose retained source is unavailable", async () => {
+  const report = credentialNamedReport();
+  // A base64 body with no retained binary field has no source to decode.
+  report.records[0]!.reported = {
+    request: { method: "GET", url: "https://example.test/unretained" },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: "eyJwYXNzd29yZCI6IngifQ==",
+        encoding: "base64",
+      },
+    },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 0 response");
+  expect(skipped[0]).toContain("retained source is unavailable");
+});
+
 it("reports bodies the credential-name scan could not read", async () => {
   const report = credentialNamedReport();
   report.records[0]!.reported = {

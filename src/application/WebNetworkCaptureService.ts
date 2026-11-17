@@ -335,7 +335,7 @@ const credentialNameLimitations = (
     : []),
   ...(scan.skipped.count > 0
     ? [
-        `${String(scan.skipped.count)} recorded bodies, header lists or query strings were not scanned: each is cut, over 4 MiB of text, or past the 524288 values the credential-name scan reads in all (${listedPointers(scan.skipped)}).`,
+        `${String(scan.skipped.count)} recorded bodies, header lists or query strings were not scanned: each is cut, over 4 MiB of text, past the 524288 values the credential-name scan reads in all, or a response body whose retained source is unavailable (${listedPointers(scan.skipped)}).`,
       ]
     : []),
 ];
