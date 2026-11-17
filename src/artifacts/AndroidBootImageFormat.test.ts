@@ -171,41 +171,63 @@ it("rejects an unsupported version, a bad page size, and a truncated image", () 
 });
 
 it("accepts an image that ends at its last declared byte", () => {
-  const legacy = parsed(buildBootImage({ version: 0 }));
-  // kernel (6 bytes) at page 1, ramdisk (7 bytes) at page 2.
-  expect(legacy).toMatchObject({ dataEnd: 4096 + 7, imageEnd: 3 * 2048 });
-  const images = [
-    buildBootImage({ version: 0 }),
-    buildBootImage({
-      version: 2,
-      recoveryDtbo: Buffer.from("dtbo"),
-      dtb: Buffer.from("dtb"),
-    }),
-    buildBootImage({ version: 4, signature: Buffer.from("signature") }),
-    buildVendorBootImage({
-      version: 3,
-      ramdisk: Buffer.from("vendor-ramdisk"),
-      dtb: Buffer.from("dtb"),
-    }),
-    buildVendorBootImage({
-      version: 4,
-      ramdisks: [{ name: "one", type: 1, bytes: Buffer.from("aaa") }],
-      bootconfig: Buffer.from("androidboot.hardware=test\n"),
-    }),
-    // The ramdisk table is the last declared structure.
-    buildVendorBootImage({
-      version: 4,
-      ramdisks: [{ name: "one", type: 1, bytes: Buffer.from("aaa") }],
-    }),
+  // Each end follows the layout: the last structure starts on a page and the
+  // image ends at its final byte.
+  const cases = [
+    // 2048-byte pages: kernel, then the 7-byte ramdisk on page 2.
+    { image: buildBootImage({ version: 0 }), end: 2 * 2048 + 7 },
+    // Recovery DTBO on page 3, then the 3-byte DTB on page 4.
+    {
+      image: buildBootImage({
+        version: 2,
+        recoveryDtbo: Buffer.from("dtbo"),
+        dtb: Buffer.from("dtb"),
+      }),
+      end: 4 * 2048 + 3,
+    },
+    // 4096-byte pages: kernel, ramdisk, then the 9-byte signature on page 3.
+    {
+      image: buildBootImage({
+        version: 4,
+        signature: Buffer.from("signature"),
+      }),
+      end: 3 * 4096 + 9,
+    },
+    // Vendor ramdisk section on page 1, then the 3-byte DTB on page 2.
+    {
+      image: buildVendorBootImage({
+        version: 3,
+        ramdisk: Buffer.from("vendor-ramdisk"),
+        dtb: Buffer.from("dtb"),
+      }),
+      end: 2 * 4096 + 3,
+    },
+    // Section, one 108-byte table entry, then 26 bootconfig bytes on page 3.
+    {
+      image: buildVendorBootImage({
+        version: 4,
+        ramdisks: [{ name: "one", type: 1, bytes: Buffer.from("aaa") }],
+        bootconfig: Buffer.from("androidboot.hardware=test\n"),
+      }),
+      end: 3 * 4096 + 26,
+    },
+    // The 108-byte ramdisk table on page 2 is the last declared structure.
+    {
+      image: buildVendorBootImage({
+        version: 4,
+        ramdisks: [{ name: "one", type: 1, bytes: Buffer.from("aaa") }],
+      }),
+      end: 2 * 4096 + 108,
+    },
   ];
-  for (const image of images) {
+  for (const { image, end } of cases) {
+    expect(image.subarray(end).every((byte) => byte === 0)).toBe(true);
     const padded = parsed(image);
-    expect(padded.dataEnd).toBeLessThan(image.length);
-    expect(padded.imageEnd).toBe(image.length);
-    expect(parsed(image.subarray(0, padded.dataEnd))).toEqual(padded);
-    expect(failed(image.subarray(0, padded.dataEnd - 1))).toMatchObject({
+    expect(padded).toMatchObject({ dataEnd: end, imageEnd: image.length });
+    expect(parsed(image.subarray(0, end))).toEqual(padded);
+    expect(failed(image.subarray(0, end - 1))).toMatchObject({
       kind: "truncated",
-      message: `image is truncated: components end at byte ${String(padded.dataEnd)} but the file is ${String(padded.dataEnd - 1)} bytes`,
+      message: `image is truncated: components end at byte ${String(end)} but the file is ${String(end - 1)} bytes`,
     });
   }
 });
