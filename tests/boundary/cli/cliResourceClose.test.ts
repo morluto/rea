@@ -1,9 +1,13 @@
 import { expect, it, vi } from "vitest";
-import "../../../src/cli.js";
+import { createCli } from "../../../src/cli.js";
 import {
   CliResourceOwners,
-  cliProcessResourceOwners,
+  closeCliResources,
 } from "../../../src/cli/cliResources.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { registrationEnvironment } from "../../support/cli/registrationEnvironment.js";
+import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 it.each([
   [false, false],
@@ -37,12 +41,48 @@ it.each([
   },
 );
 
-it("registers every process-owned CLI resource the complete CLI loads", () => {
-  expect(cliProcessResourceOwners()).toEqual(
-    expect.arrayContaining([
-      "javascript-analysis",
-      "guidance",
-      "mcp-registration",
-    ]),
-  );
-});
+it.each([
+  {
+    name: "guidance",
+    args: ["guidance", "--query", "qzxv"],
+    exitCode: 0,
+  },
+  {
+    name: "MCP registration",
+    args: [
+      "mcp",
+      "add",
+      "--agent",
+      "fixture-not-a-client",
+      "--command",
+      "fixture-mcp",
+    ],
+    exitCode: 1,
+  },
+])(
+  "closes the resource scope acquired by $name",
+  async ({ args, exitCode }) => {
+    await closeCliResources();
+    const home = await createTestTempDirectory("rea-cli-resource-close-");
+    const cli = createCli(await registrationEnvironment(home));
+    const runs = vi.spyOn(ArtifactResourceScope.prototype, "run");
+    try {
+      const result = await serveInProcessCli(cli, [...args, "--json"]);
+      expect(result.exitCode, result.stdout).toBe(exitCode);
+      const scope = runs.mock.contexts.find(
+        (value): value is ArtifactResourceScope =>
+          value instanceof ArtifactResourceScope,
+      );
+      if (scope === undefined)
+        throw new Error("Expected command to enter its resource scope");
+      await expect(scope.run(async () => "open")).resolves.toBe("open");
+      await closeCliResources();
+      await expect(scope.run(async () => "closed")).rejects.toMatchObject({
+        reason: "unavailable",
+      });
+    } finally {
+      runs.mockRestore();
+      await closeCliResources();
+    }
+  },
+);

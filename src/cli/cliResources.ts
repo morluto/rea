@@ -7,10 +7,6 @@ export class CliResourceOwners {
     if (!this.#closers.has(name)) this.#closers.set(name, close);
   }
 
-  names(): readonly string[] {
-    return [...this.#closers.keys()];
-  }
-
   /** Settle every owner, then report each failure. */
   async close(): Promise<void> {
     const results = await Promise.allSettled(
@@ -36,10 +32,6 @@ export const ownCliProcessResource = (
   name: string,
   close: () => Promise<void>,
 ): void => processOwners.own(name, close);
-
-/** Owners registered in this process, in registration order. */
-export const cliProcessResourceOwners = (): readonly string[] =>
-  processOwners.names();
 
 /** Close every process-owned resource used by CLI commands. */
 export const closeCliResources = (): Promise<void> => processOwners.close();
