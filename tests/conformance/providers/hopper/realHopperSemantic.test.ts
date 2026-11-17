@@ -82,9 +82,8 @@ describe("Hopper verifier fixture receipt", () => {
             { address: receiptAddress(input.pattern), value: input.pattern },
           ];
         if (request.name === "set_comment") return true;
-        if (request.name === "compare_functions")
+        if (request.name === "compare_functions") {
           comparisons.push(request.arguments);
-        if (request.name === "compare_functions")
           return {
             dimensions: Object.keys(receiptFacets)
               .concat("identity")
@@ -97,6 +96,7 @@ describe("Hopper verifier fixture receipt", () => {
                     : "unchanged",
               })),
           };
+        }
         const dossier = [...dossiers.values()].find(
           (value) => value.procedure.address === input.procedure,
         );
