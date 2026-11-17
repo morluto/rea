@@ -281,6 +281,23 @@ describe("json-structure normalizer", () => {
     expect(facts.coverage.status).toBe("complete");
   });
 
+  it("auto-recognizes BOM-prefixed JSON the same as an explicit json request", () => {
+    // A UTF-8 BOM precedes the opening token; recognition must follow the
+    // decoder's strip-signature policy so auto does not need the explicit format.
+    const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+    const bytes = Buffer.concat([
+      bom,
+      Buffer.from(JSON.stringify({ main: "index.js" }), "utf8"),
+    ]);
+    const auto = canonicalizeArtifactFacts(bytes, "auto", budget());
+    const explicit = canonicalizeArtifactFacts(bytes, "json", budget());
+    expect(auto.detected_format).toBe("json");
+    expect(explicit.detected_format).toBe("json");
+    expect(auto.core.find((fact) => fact.name === "$/main")?.sample).toBe(
+      "index.js",
+    );
+  });
+
   it("collapses nesting beyond max_depth and marks it truncated and unverified", () => {
     let nested = "0";
     for (let depth = 0; depth < 40; depth += 1) nested = `[${nested}]`;

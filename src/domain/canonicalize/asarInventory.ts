@@ -28,6 +28,23 @@ export interface AsarInventoryEntry {
   readonly kind: AsarEntryKind;
   /** Declared size, or null when it cannot bound the member's content. */
   readonly size: number | null;
+  /**
+   * True when the member's bytes live in the companion `.unpacked` directory,
+   * outside the selected archive. A packed and an unpacked entry can share a
+   * path and size, so this distinguishes their otherwise identical facts.
+   */
+  readonly unpacked: boolean;
+  /** True when the member declares the executable bit. */
+  readonly executable: boolean;
+  /**
+   * The owning reader's parsed integrity declaration, unvalidated by this pass,
+   * or null when none was declared. Retained so an integrity-bearing member is
+   * never indistinguishable from one without.
+   */
+  readonly declaredIntegrity: {
+    readonly algorithm: string;
+    readonly digest: string;
+  } | null;
   /** The owning reader's per-entry limitations (unknown size, integrity, ...). */
   readonly limitations: readonly string[];
 }
@@ -63,28 +80,93 @@ const sizeSuffix = (entry: AsarInventoryEntry): string =>
     ? " Declared size is unknown; this is not a zero-byte member."
     : "";
 
+/**
+ * Reader-parsed source facts that distinguish two entries sharing a path and
+ * size. Without them a packed entrypoint and an unpacked one — whose bytes live
+ * outside the archive — would produce identical facts, so they are preserved
+ * through the fact detail rather than dropped when mapping the inventory.
+ */
+const sourceFactsSuffix = (entry: AsarInventoryEntry): string => {
+  const notes: string[] = [];
+  if (entry.unpacked)
+    notes.push(
+      "Member is unpacked; its bytes live in the companion .unpacked directory, outside this archive, so the declared size does not bound in-archive content.",
+    );
+  if (entry.executable) notes.push("Declares the executable bit.");
+  if (entry.declaredIntegrity !== null)
+    notes.push(
+      `Declares a ${entry.declaredIntegrity.algorithm} integrity digest this pass did not validate.`,
+    );
+  return notes.length === 0 ? "" : ` ${notes.join(" ")}`;
+};
+
+/**
+ * Fixed budget on the package.json member bytes this pass decodes and parses to
+ * prove reachability. A small ASAR header can still declare a package.json
+ * member holding most of the archive's bytes; parsing it whole would allocate a
+ * string and object tree unbounded by the header, listing or fact budgets, so
+ * representation growth is charged here before allocation.
+ */
+export const MAX_ASAR_MANIFEST_BYTES = 8 * 1024 * 1024;
+/** Maximum distinct reachable module paths retained before reachability is partial. */
+export const MAX_REACHABLE_PATHS = 4096;
+
+/** Proven-reachable paths plus a note when a budget left reachability partial. */
+export interface AsarReachability {
+  readonly reachable: ReadonlySet<string>;
+  /** Present when the manifest or path budget stopped reachability short. */
+  readonly limitation?: string;
+}
+
 /** Best-effort reachable module paths from an archive's own package.json bytes. */
-export const reachableAsarPaths = (manifest: Buffer): ReadonlySet<string> => {
+export const reachableAsarPaths = (manifest: Buffer): AsarReachability => {
   const reachable = new Set<string>(["package.json"]);
+  // Bound the parsed manifest before allocation: an inflated package.json must
+  // not exhaust the pass that normalizes an inflated artifact.
+  if (manifest.length > MAX_ASAR_MANIFEST_BYTES)
+    return {
+      reachable,
+      limitation: `The archive's package.json is ${String(manifest.length)} bytes, beyond this pass's fixed ${String(MAX_ASAR_MANIFEST_BYTES)}-byte manifest budget; reachability beyond package.json is unverified.`,
+    };
   let parsed: unknown;
   try {
     parsed = JSON.parse(manifest.toString("utf8"));
   } catch {
     // A malformed manifest leaves reachability unproven, never confabulated.
-    return reachable;
+    return { reachable };
   }
-  if (parsed === null || typeof parsed !== "object") return reachable;
+  if (parsed === null || typeof parsed !== "object") return { reachable };
   const record = parsed as Record<string, unknown>;
+  let capped = false;
   const normalize = (value: unknown): void => {
-    if (typeof value === "string") reachable.add(value.replace(/^\.?\//u, ""));
+    if (typeof value !== "string") return;
+    if (reachable.size >= MAX_REACHABLE_PATHS) {
+      capped = true;
+      return;
+    }
+    reachable.add(value.replace(/^\.?\//u, ""));
   };
   normalize(record["main"]);
   const exports = record["exports"];
   if (typeof exports === "string") normalize(exports);
-  else if (exports !== null && typeof exports === "object")
-    for (const value of Object.values(exports as Record<string, unknown>))
-      normalize(value);
-  return reachable;
+  else if (exports !== null && typeof exports === "object") {
+    // Iterate members in place rather than copying every export into an array.
+    const exportsRecord = exports as Record<string, unknown>;
+    for (const key in exportsRecord) {
+      if (!Object.hasOwn(exportsRecord, key)) continue;
+      if (reachable.size >= MAX_REACHABLE_PATHS) {
+        capped = true;
+        break;
+      }
+      normalize(exportsRecord[key]);
+    }
+  }
+  return capped
+    ? {
+        reachable,
+        limitation: `Reachable module paths beyond ${String(MAX_REACHABLE_PATHS)} were not retained; reachability is partial and the remaining entries are reported unverified rather than reachable.`,
+      }
+    : { reachable };
 };
 
 const sizeBytes = (entry: AsarInventoryEntry): number => entry.size ?? 0;
@@ -128,7 +210,7 @@ const reachableFact = (
     location: null,
     sha256: bounded.sha256,
     sample: null,
-    detail: `Reachable from package.json main/exports.${sizeSuffix(entry)}${foldedNameDetail(entry.path, bounded.sha256)}`,
+    detail: `Reachable from package.json main/exports.${sizeSuffix(entry)}${sourceFactsSuffix(entry)}${foldedNameDetail(entry.path, bounded.sha256)}`,
   };
 };
 
@@ -150,6 +232,7 @@ const unverifiedFact = (
         ? "Packaged entry; reachability from entrypoints unverified."
         : `${entry.kind} entry; reachability from entrypoints unverified.`) +
       sizeSuffix(entry) +
+      sourceFactsSuffix(entry) +
       foldedNameDetail(entry.path, bounded.sha256),
   };
 };
@@ -165,7 +248,7 @@ const decoyFact = (
   location: null,
   sha256: canonicalizeDigest(Buffer.from(entry.path, "utf8")),
   sample: null,
-  detail: `Inventory entry with a ${String(entry.path.length)}-character path; unreferenced path inflation.${sizeSuffix(entry)}`,
+  detail: `Inventory entry with a ${String(entry.path.length)}-character path; unreferenced path inflation.${sizeSuffix(entry)}${sourceFactsSuffix(entry)}`,
 });
 
 interface InventoryState {

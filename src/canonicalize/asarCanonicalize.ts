@@ -13,6 +13,7 @@ import {
   classifyAsarInventory,
   reachableAsarPaths,
   type AsarInventoryEntry,
+  type AsarReachability,
 } from "../domain/canonicalize/asarInventory.js";
 import type {
   NormalizedArtifactFacts,
@@ -62,31 +63,38 @@ const parseHeader = (bytes: Buffer, jsonBytes: number): unknown => {
   }
 };
 
+const UNREADABLE_MANIFEST_LIMITATION =
+  "The archive's package.json could not be read in-archive (absent, unpacked or out of range); reachability beyond package.json is unverified.";
+
 /** Proven-reachable paths, read from the archive's own package.json member. */
 const resolveReachable = (
   bytes: Buffer,
   contentBase: number,
   entries: readonly AsarListedEntry[],
-): ReadonlySet<string> => {
+): AsarReachability => {
   const manifest = entries.find(
     (entry) => entry.kind === "file" && entry.path === "package.json",
   );
-  if (manifest === undefined) return new Set();
+  if (manifest === undefined) return { reachable: new Set() };
   // An unpacked package.json lives in the companion directory, not at an
   // in-archive offset: reading that offset would read unrelated packed bytes and
   // falsely "prove" reachability. Leave reachability unverified when we cannot
   // read the actual manifest from the archive.
+  const unreadable: AsarReachability = {
+    reachable: new Set(["package.json"]),
+    limitation: UNREADABLE_MANIFEST_LIMITATION,
+  };
   if (
     manifest.kind !== "file" ||
     manifest.unpacked ||
     manifest.packedOffset === undefined ||
     manifest.size === null
   )
-    return new Set(["package.json"]);
+    return unreadable;
   const start = contentBase + manifest.packedOffset;
   const end = start + manifest.size;
   if (!Number.isSafeInteger(start) || start < 0 || end > bytes.length)
-    return new Set(["package.json"]);
+    return unreadable;
   return reachableAsarPaths(bytes.subarray(start, end));
 };
 
@@ -140,7 +148,7 @@ export const canonicalizeAsarBytes = async (
       });
     throw cause;
   }
-  const reachable = resolveReachable(
+  const reachability = resolveReachable(
     bytes,
     8 + extents.value.headerBytes,
     entries,
@@ -149,10 +157,16 @@ export const canonicalizeAsarBytes = async (
     path: entry.path,
     kind: entry.kind,
     size: entry.size,
+    unpacked: entry.unpacked,
+    executable: entry.executable,
+    declaredIntegrity: entry.declaredIntegrity,
     limitations: entry.limitations,
   }));
   return classifyAsarInventory(inventory, budget, {
-    reachable,
+    reachable: reachability.reachable,
     listingTruncated: false,
+    ...(reachability.limitation === undefined
+      ? {}
+      : { extraLimitations: [reachability.limitation] }),
   });
 };

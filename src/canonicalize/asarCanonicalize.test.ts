@@ -59,3 +59,27 @@ describe("canonicalizeAsarBytes header admission", () => {
     expect(facts.limitations[0]).toMatch(/unverified/iu);
   });
 });
+
+describe("canonicalizeAsarBytes source facts", () => {
+  it("preserves an unpacked member's source facts through the returned facts", async () => {
+    // package.json lives packed at offset 0 and names app.js, which is unpacked:
+    // its bytes live outside the archive, so its fact must disclose that rather
+    // than read identically to a packed member of the same path and size.
+    const manifest = Buffer.from(JSON.stringify({ main: "app.js" }), "utf8");
+    const header = Buffer.from(
+      JSON.stringify({
+        files: {
+          "package.json": { size: manifest.length, offset: "0" },
+          "app.js": { size: 5, unpacked: true },
+        },
+      }),
+      "utf8",
+    );
+    const bytes = asarArchiveRaw(header, manifest);
+    const facts = await canonicalizeAsarBytes(bytes, budget);
+    const appFact = facts.core.find((fact) => fact.name === "app.js");
+    expect(appFact?.classification).toBe("behavior-relevant");
+    expect(appFact?.detail).toMatch(/unpacked/iu);
+    expect(appFact?.detail).toMatch(/outside this archive/iu);
+  });
+});

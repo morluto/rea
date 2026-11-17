@@ -37,8 +37,21 @@ const firstNonWhitespace = (bytes: Buffer): number => {
   return -1;
 };
 
+/** A leading UTF-8 BOM (EF BB BF) the strict decoder drops as an encoding signature. */
+const hasUtf8Bom = (bytes: Buffer): boolean =>
+  bytes.length >= 3 &&
+  bytes[0] === 0xef &&
+  bytes[1] === 0xbb &&
+  bytes[2] === 0xbf;
+
 const recognizes = (bytes: Buffer): boolean => {
-  const byte = firstNonWhitespace(bytes);
+  // Recognition must follow the same leading-BOM policy the normalizer decodes
+  // with ("strip-signature"): a UTF-8 BOM is an encoding signature, not the
+  // opening token, so skip it before scanning. Otherwise auto detection would
+  // reject a BOM-prefixed document that `format: "json"` accepts.
+  const byte = firstNonWhitespace(
+    hasUtf8Bom(bytes) ? bytes.subarray(3) : bytes,
+  );
   return byte === 0x7b /* { */ || byte === 0x5b; /* [ */
 };
 

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   classifyAsarInventory,
   reachableAsarPaths,
+  MAX_ASAR_MANIFEST_BYTES,
+  MAX_REACHABLE_PATHS,
   type AsarInventoryEntry,
 } from "./asarInventory.js";
 import {
@@ -32,7 +34,19 @@ const entry = (
   path: string,
   size: number | null,
   limitations: readonly string[] = [],
-): AsarInventoryEntry => ({ path, kind: "file", size, limitations });
+  source: Partial<
+    Pick<AsarInventoryEntry, "unpacked" | "executable" | "declaredIntegrity">
+  > = {},
+): AsarInventoryEntry => ({
+  path,
+  kind: "file",
+  size,
+  unpacked: false,
+  executable: false,
+  declaredIntegrity: null,
+  limitations,
+  ...source,
+});
 
 const longPath = `${"a".repeat(600)}.js`;
 
@@ -142,6 +156,42 @@ describe("classifyAsarInventory", () => {
     expect(facts.limitations[0]).toMatch(/asar\.max_listing_bytes/u);
   });
 
+  it("distinguishes a packed entry from an unpacked one of the same path and size", () => {
+    const packed = classifyAsarInventory(
+      [entry("app.js", 100)],
+      budget(),
+      context({ reachable: new Set(["app.js"]) }),
+    );
+    const unpacked = classifyAsarInventory(
+      [entry("app.js", 100, [], { unpacked: true })],
+      budget(),
+      context({ reachable: new Set(["app.js"]) }),
+    );
+    const packedFact = packed.core.find((fact) => fact.name === "app.js");
+    const unpackedFact = unpacked.core.find((fact) => fact.name === "app.js");
+    // Same path and size, but the unpacked member's bytes live outside the
+    // archive, so the facts must not be identical.
+    expect(unpackedFact?.detail).not.toBe(packedFact?.detail);
+    expect(unpackedFact?.detail).toMatch(/unpacked/iu);
+    expect(unpackedFact?.detail).toMatch(/outside this archive/iu);
+  });
+
+  it("surfaces the executable bit and an unvalidated integrity declaration", () => {
+    const facts = classifyAsarInventory(
+      [
+        entry("bin/tool", 200, [], {
+          executable: true,
+          declaredIntegrity: { algorithm: "sha256", digest: "a".repeat(64) },
+        }),
+      ],
+      budget(),
+      context({ reachable: new Set(["bin/tool"]) }),
+    );
+    const fact = facts.core.find((candidate) => candidate.name === "bin/tool");
+    expect(fact?.detail).toMatch(/executable bit/iu);
+    expect(fact?.detail).toMatch(/sha256 integrity digest/iu);
+  });
+
   it("accepts a declared member size beyond 4 GiB in the fact schema", () => {
     const huge = classifyAsarInventory(
       [entry("model.bin", 5_000_000_000)],
@@ -161,7 +211,7 @@ describe("classifyAsarInventory", () => {
 
 describe("reachableAsarPaths", () => {
   it("resolves main and exports from a package.json member", () => {
-    const reachable = reachableAsarPaths(
+    const { reachable, limitation } = reachableAsarPaths(
       Buffer.from(
         JSON.stringify({
           main: "./dist/app.js",
@@ -173,11 +223,33 @@ describe("reachableAsarPaths", () => {
     expect(reachable.has("package.json")).toBe(true);
     expect(reachable.has("dist/app.js")).toBe(true);
     expect(reachable.has("index.js")).toBe(true);
+    expect(limitation).toBeUndefined();
   });
 
   it("leaves reachability unproven on a malformed manifest", () => {
-    const reachable = reachableAsarPaths(Buffer.from("{ not json", "utf8"));
+    const { reachable } = reachableAsarPaths(Buffer.from("{ not json", "utf8"));
     expect(reachable.has("package.json")).toBe(true);
     expect(reachable.size).toBe(1);
+  });
+
+  it("does not parse a manifest beyond the fixed budget and reports it", () => {
+    // A small header can declare a package.json holding most of the archive's
+    // bytes; the pass must not decode and parse it whole.
+    const oversized = Buffer.alloc(MAX_ASAR_MANIFEST_BYTES + 1, 0x20);
+    const { reachable, limitation } = reachableAsarPaths(oversized);
+    expect(reachable.has("package.json")).toBe(true);
+    expect(reachable.size).toBe(1);
+    expect(limitation).toMatch(/manifest budget/u);
+  });
+
+  it("caps retained reachable paths and reports partial reachability", () => {
+    const exports: Record<string, string> = {};
+    for (let index = 0; index <= MAX_REACHABLE_PATHS + 10; index += 1)
+      exports[`./k${String(index)}`] = `./mod${String(index)}.js`;
+    const { reachable, limitation } = reachableAsarPaths(
+      Buffer.from(JSON.stringify({ exports }), "utf8"),
+    );
+    expect(reachable.size).toBeLessThanOrEqual(MAX_REACHABLE_PATHS);
+    expect(limitation).toMatch(/reachability is partial/u);
   });
 });
