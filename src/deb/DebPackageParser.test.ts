@@ -586,6 +586,23 @@ it.each(["1:", "1:-1", "1.0-"])(
   },
 );
 
+it("reads an Installed-Size with a long NUL run and continuation in linear time", () => {
+  // A NUL run followed by a continuation line makes a NUL-to-end regex retry
+  // from every NUL; 128 KiB of this took over ten seconds before the fix.
+  const value = `1${"\0".repeat(128 * 1024)}\n x`;
+  const started = performance.now();
+  const report = parse(
+    debPackageFixture({
+      controlText: `Package: hello\nVersion: 1.0\nArchitecture: all\nInstalled-Size: ${value}\n`,
+    }),
+  );
+  expect(performance.now() - started).toBeLessThan(2000);
+  expect(report.control?.installed_size ?? null).toBeNull();
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({ kind: "malformed", field: "Installed-Size" }),
+  );
+});
+
 it("reports a field issue for an Installed-Size past the safe integer range", () => {
   const report = parse(
     debPackageFixture({

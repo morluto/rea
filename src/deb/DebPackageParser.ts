@@ -106,7 +106,14 @@ const throwIfAborted = (signal: AbortSignal | undefined): void => {
 const ascii = (bytes: Uint8Array): string =>
   Buffer.from(bytes).toString("ascii");
 
-const trimField = (value: string): string => value.replace(/\0.*$/u, "").trim();
+/**
+ * A fixed-width ar or tar header field: text up to the first NUL, trimmed.
+ * A single `indexOf` keeps this linear for any input.
+ */
+const trimField = (value: string): string => {
+  const nul = value.indexOf("\0");
+  return (nul === -1 ? value : value.slice(0, nul)).trim();
+};
 
 const nonempty = (value: string | undefined): string | null => {
   if (value === undefined) return null;
@@ -147,8 +154,9 @@ const looksLike = (bytes: Uint8Array, magic: Uint8Array): boolean => {
   return true;
 };
 
+/** Decimal text such as a control field value; NUL is not a terminator. */
 const parseDecimal = (text: string): number | null => {
-  const trimmed = trimField(text);
+  const trimmed = text.trim();
   if (!/^\d+$/u.test(trimmed)) return null;
   const value = Number(trimmed);
   return Number.isSafeInteger(value) ? value : null;
@@ -306,7 +314,7 @@ const parseArMembers = (bytes: Uint8Array, maxMembers: number): ArParse => {
         ),
       };
     const rawName = ascii(header.subarray(0, 16));
-    const size = parseDecimal(ascii(header.subarray(48, 58)));
+    const size = parseDecimal(trimField(ascii(header.subarray(48, 58))));
     if (size === null)
       return {
         members,
