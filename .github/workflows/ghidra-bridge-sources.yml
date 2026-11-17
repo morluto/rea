@@ -1,14 +1,36 @@
 name: Ghidra bridge source compilation
 
 on:
-  workflow_dispatch:
   workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted callers pass it.
+        required: false
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   HUSKY: "0"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Writes when remote_cache_write is set, or on the default branch
+  # for push, schedule, and manual dispatch. Open pull requests stay empty-token
+  # and use the local cache only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
 
 jobs:
   ghidra-bridge-sources:
@@ -23,6 +45,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
       - name: Validate the SDK pin against the provider's verified release
         run: node scripts/verify-ghidra-bridge-sources.mjs --check-sdk-pin >> "$GITHUB_ENV"
       # The bridge probe imports only source-owned ARM, Thumb and MIPS bytes and never
@@ -48,6 +73,9 @@ jobs:
           JAVA_HOME="${!java_home_variable}" npm run verify:ghidra:bridge-sources -- --verified-sdk
       - name: Install locked dependencies for loader relocation regression
         run: npm ci
+      - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Verify loader relocation handling with the native decompiler
         shell: bash
         run: |

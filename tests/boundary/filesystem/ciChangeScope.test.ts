@@ -524,7 +524,7 @@ it("selects the tests a pull request affects and runs everything when it cannot 
       reason: "401 affected test files exceed the 400-file selection cap",
     },
   });
-  const capped = await change(directory, many.slice(0, 81), "// edited\n");
+  const capped = await change(directory, many.slice(0, 101), "// edited\n");
   expect(await classify(directory, wide, capped)).toMatchObject({
     testSelection: { mode: "selected" },
     testShards: ["1/3", "2/3", "3/3"],
@@ -554,6 +554,39 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
     code: true,
     docs: true,
     runtime: false,
+    package: false,
+  });
+  for (const staticOnly of [
+    "scripts/lib/module-layers.baseline.json",
+    "scripts/verify/architecture-guards.mjs",
+    "scripts/verify/baselines/incur-import.json",
+    "tsconfig.scripts.json",
+  ]) {
+    expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
+      code: true,
+      docs: false,
+      runtime: false,
+      package: false,
+    });
+  }
+  for (const docsAndCode of [
+    "scripts/check-doc-facts.mjs",
+    "scripts/lib/product-catalog.mjs",
+  ]) {
+    expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
+      code: true,
+      docs: true,
+      runtime: false,
+      package: false,
+    });
+  }
+  expect(
+    await classifyPaths([
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+    ]),
+  ).toMatchObject({
+    docs: true,
+    runtime: true,
     package: false,
   });
 });

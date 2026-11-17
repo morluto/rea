@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { z } from "zod";
 import {
   TOOL_CONTRACTS,
   toolContract,
@@ -21,6 +22,92 @@ const evidenceServer = () =>
     {},
     undefined,
     createToolResultDelivery(undefined),
+  );
+
+mcpTest(
+  "application summary admission preserves nested caller omissions",
+  async ({ mcp }) => {
+    const received: unknown[] = [];
+    const contract = {
+      ...toolContract("inspect_elf_dependencies"),
+      name: "inspect_nested_fixture",
+      inputSchema: z.strictObject({
+        path: z.string(),
+        policy: z.strictObject({
+          count: z.int().default(12),
+          mode: z.string().default("full"),
+        }),
+        detail: z.enum(["complete", "summary"]).default("complete"),
+      }),
+    };
+    const server = evidenceServer();
+    registerContractTools(
+      server,
+      {
+        inspect_nested_fixture: {
+          admission: "application",
+          summary: (input: unknown) => {
+            received.push(input);
+            return Promise.resolve(
+              err(new AnalysisInputError("inspect_nested_fixture")),
+            );
+          },
+        },
+      } as ContractToolBindings,
+      { logger: silentLogger },
+      [contract],
+    );
+    const client = await mcp.connect(server);
+    const request = { path: "/fixture", policy: { count: 2 } };
+    const reply = await client.callTool({
+      name: contract.name,
+      arguments: request,
+    });
+    expect(reply.isError).toBe(true);
+    expect(received).toEqual([request]);
+  },
+);
+
+for (const admission of ["sdk", "application"] as const)
+  mcpTest(
+    `${admission} summary admission preserves its input-default ownership`,
+    async ({ mcp }) => {
+      const received: unknown[] = [];
+      const inspect = (input: unknown) => {
+        received.push(input);
+        return Promise.resolve(
+          err(new AnalysisInputError("inspect_elf_dependencies")),
+        );
+      };
+      const server = evidenceServer();
+      registerContractTools(
+        server,
+        { inspect_elf_dependencies: { admission, summary: inspect } },
+        { logger: silentLogger },
+        [toolContract("inspect_elf_dependencies")],
+      );
+      const client = await mcp.connect(server);
+      for (const selected of [undefined, 1024, 2]) {
+        const request = {
+          path: "/fixture",
+          ...(selected === undefined ? {} : { max_needed: selected }),
+        };
+        const reply = await client.callTool({
+          name: "inspect_elf_dependencies",
+          arguments: { ...request, detail: "complete" },
+        });
+        expect(reply.isError).toBe(true);
+        const source = received.at(-1);
+        if (admission === "application") expect(source).toEqual(request);
+        else
+          expect(source).toMatchObject({
+            path: request.path,
+            max_needed: selected ?? 1024,
+            max_file_bytes: 67108864,
+          });
+        expect(source).not.toHaveProperty("detail");
+      }
+    },
   );
 
 mcpTest(

@@ -81,12 +81,10 @@ import {
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import {
-  analysisErrorWithCleanupFailure,
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
 } from "../../domain/analysisErrorCleanup.js";
-import { ConfigurationError } from "../../domain/configurationErrors.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -617,11 +615,11 @@ export class BinarySession
         this.#clearRuntimeAvailability();
         if (isAborted(options.signal))
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               cancelledBy("open_binary", options.signal),
               closed.error,
               "open_binary",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
         return closed;
       }

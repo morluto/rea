@@ -1283,6 +1283,46 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-dwarf-units": inProcess(
+    covered(
+      test(
+        "tests/acceptance/dwarfUnitsCli.test.ts",
+        "reports a compile unit through the public CLI",
+      ),
+      test(
+        "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
+        "advertises inspect_dwarf_units and reads a compile unit",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/dwarfUnits.test.ts"),
+  ),
+  "rea-elf-debug-link": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDebugLinkCli.test.ts",
+        "verifies a matching debug file from absolute and relative paths",
+      ),
+    ),
+    covered(
+      test(
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "returns typed resource and cancellation failures",
+      ),
+      test(
+        "src/native/elf/ElfDebugLinkProvider.test.ts",
+        "keeps a completed candidate stream's identity when cancellation arrives during close",
+      ),
+    ),
+  ),
+  "rea-elf-dependencies": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDependenciesCli.test.ts",
+        "reports needed libraries, RUNPATH tokens, and versioned imports through the public CLI",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/elfDependencies.test.ts"),
+  ),
   "rea-elf-notes": inProcess(
     covered(
       test(
