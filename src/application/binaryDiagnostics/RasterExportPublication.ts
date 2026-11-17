@@ -1,4 +1,4 @@
-import type { SafeOutputFile } from "../../resources/SafeOutputTree.js";
+import type { SafeOutputFile } from "../../resources/index.js";
 import { Readable } from "node:stream";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import {

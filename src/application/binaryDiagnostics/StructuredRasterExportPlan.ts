@@ -1,7 +1,7 @@
 import { selectRasterRegistries } from "./RasterRenderingSelection.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { StructuredRasterExportInput } from "../../domain/native/structuredRasterExport.js";
-import type { SafeOutputFile } from "../../resources/SafeOutputTree.js";
+import type { SafeOutputFile } from "../../resources/index.js";
 import type { prepareStructuredRasterAnalysis } from "./StructuredRasterAnalysis.js";
 import type {
   RasterRenderLayout,
