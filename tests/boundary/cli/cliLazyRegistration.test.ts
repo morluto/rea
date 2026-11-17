@@ -221,7 +221,17 @@ describe("CLI help output adaptation", () => {
     const result = await serveInProcessCli(cli, ["--help"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain(
-      "--format <toon|json|yaml|md|jsonl|csv|tsv>  Output format (CSV/TSV require --filter-output and --columns)",
+      "--format <toon|json|yaml|md|jsonl|csv|tsv>  Output format (CSV/TSV require a selected row collection with --filter-output and --columns)",
     );
+  });
+
+  it("does not advertise delimited formats for mcp add help", async () => {
+    const cli = createCliShell({
+      selectedEnvironment: ENVIRONMENT,
+      registrations: [],
+    });
+    const result = await serveInProcessCli(cli, ["mcp", "add", "--help"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("|csv|tsv");
   });
 });

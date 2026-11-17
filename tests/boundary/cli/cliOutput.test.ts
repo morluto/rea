@@ -26,13 +26,16 @@ describe("CLI help format advertisement", () => {
     const before =
       "Global Options:\n  --format <toon|json|yaml|md|jsonl>  Output format\n";
     expect(rewriteCliHelpOutput(before)).toBe(
-      "Global Options:\n  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format (CSV/TSV require --filter-output and --columns)\n",
+      "Global Options:\n  --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format (CSV/TSV require a selected row collection with --filter-output and --columns)\n",
     );
     expect(rewriteCliHelpOutput("no format help here\n")).toBe(
       "no format help here\n",
     );
     expect(hasCliHelpFlag(["inspect-analysis-view", "--help"])).toBe(true);
     expect(hasCliHelpFlag(["rows", "--", "--help"])).toBe(false);
+    expect(
+      hasCliHelpFlag(["mcp", "add", "--filter-output", "--", "--help"]),
+    ).toBe(true);
   });
 });
 

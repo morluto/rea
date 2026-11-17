@@ -4,8 +4,10 @@ import type { FridaInstrumentationPort } from "../application/frida/FridaInstrum
 import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
 import {
   adaptCliOutputArgumentsForIncur,
+  classifyMcpAddDiscovery,
   hasCliHelpFlag,
   normalizeCliArguments,
+  splitIncurBuiltinArguments,
 } from "../cliBuiltinArguments.js";
 import { rewriteCliHelpOutput } from "../cliOutput.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -61,7 +63,13 @@ const adaptCliHelpOutput = <T extends object>(
 ): T & {
   readonly stdout?: ((text: string) => void) | undefined;
 } => {
-  if (!hasCliHelpFlag(arguments_)) return options;
+  const split = splitIncurBuiltinArguments(arguments_);
+  const mcpAddHelp =
+    split.command[0] === "mcp" &&
+    split.command[1] === "add" &&
+    classifyMcpAddDiscovery(split.flags) === "bypass" &&
+    (split.flags.has("--help") || split.flags.has("-h"));
+  if (!hasCliHelpFlag(arguments_) || mcpAddHelp) return options;
   const write =
     options.stdout ?? ((text: string) => process.stdout.write(text));
   return {
