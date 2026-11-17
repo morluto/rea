@@ -534,7 +534,7 @@ it("reports a launch refusal with the repair the command port names", async () =
 });
 
 it("builds the default radare2 provider profile", () => {
-  const port = createReverseEngineeringCommandPort({});
+  const port = createReverseEngineeringCommandPort({}, "linux");
   const profile = port.radare2({ path: "a", command: "iI" });
   expect(profile.ok).toBe(true);
   if (!profile.ok) throw new Error("expected a resolved profile");
@@ -559,17 +559,19 @@ it("builds the default radare2 provider profile", () => {
 });
 
 it("resolves the radare2 executable from REA_R2_COMMAND", () => {
-  const port = createReverseEngineeringCommandPort({
-    REA_R2_COMMAND: "/selected/r2",
-  });
+  const port = createReverseEngineeringCommandPort(
+    { REA_R2_COMMAND: "/selected/r2" },
+    "linux",
+  );
   const selected = port.radare2({ path: "a", command: "ij" });
   expect(selected.ok && selected.value.executable).toBe("/selected/r2");
 });
 
 it("keeps the radare2 profile free of environment overrides", () => {
-  const port = createReverseEngineeringCommandPort({
-    PATH: "/selected/bin",
-  });
+  const port = createReverseEngineeringCommandPort(
+    { PATH: "/selected/bin" },
+    "linux",
+  );
   const profile = port.radare2({ path: "a", command: "ij" });
   expect(profile.ok && profile.value.environmentOverrides).toBeUndefined();
 });
@@ -586,7 +588,7 @@ it("exposes execute_radare2_command with the same authority as the rizin tool", 
 });
 
 it("builds the radiff2 provider profile for function and byte diffs", () => {
-  const port = createReverseEngineeringCommandPort({});
+  const port = createReverseEngineeringCommandPort({}, "linux");
   const functions = port.radiff2({
     path_a: "a",
     path_b: "b",
@@ -615,9 +617,10 @@ it("builds the radiff2 provider profile for function and byte diffs", () => {
 });
 
 it("resolves the radiff2 executable from REA_RADIFF2_COMMAND", () => {
-  const port = createReverseEngineeringCommandPort({
-    REA_RADIFF2_COMMAND: "/selected/radiff2",
-  });
+  const port = createReverseEngineeringCommandPort(
+    { REA_RADIFF2_COMMAND: "/selected/radiff2" },
+    "linux",
+  );
   const selected = port.radiff2({
     path_a: "a",
     path_b: "b",
