@@ -1,13 +1,18 @@
-import { createHash } from "node:crypto";
-import { mkdir, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
+import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { Budget } from "../domain/budget.js";
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
-import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
+  regularFileCancellation,
+  withOwnedFileHandle,
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 import {
@@ -19,17 +24,13 @@ import {
   RegularFileCapacityError,
   readStableFileBytes,
 } from "../filesystem/readStableFileBytes.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import type {
+  DesktopCaptureStore,
+  RetainOutcome,
+} from "../ports/CaptureContentStore.js";
 
 type Omission = DesktopApplicationCapture["state"]["omitted_content"][number];
-
-/** A stored file, or why its bytes were left out. */
-export type RetainOutcome =
-  | {
-      readonly kind: "retained";
-      readonly sha256: string;
-      readonly size: number;
-    }
-  | { readonly kind: "omitted"; readonly reason: Omission["reason"] };
 
 class ChangedSinceWalk extends Error {}
 
@@ -37,7 +38,7 @@ class ChangedSinceWalk extends Error {}
 const DENIED_CODES = new Set(["EACCES", "EPERM", "ENXIO"]);
 
 /** Content-addressed copies of observed files under `<capture>/content`. */
-export class DesktopContentStore {
+export class DesktopContentStore implements DesktopCaptureStore {
   readonly #directory: string;
   readonly #maxFileBytes: number;
   readonly #stored = new Map<string, number>();
@@ -45,9 +46,9 @@ export class DesktopContentStore {
   readonly #omissions: Omission[] = [];
   /** Handles whose close failed; kept owned so `close` can retry them. */
   readonly #unclosed = new ArtifactResourceScope();
-  /** The partial file being written, removed by `discard` if it was left. */
-  #writing: string | undefined;
-  #remainingBytes: number;
+  /** Every partial file this store created but has not published or removed. */
+  readonly #unpublished = new Set<string>();
+  readonly #bytes: Budget;
 
   constructor(
     captureDirectory: string,
@@ -56,7 +57,7 @@ export class DesktopContentStore {
   ) {
     this.#directory = join(captureDirectory, "content");
     this.#maxFileBytes = maxFileBytes;
-    this.#remainingBytes = maxBytes;
+    this.#bytes = new Budget(maxBytes);
   }
 
   /** Create the private content directory; it must not exist yet. */
@@ -81,6 +82,11 @@ export class DesktopContentStore {
     return this.#directory;
   }
 
+  /** The existing capture cleanup owner also retains failed inspection resources. */
+  get resourceScope(): ArtifactResourceScope {
+    return this.#unclosed;
+  }
+
   /**
    * Retry every handle whose close failed during a read. A handle that fails
    * again stays owned, and the rejection carries its exact cleanup lease.
@@ -94,8 +100,10 @@ export class DesktopContentStore {
    * when the directory holds anything else or a removal fails.
    */
   async discard(): Promise<void> {
-    if (this.#writing !== undefined) await rm(this.#writing, { force: true });
-    this.#writing = undefined;
+    for (const path of this.#unpublished) {
+      await rm(path, { force: true });
+      this.#unpublished.delete(path);
+    }
     for (const sha256 of this.#stored.keys()) {
       await rm(join(this.#directory, sha256), { force: true });
       this.#stored.delete(sha256);
@@ -130,23 +138,46 @@ export class DesktopContentStore {
 
   /** Store bytes already read, such as a verified apt key; over the per-file limit or the remaining budget they are omitted. */
   async retainBytes(bytes: Buffer): Promise<RetainOutcome> {
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const size = bytes.byteLength;
     if (size > this.#maxFileBytes)
       return { kind: "omitted", reason: "too_large" };
     if (this.#stored.has(sha256)) return { kind: "retained", sha256, size };
-    if (size > this.#remainingBytes)
+    // Reserve before writing; a write that fails retains nothing.
+    if (!this.#bytes.tryCharge(size))
       return { kind: "omitted", reason: "budget_exhausted" };
-    const target = join(this.#directory, sha256);
-    const partial = `${target}.partial`;
-    this.#writing = partial;
-    await writeFile(partial, bytes, { mode: 0o600, flag: "wx" });
-    await rename(partial, target);
-    this.#writing = undefined;
+    try {
+      await this.#publish(sha256, bytes);
+    } catch (error) {
+      this.#bytes.refund(size);
+      throw error;
+    }
     this.#stored.set(sha256, size);
     this.#storedSizes.add(size);
-    this.#remainingBytes -= size;
     return { kind: "retained", sha256, size };
+  }
+
+  async #publish(sha256: string, bytes: Buffer): Promise<void> {
+    const target = join(this.#directory, sha256);
+    const partial = `${target}.partial`;
+    const owner = new OwnedFileHandle(await open(partial, "wx", 0o600));
+    this.#unpublished.add(partial);
+    await withOwnedFileHandle(
+      partial,
+      owner,
+      {
+        retainFailedClose: (handle) => {
+          this.#unclosed.retain({
+            kind: "file-handle",
+            resource: partial,
+            handle,
+          });
+        },
+      },
+      (file) => file.writeFile(bytes),
+    );
+    await rename(partial, target);
+    this.#unpublished.delete(partial);
   }
 
   async #read(
@@ -163,7 +194,7 @@ export class DesktopContentStore {
       return { kind: "omitted", reason: "too_large" };
     // Over budget, only a size some stored content has can still be a duplicate.
     if (
-      expected.size > this.#remainingBytes &&
+      expected.size > this.#bytes.remaining &&
       !this.#storedSizes.has(expected.size)
     )
       return { kind: "omitted", reason: "budget_exhausted" };
@@ -191,7 +222,16 @@ export class DesktopContentStore {
       );
       return { kind: "read", bytes };
     } catch (cause: unknown) {
-      signal?.throwIfAborted();
+      const cancellation = regularFileCancellation(cause);
+      if (cancellation !== undefined)
+        throw new ArtifactReaderFailure(
+          "cancelled",
+          "Desktop content read cancelled",
+          {
+            cause: cancellation.reason,
+            cancellation,
+          },
+        );
       if (cause instanceof ChangedSinceWalk)
         return { kind: "omitted", reason: "changed_since_walk" };
       // The read finished or failed but its close did not; the owner is kept.

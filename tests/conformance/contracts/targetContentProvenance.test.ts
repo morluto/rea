@@ -32,7 +32,10 @@ describe("target-content provenance audit", () => {
   });
 
   it("documents exactly the audited content-free exceptions", async () => {
-    const guide = await readFile(resolve("docs/mcp-contracts.md"), "utf8");
+    const guide = await readFile(
+      resolve("docs/reference/mcp-contracts.md"),
+      "utf8",
+    );
     const exceptions = /on by default: ([^.]*?) omit it\./su.exec(guide)?.[1];
     expect(exceptions).toBeDefined();
     expect(

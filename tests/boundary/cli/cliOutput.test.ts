@@ -7,10 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import {
-  normalizeCliArguments,
-  adaptCliOutputArgumentsForIncur,
-} from "../../../src/cliBuiltinArguments.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
   renderCliDocument,
@@ -18,8 +15,6 @@ import {
   renderVersionReport,
   parseCliOutputArguments,
 } from "../../../src/cliOutput.js";
-
-const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
 describe("CLI output argument boundary", () => {
   it("requires an exact row selector and explicit columns for delimited formats", () => {
@@ -78,26 +73,6 @@ describe("CLI output argument boundary", () => {
         "--token-count",
       ]).validation,
     ).toMatchObject({ ok: false, code: "UNSUPPORTED_OUTPUT_COMBINATION" });
-  });
-
-  it("adapts REA-owned delimited options only at the Incur boundary", () => {
-    expect(
-      adaptCliOutputArgumentsForIncur([
-        "inspect-analysis-view",
-        "--format",
-        "csv",
-        "--columns",
-        "name,version",
-        "--filter-output",
-        "normalized_result.items",
-      ]),
-    ).toEqual([
-      "inspect-analysis-view",
-      "--format",
-      "json",
-      "--filter-output",
-      "normalized_result.items",
-    ]);
   });
 
   it("uses the shared Markdown table formatter for standalone reports", () => {
@@ -181,12 +156,12 @@ it("formats arrays of empty objects without column keys as JSON in Markdown", ()
 
 it("preserves flag-shaped values consumed by valued output options", () => {
   expect(
-    adaptCliOutputArgumentsForIncur([
+    parseCliGlobalArguments([
       "--filter-output",
       "--columns",
       "providers",
       "--json",
-    ]),
+    ]).arguments,
   ).toEqual(["--filter-output", "--columns", "providers", "--json"]);
 });
 
@@ -281,7 +256,8 @@ describe("CLI output flag value forms", () => {
     "preserves a flag-shaped spaced value owned by %s",
     (flag) => {
       expect(
-        normalizeCliArguments([flag, "--format=json", "providers", "--json"]),
+        parseCliGlobalArguments([flag, "--format=json", "providers", "--json"])
+          .arguments,
       ).toEqual([flag, "--format=json", "providers", "--json"]);
     },
   );
@@ -295,19 +271,17 @@ describe("CLI output flag value forms", () => {
       ]) {
         const result = await cli.run({
           arguments: [...filter, "providers", "--json"],
-          timeoutMs: 10_000,
         });
         expect(result.exitCode).toBe(0);
         expect(JSON.parse(result.stdout)).toEqual({});
         expect(result.stderr).toBe("");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   it("splits only the equals forms of valued output flags", () => {
     expect(
-      normalizeCliArguments([
+      parseCliGlobalArguments([
         "inspect-sqlite-database",
         "--table=a=b",
         "--format=json",
@@ -316,7 +290,7 @@ describe("CLI output flag value forms", () => {
         "--token-offset=",
         "--json",
         "--format-hint=x",
-      ]),
+      ]).arguments,
     ).toEqual([
       "inspect-sqlite-database",
       "--table=a=b",
@@ -396,7 +370,6 @@ describe("unclosed CLI output filter slices", () => {
             "--filter-output",
             "result[0,1].name[",
           ],
-          timeoutMs: 3000,
         });
         expect(result.exitCode).toBe(1);
         expect(result.stdout).toContain("INVALID_OUTPUT_FILTER");
@@ -405,7 +378,6 @@ describe("unclosed CLI output filter slices", () => {
       }
       const splitPath = await cli.run({
         arguments: ["providers", "--json", "--filter-output", "][,]"],
-        timeoutMs: 3000,
       });
       expect(splitPath.exitCode).toBe(1);
       expect(splitPath.json).toMatchObject({
@@ -413,7 +385,6 @@ describe("unclosed CLI output filter slices", () => {
         error: { code: "INVALID_OUTPUT_FILTER" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -426,7 +397,6 @@ describe("unclosed CLI output filter slices", () => {
           "--filter-output",
           "capabilities[0,1].provider.id,open",
         ],
-        timeoutMs: 3000,
       });
       expect(result.exitCode).toBe(0);
       expect(result.json).toEqual({
@@ -434,7 +404,6 @@ describe("unclosed CLI output filter slices", () => {
         open: false,
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -455,7 +424,6 @@ describe("CLI output valued-flag parsing", () => {
         });
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -470,7 +438,6 @@ describe("CLI output valued-flag parsing", () => {
         error: { code: "UNSUPPORTED_OUTPUT_COMBINATION" },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -558,7 +525,6 @@ describe("CLI output valued-flag parsing", () => {
         expect(result.stdout).not.toContain("[truncated:");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -644,7 +610,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -679,7 +644,6 @@ describe("compiled CLI output boundary", () => {
         expect(result.stdout).toContain("expected string");
       }
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -710,7 +674,6 @@ describe("compiled CLI output boundary", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 
   workspaceCliTest(
@@ -735,7 +698,6 @@ describe("compiled CLI output boundary", () => {
       );
       expect(result.stdout).toContain("See below for usage.");
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -766,7 +728,6 @@ describe("compiled CLI artifact diagnostics", () => {
         },
       });
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });
 
@@ -821,8 +782,8 @@ describe("CLI update root alias", () => {
   ])(
     "routes only an unambiguous root update while retaining option data: %j",
     (input, expected) => {
-      expect(normalizeCliArguments(input)).toEqual(expected);
-      expect(normalizeCliArguments(expected)).toEqual(expected);
+      expect(parseCliGlobalArguments(input).arguments).toEqual(expected);
+      expect(parseCliGlobalArguments(expected).arguments).toEqual(expected);
     },
   );
 });
@@ -832,7 +793,7 @@ describe("version report requests", () => {
     [["--version", "--json"], "json"],
     [["--json", "--version"], "json"],
     [["--version", "--format", "yaml"], "yaml"],
-    [normalizeCliArguments(["--version", "--format=toon"]), "toon"],
+    [parseCliGlobalArguments(["--version", "--format=toon"]).arguments, "toon"],
     // Without an explicit format, Incur prints the bare version.
     [["--version"], undefined],
     // Help keeps precedence over --version.
@@ -1061,6 +1022,5 @@ describe("unknown MCP subcommand output", () => {
       expect(toon.exitCode).toBe(1);
       expect(toon.stdout).toMatch(/^code: COMMAND_NOT_FOUND\n/u);
     },
-    CLI_INTEGRATION_TIMEOUT_MS,
   );
 });

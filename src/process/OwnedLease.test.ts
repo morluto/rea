@@ -5,10 +5,12 @@ import { promisify } from "node:util";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { HopperStartError } from "../domain/hopperErrors.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { HopperStartError } from "../hopper/HopperErrors.js";
+// Unix socket paths have a short platform limit; the canonical system temp path can exceed it.
 const createTestTempDirectory = async (prefix: string): Promise<string> => {
   const directory = await mkdtemp(join("/tmp", prefix));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));
@@ -73,7 +75,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-const { acquireLinuxHopperApplicationLease } = await import("./HopperLease.js");
+const { acquireLinuxHopperApplicationLease } =
+  await import("../hopper/HopperLease.js");
 const { acquireOwnedLease } = await import("./OwnedLease.js");
 const { HopperApplicationLauncher } =
   await import("../hopper/BridgeLauncher.js");
@@ -92,6 +95,50 @@ afterEach(() => {
 describe.skipIf(process.platform === "win32")(
   "accepted lease connections",
   () => {
+    it("joins concurrent release callers until the listening server finishes closing", async () => {
+      const directory = await createTestTempDirectory("rea-release-join-");
+      const acquired = await acquireOwnedLease({
+        identity: { test: "concurrent-release" },
+        directory,
+        runId: "concurrent-release",
+        failure: (failure) => new Error(failure.kind),
+      });
+      if (!acquired.acquired) throw new Error("expected acquired lease");
+      onTestFinished(() => acquired.lease.release());
+      const leaseClose = phaseGate();
+      const close = Server.prototype.close;
+      vi.spyOn(Server.prototype, "close").mockImplementationOnce(function (
+        this: Server,
+        callback,
+      ) {
+        return close.call(this, (cause) => {
+          void leaseClose.hold().then(() => callback?.(cause));
+        });
+      });
+      let firstFinished = false;
+      let secondFinished = false;
+      const first = acquired.lease.release().then(() => {
+        firstFinished = true;
+      });
+      let second: Promise<void> | undefined;
+      try {
+        await leaseClose.reached(first, "lease close");
+        second = acquired.lease.release().then(() => {
+          secondFinished = true;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(firstFinished).toBe(false);
+        expect(secondFinished).toBe(false);
+      } finally {
+        leaseClose.release();
+        await Promise.allSettled([first, ...(second ? [second] : [])]);
+      }
+      await first;
+      await second;
+      expect(firstFinished).toBe(true);
+      expect(secondFinished).toBe(true);
+    });
+
     it.each([false, true])(
       "closes a held peer and preserves retry after failure=%s",
       async (failClose) => {

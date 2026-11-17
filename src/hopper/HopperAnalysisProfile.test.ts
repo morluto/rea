@@ -211,7 +211,6 @@ it("commits a thin header selection only for derived Hopper loader arguments", a
     provider,
     resourceScope: inspectionResources.owner,
   });
-  expect(staleAdmission.ok).toBe(false);
   if (staleAdmission.ok) throw new Error("stale thin admission was accepted");
   expect(staleAdmission.error.message).toContain(
     "Thin Mach-O source changed after target admission",
@@ -354,7 +353,6 @@ it("keeps failed Mach-O preflight cleanup attached to the supplied profile owner
     },
   );
 
-  expect(resolved.ok).toBe(false);
   if (resolved.ok) throw new Error("Failed preflight cleanup was accepted");
   expect(resolved.error._tag).toBe("BinaryTargetError");
   expect(resolved.error.cause).toBe(closeFailure);
@@ -489,7 +487,6 @@ it.each([
       ...options,
       signal: controller.signal,
     });
-    expect(first.ok).toBe(false);
     if (first.ok) throw new Error("Failed close was accepted");
     expect(first.error.cleanupIncomplete).toBe(true);
     expect(first.error.cleanupResources).toEqual([path]);
@@ -521,7 +518,6 @@ it.each([
         : "AnalysisCancelledError",
     );
     const retry = await resolveHopperAnalysisProfile(target, options);
-    expect(retry.ok).toBe(false);
     if (retry.ok) throw new Error("Failed cleanup retry was accepted");
     expect(retry.error.cleanupIncomplete).toBe(true);
     expect(retry.error.cleanupResources).toEqual([path]);

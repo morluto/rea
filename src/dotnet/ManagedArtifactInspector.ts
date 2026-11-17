@@ -1,7 +1,7 @@
 import {
   admitManagedProjection,
   managedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedArtifactInspectionSchema,
@@ -14,23 +14,23 @@ import {
   readManagedPeLayout,
   type ManagedCliHeader,
   type ManagedPeLayout,
-} from "./ManagedPeReader.js";
+} from "../domain/managed/managedPeReader.js";
 import {
   managedTableRowCounts,
   readManagedMetadataInventory,
   type ManagedMetadataInventory,
   readManagedResourceDirectory,
-} from "./ManagedMetadataInventory.js";
+} from "../domain/managed/managedMetadataInventory.js";
 import {
   readManagedMetadataLayout,
   type ManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+} from "../domain/managed/managedMetadataLayout.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   ManagedReaderFailure,
   managedMetadataFailureStatus,
   type ManagedMetadataHeaderFacts,
-} from "./ManagedReaderFailure.js";
+} from "../domain/managed/managedReaderFailure.js";
 
 const flagNames = (flags: number): string[] => {
   const names: string[] = [];
@@ -160,6 +160,8 @@ const unavailableResult = (
 
 interface RuntimeClassificationInput {
   readonly layout: ManagedPeLayout;
+  /** The layout's CLI header, which a managed classification requires. */
+  readonly cli: ManagedCliHeader;
   readonly metadata: ManagedMetadataLayout;
   readonly inventory: ManagedMetadataInventory;
 }
@@ -283,14 +285,13 @@ const managedArchitectureFor = (
 
 const runtimeClassification = ({
   layout,
+  cli,
   metadata,
   inventory,
 }: RuntimeClassificationInput): Pick<
   ManagedArtifactInspection["classification"],
   "runtime_family" | "implementation" | "managed_architecture" | "evidence"
 > => {
-  const cli = layout.cli;
-  if (cli === null) throw new TypeError("Managed classification requires CLI");
   const { runtime_family: runtimeFamily, evidence } = runtimeFamilyFor(
     cli,
     inventory,
@@ -371,6 +372,7 @@ const partialMetadataResult = ({
 export const inspectManagedArtifactBytes = (
   bytes: Buffer,
   target: BinaryTarget,
+  maxRepresentationBytes?: number,
 ): ManagedArtifactInspection => {
   const layout = readManagedPeLayout(bytes);
   if (layout.cli === null) return unavailableResult(target, bytes, layout);
@@ -386,6 +388,7 @@ export const inspectManagedArtifactBytes = (
       bytes,
       metadataOffset,
       cli.metadata.size,
+      maxRepresentationBytes,
     );
   } catch (cause: unknown) {
     if (!(cause instanceof ManagedReaderFailure)) throw cause;
@@ -430,7 +433,7 @@ export const inspectManagedArtifactBytes = (
           classification: {
             status: "managed",
             container: "pe",
-            ...runtimeClassification({ layout, metadata, inventory }),
+            ...runtimeClassification({ layout, cli, metadata, inventory }),
           },
           metadata: {
             status: issues.length === 0 ? "complete" : "partial",

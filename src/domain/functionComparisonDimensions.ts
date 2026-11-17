@@ -16,7 +16,6 @@ import {
   nameAndSwiftProjection,
   normalizeCfg,
   referencedStringProjection,
-  sorted,
   swiftLiteralCoverage,
   swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
@@ -34,7 +33,7 @@ type ComparisonContext = Pick<
   DimensionResultInput,
   "links" | "providersDiffer"
 > & {
-  readonly sameEntry: boolean;
+  readonly sameIdentity: boolean;
   readonly coordinateContext: FunctionSnapshotCoordinateContext;
 };
 
@@ -78,13 +77,18 @@ export const compareDimensions = (
     ];
     return limitations.length === 0
       ? result
-      : unresolvedDimension({
-          dimension: result.dimension,
-          links: context.links,
-          leftCount: null,
-          rightCount: null,
-          limitations: [...result.limitations, ...limitations],
-        });
+      : {
+          ...unresolvedDimension({
+            dimension: result.dimension,
+            links: context.links,
+            leftCount: null,
+            rightCount: null,
+            limitations: [...result.limitations, ...limitations],
+          }),
+          ...(result.discovery_status === undefined
+            ? {}
+            : { discovery_status: result.discovery_status }),
+        };
   });
 };
 
@@ -114,6 +118,7 @@ const facetLimitations = (
         "strings_names",
         dossier.referenced_strings.length +
           dossier.referenced_names.length +
+          // optional-fact-default: swiftLiteralCoverage reports absence.
           (dossier.swift_string_literals?.length ?? 0),
       ],
     ],
@@ -174,10 +179,9 @@ const compareText = (
     });
   const delta = changes.reduce(
     (summary, change) => ({
-      added_lines:
-        summary.added_lines + (change.added ? (change.count ?? 0) : 0),
+      added_lines: summary.added_lines + (change.added ? change.count : 0),
       removed_lines:
-        summary.removed_lines + (change.removed ? (change.count ?? 0) : 0),
+        summary.removed_lines + (change.removed ? change.count : 0),
       hunks: summary.hunks + (change.added || change.removed ? 1 : 0),
     }),
     { added_lines: 0, removed_lines: 0, hunks: 0 },
@@ -354,8 +358,15 @@ const stringsAndNamesResult = ({
       names_and_literals: rightNamesAndLiterals,
     },
     ...context,
-    leftCount: leftStrings.length + (leftNamesAndLiterals?.length ?? 0),
-    rightCount: rightStrings.length + (rightNamesAndLiterals?.length ?? 0),
+    // Names that cannot be placed in the function leave the side's count unknown.
+    leftCount:
+      leftNamesAndLiterals === null
+        ? null
+        : leftStrings.length + leftNamesAndLiterals.length,
+    rightCount:
+      rightNamesAndLiterals === null
+        ? null
+        : rightStrings.length + rightNamesAndLiterals.length,
     textDelta: null,
     limitations,
   });
@@ -554,7 +565,7 @@ const compareIdentity = (
   context: ComparisonContext,
 ): FunctionDimension => {
   if (
-    !context.sameEntry &&
+    !context.sameIdentity &&
     (!hasStableNativeSymbol(
       left.dossier.procedure.name,
       left.dossier.procedure.symbol,
@@ -594,30 +605,49 @@ const compareCalls = (
   const coverageDiagnostics = [
     ...left.callCoverageDiagnostics.map((reason) => `Left: ${reason}`),
     ...right.callCoverageDiagnostics.map((reason) => `Right: ${reason}`),
+    ...left.callDiscoveryLimitations.map((reason) => `Left: ${reason}`),
+    ...right.callDiscoveryLimitations.map((reason) => `Right: ${reason}`),
   ];
+  const discovery_status =
+    left.callDiscoveryStatus === "partial" ||
+    right.callDiscoveryStatus === "partial"
+      ? "partial"
+      : left.callDiscoveryStatus === "complete" &&
+          right.callDiscoveryStatus === "complete"
+        ? "complete"
+        : "unknown";
   if (coverageLimitations.length > 0)
-    return unresolvedDimension({
-      dimension: "calls",
-      links: context.links,
-      leftCount: comparison.leftCount,
-      rightCount: comparison.rightCount,
-      limitations: [...coverageLimitations, ...coverageDiagnostics],
-    });
+    return {
+      ...unresolvedDimension({
+        dimension: "calls",
+        links: context.links,
+        leftCount: comparison.leftCount,
+        rightCount: comparison.rightCount,
+        limitations: [...coverageLimitations, ...coverageDiagnostics],
+      }),
+      discovery_status,
+    };
   if (comparison.status === "unknown")
-    return unresolvedDimension({
+    return {
+      ...unresolvedDimension({
+        dimension: "calls",
+        links: context.links,
+        leftCount: comparison.leftCount,
+        rightCount: comparison.rightCount,
+        limitations: [...comparison.limitations, ...coverageDiagnostics],
+      }),
+      discovery_status,
+    };
+  return {
+    ...dimensionResult({
       dimension: "calls",
-      links: context.links,
-      leftCount: comparison.leftCount,
-      rightCount: comparison.rightCount,
+      ...comparison,
+      ...context,
+      textDelta: null,
       limitations: [...comparison.limitations, ...coverageDiagnostics],
-    });
-  return dimensionResult({
-    dimension: "calls",
-    ...comparison,
-    ...context,
-    textDelta: null,
-    limitations: [...comparison.limitations, ...coverageDiagnostics],
-  });
+    }),
+    discovery_status,
+  };
 };
 
 const compareCfg = (

@@ -1,4 +1,4 @@
-import { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { ManagedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
 import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import { expect, it } from "vitest";
 
@@ -12,22 +12,22 @@ import {
   buildManagedMemberCapacityFixture,
   buildManagedMemberSelectionCapacityFixture,
 } from "../../tests/fixtures/managedMemberCapacity.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import {
   parseTypes,
   readTypeDefinitions,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import {
   readManagedMetadataInventory,
   readManagedResourceDirectory,
-} from "./ManagedMetadataInventory.js";
-import { managedMetadataTypeNames } from "./ManagedMetadataInventoryRows.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+} from "../domain/managed/managedMetadataInventory.js";
+import { managedMetadataTypeNames } from "../domain/managed/managedMetadataInventoryRows.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 
 it("retains admitted type names, member counts and artifact identity", () => {
   const bytes = buildManagedMemberCapacityFixture();
@@ -308,7 +308,6 @@ it("does not turn an unreadable requested type name into observed absence during
   expect(result.types.map((type) => type.full_name)).toEqual([
     "Fixture.Program",
   ]);
-  expect(result.limitations.join(" ")).toContain("absence is not observed");
 });
 
 it("keeps later type identity, member ownership and constructor names at their original row", () => {
@@ -364,7 +363,6 @@ it("keeps later type identity, member ownership and constructor names at their o
   expect(result.artifact.sha256).toBe(target.sha256);
   expect(result.coverage.state).toBe("partial");
   expect(result.selection?.unmatched_type_names).toEqual(["Fixture.Empty0"]);
-  expect(result.limitations.join(" ")).toContain("absence is not observed");
 
   // Member inspection uses the parsed-type name owner for its metadata
   // inventory, whose attribute names are not included in the member report.

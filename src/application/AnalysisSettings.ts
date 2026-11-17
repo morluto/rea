@@ -1,3 +1,4 @@
+import { runWithAnalysisOperationSnapshot } from "../domain/analysisOperationSnapshot.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -42,7 +43,9 @@ export class AnalysisSettings {
   readonly read = (): AnalysisSettingsSnapshot =>
     this.#accepted.getStore() ?? this.#current;
   run<Value>(operation: () => Value): Value {
-    return this.#accepted.run(this.#current, operation);
+    return this.#accepted.run(this.#current, () =>
+      runWithAnalysisOperationSnapshot(this.#current, operation),
+    );
   }
   inspect(input: z.infer<typeof inspectAnalysisSettingsInputSchema> = {}) {
     return {
@@ -134,7 +137,7 @@ export class AnalysisSettings {
         };
       }),
       active_work_changed: false as const,
-      rea_restart_required: false as const,
+      pending_restart: false as const,
     });
   }
   #describe(setting: AnalysisSettingId) {
@@ -156,6 +159,10 @@ export class AnalysisSettings {
       minimum: definition.minimum,
       maximum: definition.maximum,
       applies_at: definition.appliesAt,
+      update_mode: definition.updateMode,
+      ...(override === undefined && !launch.ok
+        ? {}
+        : { pending_restart: false as const }),
       provider: definition.provider,
       operations: [...definition.operations],
       ...(definition.environment === undefined

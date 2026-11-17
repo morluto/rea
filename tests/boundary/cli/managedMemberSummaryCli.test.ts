@@ -12,14 +12,12 @@ import { join, resolve } from "node:path";
 import { expect } from "vitest";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import {
   analysisViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../../../src/domain/analysisView/analysisView.js";
+} from "../../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import {
@@ -194,12 +192,13 @@ cliTest(
     ]) {
       const result = await cli.run({ arguments: [command, "--help"] });
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("--evidence-bundle");
       if (command === "inspect-managed-members") {
+        expect(result.stdout).toContain("--evidence_output");
+        expect(result.stdout).not.toContain("--evidence-bundle");
         expect(result.stdout).toContain("--detail");
         expect(result.stdout).toContain("summary");
         expect(result.stdout).toContain("complete");
-      }
+      } else expect(result.stdout).toContain("--evidence-bundle");
     }
   },
 );
@@ -239,6 +238,7 @@ cliTest(
 
 cliTest(
   "retains complete member Evidence for exact CLI pages after process exit and target removal",
+  { tags: ["long-running"] },
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-member-summary-cli-");
     const path = join(root, "fixture.dll");
@@ -261,7 +261,7 @@ cliTest(
         ...arguments_,
         "--detail",
         "complete",
-        "--evidence-bundle",
+        "--evidence_output",
         completeBundlePath,
       ],
     });
@@ -285,17 +285,24 @@ cliTest(
         ...arguments_,
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         "members.json",
       ],
     });
     expect(reply.exitCode).toBe(0);
-    const receipt = parseEvidence(reply.json);
+    const delivered = reply.json as {
+      summary: unknown;
+      evidence_bundle: unknown;
+    };
+    const receipt = parseEvidence(delivered.summary);
     expect(receipt.caller_input_path).toBe(path);
     const summary = managedMemberSummaryViewResultSchema.parse(
       receipt.normalized_result,
     );
     const originalBytes = await readFile(bundlePath, "utf8");
+    expect(delivered.evidence_bundle).toMatchObject({
+      bytes: Buffer.byteLength(originalBytes),
+    });
     const bundle = parseEvidenceBundle(JSON.parse(originalBytes));
     expect(bundle.records).toHaveLength(1);
     const parent = bundle.records[0]!;
@@ -349,11 +356,12 @@ cliTest(
       parent,
       report,
     };
+    // The producer has exited and its target is gone. Reuse only the reader
+    // process across page selections; every command still loads the bundle.
     await verifyCliFullPages(pageContext, summary.summary.reported_counts);
     await verifyCliSelection(pageContext);
     expect(await readFile(bundlePath, "utf8")).toBe(originalBytes);
   },
-  180_000,
 );
 
 cliTest(
@@ -375,8 +383,8 @@ cliTest(
       details: {
         issues: [
           expect.objectContaining({
-            path: ["evidence_bundle"],
-            message: expect.stringContaining("summary"),
+            path: ["evidence_output"],
+            message: expect.stringContaining("Summary"),
           }),
         ],
       },
@@ -404,7 +412,7 @@ cliTest(
           path,
           "--detail",
           "summary",
-          "--evidence-bundle",
+          "--evidence_output",
           destination,
           "--json",
         ],
@@ -417,13 +425,8 @@ cliTest(
           reason: destination === path ? "exists" : "missing",
         },
       });
-      const {
-        error: _label,
-        input_path: _inputPath,
-        input_reason: _inputReason,
-        ...projection
-      } = analysisCliErrorEnvelopeSchema.parse(result.json);
-      const failure = analysisErrorProjectionSchema.parse(projection);
+      // Delivery failures are the shared publication's error projection.
+      const failure = analysisErrorProjectionSchema.parse(result.json);
       if (failure.code !== "invalid_request")
         throw new Error(`Unexpected publication failure: ${failure.code}`);
       const retained = parseEvidence(failure.details?.partial_observation);
@@ -452,7 +455,7 @@ cliTest(
         path,
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         destination,
         "--json",
       ],
@@ -479,14 +482,15 @@ cliTest(
         path,
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         destination,
         "--json",
       ],
     });
     expect(result.exitCode).toBe(0);
     const summary = managedMemberSummaryViewResultSchema.parse(
-      parseEvidence(result.json).normalized_result,
+      parseEvidence((result.json as { summary: unknown }).summary)
+        .normalized_result,
     );
     expect(summary.summary).toMatchObject({
       metadata: { status: "malformed" },
@@ -565,7 +569,7 @@ cliTest.for(
         "Fixture.Program",
         "--detail",
         "summary",
-        "--evidence-bundle",
+        "--evidence_output",
         destination,
         "--json",
       ],
@@ -582,9 +586,7 @@ cliTest.for(
       },
     });
     expect(reply.exitCode).toBe(status);
-    const { error: _label, ...projection } =
-      analysisCliErrorEnvelopeSchema.parse(reply.json);
-    const error = analysisErrorProjectionSchema.parse(projection);
+    const error = analysisErrorProjectionSchema.parse(reply.json);
     expect(error.code).toBe("cancelled");
     expect(error.details?.operation).toBe("inspect_managed_members");
     const bytes = await readFile(destination);

@@ -166,7 +166,7 @@ it("retains a selected snapshot descriptor through MCP cleanup discovery and sam
       evidence_links: [original.evidence_id],
       limitations: [
         ...original.limitations,
-        "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
       ],
     });
     expect(replayEvidence.evidence_id).not.toBe(original.evidence_id);

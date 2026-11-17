@@ -1,12 +1,12 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import {
-  artifactInventorySummaryViewResultSchema,
-  sealAnalysisView,
-} from "../../src/domain/analysisView/analysisView.js";
+import { sealAnalysisView } from "../../src/domain/analysisView/analysisView.js";
+import { artifactInventorySummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../src/domain/evidenceFormat.js";
 import { digestCanonicalValue } from "../../src/domain/canonicalDigest.js";
 import {
   evidenceSemanticContent,
@@ -36,7 +36,7 @@ const resealSummary = (
   });
 };
 
-it("compares a historical alias summary through its retained complete MCP parent and rejects resealed false facts", async () => {
+it("refuses a historical alias summary with recreate guidance and rejects resealed false facts", async () => {
   const root = await createTestTempDirectory("rea-historical-summary-mcp-");
   const path = join(root, "original.plist");
   await writeFile(
@@ -53,8 +53,8 @@ it("compares a historical alias summary through its retained complete MCP parent
   const alias = join(root, "caller-selected-alias.plist");
   const aliasedParent = rebindEvidenceToTargetPath(parent, {
     path: alias,
-    sha256: parent.subject!.digest.sha256,
-    format: parent.subject!.format,
+    sha256: fileIdentity(parent.subject).sha256,
+    format: fileIdentity(parent.subject).format,
   });
   expect(aliasedParent.evidence_id).toBe(parent.evidence_id);
   const projected = await call("inspect_analysis_view", {
@@ -89,21 +89,19 @@ it("compares a historical alias summary through its retained complete MCP parent
   });
   expect(historical.evidence_id).not.toBe(current.evidence_id);
   const originalHistorical = JSON.stringify(historical);
+  // The Evidence format owner no longer rebuilds 6.7-era summary identities:
+  // the earlier projection is refused with the single recreate guidance.
   const compared = await call("compare_artifacts", {
     left: historical,
     right: parent,
   });
-  expect(compared.isError, JSON.stringify(compared)).not.toBe(true);
-  const comparison = parseEvidence(compared.structuredContent);
-  expect(
-    artifactComparisonResultSchema.parse(comparison.normalized_result),
-  ).toMatchObject({
-    status: "unchanged",
-    summary: { unchanged: 1, unknown: 0 },
-    changes: [],
+  expect(compared.isError, JSON.stringify(compared)).toBe(true);
+  expect(parseMcpToolError(compared)).toMatchObject({
+    error: {
+      code: "evidence_integrity_mismatch",
+      details: { reason: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE) },
+    },
   });
-  expect(comparison.evidence_links).toContain(parent.evidence_id);
-  expect(comparison.evidence_links).not.toContain(historical.evidence_id);
 
   const historicalResult = artifactInventorySummaryViewResultSchema.parse(
     historical.normalized_result,

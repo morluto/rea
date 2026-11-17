@@ -1,5 +1,5 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { AppleIpsPort } from "./AppleIpsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { AppleIpsPort } from "../../ports/binaryDiagnostics/AppleIpsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -63,7 +63,12 @@ export class AppleIpsService {
           result: value,
           confidence: "observed",
           limitations: value.limitations,
-          locations: [{ kind: "artifact-path", path: value.artifact.path }],
+          locations: [
+            { kind: "artifact-path", path: value.artifact.path },
+            ...(value.join === null || value.join.path === value.artifact.path
+              ? []
+              : [{ kind: "artifact-path" as const, path: value.join.path }]),
+          ],
         },
       ),
       options?.signal,
@@ -76,6 +81,11 @@ const validReport = (
   input: InspectAppleIpsInputLike,
 ): boolean => {
   if (
+    (input.join_path === undefined
+      ? report.join !== null
+      : report.join === null ||
+        report.join.path !== input.join_path ||
+        report.join.bytes > input.max_join_bytes) ||
     report.artifact.bytes > input.max_file_bytes ||
     report.coverage.threads > input.max_threads ||
     report.coverage.frames > input.max_frames ||
@@ -112,6 +122,8 @@ const validReport = (
 };
 
 type InspectAppleIpsInputLike = {
+  readonly join_path?: string | undefined;
+  readonly max_join_bytes: number;
   readonly max_file_bytes: number;
   readonly max_threads: number;
   readonly max_frames: number;

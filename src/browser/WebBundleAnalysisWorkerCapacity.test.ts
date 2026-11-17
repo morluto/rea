@@ -48,7 +48,6 @@ it("refuses before spawning or reading source when no host result capacity remai
 
   try {
     const result = await worker.analyze(script, 10_000);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected result-capacity refusal");
     const refusal = result.error.error;
     expect(refusal).toBeInstanceOf(AnalysisResourceConstraintError);

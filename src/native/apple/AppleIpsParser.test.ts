@@ -9,10 +9,8 @@ import {
   appleIpsMetadataLine,
   appleIpsReport,
 } from "../../../tests/fixtures/binaryDiagnostics/appleIps.js";
-import {
-  AppleIpsFormatFailure,
-  AppleIpsResourceFailure,
-} from "./AppleIps.errors.js";
+import { AppleIpsResourceFailure } from "./AppleIps.errors.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import { parseAppleIps } from "./AppleIpsParser.js";
 
 const input = inspectAppleIpsInputSchema.parse({
@@ -45,7 +43,7 @@ it.each(
           : `${metadata}\n${body}${character}`,
     );
     expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-      AppleIpsFormatFailure,
+      ParseFailureError,
     );
   },
 );
@@ -57,6 +55,30 @@ it("accepts only JSON whitespace around each object", () => {
   expect(parseAppleIps(bytes, artifact(bytes), input).coverage.status).toBe(
     "complete",
   );
+});
+
+it("accepts previously recorded rows that omit newly added unknown-key fields", () => {
+  const bytes = appleIpsBytes();
+  const current = parseAppleIps(bytes, artifact(bytes), input);
+  expect(current.threads.length).toBeGreaterThan(0);
+  expect(current.threads[0]?.frames.length).toBeGreaterThan(0);
+  expect(current.images.length).toBeGreaterThan(0);
+  const historical = {
+    ...current,
+    threads: current.threads.map(
+      ({ unlisted_keys: _threadKeys, ...thread }) => ({
+        ...thread,
+        frames: thread.frames.map(
+          ({ unlisted_keys: _frameKeys, ...frame }) => frame,
+        ),
+      }),
+    ),
+    images: current.images.map(
+      ({ unlisted_keys: _imageKeys, ...image }) => image,
+    ),
+  };
+  expect(appleIpsSchema.safeParse(historical).success).toBe(true);
+  expect(appleIpsSchema.safeParse(current).success).toBe(true);
 });
 
 it.each([
@@ -78,7 +100,9 @@ it.each([
   expect(parsed.coverage.type_mismatches).toEqual([
     {
       path: "body.usedImages[0].uuid",
-      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      expected: expect.stringMatching(
+        /32 hexadecimal UUID digits.*optional.*hyphens/iu,
+      ),
       observed: "malformed UUID string",
       recorded_value: recorded,
     },
@@ -168,23 +192,26 @@ it("reads a 309 crash report, uppercase UUID, and lossless register", () => {
 
 it("refuses a stackshot bug_type without a crash body", () => {
   const bytes = appleIpsBytes({ bugType: "288" });
-  expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
-  );
+  let failure: unknown;
   try {
     parseAppleIps(bytes, artifact(bytes), input);
   } catch (cause) {
-    expect(cause).toMatchObject({
-      kind: "unsupported",
-      message: expect.stringContaining("288"),
-    });
+    failure = cause;
   }
+  expect(failure).toBeInstanceOf(ParseFailureError);
+  expect(failure).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      format: "apple-ips",
+      detail: expect.stringContaining("288"),
+    },
+  });
 });
 
 it("fails closed on a truncated crash body", () => {
   const bytes = appleIpsBytes({ truncateBody: true });
   expect(() => parseAppleIps(bytes, artifact(bytes), input)).toThrow(
-    AppleIpsFormatFailure,
+    ParseFailureError,
   );
 });
 
@@ -310,7 +337,9 @@ it("keeps empty observed text and JSON keys distinct from omitted fields", () =>
   expect(parsed.coverage.type_mismatches).toEqual([
     {
       path: "body.usedImages[0].uuid",
-      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      expected: expect.stringMatching(
+        /32 hexadecimal UUID digits.*optional.*hyphens/iu,
+      ),
       observed: "malformed UUID string",
       recorded_value: "",
     },

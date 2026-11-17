@@ -2,7 +2,8 @@ import { expect, it } from "vitest";
 
 import {
   encodeMarkdownTableCell,
-  formatDelimitedRows,
+  formatCliOutput,
+  prepareDelimitedOutput,
 } from "../../../src/cli/cliOutputFormatter.js";
 
 it.each([
@@ -25,6 +26,54 @@ it.each([
     expect(encodeMarkdownTableCell(value)).toBe(expected);
   },
 );
+
+it.each<[string, unknown, "toon" | "json" | "yaml" | "jsonl", string]>([
+  ["no value as TOON", null, "toon", ""],
+  ["no value as JSON", undefined, "json", ""],
+  ["no value as YAML", null, "yaml", ""],
+  ["a scalar as TOON", 12, "toon", "12"],
+  ["text as TOON", "text", "toon", "text"],
+  [
+    "an object as TOON",
+    { a: 1, b: [1, 2], c: { d: "x" } },
+    "toon",
+    "a: 1\nb[2]: 1,2\nc:\n  d: x",
+  ],
+  [
+    "rows as TOON",
+    [
+      { id: 1, name: "a" },
+      { id: 2, name: "b" },
+    ],
+    "toon",
+    "[2]{id,name}:\n  1,a\n  2,b",
+  ],
+  ["JSON object text as JSON", '  {"a":1}  ', "json", '{\n  "a": 1\n}'],
+  ["JSON array text as JSON", "[1,2]", "json", "[\n  1,\n  2\n]"],
+  ["malformed JSON text as JSON", "{not json", "json", '"{not json"'],
+  ["plain text as JSON", "plain", "json", '"plain"'],
+  [
+    "nested BigInt values as JSON",
+    { big: 9007199254740993n, nested: [1n, { x: 2n }] },
+    "json",
+    '{\n  "big": "9007199254740993",\n  "nested": [\n    "1",\n    {\n      "x": "2"\n    }\n  ]\n}',
+  ],
+  [
+    "a BigInt value as JSON Lines",
+    { big: 9007199254740993n },
+    "jsonl",
+    '{"big":"9007199254740993"}',
+  ],
+  ["rows as JSON Lines", [{ a: 1 }, { a: 2 }], "jsonl", '{"a":1}\n{"a":2}'],
+  [
+    "an object as YAML",
+    { a: 1, b: [1, 2] },
+    "yaml",
+    "a: 1\nb:\n  - 1\n  - 2\n",
+  ],
+])("formats %s", (_name, value, format, expected) => {
+  expect(formatCliOutput(value, format)).toBe(expected);
+});
 
 const parseDelimited = (source: string, delimiter: string): string[][] => {
   const records: string[][] = [];
@@ -84,7 +133,7 @@ it.each([
       { name: "", note: "", count: false },
       { name: "欠", count: null },
     ];
-    const output = formatDelimitedRows(rows, format, {
+    const output = formatCliOutput(rows, format, {
       fields: ["name", "note", "count"],
       metadata: {
         version: 1,
@@ -92,12 +141,10 @@ it.each([
         view: { offset: 0, limit: 3 },
       },
     });
-    expect(output.ok).toBe(true);
-    if (!output.ok) throw output.error;
     const lineEnding = format === "csv" ? "\r\n" : "\n";
-    const metadataEnd = output.value.indexOf(lineEnding);
-    const metadataLine = output.value.slice(0, metadataEnd);
-    const records = output.value
+    const metadataEnd = output.indexOf(lineEnding);
+    const metadataLine = output.slice(0, metadataEnd);
+    const records = output
       .slice(metadataEnd + lineEnding.length)
       .replace(/\r?\n$/u, "");
     expect(
@@ -118,7 +165,7 @@ it.each([
 
 it("does not flatten nested selected field values", () => {
   expect(
-    formatDelimitedRows([{ details: { name: "nested" } }], "csv", {
+    prepareDelimitedOutput([{ details: { name: "nested" } }], "csv", {
       fields: ["details"],
       metadata: {},
     }),
@@ -132,7 +179,7 @@ it.each(["=1+1", "  =1+1", "+1", "-1", "@SUM(A1:A2)"])(
   "refuses formula-leading string cells without changing the source value %j",
   (value) => {
     const row = { target: value };
-    const result = formatDelimitedRows([row], "csv", {
+    const result = prepareDelimitedOutput([row], "csv", {
       fields: ["target"],
       metadata: {},
     });
@@ -149,7 +196,7 @@ it.each(["=1+1", "  =1+1", "+1", "-1", "@SUM(A1:A2)"])(
 
 it("refuses formula-leading column headers", () => {
   expect(
-    formatDelimitedRows([{ value: "safe" }], "csv", {
+    prepareDelimitedOutput([{ value: "safe" }], "csv", {
       fields: ["=header"],
       metadata: {},
     }),

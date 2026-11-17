@@ -57,6 +57,7 @@ it
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'; exit 0; fi
 if [ "$1" = -s ] && [ "$3" = exec-out ]; then /bin/cat "$(dirname "$0")/frame.png"; exit 0; fi
 exit 1
@@ -97,8 +98,10 @@ exit 1
       expect(
         adbResultSchemas.capture_adb_screen.parse(output.normalized_result),
       ).toMatchObject({ width: 1, height: 1 });
-      expect(output.limitations).toContain(
-        "PNG signature, IHDR framing, checksum, and dimensions are validated; encoding and image contents are not validated",
+      expect(output.limitations).toContainEqual(
+        expect.stringMatching(
+          /PNG signature.*IHDR.*checksum.*dimensions.*validated.*encoding.*image contents.*not validated/iu,
+        ),
       );
       expect(
         (await readFile(join(outputPath, "screen.png"))).equals(frame),
@@ -128,6 +131,7 @@ it.skipIf(process.platform === "win32").each([
   const adb = await workspace.write(
     "adb",
     `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 printf '%s\\n' "$3" >> "$root/calls"
 if [ "$1" = version ]; then
@@ -191,6 +195,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ "$1" = version ]; then printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'; exit 0; fi
 if [ "$1" = -s ] && [ "$3" = shell ] && [ "$4" = test ]; then
@@ -258,6 +263,7 @@ it.skipIf(process.platform === "win32")(
     const file = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
 `,
     );
@@ -272,6 +278,14 @@ printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
         result,
         `Execution of the selected adb binary was denied (EACCES): ${binary}. Set REA_ADB_PATH to an absolute path to the adb executable file, not a directory`,
       );
+      const { details } = JSON.parse(result.stdout) as {
+        details: { diagnostics: Record<string, unknown> };
+      };
+      expect(details.diagnostics).toMatchObject({
+        selected_binary: binary,
+        path_source: "environment",
+        filesystem_error: "EACCES",
+      });
     }
     // A parent component that is a file, a symlink loop and a missing path
     // fail before any process starts, so no exit code is reported.
@@ -395,7 +409,13 @@ it("retains safe structured constraints for ADB selectors", async () => {
       expected: "regex",
     },
     {
-      argv: ["start-adb-activity", "S", "x", "--component", "a".repeat(513)],
+      argv: [
+        "start-adb-activity",
+        "S",
+        "x",
+        "--component",
+        `${"a".repeat(256)}/${"b".repeat(256)}`,
+      ],
       path: "component",
       maximum: 512,
     },
@@ -408,6 +428,16 @@ it("retains safe structured constraints for ADB selectors", async () => {
       argv: ["start-adb-activity", "S", "x", "--data-uri", "a".repeat(2049)],
       path: "data-uri",
       maximum: 2048,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "k".repeat(257)],
+      path: "key",
+      maximum: 256,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "bad key"],
+      path: "key",
+      expected: "regex",
     },
   ];
   for (const { argv, path, expected, maximum } of cases) {
@@ -527,6 +557,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\n'
   exit 0
@@ -613,6 +644,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 printf '%s\\n' "$*" >> "$root/calls"
 if [ "$1" = version ]; then
@@ -745,6 +777,7 @@ it.skipIf(process.platform === "win32")(
     const adb = await workspace.write(
       "adb",
       `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = "version" ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-cli\\nInstalled as %s\\n' "$0"
   exit 0
@@ -771,5 +804,44 @@ exit 0
     });
     await expect(readFile(workspace.path("invoked"))).rejects.toThrow();
     await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves exact transport identity through CLI JSON projection",
+  async () => {
+    const workspace = await createTestWorkspace("rea-adb-identity-cli-");
+    onTestFinished(() => removeTestWorkspace(workspace.root));
+    const line =
+      "exact-serial device model:Pixel transport_id:18446744073709551615";
+    const binary = await workspace.write(
+      "adb",
+      `#!${process.execPath}\nif(process.argv[2]==='version')process.stdout.write('Android Debug Bridge version 1.0.41\\nVersion 35.0.2-inert\\n');\nelse if(process.argv[2]==='start-server');\nelse if(process.argv[2]==='devices'&&process.argv[3]==='-l')process.stdout.write(${JSON.stringify(line + "\n")});\nelse throw Error('No other command authorized');\n`,
+    );
+    await chmod(binary, 0o755);
+    const result = await serve(["list-adb-devices", "--json"], {
+      REA_ADB_PATH: binary,
+    });
+    expect(result.exitCode).toBe(0);
+    const evidence = JSON.parse(result.stdout);
+    expect(evidence.normalized_result).toMatchObject({
+      devices: [
+        {
+          serial: "exact-serial",
+          model: "Pixel",
+          transport_id: null,
+          transport_id_text: "18446744073709551615",
+          transport_id_status: "reported",
+        },
+      ],
+    });
+    expect(evidence.raw_result).toMatchObject({
+      transport_id_observations: [
+        { source_line: line, source_token: "18446744073709551615" },
+      ],
+    });
+    expect(
+      toolContract("list_adb_devices").outputSchema.safeParse(evidence).success,
+    ).toBe(true);
   },
 );

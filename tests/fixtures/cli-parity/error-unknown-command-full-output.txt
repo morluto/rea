@@ -1,0 +1,7 @@
+$ rea no-such-command --full-output --json
+exit: 1
+--- stdout
+{"ok":false,"error":{"code":"COMMAND_NOT_FOUND","message":"'no-such-command' is not a command for 'rea'. Did you mean 'cutter-command'?"},"meta":{"command":"no-such-command","cta":{"description":"Suggested commands:","commands":[{"command":"rea cutter-command --full-output --json"},{"command":"rea --help","description":"see all available commands"}]},"duration":"<ms>ms"}}
+<end>
+--- stderr
+<end>
