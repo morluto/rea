@@ -99,6 +99,72 @@ export async function connectLocalToolsMcp(
 }
 
 /**
+ * Lazy file-scoped production stdio MCP client. Connects on first use so
+ * skipped files pay zero startup cost, and drains cleanups in LIFO order while
+ * retaining any cleanup that fails.
+ */
+export const lazyLocalToolsMcp = (
+  environment: Readonly<Record<string, string>> = {},
+): (() => Promise<Awaited<ReturnType<typeof connectLocalToolsMcp>>>) => {
+  type ConnectedLocalToolsMcp = Awaited<
+    ReturnType<typeof connectLocalToolsMcp>
+  >;
+  let pending: Promise<ConnectedLocalToolsMcp> | undefined;
+  let closed = false;
+  const cleanups: Array<() => Promise<void>> = [];
+  const drain = async (): Promise<void> => {
+    const failures: unknown[] = [];
+    const retained: Array<() => Promise<void>> = [];
+    while (cleanups.length > 0) {
+      const cleanup = cleanups.pop();
+      if (cleanup === undefined) break;
+      try {
+        await cleanup();
+      } catch (error) {
+        failures.push(error);
+        retained.push(cleanup);
+      }
+    }
+    for (const cleanup of retained.reverse()) cleanups.push(cleanup);
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        "File-scoped MCP session cleanup failed",
+      );
+    }
+    if (failures.length === 1) throw failures[0];
+  };
+  afterAll(async () => {
+    closed = true;
+    if (pending !== undefined) await pending.catch(() => undefined);
+    await drain();
+  });
+  return () => {
+    if (closed) {
+      return Promise.reject(new Error("File-scoped MCP session is closed"));
+    }
+    pending ??= (async () => {
+      if (cleanups.length > 0) await drain();
+      if (closed) throw new Error("File-scoped MCP session is closed");
+      try {
+        const opened = await connectLocalToolsMcp(environment, (cleanup) => {
+          cleanups.push(cleanup);
+        });
+        if (closed) throw new Error("File-scoped MCP session is closed");
+        return opened;
+      } catch (error) {
+        if (!closed) {
+          pending = undefined;
+          await drain().catch(() => undefined);
+        }
+        throw error;
+      }
+    })();
+    return pending;
+  };
+};
+
+/**
  * One production stdio MCP client for the calling test file. It connects
  * before the file's tests. Teardown removes each cleanup only after it
  * succeeds, so a failed cleanup stays owned.
@@ -124,6 +190,11 @@ export const fileLocalToolsMcp = (
       if (connected === undefined)
         throw new Error("The file's MCP client is not connected");
       return connected.client;
+    },
+    get call() {
+      if (connected === undefined)
+        throw new Error("The file's MCP client is not connected");
+      return connected.call;
     },
   };
 };
