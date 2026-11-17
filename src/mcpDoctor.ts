@@ -1,11 +1,11 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 import { OwnedMcpClient } from "./process/OwnedMcpClient.js";
 import { formatCommandHelp } from "./cli/help.js";
+import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-import { createCatalogIdentity } from "./contracts/catalog/catalogIdentity.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
@@ -20,10 +20,15 @@ import {
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
 } from "./contracts/catalog/catalogDiscovery.js";
-import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
-import { toolContract } from "./contracts/toolContracts.js";
-import { advertisedOutputJsonSchema } from "./contracts/toolSchemaMetadata.js";
-import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
+import {
+  RECORDED_CATALOG_DIGEST_PROFILES,
+  type CatalogIdentitySnapshot,
+} from "./contracts/catalog/recordedCatalogDigests.js";
+import {
+  RECORDED_MCP_CATALOG_SHA256,
+  type RecordedMcpCatalog,
+} from "./recordedMcpCatalog.js";
+import type { McpDoctorCatalogExpectation } from "./contracts/catalog/mcpDoctorCatalog.js";
 import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
@@ -38,6 +43,7 @@ import {
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 import { isRecord } from "./kernel/isRecord.js";
+import { sha256Hex } from "./kernel/sha256Hex.js";
 import { resolveMcpOutputSchemaProfile } from "./contracts/mcpSchemaPresentation.js";
 import { errorMessage } from "./kernel/errorMessage.js";
 
@@ -111,7 +117,9 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         stderr_truncated: false,
       },
     };
-  const expectation = doctorExpectationForEnvironment(options.environment);
+  const expectation = await doctorExpectationForEnvironment(
+    options.environment,
+  );
   const budget = parsedBudgets.value.doctor;
   const budgetMs = budget.milliseconds;
   const deadline = performance.now() + budgetMs;
@@ -236,13 +244,6 @@ class DoctorStdioTransport extends OwnedMcpStdioTransport {
 const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
   "binary_session is outside the selected tool families; include the session family for request-flow and identity checks";
 
-/** Doctor expectations derived from the same environment the child inherits. */
-interface DoctorCatalogExpectation {
-  readonly catalog: ReturnType<typeof createCatalogIdentity>;
-  readonly expectedToolNames: readonly string[];
-  readonly expectedPromptNames: readonly string[];
-}
-
 const listPromptsWhenAdvertised = (
   client: Client,
   request: ReturnType<typeof requestOptions>,
@@ -255,7 +256,7 @@ const inspectProductionMcpSession = async (
   client: Client,
   deadline: number,
   signal: AbortSignal,
-  expectation: DoctorCatalogExpectation,
+  expectation: McpDoctorCatalogExpectation,
   budget: McpPhaseBudget,
 ) => {
   const request = requestOptions(deadline, signal);
@@ -276,7 +277,7 @@ const inspectProductionMcpSession = async (
       name: "binary_session",
       inputSchema: { type: "object" as const },
     }),
-    outputSchema: advertisedOutputJsonSchema(toolContract("binary_session")),
+    outputSchema: expectation.binarySessionOutputSchema,
   };
   // A scope without the session family cannot serve request flow at all;
   // every other case still probes the call so the report names the real cause.
@@ -600,11 +601,42 @@ const targetFreeEnvironment = (
   return result;
 };
 
-const doctorExpectationForEnvironment = (
+let cachedVerifiedCatalog: RecordedMcpCatalog | null | undefined;
+
+const readVerifiedRecordedMcpCatalog = (): RecordedMcpCatalog | undefined => {
+  if (cachedVerifiedCatalog !== undefined)
+    return cachedVerifiedCatalog ?? undefined;
+  if (RECORDED_MCP_CATALOG_SHA256 === undefined) {
+    cachedVerifiedCatalog = null;
+    return undefined;
+  }
+  try {
+    const bytes = readFileSync(new URL("./mcp-catalog.json", import.meta.url));
+    if (sha256Hex(bytes) !== RECORDED_MCP_CATALOG_SHA256) {
+      cachedVerifiedCatalog = null;
+      return undefined;
+    }
+    const parsed: unknown = JSON.parse(bytes.toString("utf8"));
+    if (!isRecord(parsed) || parsed.version !== 1) {
+      cachedVerifiedCatalog = null;
+      return undefined;
+    }
+    cachedVerifiedCatalog = parsed as unknown as RecordedMcpCatalog;
+    return cachedVerifiedCatalog;
+  } catch {
+    cachedVerifiedCatalog = null;
+    return undefined;
+  }
+};
+
+const doctorExpectationForEnvironment = async (
   environment: Readonly<Record<string, string | undefined>>,
-): DoctorCatalogExpectation => {
+): Promise<McpDoctorCatalogExpectation> => {
   const outputProfile = parseMcpOutputSchemaProfile(
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
+  );
+  const resolvedOutputProfile = resolveMcpOutputSchemaProfile(
+    outputProfile.ok ? outputProfile.value : undefined,
   );
   // An invalid selection fails child startup, which the transport check
   // reports with the server's diagnostics; expect the complete catalog so a
@@ -614,31 +646,50 @@ const doctorExpectationForEnvironment = (
     families.ok && families.value !== undefined
       ? new Set(families.value)
       : undefined;
-  const contracts = contractsForToolFamilies(selection);
-  const promptContracts = promptsForToolFamilies(selection);
   const catalogProfile = parseMcpToolCatalogProfile(
     environment.REA_MCP_TOOL_CATALOG_PROFILE,
   );
   const progressive = catalogProfile.ok && catalogProfile.value === "hot-cold";
-  const catalog = createCatalogIdentity({
-    contracts,
-    outputSchemaProfile: resolveMcpOutputSchemaProfile(
-      outputProfile.ok ? outputProfile.value : undefined,
-    ),
-    promptContracts,
-  });
-  return {
-    catalog: progressive ? progressiveCatalogIdentity(catalog) : catalog,
-    expectedToolNames: progressive
-      ? [
-          ...contracts
-            .map(({ name }) => name)
-            .filter((name) => HOT_TOOL_NAMES.has(name)),
-          DISCOVER_TOOLS.name,
-        ]
-      : contracts.map(({ name }) => name),
-    expectedPromptNames: promptContracts.map(({ name }) => name),
-  };
+  if (
+    selection === undefined &&
+    RECORDED_CATALOG_DIGEST_PROFILES !== undefined
+  ) {
+    const recorded = readVerifiedRecordedMcpCatalog();
+    const sessionTool = recorded?.tools.find(
+      ({ name }) => name === "binary_session",
+    );
+    if (
+      recorded !== undefined &&
+      sessionTool !== undefined &&
+      isRecord(sessionTool.outputSchema)
+    ) {
+      const baseCatalog: CatalogIdentitySnapshot = {
+        counts: recorded.identity.counts,
+        digests: RECORDED_CATALOG_DIGEST_PROFILES[resolvedOutputProfile],
+      };
+      const toolNames = recorded.tools.map(({ name }) => name);
+      return {
+        catalog: progressive
+          ? progressiveCatalogIdentity(baseCatalog)
+          : baseCatalog,
+        expectedToolNames: progressive
+          ? [
+              ...toolNames.filter((name) => HOT_TOOL_NAMES.has(name)),
+              DISCOVER_TOOLS.name,
+            ]
+          : toolNames,
+        expectedPromptNames: recorded.prompts.map(({ name }) => name),
+        binarySessionOutputSchema: sessionTool.outputSchema,
+      };
+    }
+  }
+  const { buildLiveMcpDoctorExpectation } =
+    await import("./contracts/catalog/mcpDoctorCatalog.js");
+  return buildLiveMcpDoctorExpectation(
+    selection,
+    resolvedOutputProfile,
+    progressive,
+  );
 };
 
 const captureStderr = () => {
