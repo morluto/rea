@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { createHash } from "node:crypto";
 
 import {
   ArtifactReaderFailure,
@@ -9,11 +10,14 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { constants as bufferConstants } from "node:buffer";
 import {
   imageFileSizeRemediation,
+  projectOwnedArtifactInputFailure,
+  projectStableArtifactFailure,
   readerIntegrityFailure,
 } from "./StableArtifactFailure.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFilePrimaryFacts,
   artifactParseFailure,
 } from "./ArtifactFileOperation.js";
 import { AnalysisCleanupLease } from "./AnalysisCleanupLease.js";
@@ -24,6 +28,106 @@ import {
   truncatedInput,
   unsupportedInput,
 } from "../domain/parseFailure.js";
+
+it.each([
+  malformedInput("pe", "bad field"),
+  truncatedInput("pe", "short field"),
+  unsupportedInput("pe", "unsupported image"),
+])(
+  "preserves selected input projection and partial identity through cleanup retry: $kind",
+  async (cause) => {
+    const path = "/selected/./program.exe";
+    const operation = "inspect_pe_resources";
+    const failure = artifactParseFailure(cause, undefined);
+    expect(failure).toMatchObject({ cause });
+    let attempts = 0;
+    const lease = new AnalysisCleanupLease(async () => {
+      if (attempts++ === 0) throw new Error("cleanup retry failed");
+    }, [path]);
+    const wrapped = new ArtifactFileCleanupFailure(
+      new RegularFileCleanupFailure({
+        path,
+        owner: { close: async () => undefined } as never,
+        outcome: { kind: "failed", cause: failure },
+        cleanupCause: new Error("close failed"),
+      }),
+      lease,
+    );
+    const primary = projectOwnedArtifactInputFailure(
+      artifactFilePrimaryFacts(wrapped),
+      operation,
+      path,
+    );
+    if (primary === undefined)
+      throw new Error("Expected a selected-input projection");
+    expect(primary.cause).toBe(failure);
+    const bytes = Buffer.from("inert snapshot");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const projected = projectStableArtifactFailure(
+      wrapped,
+      primary,
+      path,
+      "pe-fixture",
+      operation,
+      { bytes, sha256 },
+    );
+    expect(projectAnalysisError(projected)).toMatchObject({
+      code: "cleanup_incomplete",
+    });
+    await expect(lease.release()).rejects.toThrow("cleanup retry failed");
+    expect(projectAnalysisError(projected)).toMatchObject({
+      code: "cleanup_incomplete",
+    });
+    await lease.release();
+    expect(projectAnalysisError(projected)).toMatchObject({
+      code:
+        cause.kind === "unsupported" ? "unsupported_target" : "invalid_request",
+      details:
+        cause.kind === "unsupported"
+          ? { operation, path, reason: cause.message }
+          : {
+              operation,
+              issues: [
+                {
+                  path: ["path"],
+                  reason: "invalid_format",
+                  message: cause.message,
+                },
+              ],
+            },
+    });
+    expect(projected.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path,
+      sha256,
+      bytes: bytes.length,
+    });
+  },
+);
+
+it("leaves opaque operation errors and decode limits with their owning projection", () => {
+  const unsupported = artifactParseFailure(
+    unsupportedInput("pe", "unsupported"),
+    undefined,
+  );
+  expect(
+    projectOwnedArtifactInputFailure(
+      { cause: unsupported, origin: "opaque-operation" },
+      "inspect_pe_resources",
+      "/selected.exe",
+    ),
+  ).toBeUndefined();
+  expect(
+    projectOwnedArtifactInputFailure(
+      {
+        cause: new ArtifactReaderFailure("limit", "budget"),
+        origin: "owned-or-classified",
+      },
+      "inspect_pe_resources",
+      "/selected.exe",
+    ),
+  ).toBeUndefined();
+});
 
 it.each([
   {

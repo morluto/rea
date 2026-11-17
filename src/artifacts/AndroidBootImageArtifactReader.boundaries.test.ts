@@ -5,7 +5,10 @@ import { buffer } from "node:stream/consumers";
 import { expect, it, vi } from "vitest";
 
 import { AndroidBootImageArtifactReader } from "./AndroidBootImageArtifactReader.js";
-import { artifactFixedLimitFailure } from "../resources/index.js";
+import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
+} from "../resources/index.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
   buildBootImage,
@@ -28,6 +31,82 @@ const entries = async (reader: AndroidBootImageArtifactReader) => {
   for await (const entry of reader.entries()) result.push(entry);
   return result;
 };
+
+it("does not publish preparation metadata or coverage after carrier mutation", async () => {
+  const bytes = buildBootImage({ version: 0 });
+  const path = await fixture(bytes);
+  class ChangedDuringPreparation extends AndroidBootImageArtifactReader {
+    protected override async prepareEntries(signal?: AbortSignal) {
+      const prepared = await super.prepareEntries(signal);
+      await writeFile(path, Buffer.concat([bytes, Buffer.from([0])]));
+      return prepared;
+    }
+  }
+  const reader = new ChangedDuringPreparation(path);
+  const onCoverage = vi.fn();
+  let yielded = 0;
+  try {
+    await expect(
+      (async () => {
+        for await (const _entry of reader.entries(undefined, { onCoverage }))
+          yielded += 1;
+      })(),
+    ).rejects.toMatchObject({ reason: "integrity" });
+    expect(yielded).toBe(0);
+    expect(onCoverage).not.toHaveBeenCalled();
+    expect(reader.formatMetadata()).toBeUndefined();
+  } finally {
+    await reader.close();
+  }
+});
+
+it.each(["invalid", "cancelled"] as const)(
+  "retries a first %s preparation without publishing its metadata",
+  async (mode) => {
+    const path = await fixture(buildBootImage({ version: 0 }));
+    const controller = new AbortController();
+    let refuse = true;
+    class InterruptedPreparation extends AndroidBootImageArtifactReader {
+      protected override async prepareEntries(signal?: AbortSignal) {
+        const prepared = await super.prepareEntries(signal);
+        if (refuse) {
+          refuse = false;
+          if (mode === "invalid")
+            throw new ArtifactReaderFailure(
+              "malformed",
+              "injected preparation failure",
+            );
+          controller.abort(new Error("cancel final preparation validation"));
+        }
+        return prepared;
+      }
+    }
+    const reader = new InterruptedPreparation(path);
+    try {
+      const onCoverage = vi.fn();
+      await expect(
+        (async () => {
+          for await (const _entry of reader.entries(controller.signal, {
+            onCoverage,
+          })) {
+            throw new Error("Failed preparation yielded an entry");
+          }
+        })(),
+      ).rejects.toMatchObject({
+        reason: mode === "invalid" ? "malformed" : "cancelled",
+      });
+      expect(onCoverage).not.toHaveBeenCalled();
+      expect(reader.formatMetadata()).toBeUndefined();
+      expect(await entries(reader)).toHaveLength(2);
+      expect(reader.formatMetadata()).toMatchObject({
+        header_version: 0,
+        component_count: 2,
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("preserves cancellation during header admission", async () => {
   const path = await fixture(buildBootImage({ version: 0 }));

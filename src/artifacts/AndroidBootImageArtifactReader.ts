@@ -40,21 +40,21 @@ const COMPRESSION_LIMITATION =
   "Compression was identified from the leading magic only and the stored bytes were not decompressed.";
 
 /** Read an Android boot or vendor_boot image without unpacking or verifying it. */
-export class AndroidBootImageArtifactReader extends PositionalArtifactReader {
+export class AndroidBootImageArtifactReader extends PositionalArtifactReader<AndroidBootImageMetadata> {
   override readonly format = "android-boot-image" as const;
-  #header: AndroidBootImageMetadata | undefined;
 
   constructor(path: string, admitted?: StableRegularFileDescriptor) {
     super(path, "Android boot image", admitted);
   }
 
   formatMetadata(): AndroidBootImageMetadata | undefined {
-    return this.#header === undefined ? undefined : { ...this.#header };
+    const metadata = this.preparedFormatMetadata;
+    return metadata === undefined ? undefined : { ...metadata };
   }
 
   protected override async prepareEntries(
     signal?: AbortSignal,
-  ): Promise<PositionalArtifactEntries> {
+  ): Promise<PositionalArtifactEntries<AndroidBootImageMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const headerBytes = await readArtifactFileBytes(
       handle,
@@ -76,7 +76,6 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader {
       plans,
       signal,
     );
-    this.#header = toMetadata(header, avb, plans.length);
     const entries = new Map<string, BootEntry>();
     for (const plan of plans) {
       const entry = entryFor(plan, compressions.get(plan.path) ?? null);
@@ -86,6 +85,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader {
     }
     return {
       entries: [...entries.values()],
+      formatMetadata: toMetadata(header, avb, plans.length),
       coverage: {
         status: "complete",
         limitations: [
