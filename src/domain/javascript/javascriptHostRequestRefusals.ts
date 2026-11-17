@@ -28,6 +28,19 @@ const literalString = (node: t.Node | undefined): string | undefined => {
     : undefined;
 };
 
+/** An inherited iterator can change while the call's arguments are evaluated. */
+const inheritedIteratorMayHaveChanged = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+  constructor: "Object" | "Array",
+): boolean =>
+  intrinsicPrototypeMemberMayHaveChanged(
+    state,
+    constructor,
+    "Symbol.iterator",
+    node,
+  ) || opaqueCodeMayChangeGlobalRead(node.callee, state, constructor, node);
+
 /**
  * Whether an absolute URL literal names a user or password. Without `//` after
  * the scheme, a browser page with the same scheme reads the rest as a relative
@@ -163,14 +176,7 @@ const fetchRefused = (
     return false;
   // An inherited iterator changes HeadersInit from record to sequence. A
   // source-visible write or escape can happen while arguments are evaluated.
-  return (
-    !intrinsicPrototypeMemberMayHaveChanged(
-      state,
-      "Object",
-      "Symbol.iterator",
-      node,
-    ) && !opaqueCodeMayChangeGlobalRead(node.callee, state, "Object", node)
-  );
+  return !inheritedIteratorMayHaveChanged(node, state, "Object");
 };
 
 /**
@@ -186,7 +192,10 @@ const fetchRefused = (
  * A relative URL without a fragment stays: a browser resolves it against the
  * document. A non-string subprotocol becomes its string form, so it stays too.
  */
-const webSocketRefused = (node: t.Node): boolean => {
+const webSocketRefused = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
   if (!t.isNewExpression(node)) return false;
   const [target, protocols] = node.arguments;
   // A spread can move every later literal to a slot the host ignores.
@@ -207,10 +216,10 @@ const webSocketRefused = (node: t.Node): boolean => {
     const name = literalString(element ?? undefined);
     return name === undefined ? [] : [name];
   });
-  return (
+  const refused =
     known.some((name) => !TOKEN.test(name)) ||
-    new Set(known).size !== known.length
-  );
+    new Set(known).size !== known.length;
+  return refused && !inheritedIteratorMayHaveChanged(node, state, "Array");
 };
 
 /**
@@ -225,5 +234,5 @@ export const hostRefusesJavaScriptRequest = (
   method === "fetch"
     ? fetchRefused(node, state)
     : method === "WebSocket"
-      ? webSocketRefused(node)
+      ? webSocketRefused(node, state)
       : false;
