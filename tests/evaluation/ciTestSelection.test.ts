@@ -310,6 +310,24 @@ it("parses only well-formed plans and derives the selected shard count", () => {
   expect(
     testShards("fast", parseTestSelection(JSON.stringify(selected))),
   ).toEqual(["1/2", "2/2"]);
+  const maxSelectedFiles = Object.fromEntries(
+    Array.from({ length: 400 }, (_, i) => [
+      `src/feature-${String(i)}.test.ts`,
+      "",
+    ]),
+  );
+  expect(plan(Object.keys(maxSelectedFiles), maxSelectedFiles)).toMatchObject({
+    mode: "selected",
+    shards: 8,
+  });
+  const overCapFiles = {
+    ...maxSelectedFiles,
+    "src/feature-400.test.ts": "",
+  };
+  expect(plan(Object.keys(overCapFiles), overCapFiles)).toMatchObject({
+    mode: "full",
+    reason: "401 affected test files exceed the 400-file selection cap",
+  });
   const full = { version: 3, mode: "full", reason: "Shared" };
   expect(testShards("fast", parseTestSelection(full))).toHaveLength(12);
   expect(testShards("full", parseTestSelection(full))).toHaveLength(12);
@@ -327,8 +345,8 @@ it("parses only well-formed plans and derives the selected shard count", () => {
     { ...selected, shards: 0 },
     {
       ...selected,
-      files: Array.from({ length: 5 }, (_, i) => `src/${i}.test.ts`),
-      shards: 5,
+      files: Array.from({ length: 9 }, (_, i) => `src/${i}.test.ts`),
+      shards: 9,
     },
     { ...full, shards: 1 },
   ])

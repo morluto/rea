@@ -13,8 +13,8 @@ const SELECTION_CAP = 400;
 // Selected files per test job, and the most jobs one selection uses. Each job
 // runs one `--shard` of the selection; the CI sequencer balances the shards by
 // main's recorded per-file durations when that history is available.
-const FILES_PER_SHARD = 40;
-const MAX_SHARDS = 4;
+const FILES_PER_SHARD = 50;
+const MAX_SHARDS = 8;
 
 // Leaf adapters whose tests also reach their sources through the built CLI,
 // MCP server or a fake provider process rather than an import. An adapter
