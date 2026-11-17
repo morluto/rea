@@ -2353,7 +2353,19 @@ export const describeContractCommand = <
             };
             return [{ path: [flag], message, issue }];
           });
-          const result = contractChecks.safeParse(toContractInput(options));
+          // Checks observe execution defaults, while the command retains the
+          // caller's raw selections. Resolve only omitted fields: supplied
+          // options have already passed argv admission, and JSON text is not
+          // decoded until the command runs.
+          const checkInput = toContractInput(options);
+          if (checks.length > 0)
+            for (const [field, declared] of Object.entries(shape)) {
+              if (Object.hasOwn(checkInput, field)) continue;
+              const omitted = declared.safeParse(undefined);
+              if (omitted.success && omitted.data !== undefined)
+                checkInput[field] = omitted.data;
+            }
+          const result = contractChecks.safeParse(checkInput);
           return result.success
             ? conflicts
             : [
