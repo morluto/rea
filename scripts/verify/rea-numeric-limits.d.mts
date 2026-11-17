@@ -21,3 +21,17 @@ export function requiredRuntimeLimitFailure(
   name: string,
   presence: { readonly inRuntime: boolean; readonly inRegistry: boolean },
 ): string | undefined;
+
+/** Read registry entry shapes with the TypeScript parser, order-independently. */
+export const readNumericLimitRegistryEntries: (source: string) => {
+  readonly name: string;
+  readonly updateMode: string | undefined;
+  readonly policy: string | undefined;
+  readonly read: string | undefined;
+  readonly reason: string | undefined;
+}[];
+
+/** Read ANALYSIS_SETTINGS entry update modes with the TypeScript parser. */
+export const readAnalysisSettingUpdateModes: (
+  source: string,
+) => (string | undefined)[];

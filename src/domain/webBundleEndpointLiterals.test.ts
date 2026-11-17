@@ -635,13 +635,17 @@ client.POST(\`/api/uppercase-post\`);`);
 });
 
 it("rejects backslash-prefixed candidates that could leak URL credentials", () => {
-  // `/\user:pass@host/path` is a cross-origin reference carrying URL
-  // authentication; a transport path or URL literal never contains a
-  // backslash, so admitting one would leak credentials in
-  // `endpoint_candidate.value`.
-  const result = analyze(`fetch('/\\\\user:pass@api.example.test/path');`);
+  // Array elements reach `webBundleEndpointLiteral` through
+  // `inspectEndpointLiterals`, so the backslash guard is actually exercised.
+  // The valid path is admitted as a control; the slash-backslash credential
+  // reference must never become an `endpoint_candidate`.
+  const result = analyze(`const paths = [
+    "/valid-path",
+    "/\\\\user:pass@api.example.test/path",
+  ];`);
   const candidates = result.inferences.filter(
     ({ kind }) => kind === "endpoint_candidate",
   );
+  expect(candidates.map(({ value }) => value)).toContain("/valid-path");
   expect(candidates.some(({ value }) => value.includes("\\"))).toBe(false);
 });
