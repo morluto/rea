@@ -151,6 +151,7 @@ export class AndroidBootImageArtifactReader extends PositionalArtifactReader<And
         : null;
     const footer = inspectAvbFooter({
       fileSize,
+      dataEnd: header.dataEnd,
       imageEnd: header.imageEnd,
       headerOccupied: header.headerOccupied,
       components: [
