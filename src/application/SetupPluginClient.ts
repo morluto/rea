@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import {
   SetupPluginCommands,
@@ -41,9 +41,10 @@ export class SetupPluginClient extends SetupPluginCommands {
     readonly command: PluginClientCommand,
     environment: Readonly<NodeJS.ProcessEnv>,
     resources: ArtifactResourceScope,
+    platform: NodeJS.Platform,
     launch?: SetupPluginCommandLauncher,
   ) {
-    super(environment, resources, launch);
+    super(environment, resources, platform, launch);
   }
 
   async inspect(): Promise<PluginInspection> {

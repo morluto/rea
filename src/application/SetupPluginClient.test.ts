@@ -3,8 +3,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -16,6 +18,8 @@ import { launchSetupPluginCommand } from "./SetupPluginCommand.js";
 import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { supportedClientRegistrationProfile } from "./SupportedClients.js";
 
 it("reports an explicit capture limit for valid inventory above 64 KiB", async () => {
   const resources = new ArtifactResourceScope();
@@ -24,6 +28,7 @@ it("reports an explicit capture limit for valid inventory above 64 KiB", async (
     "codex",
     process.env,
     resources,
+    HOST_PLATFORM.platform,
     (_command, _args, launchOptions) =>
       launchSetupPluginCommand(
         process.execPath,
@@ -45,7 +50,12 @@ it("reports an explicit capture limit for valid inventory above 64 KiB", async (
 it("preserves cancellation and retained cleanup ownership through setup and retry", async () => {
   const base = new FakeSetupHost("win32");
   base.clients = [
-    { name: "claude_code", configPath: "/fixture/config", format: "json" },
+    {
+      name: "claude_code",
+      configPath: "/fixture/config",
+      format: "json",
+      registrationProfile: supportedClientRegistrationProfile("claude_code"),
+    },
   ];
   base.productRegistrations = [
     {
@@ -133,6 +143,7 @@ it.runIf(process.platform === "win32")(
       "codex",
       { ...process.env, PATH: `"${bin}"`, PATHEXT: ".PS1;.CMD" },
       resources,
+      "win32",
     );
     expect(await client.inspect()).toMatchObject({
       status: "available",
@@ -164,7 +175,7 @@ it.each(["inventory", "install", "readback"] as const)(
           : {}),
       };
     };
-    const client = new SetupPluginClient("claude", {}, resources, launch);
+    const client = new SetupPluginClient("claude", {}, resources, HOST_PLATFORM.platform, launch);
     const failure =
       stage === "inventory"
         ? await client.inspect()

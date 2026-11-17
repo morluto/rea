@@ -5,6 +5,10 @@ import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
+import {
+  supportedClientRegistrationProfile,
+  type SupportedClientName,
+} from "./SupportedClients.js";
 
 it.each([
   { client: "cursor", args: ["plugin", "list", "--json"] },
@@ -24,7 +28,14 @@ it.each([
 const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   const base = new FakeSetupHost(platform);
   base.clients = [
-    { name: clientId, configPath: "/fixture/config", format: "toml" },
+    {
+      name: clientId,
+      configPath: "/fixture/config",
+      format: "toml",
+      registrationProfile: supportedClientRegistrationProfile(
+        clientId as SupportedClientName,
+      ),
+    },
   ];
   base.clientInspections.set(clientId, { status: "create" });
   base.productRegistrations = [
@@ -169,6 +180,7 @@ it.each([true, false])(
         name: "gemini_cli",
         configPath: "/fixture/gemini.json",
         format: "json",
+        registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
       },
     ];
     f.base.clientInspections.set("gemini_cli", {
@@ -211,7 +223,12 @@ it("retains the private-launcher blocker for mixed plugin and direct setup", asy
   f.base.registrationCommandBlocker = "Install REA outside the package.";
   f.base.clients = [
     ...f.base.clients,
-    { name: "gemini_cli", configPath: "/fixture/gemini.json", format: "json" },
+    {
+      name: "gemini_cli",
+      configPath: "/fixture/gemini.json",
+      format: "json",
+      registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
+    },
   ];
   const result = await runSetup(
     { ...f.setupOptions, clientIds: ["claude_code", "gemini_cli"] },
@@ -233,6 +250,7 @@ it.each([1, 2, 3, 4, 5])(
         name: "gemini_cli",
         configPath: "/fixture/gemini.json",
         format: "json",
+        registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
       },
     ];
     let closed = false;
@@ -378,7 +396,12 @@ it("keeps other clients' skill installations when a plugin client shares setup",
   const f = fixture();
   f.base.clients = [
     ...f.base.clients,
-    { name: "gemini_cli", configPath: "/fixture/gemini.json", format: "json" },
+    {
+      name: "gemini_cli",
+      configPath: "/fixture/gemini.json",
+      format: "json",
+      registrationProfile: supportedClientRegistrationProfile("gemini_cli"),
+    },
   ];
   const result = await runSetup(
     { ...f.setupOptions, clientIds: ["codex", "gemini_cli"] },

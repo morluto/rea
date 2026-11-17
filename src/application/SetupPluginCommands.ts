@@ -1,5 +1,8 @@
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   isWindowsBatchFile,
   windowsBatchCommand,
@@ -105,6 +108,7 @@ export class SetupPluginCommands {
   constructor(
     protected readonly environment: Readonly<NodeJS.ProcessEnv>,
     protected readonly resources: ArtifactResourceScope,
+    protected readonly platform: NodeJS.Platform,
     private readonly launch: SetupPluginCommandLauncher = launchPluginCommand,
   ) {}
   protected async run(
@@ -116,12 +120,11 @@ export class SetupPluginCommands {
       env: this.environment,
       cwd: process.cwd(),
       timeoutMs,
-      platform: process.platform,
+      platform: this.platform,
       resources: this.resources,
     });
     if (result.interruptedSignal !== undefined)
-      throw new AnalysisCancelledError("setup", {
-        cause: result.interruptedSignal,
+      throw cancelledBy("setup", carriedReason(result.interruptedSignal), {
         diagnostics: { interrupted_signal: result.interruptedSignal },
       });
     return result;

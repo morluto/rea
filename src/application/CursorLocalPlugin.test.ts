@@ -13,7 +13,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 import { setupPluginOperation } from "../../tests/fixtures/setupPluginProtocol.mjs";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
 import {
   primaryAnalysisError,
   AnalysisError,
@@ -25,6 +25,10 @@ import { runSetup } from "./Setup.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
 import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 import { MCP_BOOTSTRAP_FILES } from "../../scripts/lib/cli-runtime-files.mjs";
+import {
+  supportedClientRegistrationProfile,
+  type SupportedClientName,
+} from "./SupportedClients.js";
 
 const writeDownloadedPackage = async (
   prefix: string,
@@ -71,7 +75,14 @@ const fixture = async () => {
   const config = join(home, ".cursor", "mcp.json");
   const local = join(home, ".cursor", "plugins", "local");
   const target = join(local, "rea");
-  base.clients = [{ name: "cursor", configPath: config, format: "json" }];
+  base.clients = [
+    {
+      name: "cursor",
+      configPath: config,
+      format: "json",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+    },
+  ];
   base.clientInspections.set("cursor", { status: "create" });
   base.productRegistrations = [
     {
@@ -275,7 +286,14 @@ it.each(["codex", "claude_code"] as const)(
     const configPath = join(f.home, client, "config");
     f.base.clients = [
       ...f.base.clients,
-      { name: client, configPath, format: "json" },
+      {
+        name: client,
+        configPath,
+        format: "json",
+        registrationProfile: supportedClientRegistrationProfile(
+          client as SupportedClientName,
+        ),
+      },
     ];
     f.base.clientInspections.set(client, { status: "create" });
     f.base.productRegistrations = [

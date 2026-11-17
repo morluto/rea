@@ -2,7 +2,8 @@ import { lstat, mkdir, realpath, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { readSkillFile } from "./SetupSkill.js";
@@ -19,8 +20,6 @@ const version = PRODUCT_IDENTITY.packageVersion;
 const packagePath = "node_modules/rea-agents";
 const receipt = { format: "rea-cursor-local-v1", version };
 const json = (value: unknown): string => JSON.stringify(value, null, 2) + "\n";
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 const isMissing = (cause: unknown): boolean =>
   cause instanceof Error && Reflect.get(cause, "code") === "ENOENT";
 const sharedManifest = z.object({
@@ -55,10 +54,11 @@ export class CursorLocalPlugin extends SetupPluginCommands {
     private readonly home: string,
     environment: Readonly<NodeJS.ProcessEnv>,
     resources: ArtifactResourceScope,
+    platform: NodeJS.Platform,
     launch?: SetupPluginCommandLauncher,
   ) {
     const commands = new ArtifactResourceScope();
-    super(environment, commands, launch);
+    super(environment, commands, platform, launch);
     this.directory = join(home, ".cursor", "plugins", "local", "rea");
     resources.addCloseHook(async () => {
       // End the manager lifetime only when setup closes, after installer cleanup.

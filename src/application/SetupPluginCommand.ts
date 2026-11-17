@@ -3,8 +3,13 @@ import { randomUUID } from "node:crypto";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+  AnalysisCleanupLease,
+} from "../resources/index.js";
+import {
+  CallerAbort,
+  OwnerCancellation,
+} from "../domain/analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -70,7 +75,7 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
     let resource: ArtifactResourceOwner | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
-      controller.abort();
+      controller.abort(OwnerCancellation.deadlineElapsed);
     }, options.timeoutMs);
     const signalHandlers = new Map<NodeJS.Signals, () => void>(
       FORWARD_SIGNALS.map((signal) => [
@@ -78,7 +83,11 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
         () => {
           if (interruptedSignal !== undefined) return;
           interruptedSignal = signal;
-          controller.abort();
+          controller.abort(
+            CallerAbort.forProcessSignal(
+              signal === "SIGINT" ? "SIGINT" : "SIGTERM",
+            ),
+          );
         },
       ]),
     );
@@ -134,8 +143,7 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
       );
       await supervisor.waitForOutputClose(undefined, controller.signal);
     } catch (cause: unknown) {
-      if (!controller.signal.aborted)
-        spawnError = cause instanceof Error ? cause.message : String(cause);
+      if (!controller.signal.aborted) spawnError = errorMessage(cause);
     } finally {
       clearTimeout(timer);
       try {
@@ -144,7 +152,7 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
           if (released.kind === "failed") throw released.cause;
         }
       } catch (cause: unknown) {
-        cleanupFailure = cause instanceof Error ? cause.message : String(cause);
+        cleanupFailure = errorMessage(cause);
       }
       for (const [signal, handler] of signalHandlers)
         process.removeListener(signal, handler);

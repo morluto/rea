@@ -5,6 +5,10 @@ import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { setupOutcomeSnapshot } from "./SetupCancellation.js";
 import { SetupSkillInstallError } from "./SetupSkill.js";
+import {
+  supportedClientRegistrationProfile,
+  type SupportedClientName,
+} from "./SupportedClients.js";
 
 it.each(["initial", "approval", "client", "skill", "hopper", "close"] as const)(
   "stops later setup writes after cancellation during %s and awaits close",
@@ -16,6 +20,9 @@ it.each(["initial", "approval", "client", "skill", "hopper", "close"] as const)(
       name,
       configPath: `/fixture/${name}.json`,
       format: "json" as const,
+      registrationProfile: supportedClientRegistrationProfile(
+        name as SupportedClientName,
+      ),
     }));
     base.doctorHealthy = true;
     let closed = false;
@@ -112,7 +119,12 @@ it("retains rollback recovery facts when cancellation arrives as registration se
   const controller = new AbortController();
   const base = new FakeSetupHost(process.platform);
   base.clients = [
-    { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+    {
+      name: "cursor",
+      configPath: "/fixture/cursor.json",
+      format: "json",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+    },
   ];
   const recovery = {
     status: "failed" as const,

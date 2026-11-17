@@ -1,11 +1,11 @@
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 import { ok } from "../domain/result.js";
 import { explicitSetupRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { throwIfSetupCancelled } from "./SetupCancellation.js";
 import { launchPluginCommand } from "./SetupPluginCommands.js";
-import type { DoctorCheck } from "./Doctor.js";
+import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";
 import type { SetupHost, SetupAction } from "./SetupTypes.js";
 import type { SetupPluginCommandLauncher } from "./SetupPluginCommand.js";
 import {
@@ -120,12 +120,14 @@ class PluginSetupHost {
             this.host.homeDirectory,
             this.environment,
             this.resources,
+            this.host.platform,
             this.launch,
           )
         : new SetupPluginClient(
             command,
             this.environment,
             this.resources,
+            this.host.platform,
             this.launch,
           );
     // Claude inventory can migrate settings; the other inventory paths are read-only.
