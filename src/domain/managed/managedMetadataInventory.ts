@@ -104,12 +104,26 @@ const validateIdentityTableCounts = (
     });
 };
 
+const reportIgnoredStreamHeaders = (
+  layout: ManagedMetadataLayout,
+  issues: ManagedParseIssue[],
+): void => {
+  for (const header of layout.ignoredStreamHeaders)
+    issues.push({
+      code: "invalid-stream",
+      scope: "metadata.stream-header",
+      offset: header.headerOffset,
+      detail: `Duplicate metadata stream ${header.name} ignored; facts use the first ${header.name} header, as the .NET Framework 4 loader does. CoreCLR may resolve a later header, so heap-backed facts are uncertain for CoreCLR-only targets.`,
+    });
+};
+
 /** Module identity is independent of assembly references, attributes and resources. */
 export const readManagedModuleIdentity = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
 ): Pick<ManagedMetadataInventory, "module" | "issues"> => {
   const issues: ManagedParseIssue[] = [];
+  reportIgnoredStreamHeaders(layout, issues);
   validateIdentityTableCounts(layout, issues);
   const module =
     readManagedValue(

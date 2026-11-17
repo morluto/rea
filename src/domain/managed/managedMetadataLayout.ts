@@ -80,6 +80,8 @@ export interface ManagedMetadataLayout {
   readonly size: number;
   readonly version: string;
   readonly streamNames: readonly string[];
+  /** Repeated stream headers after the admitted first header of each name. */
+  readonly ignoredStreamHeaders: readonly IgnoredMetadataStreamHeader[];
   readonly strings: MetadataStream;
   readonly guid: MetadataStream;
   /** Empty blob heaps may omit the stream; index zero remains the empty blob. */
@@ -219,8 +221,16 @@ const codedSize = (
 const tableSize = (index: number, rows: readonly number[]): 2 | 4 =>
   (rows[index] ?? 0) < 0x1_0000 ? 2 : 4;
 
+/** A later stream header whose name an earlier header already claimed. */
+export interface IgnoredMetadataStreamHeader {
+  readonly name: string;
+  /** File offset of the ignored stream header. */
+  readonly headerOffset: number;
+}
+
 interface ParsedStreams {
   readonly streams: ReadonlyMap<string, MetadataStream>;
+  readonly ignoredStreamHeaders: readonly IgnoredMetadataStreamHeader[];
   readonly version: string;
   readonly minimalDeltaOffset: number | null;
 }
@@ -264,19 +274,25 @@ const readMetadataStreams = (
     );
   cursor += 4;
   const streams = new Map<string, MetadataStream>();
+  const ignoredStreamHeaders: IgnoredMetadataStreamHeader[] = [];
   let minimalDeltaOffset: number | null = null;
   for (let index = 0; index < streamCount; index += 1) {
     requireRange(bytes, rootOffset, cursor, 8, "metadata.stream-header");
     const relativeOffset = bytes.readUInt32LE(cursor);
     const streamSize = bytes.readUInt32LE(cursor + 4);
     const named = readStreamName(bytes, rootOffset, cursor + 8);
-    if (streams.has(named.name))
-      throw managedFailure(
-        "invalid-stream",
-        "metadata.stream-header",
-        `Duplicate metadata stream ${named.name}`,
-        rootOffset + cursor,
-      );
+    // The .NET Framework 4 loader admits the first header of each name and
+    // loads assemblies that repeat a stream name; obfuscators append decoy
+    // headers for that reason. Keep the first and report the rest instead of
+    // rejecting every metadata fact.
+    if (streams.has(named.name)) {
+      ignoredStreamHeaders.push({
+        name: named.name,
+        headerOffset: rootOffset + cursor,
+      });
+      cursor = named.next;
+      continue;
+    }
     requireRange(
       bytes,
       rootOffset,
@@ -292,7 +308,7 @@ const readMetadataStreams = (
     if (named.name === "#JTD") minimalDeltaOffset = rootOffset + cursor;
     cursor = named.next;
   }
-  return { streams, version, minimalDeltaOffset };
+  return { streams, ignoredStreamHeaders, version, minimalDeltaOffset };
 };
 
 interface HeapSizes {
@@ -460,11 +476,8 @@ export const readManagedMetadataLayout = (
     );
   const bytes = artifact.subarray(rootOffset, rootOffset + size);
   const budget = new ManagedDecodeBudget(maxRepresentationBytes);
-  const { streams, version, minimalDeltaOffset } = readMetadataStreams(
-    bytes,
-    rootOffset,
-    budget,
-  );
+  const { streams, ignoredStreamHeaders, version, minimalDeltaOffset } =
+    readMetadataStreams(bytes, rootOffset, budget);
   // Runtime v9.0.0 MetadataReader recognizes #JTD before sizing references.
   // Minimal deltas also use baseline coordinates and cumulative heap handles;
   // widening local rows alone cannot establish standalone member identities.
@@ -496,6 +509,7 @@ export const readManagedMetadataLayout = (
     size,
     version,
     streamNames: [...streams.keys()].sort(),
+    ignoredStreamHeaders,
     strings: requireStream(streams, "#Strings"),
     guid: requireStream(streams, "#GUID"),
     blob: streams.get("#Blob") ?? null,
