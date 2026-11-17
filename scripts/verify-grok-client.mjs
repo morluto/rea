@@ -55,6 +55,10 @@ let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
 let catalogSize = null;
+// Native search_tool takes a uint8 limit, so a catalog larger than 255 tools is
+// discovered across several queries and checked as one inventory.
+const searchLimit = 255;
+const discoveredTools = new Map();
 let schemasChecked = 0;
 let analysisRequested = false;
 let evidenceSeen = false;
@@ -106,10 +110,6 @@ await withVerifierCleanup(async () => {
           (_, index) =>
             `export function extra${index}() { return { index: ${index}, tag: "GROK_LARGE_FIXTURE" }; }`,
         ).join("\n"),
-    );
-    assert(
-      expectedNames.length <= 255,
-      "Native search_tool limit is uint8; this full-catalog query cannot cover more than 255 tools",
     );
     const schemaValidator = new Ajv2020({
       strict: false,
@@ -253,10 +253,23 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: 255 });
-          const inventory = discovery.results
+            return call("search_tool", { query: "rea", limit: searchLimit });
+          const page = discovery.results
             .filter((result) => result.server === "rea")
             .flatMap((result) => result.tools);
+          const before = discoveredTools.size;
+          for (const tool of page) discoveredTools.set(tool.tool_name, tool);
+          const missing = expectedNames.filter(
+            (name) => !discoveredTools.has(name),
+          );
+          // Query the next missing name while each query still adds tools; a
+          // query that adds none falls through to the complete-catalog check.
+          if (missing.length > 0 && discoveredTools.size > before)
+            return call("search_tool", {
+              query: missing[0],
+              limit: searchLimit,
+            });
+          const inventory = [...discoveredTools.values()];
           catalogSize = inventory.length;
           assert.deepEqual(
             inventory.map((tool) => tool.tool_name).sort(),
