@@ -498,3 +498,17 @@ Export directories in PE headers are read like those in sections. An export or
 dynamic symbol table above 262144 entries, more than 262144 rows, or more than
 16 MiB of retained names fails without partial success. Export rows do not establish that a symbol is reachable, safe to call
 or loaded at runtime.
+
+## Portable ELF dependencies
+
+`inspect_elf_dependencies` / `inspect-elf-dependencies` reads the load-time
+dynamic-dependency inventory of an explicit ELF32/ELF64 `ET_EXEC` or `ET_DYN`
+image on any supported host, without executing it, invoking the dynamic
+loader, or opening a disassembler:
+
+```sh
+rea inspect-elf-dependencies ./program --json
+```
+
+It reports needed libraries, search paths, symbol versions and versioned
+imports. See [ELF dynamic dependencies](../../elf-dependencies.md).
