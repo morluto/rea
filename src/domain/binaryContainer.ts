@@ -1,3 +1,4 @@
+import type { FixedCeilingFacts } from "./fixedAllowanceRemediation.js";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -56,11 +57,17 @@ export class BinaryMappingFailure extends BinaryFormatFailure {
  * `LimitRef`; it defaults to the boundary when a decoder has only one.
  */
 export class BinaryResourceFailure extends ParseFailureError<"limit"> {
+  /**
+   * @param maximum_bytes The exceeded maximum, in `unit`. Despite its name,
+   *   some producers count entries or values; `unit` says which, and is
+   *   undefined when the producer has not named it.
+   */
   constructor(
     readonly boundary: "build-info" | "structure" | "search",
     readonly maximum_bytes: number,
     message: string,
     allowance: string = boundary,
+    readonly unit?: "bytes" | "entries",
   ) {
     super({
       kind: "limit",
@@ -71,6 +78,14 @@ export class BinaryResourceFailure extends ParseFailureError<"limit"> {
     this.name = "BinaryResourceFailure";
   }
 }
+
+/** The exceeded maximum as fixed-ceiling facts; the unit only when its producer named it. */
+export const binaryResourceCeiling = (
+  failure: BinaryResourceFailure,
+): FixedCeilingFacts => ({
+  limit: failure.maximum_bytes,
+  ...(failure.unit === undefined ? {} : { unit: failure.unit }),
+});
 
 /** The failure's allowance when it is one of `allowances`, else `null`. */
 export const binaryResourceAllowance = <Allowance extends string>(
@@ -166,6 +181,8 @@ export type ImageSection = {
       };
       readonly segment_mapping: FileMapping | null;
       readonly segment_unmapped: boolean;
+      /** Non-zero-fill bytes within the file and the segment's file range. */
+      readonly on_disk: boolean;
       /** Declared `reloff` and `nreloc`, which only object files populate. */
       readonly relocations: { readonly offset: number; readonly count: number };
     }
@@ -214,7 +231,8 @@ export type BinaryContainer = BinaryContainerFacts &
           readonly dynamicSegments: readonly ElfDynamicSegment[];
         };
       }
-    | { readonly format: "pe" | "macho" }
+    | { readonly format: "pe" }
+    | { readonly format: "macho"; readonly macho_cpu_type: number }
   );
 
 /** All declared file-backed image memory, including PE headers at the image base. */
@@ -309,6 +327,8 @@ export class BinaryReader {
         "structure",
         16 * 1024 * 1024,
         `${label} exceeds the 16 MiB structural decoding budget`,
+        "structure",
+        "bytes",
       );
     return this.fileRange(offset, size, label).offset;
   }

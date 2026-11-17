@@ -2,6 +2,41 @@ import { z } from "zod";
 
 import { analysisParameterLimitSchema } from "./analysisSettingDefinitions.js";
 
+/**
+ * A completed provider's own refusal of the command, read from the exact
+ * diagnostic line it logged. Present only with completion_status rejected.
+ */
+export const commandRefusalSchema = z
+  .strictObject({
+    reason: z
+      .enum([
+        "unknown_command",
+        "wrong_argument_count",
+        "invalid_statement",
+        "parse_failure",
+      ])
+      .describe(
+        "unknown_command: the named command does not exist. wrong_argument_count: the named command received the wrong number of arguments. invalid_statement: the provider could not execute a statement. parse_failure: the provider could not parse the input.",
+      ),
+    command: z
+      .string()
+      .nullable()
+      .describe(
+        "The command the refusal line names; null when the line names none.",
+      ),
+    line: z.string().describe("The provider's refusal line from stderr."),
+  })
+  .describe(
+    "The provider refused the command after starting it; statements after the refused one did not run.",
+  );
+export type CommandRefusal = z.infer<typeof commandRefusalSchema>;
+
+/** A completed command's refusal and the limitation it places on the capture. */
+export interface CommandRejection {
+  readonly refusal: CommandRefusal;
+  readonly limitation: string;
+}
+
 /** Opaque producer text and the command capture's explicit completion facts. */
 export const commandObservationSchema = z.strictObject({
   stdout: z.string(),
@@ -20,8 +55,9 @@ export const commandObservationSchema = z.strictObject({
   completion_status: z
     .enum(["complete", "rejected", "unknown"])
     .describe(
-      "complete: the provider process completed. rejected: it completed, but the provider reported that it refused the command; limitations say what ran. unknown: the capture or process ended early.",
+      "complete: the provider process completed. rejected: it completed, but the provider reported that it refused the command; refusal and limitations say what ran. unknown: the capture or process ended early.",
     ),
+  refusal: commandRefusalSchema.exactOptional(),
   artifact_sha256_after: z
     .string()
     .regex(/^[a-f0-9]{64}$/u)

@@ -35,11 +35,9 @@ import {
   type ComputerStartTiming,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
-import {
-  AGENTENV_PROVIDER,
-  ComputerHelper,
-  type ComputerRelease,
-} from "../../desktop/AgentEnvComputerHelper.js";
+import { ComputerHelper } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
+import type { ComputerRelease } from "../../domain/desktop/computerRelease.js";
 import {
   resolveBuildComputerEnvironment,
   type BuildComputerDefaults,

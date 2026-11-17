@@ -14,13 +14,14 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
 import type { AnalysisExecution } from "../ports/AnalysisProvider.js";
-import type { BinarySession } from "./binary/BinarySession.js";
+import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
 import {
   analysisErrorWithCleanupFailure,
   analysisErrorWithCloseRejection,
 } from "../domain/analysisErrorCleanup.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { recognizeEvidence } from "../domain/evidenceValidation.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /**
  * Project a one-shot failure for its invocation, which has released its
@@ -38,11 +39,7 @@ export const projectDirectAnalysisFailure = (
 ): ReturnType<typeof projectAnalysisError> => {
   const projection = projectInvocationFailure(error);
   const partial = projection.details?.partial_observation;
-  const wrapped =
-    typeof partial === "object" &&
-    partial !== null &&
-    !Array.isArray(partial) &&
-    partial.kind === "unretained-evidence";
+  const wrapped = isRecord(partial) && partial.kind === "unretained-evidence";
   // Only authenticated Evidence gains the request path; a record that fails
   // authentication is projected as the owner reported it, never as absent.
   const observation = recognizeEvidence(wrapped ? partial.evidence : partial);
@@ -92,7 +89,7 @@ export const projectDirectAnalysisFailure = (
 
 /** Await one-shot cleanup and retain either the outcome or both failures. */
 export const withSessionCleanup = async <Value>(
-  session: BinarySession,
+  session: Pick<BinarySessionPort, "close">,
   operation: () => Promise<Value>,
   onCleanupFailure: (value: Value, error: AnalysisError) => Value,
 ): Promise<Value> => {

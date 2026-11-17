@@ -63,6 +63,7 @@ import {
   type SourceMapLimits,
 } from "../domain/sourceMapLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export interface WebSourceMapRequest {
   readonly scriptKey: string;
@@ -320,14 +321,19 @@ class SourceMapCallerAbort extends Error {
 const sourceMapCallerReason = (value: unknown): unknown =>
   value instanceof SourceMapCallerAbort ? value.reason : value;
 
-class SourceMapSizeLimitError extends Error {
-  constructor(maxBytes: number) {
-    super(
-      `Source-map response exceeded its retained budget. ${sourceMapLimitRecovery("fetch_bytes", maxBytes)}`,
-    );
-    this.name = "SourceMapSizeLimitError";
-  }
-}
+const sourceMapSizeLimitError = (
+  maxBytes: number,
+): ParseFailureError<"limit"> =>
+  sourceMapLimitFailure(
+    "Source-map response exceeded its retained budget.",
+    "fetch_bytes",
+    maxBytes,
+  );
+
+const isSourceMapSizeLimitError = (
+  cause: unknown,
+): cause is ParseFailureError<"limit"> =>
+  isSourceMapLimit(cause) && cause.failure.limit.name === "fetch_bytes";
 
 class SourceMapRedirectLocationError extends Error {
   constructor(url: string, location: string) {
@@ -717,7 +723,8 @@ const fetchOne = async (
     const cause =
       caught instanceof SourceMapResponseCleanup ? caught.cause : caught;
     if (cause instanceof AnalysisError) throw cause;
-    if (isSourceMapLimit(cause)) throw cause;
+    if (isSourceMapLimit(cause) && !isSourceMapSizeLimitError(cause))
+      throw cause;
     if (
       signal?.aborted === true &&
       !(signal.reason instanceof SourceMapDeadlineError)
@@ -727,7 +734,7 @@ const fetchOne = async (
       request,
       "fetch_failed",
       cause instanceof SourceMapRedirectLocationError ||
-        cause instanceof SourceMapSizeLimitError ||
+        isSourceMapSizeLimitError(cause) ||
         cause instanceof SourceMapDeadlineError
         ? cause.message
         : "Source-map fetch or validation failed.",
@@ -846,7 +853,7 @@ const readBoundedText = async (
       if (done) break;
       const nextBytes = value?.byteLength ?? 0;
       if (budget.retainedBytes + bytes + nextBytes > maxBytes) {
-        throw new SourceMapSizeLimitError(maxBytes);
+        throw sourceMapSizeLimitError(maxBytes);
       }
       if (value !== undefined) chunks.push(value);
       bytes += nextBytes;
@@ -878,7 +885,7 @@ const readBoundedText = async (
       signal,
       sourceMapCallerReason(cause),
     );
-    if (cause instanceof SourceMapSizeLimitError) {
+    if (isSourceMapSizeLimitError(cause)) {
       try {
         // Preserve the size-limit item's existing finalization boundary.
         const completion = cleanup.completion;
@@ -911,7 +918,7 @@ const readBoundedText = async (
     offset += chunk.byteLength;
   }
   const responseIdentity: ResponseIdentity = {
-    sha256: createHash("sha256").update(joined).digest("hex"),
+    sha256: sha256Hex(joined),
     bytes,
     representation: "fetch-response-body-bytes",
   };

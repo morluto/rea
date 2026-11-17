@@ -9,7 +9,7 @@ import {
   assertKunaProjectState,
   type KunaProjectFileStates,
 } from "./KunaProjectState.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   mkdir,
   lstat,
@@ -74,6 +74,7 @@ import type {
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** A manifest names five files and their digests; anything larger is not ours. */
 const MANIFEST_MAX_BYTES = 64 * 1024;
@@ -99,22 +100,20 @@ export interface KunaProjectKeyInputs {
 
 /** Content address of one export: every input that can change its bytes. */
 export const kunaProjectKey = (inputs: KunaProjectKeyInputs): string =>
-  createHash("sha256")
-    .update(
-      canonicalize({
-        // The entry layout and manifest meaning are REA's code: a new release
-        // keys new entries, and older ones are retired as foreign manifests.
-        producer: releaseProducerIdentity(),
-        target_sha256: inputs.targetSha256,
-        target_basename: inputs.targetBasename,
-        kuna_sha256: inputs.kunaSha256,
-        kuna_command: inputs.kunaCommand,
-        kuna_executable: inputs.kunaExecutable,
-        kuna_version: inputs.kunaVersion,
-        export: { command: "decompile-project", jobs: inputs.jobs },
-      }) ?? "",
-    )
-    .digest("hex");
+  sha256Hex(
+    canonicalize({
+      // The entry layout and manifest meaning are REA's code: a new release
+      // keys new entries, and older ones are retired as foreign manifests.
+      producer: releaseProducerIdentity(),
+      target_sha256: inputs.targetSha256,
+      target_basename: inputs.targetBasename,
+      kuna_sha256: inputs.kunaSha256,
+      kuna_command: inputs.kunaCommand,
+      kuna_executable: inputs.kunaExecutable,
+      kuna_version: inputs.kunaVersion,
+      export: { command: "decompile-project", jobs: inputs.jobs },
+    }) ?? "",
+  );
 
 const fileSchema = z.strictObject({
   path: z.string().min(1),

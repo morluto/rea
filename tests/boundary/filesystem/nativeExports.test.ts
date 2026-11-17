@@ -80,13 +80,13 @@ describe("native export stable filesystem boundary", () => {
           expect(result.error).toMatchObject({
             _tag: "AnalysisResourceConstraintError",
             resource: "capacity",
-            reportedLimits: { boundary: "structure", maximum: 16777216 },
+            reportedLimits: { boundary: "retained_text", maximum: 16777216 },
             retryable: false,
             fixedAllowance: {
-              name: expect.stringContaining(
-                "16777216-byte native export retained-text allowance",
-              ),
+              name: "The native export retained-text allowance",
               kind: "bytes",
+              limit: 16777216,
+              unit: "bytes",
             },
           });
           expect(result.error.message).toContain(
@@ -295,13 +295,13 @@ describe("native export entry allowance", () => {
         expect(result.error).toMatchObject({
           _tag: "AnalysisResourceConstraintError",
           resource: "capacity",
-          reportedLimits: { boundary: "structure", maximum: 262144 },
+          reportedLimits: { boundary: "rows", maximum: 262144 },
           retryable: false,
           fixedAllowance: {
-            name: expect.stringContaining(
-              "262144-entry native export inventory allowance",
-            ),
+            name: "The native export inventory allowance",
             kind: "count",
+            limit: 262144,
+            unit: "entries",
           },
         });
         const action = analysisErrorRemediationAction(result.error);

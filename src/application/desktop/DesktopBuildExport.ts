@@ -29,12 +29,12 @@ import {
 } from "../../domain/desktop/buildSecrets.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
+import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvProviderIdentity.js";
 import {
   BUILD_REA_TIMEOUT_S,
   fetchHomeFolder,
-  type ControlledComputer,
 } from "../../desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../ports/BuildComputerControl.js";
 import {
   adapterError,
   ENDS,

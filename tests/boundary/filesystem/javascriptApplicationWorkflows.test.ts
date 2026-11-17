@@ -21,7 +21,11 @@ import {
   createEvidence,
   evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
-import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+} from "../../../src/domain/analysisErrorCore.js";
+import { JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
@@ -227,6 +231,38 @@ describe("JavaScript application comparison workflows", () => {
     expect(
       compareApplicationVersionsRequestSchema.safeParse(input).success,
     ).toBe(true);
+  });
+});
+
+describe("JavaScript application workflow cancellation", () => {
+  it("stops resolving retained version-comparison sources when the caller cancels mid-request", () => {
+    const { left, right } = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+    const sources = [left, right];
+    const controller = new AbortController();
+    const reason = { request: "cancel version comparison" };
+    const looked: string[] = [];
+    const result = compareApplicationVersionsEvidence(
+      {
+        left: {
+          kind: "retained-evidence",
+          evidence_id: left.evidence_id,
+        },
+        right: {
+          kind: "retained-evidence",
+          evidence_id: right.evidence_id,
+        },
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return sources.find(({ evidence_id }) => evidence_id === id);
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([left.evidence_id]);
   });
 });
 

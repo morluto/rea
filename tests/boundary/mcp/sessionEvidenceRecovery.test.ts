@@ -15,6 +15,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const bundleResult = (reply: CallToolResult) =>
   z.object({ result: evidenceBundleSchema }).parse(reply.structuredContent)
@@ -108,10 +109,13 @@ it.each(["switch", "restart"] as const)(
       { kind: "session", session },
       { environment: {} },
     );
-    const client = new Client({
-      name: "switch-evidence-recovery",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "switch-evidence-recovery",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     const call = (name: string, arguments_: Record<string, unknown> = {}) =>

@@ -3,7 +3,7 @@ import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -37,6 +37,7 @@ import {
   cancelledBy,
   isAborted,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -76,6 +77,7 @@ import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type AcquiredGlue =
@@ -86,8 +88,6 @@ type AcquiredGlue =
       readonly references: [];
     };
 const OPERATION = "inspect_wasm_artifact";
-const digest = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
 const warningOutput = (text: string): readonly string[] | null => {
   if (text === "") return [];
   const lines = text.trimEnd().split("\n");
@@ -518,12 +518,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       }).catch((cause: unknown) => {
         // Node rejects a write this signal aborted with an envelope that
         // carries the signal's own reason; any other failure stays itself.
-        if (
-          isAborted(signal) &&
-          cause instanceof Error &&
-          cause.cause === signal.reason
-        )
-          throw cancelledBy(OPERATION, signal);
+        if (isAbortOf(cause, signal)) throw cancelledBy(OPERATION, signal);
         throw cause;
       });
       snapshotHash = selected.sha256;
@@ -536,7 +531,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       )
         throw new WabtAdmissionError("incomplete_tool_profile");
       const validation = await execute(validate, validate.arguments, true);
-      if (validation.exitCode !== 0)
+      if (validation.exitCode !== 0) {
+        const validationOutput = capturedProviderOutput(validation);
         throw new AnalysisInputError(
           OPERATION,
           {
@@ -549,9 +545,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 result: {
                   ...acquiredFacts(),
                   validation: "rejected-by-selected-profile",
-                  exit_code: validation.exitCode ?? null,
-                  stdout: validation.stdout.text,
-                  stderr: validation.stderr.text,
+                  exit_code: validationOutput.exit_code ?? null,
+                  stdout: validationOutput.stdout,
+                  stderr: validationOutput.stderr,
                 },
                 confidence: "observed",
                 locations: [{ kind: "artifact-path", path: input.path }],
@@ -563,7 +559,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 ],
               },
             ),
-            capturedOutput: capturedProviderOutput(validation),
+            capturedOutput: validationOutput,
           },
           [
             {
@@ -574,6 +570,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             },
           ],
         );
+      }
       validationState = "valid";
       const customSectionWarnings: {
         tool: (typeof commands)[number]["tool"];
@@ -694,7 +691,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         details,
         wat: {
           text: wat.stdout.text,
-          sha256: digest(wat.stdout.text),
+          sha256: sha256Hex(wat.stdout.text),
           representation: "decoded-wat",
         },
         tool_profile: toolProfile,

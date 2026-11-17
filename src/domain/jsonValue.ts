@@ -1,7 +1,7 @@
 import { types } from "node:util";
 import { z } from "zod";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
-import { isRecord } from "./isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Maximum JSON nesting accepted before recursive result cloning. */
 export const MAX_JSON_DEPTH = 1000;

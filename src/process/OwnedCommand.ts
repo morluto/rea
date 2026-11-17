@@ -11,8 +11,8 @@ import {
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
-import { finished } from "node:stream";
-import type { Readable, Writable } from "node:stream";
+import { finished, Transform, Writable } from "node:stream";
+import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import type {
@@ -21,6 +21,7 @@ import type {
   ProcessDiagnosticBudget,
   ProviderProcessStopResult,
   ProviderProcessInspectionCleanup,
+  ProcessTerminationPolicy,
   SpawnedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
@@ -39,6 +40,7 @@ import {
   waitForAbortableDelay,
 } from "./ProviderDeadline.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { launcherFailureOf, type LauncherFailure } from "./launchFailure.js";
 
 /** A short-lived command failed its lifecycle or complete-output contract. */
 export class OwnedCommandFailure extends Error {
@@ -120,6 +122,17 @@ interface OwnedCommandLimits {
    * stays authoritative; a failing stream is a collection failure.
    */
   readonly stdout?: Writable;
+  /**
+   * With `stdout`, the most bytes the sink receives. Further output fails the
+   * command as an output-limit failure, like an exceeded diagnostic budget;
+   * the sink keeps the bytes it received.
+   */
+  readonly maxStdoutBytes?: number;
+  /**
+   * Ask the command to stop before owned cleanup kills its process group,
+   * for a command that rolls back work it started when signaled.
+   */
+  readonly termination?: ProcessTerminationPolicy;
 }
 
 /** Keep independently bounded macOS helper compilation outside a short command deadline.
@@ -191,6 +204,29 @@ function throwCommandPreparationFailure(
     );
   throw cause;
 }
+
+/**
+ * Ownership preparation could not start a process it needed, such as the
+ * macOS ownership helper's compiler, because the host lacked capacity. The
+ * command cannot start for the same reason, so callers report it as their own
+ * host-capacity launch failure. Other preparation failures, including a
+ * missing helper compiler, say nothing about the command's executable.
+ */
+export const preparationHostCapacityFailure = (
+  cause: unknown,
+): LauncherFailure | undefined => {
+  if (cause instanceof OwnedCommandFailure && cause.cancellation !== undefined)
+    return undefined;
+  const preparation =
+    cause instanceof OwnedCommandFailure ? cause.preparationFailure : cause;
+  if (
+    !(preparation instanceof DarwinProcessOwnershipInspectionError) ||
+    preparation.cancellation !== undefined
+  )
+    return undefined;
+  const launch = launcherFailureOf(preparation.cause);
+  return launch?.kind === "host-exhausted" ? launch : undefined;
+};
 
 /** Execute a single owned process with independent cleanup and bounded diagnostic retention. */
 export const runOwnedCommand = async (
@@ -336,6 +372,16 @@ const collectOwnedCommand = async (
     launched.process.stdout,
     limits.stdout,
     collectionSignal,
+    limits.maxStdoutBytes === undefined
+      ? undefined
+      : {
+          maxBytes: limits.maxStdoutBytes,
+          exceeded: () => {
+            exceeded = true;
+            if (deadline.interruption === undefined)
+              outputLimitObservedBeforeInterruption = true;
+          },
+        },
   );
   void consumed.then((failed) => {
     processFailure ??= failed;
@@ -485,7 +531,9 @@ const collectOwnedCommand = async (
   }
   // A finished sink ignores this; an unfinished one is destroyed.
   abandoned.abort(OwnerCancellation.noLongerNeeded);
-  const stopped = await supervisor.stop();
+  const stopped = await supervisor.stop(
+    limits.termination === undefined ? {} : { termination: limits.termination },
+  );
   const snapshot = supervisor.snapshot();
   // An input error can arrive after finish while process cleanup is still pending.
   if (failure === undefined && inputFailure !== undefined)
@@ -501,10 +549,26 @@ const collectOwnedCommand = async (
     (callerSignal?.aborted ? { reason: callerSignal.reason } : undefined);
   if (stopped.status === "incomplete" && retainCleanup !== undefined)
     retainCleanup(supervisor, stopped);
-  else if (stopped.status === "incomplete")
+  else if (stopped.status === "incomplete") {
+    // A completed run interrupted during final cleanup is reported as that
+    // interruption, as when the cleanup succeeds (below); only the retry
+    // owner differs.
+    const interruption =
+      failure !== undefined
+        ? undefined
+        : callerSignal?.aborted
+          ? ("cancelled" as const)
+          : deadline.interruption === "timeout"
+            ? ("timeout" as const)
+            : undefined;
     throw new OwnedCommandFailure(
-      failure?.reason ?? "process",
-      failure?.message ?? "Command cleanup failed.",
+      failure?.reason ?? interruption ?? "process",
+      failure?.message ??
+        (interruption === "cancelled"
+          ? "Command cancelled during final cleanup."
+          : interruption === "timeout"
+            ? "Command deadline elapsed during final cleanup."
+            : "Command cleanup failed."),
       snapshot,
       stopped.reason,
       {
@@ -525,6 +589,7 @@ const collectOwnedCommand = async (
       ownedCommandResources(launched.ownership, spawn.cwd),
       supervisor,
     );
+  }
   if (failure !== undefined)
     throw new OwnedCommandFailure(
       failure.reason,
@@ -595,6 +660,57 @@ const finishCommandInput = (
   });
 };
 
+/** Bytes an owned command wrote to stdout, kept whole for binary protocols. */
+export class OwnedCommandStdoutBytes extends Writable {
+  readonly #chunks: Buffer[] = [];
+  #length = 0;
+
+  /** The bytes received so far. */
+  get bytes(): Buffer {
+    return Buffer.concat(this.#chunks, this.#length);
+  }
+
+  override _write(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.#chunks.push(chunk);
+    this.#length += chunk.byteLength;
+    callback();
+  }
+}
+
+/**
+ * Pass at most `maxBytes` to the sink, report the first byte beyond them, and
+ * keep draining so the command is stopped by its owner rather than by a full
+ * pipe.
+ */
+const stdoutLimit = (limit: {
+  readonly maxBytes: number;
+  readonly exceeded: () => void;
+}): Transform => {
+  let passed = 0;
+  let reported = false;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      const remaining = limit.maxBytes - passed;
+      if (chunk.byteLength <= remaining) {
+        passed += chunk.byteLength;
+        callback(null, chunk);
+        return;
+      }
+      if (remaining > 0) this.push(chunk.subarray(0, remaining));
+      passed = limit.maxBytes;
+      if (!reported) {
+        reported = true;
+        limit.exceeded();
+      }
+      callback();
+    },
+  });
+};
+
 /**
  * Pipe stdout into its sink until `signal` aborts, which destroys both; settles
  * with a failure message, never rejects.
@@ -603,13 +719,18 @@ const consumeStdout = (
   stdout: Readable | null,
   sink: Writable | undefined,
   signal: AbortSignal,
+  limit?: Parameters<typeof stdoutLimit>[0],
 ): Promise<string | undefined> => {
   if (sink === undefined) return Promise.resolve(undefined);
   if (stdout === null) {
     sink.destroy();
     return Promise.resolve("stdout stream is unavailable");
   }
-  return pipeline(stdout, sink, { signal }).then(
+  return (
+    limit === undefined
+      ? pipeline(stdout, sink, { signal })
+      : pipeline(stdout, stdoutLimit(limit), sink, { signal })
+  ).then(
     () => undefined,
     (cause: unknown) => `stdout stream failed: ${errorMessage(cause)}`,
   );

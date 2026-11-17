@@ -7,6 +7,7 @@ import { classifyProviderFailure } from "../providers/classifyProviderFailure.js
 
 import { WASM_RESOURCE_DEFAULTS } from "../domain/wasm/wasmArtifact.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
 
 /** Classify a raw failure the way the provider does, through WABT's dialect. */
 const wabtFailure = (
@@ -338,6 +339,26 @@ it("reports a WABT tool the host refused to start as unavailable", async () => {
     projectAnalysisError(wabtFailure(refused, "producer", "/module.wasm")),
   ).toMatchObject({ code: "capability_unavailable" });
 });
+
+it.each(["artifact", "producer"] as const)(
+  "reports an unrecognised WABT %s-phase exit with the examined outcome",
+  (phase) => {
+    const cause = new OwnedCommandFailure("process", "exited with code 2", {
+      stdout: { text: "", bytes: 0, observedBytes: 0 },
+      stderr: { text: "unexpected", bytes: 10, observedBytes: 10 },
+      exitCode: 2,
+      signal: null,
+    });
+    const failure = wabtFailure(cause, phase, "/module.wasm");
+    expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+    expect(failure).toMatchObject({
+      providerId: "wabt-artifact",
+      examined: { failure_kind: "exited", exit_code: 2 },
+      capturedOutput: { stderr: "unexpected" },
+    });
+    expect(projectAnalysisError(failure).code).toBe("execution_failure");
+  },
+);
 
 it("keeps setup guidance when a version probe's output cannot be collected", () => {
   const cause = new OwnedCommandFailure(

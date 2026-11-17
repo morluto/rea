@@ -8,7 +8,6 @@
   "import-reference-source: no contract import_reference_source",
   "project-managed-application-graph: no object shape project_managed_application_graph",
   "compare-web-captures: no object shape compare_web_captures",
-  "validate-browser-scenario: no contract validate_browser_scenario",
   "guided-workflows: no object shape guided_workflows",
   "inspect-evidence-bundle: no contract inspect_evidence_bundle",
   "evidence-import: no contract evidence_import",

@@ -1,5 +1,6 @@
 import { unknownTarget } from "../../domain/targetIdentity.js";
 import { expect, it } from "vitest";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
   parseEvidence,
@@ -30,6 +31,41 @@ const reconcile = (observations: readonly Evidence[]) => {
     ),
   };
 };
+
+it("stops resolving retained reconciliation sources when the caller cancels mid-request", () => {
+  const sources = [
+    JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers[0]!.analysis,
+    electronRuntimeEvidence("/synthetic", SOURCE),
+  ];
+  const controller = new AbortController();
+  const reason = { request: "cancel runtime reconciliation" };
+  const looked: string[] = [];
+  const result = reconcileJavaScriptRuntimeEvidence(
+    {
+      static_layers: [
+        {
+          analysis: {
+            kind: "retained-evidence",
+            evidence_id: sources[0]!.evidence_id,
+          },
+        },
+      ],
+      runtime_observations: [
+        { kind: "retained-evidence", evidence_id: sources[1]!.evidence_id },
+      ],
+    },
+    (id) => {
+      looked.push(id);
+      controller.abort(reason);
+      return sources.find(({ evidence_id }) => evidence_id === id);
+    },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("Expected cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(looked).toHaveLength(1);
+});
 
 it("keeps equal runtime payloads at distinct selected endpoints separate through service graph Evidence", () => {
   const first = electronRuntimeEvidence("/synthetic", SOURCE);

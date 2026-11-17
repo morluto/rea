@@ -32,6 +32,7 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
     ),
   }),
   examination: z.strictObject({
+    // domain-vocabulary: whether the static pass ran without hitting a semantic_precision budget, was limited by one, or was not run.
     status: z.enum(["complete", "limited", "not-examined"]),
     semantic_resource_limits: z.array(javaScriptSemanticResourceLimitSchema),
     semantic_precision: javaScriptSemanticPrecisionSchema.optional(),

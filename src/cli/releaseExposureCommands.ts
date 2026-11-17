@@ -1,4 +1,4 @@
-import { z } from "incur";
+import { z } from "zod";
 import type { Logger } from "pino";
 
 import { createReleaseExposureService } from "../composition/releaseExposure.js";

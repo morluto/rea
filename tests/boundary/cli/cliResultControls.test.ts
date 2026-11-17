@@ -1,9 +1,11 @@
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import { parseCliOutputArguments } from "../../../src/cliOutput.js";
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
@@ -99,6 +101,115 @@ it("collects each recorded control's flag without changing the result", () => {
   expect(result).toEqual(before);
 });
 
+it("reads a union value under the option the producer used", () => {
+  const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
+  const flagged = { worker_timeout_ms: "--worker-timeout-ms" };
+  // Both options accept the value, so the first one, where `limit` is
+  // captured content, is the one the producer used.
+  const overlapping = z.union([
+    z.strictObject({ note: z.strictObject({ limit: z.unknown() }) }),
+    z.strictObject({
+      note: z.strictObject({ limit: analysisParameterLimitSchema }),
+    }),
+  ]);
+  expect(
+    cliResultControlsIn({ note: { limit } }, overlapping, binding),
+  ).toEqual({});
+  // A value whose keys and literals rule out every option but one is read
+  // under that option; a value that fits the view reads none.
+  const views = z.union([
+    z.strictObject({
+      kind: z.literal("view"),
+      limit: analysisParameterLimitSchema,
+    }),
+    z.strictObject({ limit: analysisParameterLimitSchema, total: z.number() }),
+  ]);
+  expect(cliResultControlsIn({ limit, total: 1 }, views, binding)).toEqual(
+    flagged,
+  );
+  expect(cliResultControlsIn({ kind: "view", limit }, views, binding)).toEqual(
+    flagged,
+  );
+  expect(
+    cliResultControlsIn({ kind: "other", limit, total: 1 }, views, binding),
+  ).toEqual({});
+});
+
+it("parses a union branch only when the value's keys cannot select it", () => {
+  const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
+  const spy = <Schema extends z.ZodType>(schema: Schema) => ({
+    schema,
+    // Spy through the base type: a generic `Schema` hides its method keys.
+    parse: vi.spyOn<z.ZodType, "safeParse">(schema, "safeParse"),
+  });
+  // A uniquely selected branch and a branch without controls are not parsed.
+  const view = spy(
+    z.strictObject({
+      kind: z.literal("view"),
+      limit: analysisParameterLimitSchema,
+    }),
+  );
+  const complete = spy(
+    z.strictObject({ limit: analysisParameterLimitSchema, total: z.number() }),
+  );
+  const plain = spy(z.strictObject({ count: z.number() }));
+  const other = spy(z.strictObject({ name: z.string() }));
+  const schema = z.strictObject({
+    result: z.union([view.schema, complete.schema]),
+    extra: z.union([plain.schema, other.schema]).optional(),
+  });
+  expect(
+    cliResultControlsIn(
+      { result: { limit, total: 1 }, extra: { count: 1 } },
+      schema,
+      binding,
+    ),
+  ).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
+  for (const branch of [view, complete, plain, other])
+    expect(branch.parse).not.toHaveBeenCalled();
+  // Branches the keys cannot tell apart keep first-match order.
+  const captured = spy(
+    z.strictObject({ note: z.strictObject({ limit: z.unknown() }) }),
+  );
+  const declared = spy(
+    z.strictObject({
+      note: z.strictObject({ limit: analysisParameterLimitSchema }),
+    }),
+  );
+  expect(
+    cliResultControlsIn(
+      { note: { limit } },
+      z.union([captured.schema, declared.schema]),
+      binding,
+    ),
+  ).toEqual({});
+  expect(captured.parse).toHaveBeenCalledTimes(1);
+  expect(declared.parse).not.toHaveBeenCalled();
+});
+
+it("finds a control a recursive schema reaches only past a back-reference", () => {
+  // Visiting `inner` first reaches `outer` again before `outer`'s control.
+  const outer: z.ZodType = z.strictObject({
+    get inner() {
+      return inner;
+    },
+    control: z.strictObject({ limit: analysisParameterLimitSchema }).optional(),
+  });
+  const inner: z.ZodType = z.strictObject({
+    get outer() {
+      return outer.optional();
+    },
+  });
+  const limit = deadlineParameterLimit("worker_timeout_ms", 5, 1_000);
+  expect(
+    cliResultControlsIn(
+      { inner: { outer: { inner: {}, control: { limit } } } },
+      outer,
+      binding,
+    ),
+  ).toEqual({ worker_timeout_ms: "--worker-timeout-ms" });
+});
+
 /** Run the fixture command once, returning its output and recorded controls. */
 const runFixtureCommand = async (produce: () => unknown) => {
   const contract = {
@@ -109,7 +220,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
     }),
     outputSchema: partialResultSchema,
   };
-  const cli = Cli.create("rea-result-controls", { version: "1", sync: false });
+  const cli = createCommandCli();
   registerContractCommand(
     cli as unknown as CliInstance,
     silentLogger,
@@ -121,7 +232,7 @@ const runFixtureCommand = async (produce: () => unknown) => {
     },
     async () => produce() as never,
   );
-  const command = Cli.toCommands.get(cli)?.get("inspect-control-fixture");
+  const command = cliCommand(cli, "inspect-control-fixture")?.definition;
   if (command === undefined) throw new Error("command is not registered");
   const parse = (key: "args" | "options", value: unknown) =>
     (Reflect.get(command, key) as { parse(v: unknown): unknown }).parse(value);
@@ -177,13 +288,11 @@ const written = async (
     destination,
   );
   if (output === undefined) throw new Error("Missing output surface");
-  const format = argv[argv.indexOf("--format") + 1] ?? "json";
   let collected = 0;
   // The ordinary command path: no forced output, controls collected on demand.
   const handled = await output.write(partialResult(), {
     command: "fixture",
     duration: "0ms",
-    format,
     collectCliControls: () => {
       collected += 1;
       return cliControls;
@@ -234,7 +343,7 @@ it.each(["yaml", "toon"] as const)(
       cliControls,
     );
     expect(text).toBe(
-      `${Formatter.format(
+      `${formatCliOutput(
         {
           ok: true,
           data: partialResult(),

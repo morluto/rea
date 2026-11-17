@@ -537,7 +537,7 @@ describe("reconstruction verification outcomes", () => {
 });
 
 describe("reconstruction verification integrity", () => {
-  it("accepts evidence closures larger than the former count ceilings", () => {
+  it("accepts evidence closures with more than 20,000 ids", () => {
     const evidenceIds = Array.from(
       { length: 20_101 },
       (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,

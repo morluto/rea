@@ -1508,7 +1508,7 @@ it.each(["first-selected.apk", "second-selected.apk"])(
   },
 );
 
-it("reports launcher disappearance after version admission as a provider failure", async () => {
+it("reports launcher disappearance after version admission as apktool unavailable", async () => {
   const { command, root } = await writeApktoolStub(
     () =>
       `if [ "$1" = "--version" ]; then rm -- "$0"; ${VERSION_BLOCK}; exit 0; fi`,
@@ -1521,9 +1521,14 @@ it("reports launcher disappearance after version admission as a provider failure
       input: { path: apk.path, include_strings: true },
     });
     if (result.ok) throw new Error("Expected missing launcher");
+    // The shared launch owner classifies the real ENOENT spawn failure.
     expect(result.error).toMatchObject({
-      _tag: "ProviderAdapterError",
-      diagnostics: { target_path: apk.path, selected_command: command },
+      _tag: "AnalysisCapabilityUnavailableError",
+      providerId: "apktool",
+      diagnostics: {
+        boundary: "provider-launch",
+        system_code: "ENOENT",
+      },
     });
     expect(projectAnalysisError(result.error).code).not.toBe(
       "unsupported_target",

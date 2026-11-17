@@ -1,5 +1,4 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
@@ -50,6 +49,7 @@ import {
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -100,7 +100,7 @@ export const exportWebScriptsValidated = async (
     const { bytes, loaded } = prepared.value;
     if (options.signal?.aborted)
       return err(cancelledBy(OPERATION, options.signal));
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const result = await publishWebScripts(input, loaded, sha256, {
       resources,
       ...(options.signal === undefined ? {} : { signal: options.signal }),

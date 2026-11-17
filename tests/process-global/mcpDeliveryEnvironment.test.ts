@@ -11,6 +11,7 @@ import { run } from "../../src/main.js";
 import { createServer } from "../../src/server/createServer.js";
 import type { EvidenceMcpServer } from "../../src/server/EvidenceMcpServer.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 afterEach(async () => {
@@ -19,7 +20,10 @@ afterEach(async () => {
 });
 
 const connect = async (server: EvidenceMcpServer) => {
-  const client = new Client({ name: "selected-delivery", version: "1" });
+  const client = new Client(
+    { name: "selected-delivery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);

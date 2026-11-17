@@ -113,6 +113,7 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import {
   inspectSourceMap,
   inspectSourceMapSourceContent,
@@ -1528,12 +1529,12 @@ const scriptHoldsMap = (
     !isScriptTarget(state, member.location)
   )
     return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(sourceMapJsonText(text));
-  } catch {
-    return false;
-  }
+  const decoded = parseJsonWithDuplicatePolicy(
+    sourceMapJsonText(text),
+    "last-wins",
+  );
+  if (!decoded.ok) return false;
+  const parsed = decoded.value;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     return false;
   return (
@@ -3610,10 +3611,10 @@ const pushLimitation = (state: ScanState, message: string): void => {
 
 const fileSizeRecovery = (maxFileBytes: number) =>
   maxFileBytes >= MAX_RELEASE_EXPOSURE_FILE_BYTES
-    ? fixedAllowanceOptions(
-        `The release exposure input allowance of ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes (this release has no runtime override)`,
-        "input",
-      )
+    ? fixedAllowanceOptions("The release exposure input allowance", "input", {
+        limit: MAX_RELEASE_EXPOSURE_FILE_BYTES,
+        unit: "bytes",
+      })
     : {
         retryable: false as const,
         remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,

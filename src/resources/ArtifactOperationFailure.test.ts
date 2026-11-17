@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
+} from "./ArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { constants as bufferConstants } from "node:buffer";
@@ -126,6 +129,47 @@ it.each(["capacity", "file-size", "memory"] as const)(
     });
   },
 );
+
+it("keeps a fixed reader ceiling's refusal through cleanup wrapping and public projection", () => {
+  const failure = artifactFixedLimitFailure(
+    {
+      name: "The fixture table allowance",
+      kind: "parser",
+      limit: 64,
+      unit: "records",
+    },
+    "The fixture table declares 65 records, above 64.",
+  );
+  const refusal = {
+    kind: "fixed_ceiling",
+    allowance: "The fixture table allowance",
+    allowance_kind: "parser",
+    limit: 64,
+    unit: "records",
+  };
+  expect(
+    projectAnalysisError(translateArtifactFailure("inspect_artifact", failure)),
+  ).toMatchObject({
+    code: "truncated",
+    retryable: false,
+    message: failure.message,
+    details: { refusal },
+  });
+  const wrapped = ArtifactReaderFailure.withCleanup(failure, {
+    reason: "close failed",
+    resources: ["handle"],
+  });
+  expect(wrapped.fixedAllowance).toBe(failure.fixedAllowance);
+  const projected = projectAnalysisError(
+    translateArtifactFailure("inspect_artifact", wrapped),
+  );
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    retryable: false,
+    details: { refusal, cleanup: "incomplete", resources: ["handle"] },
+  });
+  expect(projected.remediation.action).toContain("The allowance is 64 records");
+});
 
 it("keeps producer-owned recovery through cleanup wrapping and public projection", () => {
   const userMessage = "Caller-selected reader recovery";
