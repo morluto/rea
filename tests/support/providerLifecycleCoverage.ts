@@ -1283,6 +1283,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     ),
   ),
+  "rea-elf-dependencies": inProcess(
+    covered(
+      test(
+        "tests/acceptance/elfDependenciesCli.test.ts",
+        "reports needed libraries, RUNPATH tokens, and versioned imports through the public CLI",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/elfDependencies.test.ts"),
+  ),
   "rea-elf-notes": inProcess(
     covered(
       test(
