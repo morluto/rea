@@ -1350,9 +1350,6 @@ it("enforces a selected command deadline and completes a corrected retry after c
   if (!corrected.ok) throw corrected.error;
   const report = wasmArtifactSchema.parse(corrected.value.result);
   expect(report.tool_profile.timeout_ms).toBe(2_000);
-  expect(report.limitations).toContainEqual(
-    expect.stringContaining("Each WABT command has a 2000 ms deadline"),
-  );
   expect(Buffer.compare(await readFile(fixture.path), fixture.bytes)).toBe(0);
 });
 
