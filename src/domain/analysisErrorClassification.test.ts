@@ -79,6 +79,9 @@ it.each([
 
 it.each([
   "cancelled",
+  "malformed",
+  "truncated",
+  "unsupported",
   "format",
   "integrity",
   "path",

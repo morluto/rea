@@ -88,6 +88,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = __dirname;
 const args = process.argv.slice(2);
+if(args.length === 1 && args[0] === 'start-server') process.exit(0);
 if(args[0] === 'version') {
   console.log('Android Debug Bridge version 1.0.41\\nVersion 34.0.5-ui-fixture\\nInstalled as ' + __filename);
   process.exit(0);
@@ -1686,7 +1687,16 @@ it("cancels a non-UI admission wait without cancelling the active UI caller", as
     const beforeLocal = await readFile(workspace.path("calls"), "utf8");
     const local = await service.execute("inspect_adb_client", {});
     if (!local.ok) throw local.error;
-    expect(await readFile(workspace.path("calls"), "utf8")).toBe(beforeLocal);
+    const afterLocal = await readFile(workspace.path("calls"), "utf8");
+    expect(afterLocal.startsWith(beforeLocal)).toBe(true);
+    // The active wait may keep polling while the independent local probe runs.
+    // No new admission, mutation, cancellation or cleanup is allowed here.
+    for (const line of afterLocal
+      .slice(beforeLocal.length)
+      .trim()
+      .split("\n")
+      .filter(Boolean))
+      expect(JSON.parse(line).operation).toBe("status");
     const controller = new AbortController();
     const reason = new Error("cancel only the non-UI caller");
     // This direct provider call enters the admission wait synchronously, while

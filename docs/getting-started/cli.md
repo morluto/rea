@@ -275,6 +275,19 @@ The shared CLI/MCP workflow reports compiler version, modules, replacements,
 build settings, original bytes and SHA-256. See [Go binaries](../guides/native/go-binaries.md)
 for supported containers and absent or malformed metadata.
 
+Project that Evidence, or Rust dependency Evidence, as CycloneDX. The command
+prints JSON on stdout:
+
+```bash
+rea inspect-go-binary /absolute/path/to/program --json > go-evidence.json
+cat > cyclonedx-view.json <<'JSON'
+{"source":{"kind":"evidence-file","path":"go-evidence.json"},"view":{"kind":"cyclonedx"}}
+JSON
+rea inspect-analysis-view cyclonedx-view.json --json | jq '.normalized_result.document' > sbom.cdx.json
+```
+
+See [CycloneDX dependencies](../guides/native/cyclonedx-view.md).
+
 Inspect a Godot PCK without running the game:
 
 ```sh
@@ -361,6 +374,16 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
+
+```sh
+rea inspect-artifact ./payload.bin --detail summary --evidence_output payload.json --json
+rea extract-artifact ./payload.bin --json
+```
+
+See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
+facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
@@ -389,6 +412,17 @@ rea extract-artifact ./boot.itb --json
 
 See [U-Boot FIT images](../fit-images.md) for recognition, data sources, hashes
 and limits.
+
+Inspect and extract an Android boot or vendor_boot image:
+
+```sh
+rea inspect-artifact ./boot.img --detail summary --evidence_output boot.json --json
+rea extract-artifact ./vendor_boot.img --json
+```
+
+See [Android boot images](../android-boot-image.md) for header versions 0 through
+4, vendor ramdisk table entries, stored compression, and the unverified AVB
+footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
 Inspect local model declarations without loading weights:
 
@@ -477,6 +511,44 @@ rea inspect-elf-notes /absolute/path/to/program --json
 The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
+
+Inspect DWARF compile units without executing the image:
+
+```bash
+rea inspect-dwarf-units /absolute/path/to/program --json
+```
+
+The workflow reads DWARF 2 through 5 unit headers and the unit DIE from an
+ELF, Mach-O, or PE file, including compressed ELF debug sections. Rows report
+the source file, compilation directory, producer, language, and `dwo_name`.
+`offset` and `limit` page the units. Absent `.debug_info` describes this file
+only, and a declared section that could not be decoded is partial coverage. Pass `--architecture` for a universal Mach-O. A `.dSYM` bundle is not
+opened; pass the DWARF file inside it. See
+[DWARF compile units](../guides/native/dwarf-units.md).
+
+Inspect ELF separate debug-file linkage without executing the image:
+
+```bash
+rea inspect-elf-debug-link /absolute/path/to/program --json
+rea inspect-elf-debug-link /absolute/path/to/program --candidate-path /absolute/path/to/program.debug --json
+```
+
+The workflow reports `.gnu_debuglink` name and CRC32, `.gnu_debugaltlink`
+name and build-id, the GNU build-id, conventional lookup path strings, and
+`.gnu_debugdata` presence, offset, and size. Lookup paths are not opened. An
+optional candidate is verified by CRC32 and build-id equality. A missing
+section is observed absence only when section names are complete. See
+[ELF debug files](../guides/native/elf-debug-link.md).
+
+Inspect ELF needed libraries and required symbol versions without executing
+the image or invoking the dynamic loader:
+
+```bash
+rea inspect-elf-dependencies /absolute/path/to/program --json
+```
+
+The fields, coverage rules and delivery options are documented in
+[ELF dynamic dependencies](../elf-dependencies.md).
 
 List ELF and Mach-O initializer and finalizer functions without executing the
 image:
@@ -567,6 +639,30 @@ rea inspect-erlang-beam /absolute/path/to/app.beam --json
 The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](../erlang-beam.md).
+
+Inspect a Maven POM or Gradle module-metadata file without running Maven or
+Gradle, resolving a tree, or contacting a repository:
+
+```bash
+rea inspect-maven-gradle-metadata /absolute/path/to/pom.xml --json
+rea inspect-maven-gradle-metadata /absolute/path/to/demo-1.2.3.module --json
+```
+
+The workflow reports coordinates as spelled, dependency and
+dependencyManagement rows, BOM or platform notes, Gradle variants, and
+unresolved property or parent references. See
+[Maven POM and Gradle module metadata](../maven-gradle-metadata.md).
+
+Inspect a NuGet `.nupkg` without restoring the package or contacting a feed:
+
+```bash
+rea inspect-nuget-nupkg /absolute/path/to/Demo.Package.1.2.3.nupkg --json
+```
+
+The workflow reports package identity, license and repository fields as present,
+dependency groups with version ranges, and a ZIP contents inventory with
+path-derived folder roles. Missing or malformed `.nuspec` members still return
+the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
 
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and

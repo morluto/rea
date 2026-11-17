@@ -7,6 +7,7 @@ export class GrokCatalogDiscovery {
   #tools = new Map();
   #validator = new Ajv2020({ strict: false, validateFormats: false });
   pages = [];
+  queries = [];
 
   constructor(expectedNames) {
     this.#expected = new Set(expectedNames);
@@ -33,7 +34,15 @@ export class GrokCatalogDiscovery {
         this.#expected.has(tool.tool_name),
         `Unexpected REA tool ${tool.tool_name}`,
       );
-      if (this.#tools.has(tool.tool_name)) continue;
+      const previous = this.#tools.get(tool.tool_name);
+      if (previous !== undefined) {
+        assert.deepEqual(
+          previous.input_schema,
+          tool.input_schema,
+          `${tool.tool_name}: native input schema changed between queries`,
+        );
+        continue;
+      }
       assert(tool.input_schema, `${tool.tool_name}: missing input schema`);
       assert(
         this.#validator.validateSchema(tool.input_schema),
@@ -42,6 +51,7 @@ export class GrokCatalogDiscovery {
       this.#tools.set(tool.tool_name, tool);
     }
     this.pages.push(discovery);
+    this.queries.push(query);
     return [...this.#expected].find((name) => !this.#tools.has(name));
   }
 }

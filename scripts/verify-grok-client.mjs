@@ -247,7 +247,7 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready") {
-            catalogQuery = "rea";
+            catalogQuery ??= "rea";
             return call("search_tool", { query: catalogQuery, limit: 255 });
           }
           const missing = catalog.accept(discovery, catalogQuery);
@@ -515,6 +515,7 @@ enabled = false
         "default native search_tool/use_tool with accumulated explicit inventory queries and missing-name follow-ups; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
+      discoveryQueries: catalog.queries,
       schemasChecked,
       skillLoaded,
       diagnosticsRequested,

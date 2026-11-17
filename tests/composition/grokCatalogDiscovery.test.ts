@@ -23,6 +23,29 @@ it("covers a catalog larger than uint8 with only missing-name follow-ups", () =>
   expect(query).toBeUndefined();
   expect(discovery.size).toBe(names.length);
   expect(discovery.pages).toHaveLength(4);
+  expect(discovery.queries).toEqual(["rea", ...names.slice(255)]);
+});
+
+it("rejects a tool whose schema changes across native discovery pages", () => {
+  const discovery = new GrokCatalogDiscovery(["rea__one", "rea__two"]);
+  discovery.accept(page(["rea__one"]), "rea");
+  expect(() =>
+    discovery.accept(
+      {
+        status: "ready",
+        results: [
+          {
+            server: "rea",
+            tools: [
+              { ...tool("rea__one"), input_schema: { type: "string" } },
+              tool("rea__two"),
+            ],
+          },
+        ],
+      },
+      "rea__two",
+    ),
+  ).toThrow("schema changed between queries");
 });
 
 it("accepts a complete small catalog in a single query", () => {
