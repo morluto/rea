@@ -11,8 +11,8 @@ import {
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
 import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
-import { finished } from "node:stream";
-import type { Readable, Writable } from "node:stream";
+import { finished, Transform, Writable } from "node:stream";
+import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import type {
@@ -122,6 +122,12 @@ interface OwnedCommandLimits {
    * stays authoritative; a failing stream is a collection failure.
    */
   readonly stdout?: Writable;
+  /**
+   * With `stdout`, the most bytes the sink receives. Further output fails the
+   * command as an output-limit failure, like an exceeded diagnostic budget;
+   * the sink keeps the bytes it received.
+   */
+  readonly maxStdoutBytes?: number;
   /**
    * Ask the command to stop before owned cleanup kills its process group,
    * for a command that rolls back work it started when signaled.
@@ -366,6 +372,16 @@ const collectOwnedCommand = async (
     launched.process.stdout,
     limits.stdout,
     collectionSignal,
+    limits.maxStdoutBytes === undefined
+      ? undefined
+      : {
+          maxBytes: limits.maxStdoutBytes,
+          exceeded: () => {
+            exceeded = true;
+            if (deadline.interruption === undefined)
+              outputLimitObservedBeforeInterruption = true;
+          },
+        },
   );
   void consumed.then((failed) => {
     processFailure ??= failed;
@@ -644,6 +660,57 @@ const finishCommandInput = (
   });
 };
 
+/** Bytes an owned command wrote to stdout, kept whole for binary protocols. */
+export class OwnedCommandStdoutBytes extends Writable {
+  readonly #chunks: Buffer[] = [];
+  #length = 0;
+
+  /** The bytes received so far. */
+  get bytes(): Buffer {
+    return Buffer.concat(this.#chunks, this.#length);
+  }
+
+  override _write(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.#chunks.push(chunk);
+    this.#length += chunk.byteLength;
+    callback();
+  }
+}
+
+/**
+ * Pass at most `maxBytes` to the sink, report the first byte beyond them, and
+ * keep draining so the command is stopped by its owner rather than by a full
+ * pipe.
+ */
+const stdoutLimit = (limit: {
+  readonly maxBytes: number;
+  readonly exceeded: () => void;
+}): Transform => {
+  let passed = 0;
+  let reported = false;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      const remaining = limit.maxBytes - passed;
+      if (chunk.byteLength <= remaining) {
+        passed += chunk.byteLength;
+        callback(null, chunk);
+        return;
+      }
+      if (remaining > 0) this.push(chunk.subarray(0, remaining));
+      passed = limit.maxBytes;
+      if (!reported) {
+        reported = true;
+        limit.exceeded();
+      }
+      callback();
+    },
+  });
+};
+
 /**
  * Pipe stdout into its sink until `signal` aborts, which destroys both; settles
  * with a failure message, never rejects.
@@ -652,13 +719,18 @@ const consumeStdout = (
   stdout: Readable | null,
   sink: Writable | undefined,
   signal: AbortSignal,
+  limit?: Parameters<typeof stdoutLimit>[0],
 ): Promise<string | undefined> => {
   if (sink === undefined) return Promise.resolve(undefined);
   if (stdout === null) {
     sink.destroy();
     return Promise.resolve("stdout stream is unavailable");
   }
-  return pipeline(stdout, sink, { signal }).then(
+  return (
+    limit === undefined
+      ? pipeline(stdout, sink, { signal })
+      : pipeline(stdout, stdoutLimit(limit), sink, { signal })
+  ).then(
     () => undefined,
     (cause: unknown) => `stdout stream failed: ${errorMessage(cause)}`,
   );
