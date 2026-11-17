@@ -486,7 +486,8 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             (site / "guide").mkdir()
             (site / "guide/index.html").write_text("<h1>Guide</h1>")
             (site / "asset.css").write_text("body { color: black; }")
-            archive = bytes.fromhex("504b0506" + "00" * 18)
+            comment = b"\xff\x80\r\n"
+            archive = bytes.fromhex("504b0506" + "00" * 16) + len(comment).to_bytes(2, "little") + comment
             (site / "download.zip").write_bytes(archive)
             for prefix in ("/", "/rea/"):
                 with self.subTest(prefix=prefix), ThreadingHTTPServer(("127.0.0.1", 0), WEBSITE.preview_handler(site, prefix)) as server:
