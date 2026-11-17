@@ -367,6 +367,58 @@ describe("ZIP local member extents", () => {
 });
 
 describe("ZIP deferred member extents", () => {
+  it.each([false, true])(
+    "checks contained deferred records without multiplying window reads (descriptor present: %s)",
+    async (present) => {
+      const bytes = Buffer.alloc(70_000);
+      bytes.writeUInt32LE(0x04034b50);
+      bytes.writeUInt32LE(bytes.length - 30, 18);
+      bytes.writeUInt32LE(bytes.length - 30, 22);
+      bytes.writeUInt32LE(0x04034b50, 40);
+      bytes.writeUInt16LE(0x8, 46);
+      const payloadEnd = 69_000;
+      const size = payloadEnd - 40 - 30;
+      if (present) {
+        bytes.writeUInt32LE(0x08074b50, payloadEnd);
+        bytes.writeUInt32LE(size, payloadEnd + 8);
+        bytes.writeUInt32LE(size, payloadEnd + 12);
+      }
+      const records = [
+        {
+          offset: 0,
+          compressedSize: bytes.length - 30,
+          uncompressedSize: bytes.length - 30,
+          crc32: 0,
+          zip64: false,
+          dataDescriptor: false,
+        },
+        ...Array.from({ length: 64 }, () => ({
+          offset: 40,
+          compressedSize: size,
+          uncompressedSize: size,
+          crc32: 0,
+          zip64: false,
+          dataDescriptor: true,
+        })),
+      ];
+      let readBytes = 0;
+      const account = await accountZipMemberRegion(
+        records,
+        bytes.length,
+        async (at, length) => {
+          readBytes += length;
+          return bytes.subarray(at, at + length);
+        },
+      );
+      expect(zipListingCoverage(account).status).toBe(
+        present ? "complete" : "unknown",
+      );
+      // Proof reads may follow each row, but must not reload a 64 KiB window
+      // for every alias of a distant descriptor.
+      expect(readBytes).toBeLessThanOrEqual(bytes.length + records.length * 64);
+    },
+  );
+
   it("requires a descriptor even when its claimed payload ends at the directory", async () => {
     const first = member("a.txt");
     const bytes = localEntry(first, 0x8);

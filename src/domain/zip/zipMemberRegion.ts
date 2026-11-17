@@ -91,6 +91,10 @@ export const accountZipMemberRegion = async (
     localExtraBytesRemaining -= length;
     return view(offset, length);
   };
+  // Contained payloads can end far from their headers. Exact descriptor reads
+  // leave the header window intact instead of reloading it for every alias.
+  const descriptorView = async (offset: number, length: number) =>
+    new BinaryReader(Buffer.from(await read(offset, length)), true, "zip");
   let cursor = 0;
   let descriptor: ZipLocalRecord | undefined;
   const gap = async (end: number) => {
@@ -145,7 +149,16 @@ export const accountZipMemberRegion = async (
       if (descriptor !== undefined) unverifiedExtents += 1;
       cursor = end;
       descriptor = record.dataDescriptor ? record : undefined;
-    }
+    } else if (
+      deferred &&
+      (await dataDescriptorBytes(
+        record,
+        end,
+        directoryOffset,
+        descriptorView,
+      )) === 0
+    )
+      unverifiedExtents += 1;
   }
   await gap(await apkSigningBlockStart(cursor, directoryOffset, view));
   return {
