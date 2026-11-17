@@ -11,7 +11,7 @@ import {
 } from "../domain/otlpTrace/otlpTrace.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
-  inspectWithService,
+  deliverWithService,
   registerContractCommand,
   type EvidenceInspectionService,
 } from "./contractCommand.js";
@@ -30,6 +30,7 @@ export const registerOtlpTraceCommand = (
         "Inventory spans, parent links and timing in a saved OTLP JSON trace export offline without contacting a collector",
       positionals: ["path"],
       callerPaths: ["path"],
+      evidenceDelivery: true,
       fields: {
         path: { description: "Local OTLP JSON trace export path" },
         format: {
@@ -37,7 +38,7 @@ export const registerOtlpTraceCommand = (
         },
       },
     },
-    inspectWithService(createOtlpTraceService, OTLP_TRACE_PROVIDER.id, "path"),
+    deliverWithService(createOtlpTraceService, OTLP_TRACE_PROVIDER.id),
   );
 
 /** One-shot trace inspection that owns the file it opens. */

@@ -79,13 +79,16 @@ cliTest(
       (await call("inspect_otlp_trace", { path: fixture.path }))
         .structuredContent,
     );
-    const { call: callFull } = await connectLocalToolsMcp({
+    const { call: callWithoutOutputSchemas } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
-      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
     });
     const full = parseEvidence(
-      (await callFull("inspect_otlp_trace", { path: fixture.path }))
-        .structuredContent,
+      (
+        await callWithoutOutputSchemas("inspect_otlp_trace", {
+          path: fixture.path,
+        })
+      ).structuredContent,
     );
     expect(full.normalized_result).toEqual(parent.normalized_result);
     const report = otlpTraceSchema.parse(parent.normalized_result);
