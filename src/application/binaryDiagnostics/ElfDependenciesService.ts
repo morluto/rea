@@ -17,7 +17,10 @@ import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 
 const OPERATION = "inspect_elf_dependencies";
 
@@ -50,6 +53,7 @@ export class ElfDependenciesService {
           },
         ]),
       );
+    const parameters = callerAnalysisParameters(rawInput, input.value);
     const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = elfDependenciesSchema.safeParse(result.value);
@@ -80,7 +84,7 @@ export class ElfDependenciesService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.value,
+          parameters,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

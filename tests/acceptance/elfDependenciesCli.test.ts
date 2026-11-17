@@ -19,6 +19,22 @@ cliTest(
     const evidence = toolContract(
       "inspect_elf_dependencies",
     ).outputSchema.parse(result.json);
+    expect(evidence.parameters).toEqual({ path });
+    const selected = await cli.run({
+      arguments: [
+        "inspect-elf-dependencies",
+        path,
+        "--max-needed",
+        "1024",
+        "--json",
+      ],
+    });
+    expect(selected.exitCode, selected.stderr).toBe(0);
+    const explicitlySelected = toolContract(
+      "inspect_elf_dependencies",
+    ).outputSchema.parse(selected.json);
+    expect(explicitlySelected.parameters).toEqual({ path, max_needed: 1024 });
+    expect(explicitlySelected.evidence_id).not.toBe(evidence.evidence_id);
     expect(evidence.normalized_result).toMatchObject({
       type_name: "shared",
       needed: [

@@ -1941,12 +1941,15 @@ export const describeContractCommand = <
       schema = schema.default(projected.default as never);
       if (described !== undefined) schema = schema.describe(described);
     }
-    const description =
+    const described =
       projected?.description ??
       schema.description ??
       describedThroughWrappers(declared);
-    if (description !== undefined && description !== schema.description)
-      schema = schema.describe(description);
+    if (described !== undefined && described !== schema.description)
+      schema = schema.describe(described);
+    if (!delivery && projected?.default === undefined)
+      schema = withoutDefault(schema);
+    const description = schema.description ?? described;
     const value = core(declared);
     const selector = selectorOptions[field];
     let selectorOption: ContractCliSelectorOption | undefined;

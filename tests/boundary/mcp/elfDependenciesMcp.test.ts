@@ -40,6 +40,20 @@ mcpTest(
       const evidence = toolContract(
         "inspect_elf_dependencies",
       ).outputSchema.parse(response.structuredContent);
+      expect(evidence.parameters).toEqual({ path });
+      const selected = await client.callTool({
+        name: "inspect_elf_dependencies",
+        arguments: { path, max_needed: 1024 },
+      });
+      expect(selected.isError).not.toBe(true);
+      const explicitlySelected = toolContract(
+        "inspect_elf_dependencies",
+      ).outputSchema.parse(selected.structuredContent);
+      expect(explicitlySelected.parameters).toEqual({
+        path,
+        max_needed: 1024,
+      });
+      expect(explicitlySelected.evidence_id).not.toBe(evidence.evidence_id);
       expect(evidence.normalized_result).toMatchObject({
         format: "elf32",
         byte_order: "big",

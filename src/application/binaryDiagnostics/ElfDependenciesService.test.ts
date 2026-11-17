@@ -90,6 +90,27 @@ it("records an empty PT_DYNAMIC inventory and its x86_64 architecture", async ()
   });
 });
 
+it.each([undefined, 1024, 2])(
+  "preserves caller budget selection (%s) separately from execution defaults",
+  async (maxNeeded) => {
+    let resolved: number | undefined;
+    const rawInput = {
+      path: report.artifact.path,
+      ...(maxNeeded === undefined ? {} : { max_needed: maxNeeded }),
+    };
+    const result = await new ElfDependenciesService({
+      identity,
+      inspect: (input) => {
+        resolved = input.max_needed;
+        return Promise.resolve(ok(report));
+      },
+    }).inspect(rawInput);
+    if (!result.ok) throw result.error;
+    expect(resolved).toBe(maxNeeded ?? 1024);
+    expect(result.value.parameters).toEqual(rawInput);
+  },
+);
+
 it("rejects a report whose needed coverage does not match retained rows", async () => {
   const result = await new ElfDependenciesService({
     identity,

@@ -74,6 +74,8 @@ issues.
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 1024 `DT_NEEDED` entries, 4096 GNU version records, and 65536 undefined
 dynamic symbols are examined by default (65536 / 65536 / 262144 maximum).
+Omitted budgets use these defaults during analysis and stay omitted in
+Evidence parameters. Explicitly selecting a default value records that choice.
 Exceeding a named budget fails with no partial success. Decoded dynamic
 strings share one scan and retained-text budget fixed by the admitted image
 length, so names repeated by many rows cannot expand past the input size; this
