@@ -5,6 +5,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("withholds archived HTTP credentials from the reply and retained Evidence", async () => {
@@ -25,7 +26,10 @@ it("withholds archived HTTP credentials from the reply and retained Evidence", a
     throw new Error("No native provider");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "warc-credential-test", version: "1" });
+  const client = new Client(
+    { name: "warc-credential-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {

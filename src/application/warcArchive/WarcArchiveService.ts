@@ -1,8 +1,5 @@
 import { isAbsolute } from "node:path";
-import {
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
-} from "../../resources/ArtifactFileOperation.js";
+import { artifactFilePrimaryFacts } from "../../resources/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import { readStableArtifact } from "../../resources/readStableArtifact.js";
@@ -14,9 +11,10 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
-  AnalysisCancelledError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
+  carriedReason,
+  cancelledBy,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -66,9 +64,7 @@ const readFailure = (
     cause instanceof ArtifactReaderFailure
   ) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(operation, {
-        cause: artifactFileCancellationCause(cause),
-      });
+      return cancelledBy(operation, carriedReason(cause.cancellation?.reason));
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(
         operation,
@@ -76,19 +72,28 @@ const readFailure = (
         cause.message,
         { cause },
       );
-    if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
+    if (cause.reason === "limit") {
+      const boundary = cause.boundary ?? "file-size";
+      return fixedCeilingConstraint(
         operation,
-        cause.boundary ?? "file-size",
+        boundary,
         cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            "Select an archive within max_file_bytes; reply paging does not change this file admission.",
-        },
+        boundary === "file-size"
+          ? {
+              name: `max_file_bytes (${String(input.max_file_bytes)} bytes)`,
+              kind: "input",
+              limit: input.max_file_bytes,
+              unit: "bytes",
+              narrowing:
+                "Select an archive within max_file_bytes; reply paging does not change this file admission.",
+            }
+          : (cause.fixedAllowance ?? {
+              name: `The WARC ${boundary} allowance`,
+              kind: "parser",
+            }),
+        { cause },
       );
+    }
     if (cause.reason === "path" || cause.reason === "format")
       return inputFailure(cause.message, cause);
   }
