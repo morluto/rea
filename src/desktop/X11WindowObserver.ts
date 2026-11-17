@@ -7,6 +7,7 @@ import {
 } from "../domain/desktop/x11Windows.js";
 import {
   XpropUnavailableError,
+  type DesktopWindowObserver,
   type ObservedWindow,
   type WindowSample,
 } from "../ports/DesktopApplicationSession.js";
@@ -27,7 +28,7 @@ const INCOMPLETE_READS = 4;
  * titles are re-read only for windows the caller marks as interesting, since
  * every read starts a process. Entries for closed windows are dropped.
  */
-export class X11WindowObserver {
+export class X11WindowObserver implements DesktopWindowObserver {
   readonly #command: string;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #known = new Map<

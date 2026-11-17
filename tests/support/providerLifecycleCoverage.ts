@@ -171,11 +171,23 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "src/adb/AdbProvider.test.ts",
           "reports cancellation arriving during the version probe",
         ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "asks a cancelled device command to stop with SIGTERM before its group is killed",
+        ),
       ),
       cleanup: covered(
         test(
           "src/adb/AdbProvider.test.ts",
           "retains failed snapshot cleanup with completed push Evidence until close retries",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "stops a descendant a device command leaves behind with the command's cleanup",
+        ),
+        test(
+          "tests/boundary/providers/adb/adbServerLifetime.test.ts",
+          "starts the adb server explicitly before device commands and never stops it",
         ),
       ),
       retry: covered(

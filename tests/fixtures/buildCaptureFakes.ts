@@ -1,5 +1,5 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { expect } from "vitest";
 
@@ -47,14 +47,113 @@ interface BuildTaskAtEnd {
   readonly end_checkpoint: string;
 }
 
-/**
- * What the real CLI writes for a capture made between seed and end, by
- * default `seedEndCapture`: the draft, and the export with BUILD_TASK, or
- * `tasks` each at its end checkpoint, which must succeed unless `exportRefused`.
- */
-const realCliOutputs = async (
+let cachedExportSchemaStdout: Promise<string> | undefined;
+
+const exportSchemaStdout = (): Promise<string> => {
+  cachedExportSchemaStdout ??= serveCli([
+    "export-desktop-application",
+    "--schema",
+    "--json",
+  ])
+    .then((schema) => {
+      expect(schema.exitCode, schema.stdout).toBe(0);
+      return schema.stdout;
+    })
+    .catch((error: unknown) => {
+      cachedExportSchemaStdout = undefined;
+      throw error;
+    });
+  return cachedExportSchemaStdout;
+};
+
+interface DirectorySnapshot {
+  readonly directories: readonly string[];
+  readonly files: readonly {
+    readonly relativePath: string;
+    readonly bytes: Buffer;
+    readonly mode: number;
+  }[];
+}
+
+interface DefaultCliOutputSnapshot {
+  readonly capture: DirectorySnapshot;
+  readonly bundle: DirectorySnapshot | undefined;
+  readonly withheld: DirectorySnapshot | undefined;
+  readonly schemaStdout: string;
+  readonly draftStdout: string;
+  readonly exportStdout: string;
+}
+
+const snapshotDirectory = async (
+  root: string,
+): Promise<DirectorySnapshot | undefined> => {
+  try {
+    await stat(root);
+  } catch {
+    return undefined;
+  }
+  const directories: string[] = [];
+  const files: {
+    readonly relativePath: string;
+    readonly bytes: Buffer;
+    readonly mode: number;
+  }[] = [];
+  const walk = async (relativeDirectory: string): Promise<void> => {
+    const current =
+      relativeDirectory.length === 0 ? root : join(root, relativeDirectory);
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const relativePath =
+        relativeDirectory.length === 0
+          ? entry.name
+          : join(relativeDirectory, entry.name);
+      if (entry.isDirectory()) {
+        directories.push(relativePath);
+        await walk(relativePath);
+      } else if (entry.isFile()) {
+        const fullPath = join(root, relativePath);
+        const [bytes, info] = await Promise.all([
+          readFile(fullPath),
+          stat(fullPath),
+        ]);
+        files.push({ relativePath, bytes, mode: info.mode & 0o777 });
+      }
+    }
+  };
+  await walk("");
+  return { directories, files };
+};
+
+const materializeDirectory = async (
+  root: string,
+  snapshot: DirectorySnapshot,
+): Promise<void> => {
+  await mkdir(root, { recursive: true });
+  for (const relativeDirectory of snapshot.directories)
+    await mkdir(join(root, relativeDirectory), { recursive: true });
+  await Promise.all(
+    snapshot.files.map(async ({ relativePath, bytes, mode }) => {
+      const target = join(root, relativePath);
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, bytes, { mode });
+    }),
+  );
+};
+
+interface RealCliOutputDirectories {
+  readonly capture: string;
+  readonly draft: string;
+  readonly export: string;
+  readonly bundle: string;
+  readonly schema: string;
+  readonly withheld: string;
+  readonly schemaStdout: string;
+  readonly draftStdout: string;
+  readonly exportStdout: string;
+}
+
+const buildRealCliOutputDirectories = async (
   install: CapturedInstall | undefined,
-  recorded: DesktopApplicationCapture = seedEndCapture(),
+  recorded: DesktopApplicationCapture,
   {
     exportRefused = false,
     extraContent = [],
@@ -66,7 +165,7 @@ const realCliOutputs = async (
     tasks?: readonly BuildTaskAtEnd[];
     exportArgs?: readonly string[];
   } = {},
-) => {
+): Promise<RealCliOutputDirectories> => {
   const capture = await writeCaptureFolder(
     install?.package === undefined
       ? recorded
@@ -90,19 +189,11 @@ const realCliOutputs = async (
   if (install?.downloadInstall !== undefined)
     await writeFile(download, JSON.stringify(install.downloadInstall));
   const withheld = join(work, "withheld");
-  const schema = await serveCli([
-    "export-desktop-application",
-    "--schema",
-    "--json",
+  const [schemaStdout, draft] = await Promise.all([
+    exportSchemaStdout(),
+    serveCli(["describe-desktop-application-task", capture, ...ENDS, "--json"]),
   ]);
-  expect(schema.exitCode, schema.stdout).toBe(0);
-  await writeFile(join(work, "schema.json"), schema.stdout);
-  const draft = await serveCli([
-    "describe-desktop-application-task",
-    capture,
-    ...ENDS,
-    "--json",
-  ]);
+  await writeFile(join(work, "schema.json"), schemaStdout);
   const exported = await serveCli([
     "export-desktop-application",
     capture,
@@ -144,6 +235,102 @@ const realCliOutputs = async (
     export: join(work, "export.json"),
     bundle,
     schema: join(work, "schema.json"),
+    withheld,
+    schemaStdout,
+    draftStdout: draft.stdout,
+    exportStdout: exported.stdout,
+  };
+};
+
+let cachedDefaultCliSnapshot: Promise<DefaultCliOutputSnapshot> | undefined;
+
+/**
+ * What the real CLI writes for a capture made between seed and end, by
+ * default `seedEndCapture`: the draft, and the export with BUILD_TASK, or
+ * `tasks` each at its end checkpoint, which must succeed unless `exportRefused`.
+ */
+const realCliOutputs = async (
+  install: CapturedInstall | undefined,
+  recorded: DesktopApplicationCapture | undefined,
+  options: {
+    exportRefused?: boolean;
+    extraContent?: readonly string[];
+    tasks?: readonly BuildTaskAtEnd[];
+    exportArgs?: readonly string[];
+  } = {},
+) => {
+  const isDefault =
+    install === undefined &&
+    recorded === undefined &&
+    !options.exportRefused &&
+    (options.extraContent?.length ?? 0) === 0 &&
+    (options.exportArgs?.length ?? 0) === 0 &&
+    options.tasks === undefined;
+  if (!isDefault)
+    return buildRealCliOutputDirectories(
+      install,
+      recorded ?? seedEndCapture(),
+      options,
+    );
+  if (cachedDefaultCliSnapshot === undefined) {
+    let firstOutputs: RealCliOutputDirectories | undefined;
+    cachedDefaultCliSnapshot = buildRealCliOutputDirectories(
+      undefined,
+      seedEndCapture(),
+    )
+      .then(async (outputs) => {
+        firstOutputs = outputs;
+        const [capture, bundle, withheld] = await Promise.all([
+          snapshotDirectory(outputs.capture),
+          snapshotDirectory(outputs.bundle),
+          snapshotDirectory(outputs.withheld),
+        ]);
+        if (capture === undefined)
+          throw new Error("Default capture snapshot directory missing");
+        return {
+          capture,
+          bundle,
+          withheld,
+          schemaStdout: outputs.schemaStdout,
+          draftStdout: outputs.draftStdout,
+          exportStdout: outputs.exportStdout,
+        };
+      })
+      .catch((error: unknown) => {
+        cachedDefaultCliSnapshot = undefined;
+        throw error;
+      });
+    await cachedDefaultCliSnapshot;
+    if (firstOutputs !== undefined) return firstOutputs;
+  }
+  const snapshot = await cachedDefaultCliSnapshot;
+  const [capture, work] = await Promise.all([
+    createTestTempDirectory("build-capture-"),
+    createTestTempDirectory("build-cli-"),
+  ]);
+  const bundle = join(work, "bundle");
+  const withheld = join(work, "withheld");
+  const schema = join(work, "schema.json");
+  const draft = join(work, "draft.json");
+  const exported = join(work, "export.json");
+  await Promise.all([
+    materializeDirectory(capture, snapshot.capture),
+    ...(snapshot.bundle === undefined
+      ? []
+      : [materializeDirectory(bundle, snapshot.bundle)]),
+    ...(snapshot.withheld === undefined
+      ? []
+      : [materializeDirectory(withheld, snapshot.withheld)]),
+    writeFile(schema, snapshot.schemaStdout),
+    writeFile(draft, snapshot.draftStdout),
+    writeFile(exported, snapshot.exportStdout),
+  ]);
+  return {
+    capture,
+    draft,
+    export: exported,
+    bundle,
+    schema,
     withheld,
   };
 };

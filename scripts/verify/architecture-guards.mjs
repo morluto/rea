@@ -9,7 +9,10 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
-import { incurZodImportCount } from "./incur-import-guard.mjs";
+import {
+  incurImportedNameCount,
+  incurZodImportCount,
+} from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
@@ -27,6 +30,7 @@ import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
+import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -959,6 +963,29 @@ checkCounted(
   [],
 );
 
+// Every CLI command is registered through src/cli/commandRegistry.ts, which
+// records it in REA's command table (name, inputs, contract operations and
+// their flags) before handing it to the dispatcher (#11654). A direct
+// `cli.command(...)` would be dispatched but missing from that table.
+checkCounted(
+  "CLI command registered outside REA's command table (use registerCliCommand)",
+  "cli-command-outside-registry",
+  files,
+  /\bcli\.command\(/gu,
+  ["src/cli/commandRegistry.ts"],
+);
+
+// REA is replacing incur with its own CLI owners (#11654). Each replacement
+// removes the names it superseded; this counted list only shrinks until incur
+// leaves package.json.
+checkCounted(
+  "name imported from incur (use REA's CLI owner in src/cli)",
+  "incur-import",
+  [...files, ...testFiles],
+  (_content, file) => incurImportedNameCount(file.source ?? file.content),
+  [],
+);
+
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
@@ -1051,6 +1078,15 @@ checkCounted(
     "tests/boundary/mcp/outputValidatorReuse.test.ts",
   ],
 );
+
+// Scripts covered by tsconfig.scripts.json declare and check their types in
+// JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
+// creates a second, unchecked type source that hides signature drift.
+const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
+if (siblingDeclarationFiles.length > 0)
+  failures.push(
+    `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
 
 for (const key of baselineTexts.keys())
   if (!checkedBaselineKeys.has(key))

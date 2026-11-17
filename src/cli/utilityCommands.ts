@@ -28,6 +28,7 @@ import { isCliOperationFailure, logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS, cliCommandFor } from "../contracts/cliCommandNames.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { Logger } from "pino";
+import { registerCliCommand } from "./commandRegistry.js";
 import type { CliInstance } from "./types.js";
 import { registerNativeCallCommands } from "./nativeCallCommands.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
@@ -109,7 +110,7 @@ const registerCapabilityCommands = (
     CLI_COMMANDS.capabilities,
     CLI_COMMANDS.providers,
   ] as const) {
-    cli.command(command, {
+    registerCliCommand(cli, command, {
       description:
         command === "capabilities"
           ? "List provider capabilities and side effects"
@@ -252,7 +253,7 @@ const registerReferenceSourceCommand = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  cli.command(CLI_COMMANDS.importReferenceSource, {
+  registerCliCommand(cli, CLI_COMMANDS.importReferenceSource, {
     description: "Import a source tree as historical reference only",
     args: z.object({
       root: localPathStringSchema.describe(

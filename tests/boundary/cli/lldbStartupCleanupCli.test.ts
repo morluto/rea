@@ -10,6 +10,7 @@ import {
 } from "../../../src/domain/analysisErrorCore.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import type { CliInstance } from "../../../src/cli/types.js";
@@ -24,31 +25,10 @@ const registerLldbCommand = (
   run(input: {
     args: { command: string };
     options: { path?: string };
+    formatExplicit?: boolean;
   }): Promise<unknown>;
 } => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: { command: string };
-        options: { path?: string };
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (
-      name: string,
-      definition: {
-        run(input: {
-          args: { command: string };
-          options: { path?: string };
-        }): Promise<unknown>;
-      },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
+  const cli = {} as unknown as CliInstance;
   registerReverseEngineeringCommands(
     cli,
     pino({ enabled: false }),
@@ -57,10 +37,16 @@ const registerLldbCommand = (
     undefined,
     () => createManager(),
   );
-  const command = commands.get(CLI_COMMANDS.debugWithLldb);
-  if (command === undefined)
+  const entry = cliCommand(cli, CLI_COMMANDS.debugWithLldb);
+  if (entry === undefined)
     throw new Error("LLDB CLI command was not registered");
-  return command;
+  return entry.definition as unknown as {
+    run(input: {
+      args: { command: string };
+      options: { path?: string };
+      formatExplicit?: boolean;
+    }): Promise<unknown>;
+  };
 };
 
 it("retries retained LLDB cleanup when CLI session startup fails", async () => {

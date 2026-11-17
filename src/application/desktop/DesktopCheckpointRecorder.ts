@@ -9,7 +9,7 @@ import {
   type DesktopWalk,
 } from "../../domain/desktop/desktopStateDiff.js";
 import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
-import { walkHomeState } from "../../desktop/HomeStateWalker.js";
+import type { DesktopCaptureProvider } from "../../ports/DesktopApplicationSession.js";
 
 /** Where each checkpoint walks and which paths count as application state. */
 export interface CheckpointScope {
@@ -62,6 +62,7 @@ export class CheckpointRecorder {
   constructor(
     readonly scope: CheckpointScope,
     readonly store: CaptureContentStore,
+    readonly walkHome: DesktopCaptureProvider["walkHome"],
   ) {}
 
   async #retain(
@@ -120,7 +121,7 @@ export class CheckpointRecorder {
     signal?: AbortSignal,
   ): Promise<void> {
     const { roots, excluded, maxEntries, contentRoots } = this.scope;
-    const walk = await walkHomeState(roots, excluded, maxEntries, signal);
+    const walk = await this.walkHome(roots, excluded, maxEntries, signal);
     for (const mountPoint of walk.mountPoints) this.mountPoints.add(mountPoint);
     const retained: DesktopCheckpoint["retained"] = [];
     let changes: DesktopCheckpoint["changes"] = [];
