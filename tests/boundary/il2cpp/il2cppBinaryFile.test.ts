@@ -68,6 +68,18 @@ const link = (bytes: Buffer, architecture?: Il2cppBinaryArchitecture) =>
     facts,
   );
 it.each([183, 62])(
+  "links IL2CPP registration and method pointers through APS2 on machine %d",
+  (machine) => {
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      androidPacked: "aps2",
+    });
+    const original = Buffer.from(bytes);
+    expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+    expect(bytes.equals(original)).toBe(true);
+  },
+);
+it.each([183, 62])(
   "links past unrelated ABS64 and GLOB_DAT records on ELF machine %d",
   (machine) => {
     const bytes = createElfFixture(createIl2cppBinaryFixture(), {
@@ -1106,7 +1118,7 @@ it.each(["outside", "misaligned", "duplicate"] as const)(
 it.each([
   [{ dynamic: false }, "unsupported-container"],
   [{ machine: 243 }, "unsupported-container"],
-  [{ androidPacked: true }, "unsupported-pointer-encoding"],
+  [{ androidPacked: "aps1" }, "unsupported-pointer-encoding"],
 ] as const)(
   "refuses ELF relocations it cannot apply (%o)",
   (options, reason) => {

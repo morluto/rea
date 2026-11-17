@@ -96,18 +96,27 @@ it.each(["name", "descriptor"] as const)(
 );
 
 it.each([
-  [64, 183, "rela"],
-  [64, 62, "rela"],
-  [32, 40, "rel"],
-  [32, 3, "rel"],
-  [64, 183, "relr"],
-  [64, 62, "relr"],
-  [32, 40, "relr"],
-  [32, 3, "relr"],
+  [64, 183, "rela", false],
+  [64, 62, "rela", false],
+  [32, 40, "rel", false],
+  [32, 3, "rel", false],
+  [64, 183, "relr", false],
+  [64, 62, "relr", false],
+  [32, 40, "relr", false],
+  [32, 3, "relr", false],
+  [64, 183, "rela", true],
+  [64, 62, "rela", true],
+  [32, 40, "rel", true],
+  [32, 3, "rel", true],
 ] as const)(
-  "decodes %s-bit machine %s %s static tables with complete slot provenance",
-  async (bits, machine, encoding) => {
-    const fixture = jniElfFixture({ bits, machine, encoding });
+  "decodes %s-bit machine %s %s static tables (APS2: %s) with complete slot provenance",
+  async (bits, machine, encoding, packed) => {
+    const fixture = jniElfFixture({
+      bits,
+      machine,
+      encoding,
+      ...(packed ? { packing: "aps2" } : {}),
+    });
     const original = Buffer.from(fixture.bytes);
     const result = await inspectAndroidJniLibrary(fixture.bytes);
     if (!result.ok) throw new Error(result.error.message);
@@ -161,6 +170,15 @@ it.each([
       ],
     ]);
     const first = result.value.tables[0]?.entries[0];
+    if (packed)
+      expect(first?.slots.map((slot) => slot.relocation)).toEqual(
+        [0, 1, 2].map((index) => ({
+          encoding,
+          record_file_offset: 0x806,
+          kind: machine === 183 ? 1027 : machine === 40 ? 23 : 8,
+          packing: { format: "aps2", group_entry_index: index },
+        })),
+      );
     expect(
       first?.slots.map((slot) => [
         slot.role,
@@ -221,9 +239,9 @@ it.each([32, 64] as const)(
   },
 );
 
-it("keeps exports and explicit unknown table coverage for Android packed relocations", async () => {
+it("keeps exports and explicit unknown table coverage for unsupported APS1 relocations", async () => {
   const result = await inspectAndroidJniLibrary(
-    jniElfFixture({ packed: true }).bytes,
+    jniElfFixture({ packing: "aps1" }).bytes,
   );
   if (!result.ok) throw new Error(result.error.message);
   expect(result.value.exports).toHaveLength(2);
@@ -233,7 +251,7 @@ it("keeps exports and explicit unknown table coverage for Android packed relocat
     relocations_status: "unknown",
     tables_status: "unknown",
   });
-  expect(result.value.unknowns.join("\n")).toContain("APS2");
+  expect(result.value.unknowns.join("\n")).toContain("APS1");
 });
 
 it("rejects a leading RELR bitmap rather than interpreting it as an address", async () => {

@@ -1,3 +1,5 @@
+import { aps2Relocations } from "../elfAndroidPacked.js";
+
 type FixtureEncoding = "rel" | "rela" | "relr";
 
 const fixtureWriter = (bytes: Buffer, bits: 32 | 64, little: boolean) => {
@@ -91,6 +93,7 @@ const writeDirectory = (
     dynamicBytes: number;
     functions: readonly bigint[];
     unnamedData: boolean;
+    packed: boolean;
   },
   writer: FixtureWriter,
 ) => {
@@ -105,6 +108,7 @@ const writeDirectory = (
     dynamicBytes,
     functions,
     unnamedData,
+    packed,
   } = input;
   const { u16, u32, ptr } = writer;
   const dynstr = Buffer.from("\0JNI_OnLoad\0Java_fixture_Owner_exported\0");
@@ -146,13 +150,21 @@ const writeDirectory = (
     [1, 3, 0x500, word * 6, 0, 0, 0],
     [1, 3, 0x600, word * 3, 0, 0, 0],
     [
-      encoding === "rela" ? 4 : encoding === "rel" ? 9 : 19,
+      packed
+        ? encoding === "rela"
+          ? 0x60000002
+          : 0x60000001
+        : encoding === "rela"
+          ? 4
+          : encoding === "rel"
+            ? 9
+            : 19,
       2,
       0x800,
       relocationSize,
       7,
       0,
-      encoding === "relr" ? word : rowWidth,
+      packed ? 1 : encoding === "relr" ? word : rowWidth,
     ],
     [6, 3, 0xc00, dynamicBytes, 8, 0, word * 2],
     [11, 2, 0x1000, symbolWidth * 3, 8, 1, symbolWidth],
@@ -212,7 +224,7 @@ export const jniElfFixture = (
     readonly encoding?: "rel" | "rela" | "relr";
     readonly little?: boolean;
     readonly symbolicFirstFunction?: boolean;
-    readonly packed?: boolean;
+    readonly packing?: "aps1" | "aps2";
     readonly unnamedData?: boolean;
   } = {},
 ) => {
@@ -285,27 +297,48 @@ export const jniElfFixture = (
       if (encoding === "rela") ptr(row + word * 2, value);
       else ptr(at, value);
     });
-  const relocationSize =
-    encoding === "relr" ? word * 4 : rowWidth * slots.length;
+  let relocationSize = encoding === "relr" ? word * 4 : rowWidth * slots.length;
+  if (options.packing !== undefined) {
+    if (encoding === "relr")
+      throw new Error("Packed fixture requires REL or RELA");
+    const packed = aps2Relocations(
+      slots.map(([at, value]) => ({
+        offset: base + BigInt(at),
+        info: BigInt(relative),
+        addend: value,
+      })),
+      encoding,
+    );
+    if (options.packing === "aps1") packed.write("APS1", 0);
+    bytes.set(packed, 0x800);
+    relocationSize = packed.length;
+  }
   const tags: [bigint, bigint][] =
-    encoding === "relr"
+    options.packing !== undefined
       ? [
-          [36n, base + 0x800n],
-          [35n, BigInt(relocationSize)],
-          [37n, BigInt(word)],
+          [encoding === "rela" ? 0x60000011n : 0x6000000fn, base + 0x800n],
+          [
+            encoding === "rela" ? 0x60000012n : 0x60000010n,
+            BigInt(relocationSize),
+          ],
         ]
-      : encoding === "rela"
+      : encoding === "relr"
         ? [
-            [7n, base + 0x800n],
-            [8n, BigInt(relocationSize)],
-            [9n, BigInt(rowWidth)],
+            [36n, base + 0x800n],
+            [35n, BigInt(relocationSize)],
+            [37n, BigInt(word)],
           ]
-        : [
-            [17n, base + 0x800n],
-            [18n, BigInt(relocationSize)],
-            [19n, BigInt(rowWidth)],
-          ];
-  if (options.packed === true) tags.push([0x60000011n, base + 0x800n]);
+        : encoding === "rela"
+          ? [
+              [7n, base + 0x800n],
+              [8n, BigInt(relocationSize)],
+              [9n, BigInt(rowWidth)],
+            ]
+          : [
+              [17n, base + 0x800n],
+              [18n, BigInt(relocationSize)],
+              [19n, BigInt(rowWidth)],
+            ];
   tags.push([0n, 0n]);
   tags.forEach(([tag, value], i) => {
     ptr(0xc00 + i * word * 2, tag);
@@ -325,6 +358,7 @@ export const jniElfFixture = (
       dynamicBytes,
       functions,
       unnamedData: options.unnamedData === true,
+      packed: options.packing !== undefined,
     },
     writer,
   );
