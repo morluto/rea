@@ -61,6 +61,15 @@ export const fitWebBundleEndpointLiteralCandidates = (
     assemble([]) as unknown as JsonValue,
     resultBudgetBytes,
   );
+  // A result that already fits must be returned unchanged: reserving an
+  // omission record through `assemble([])` first would drop literals (and,
+  // for one short candidate, the record can even be larger than the candidate
+  // it replaces), rejecting a result that originally fit.
+  if (
+    jsonValueByteLength(result as unknown as JsonValue, resultBudgetBytes) <=
+    resultBudgetBytes
+  )
+    return result;
   if (baseBytes > resultBudgetBytes) return assemble([]);
   const kept: number[] = [];
   let used = baseBytes;
