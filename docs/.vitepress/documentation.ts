@@ -44,6 +44,11 @@ export const documentationSections = [
         route: "/binary-diagnostics",
       },
       {
+        text: "ELF separate debug files",
+        source: "guides/native/elf-debug-link.md",
+        route: "/elf-debug-link",
+      },
+      {
         text: "ELF and Mach-O initializer functions",
         source: "guides/native/native-initializers.md",
         route: "/native-initializers",
@@ -564,6 +569,11 @@ export const documentationSections = [
         route: "/electron-fuses",
       },
       { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
+      {
+        text: "ELF dependency tables",
+        source: "elf-dependencies.md",
+        route: "/elf-dependencies",
+      },
       {
         text: "Erlang BEAM files",
         source: "erlang-beam.md",

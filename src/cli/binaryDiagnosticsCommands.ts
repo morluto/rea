@@ -3,6 +3,7 @@ import {
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
+  createElfDebugLinkService,
   createNativeInitializersService,
   createElfUnwindRangesService,
   createAppleIpsService,
@@ -16,6 +17,7 @@ import {
   createPeImportsService,
   createWindowsShortcutService,
   createNativeExportsService,
+  createElfDependenciesService,
 } from "../composition/binaryDiagnostics.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -56,6 +58,24 @@ export const registerBinaryDiagnosticsCommands = (
       fields: { path: { description: "Local ELF32/ELF64 image" } },
     },
     inspectWithService(createElfNotesService, "rea-elf-notes"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_elf_debug_link"),
+    {
+      description:
+        "Inspect ELF separate debug-file linkage without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path", "candidate_path"],
+      fields: {
+        path: { description: "Local ELF32/ELF64 image" },
+        candidate_path: {
+          description: "One caller-selected debug file to verify",
+        },
+      },
+    },
+    inspectWithService(createElfDebugLinkService, "rea-elf-debug-link"),
   );
   registerContractCommand(
     cli,
@@ -294,6 +314,22 @@ export const registerBinaryDiagnosticsCommands = (
       fields: { path: { description: "Local PE or ELF image" } },
     },
     deliverWithService(createNativeExportsService, "rea-native-exports"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_elf_dependencies"),
+    {
+      description:
+        "Inspect ELF needed libraries and required symbol versions without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local ELF32/ELF64 ET_EXEC or ET_DYN image" },
+      },
+    },
+    deliverWithService(createElfDependenciesService, "rea-elf-dependencies"),
   );
   const layout = createBinaryLayoutService(environment);
   registerContractCommand(

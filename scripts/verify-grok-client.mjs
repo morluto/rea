@@ -55,10 +55,13 @@ let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
 let catalogSize = null;
-// Native search_tool takes a uint8 limit, so a catalog larger than 255 tools is
-// discovered across several queries and checked as one inventory.
+// The native keyword search limit is uint8. Keep each query through partial
+// replies, then query missing canonical names and verify the complete union.
 const searchLimit = 255;
-const discoveredTools = new Map();
+const discovered = new Map();
+const searchedQueries = new Set();
+const discoveryPages = [];
+let pendingQuery = "rea";
 let schemasChecked = 0;
 let analysisRequested = false;
 let evidenceSeen = false;
@@ -253,23 +256,34 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: searchLimit });
-          const page = discovery.results
-            .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools);
-          const before = discoveredTools.size;
-          for (const tool of page) discoveredTools.set(tool.tool_name, tool);
-          const missing = expectedNames.filter(
-            (name) => !discoveredTools.has(name),
-          );
-          // Query the next missing name while each query still adds tools; a
-          // query that adds none falls through to the complete-catalog check.
-          if (missing.length > 0 && discoveredTools.size > before)
             return call("search_tool", {
-              query: missing[0],
+              query: pendingQuery,
               limit: searchLimit,
             });
-          const inventory = [...discoveredTools.values()];
+          discoveryPages.push({ query: pendingQuery, response: discovery });
+          searchedQueries.add(pendingQuery);
+          for (const tool of discovery.results
+            .filter((result) => result.server === "rea")
+            .flatMap((result) => result.tools)) {
+            const previous = discovered.get(tool.tool_name);
+            if (previous !== undefined)
+              assert.deepEqual(
+                previous.input_schema,
+                tool.input_schema,
+                `${tool.tool_name}: native input schema changed between queries`,
+              );
+            discovered.set(tool.tool_name, tool);
+          }
+          const missing = expectedNames.filter((name) => !discovered.has(name));
+          const nextQuery = missing.find((name) => !searchedQueries.has(name));
+          if (nextQuery !== undefined) {
+            pendingQuery = nextQuery;
+            return call("search_tool", {
+              query: pendingQuery,
+              limit: searchLimit,
+            });
+          }
+          const inventory = [...discovered.values()];
           catalogSize = inventory.length;
           assert.deepEqual(
             inventory.map((tool) => tool.tool_name).sort(),
@@ -287,7 +301,10 @@ await withVerifierCleanup(async () => {
             );
             schemasChecked++;
           }
-          await writeFile(join(lab, "native-discovery.json"), last);
+          await writeFile(
+            join(lab, "native-discovery.json"),
+            JSON.stringify(discoveryPages),
+          );
           catalogChecked = true;
           analysisRequested = true;
           return call("use_tool", {
@@ -537,9 +554,10 @@ enabled = false
       discovery:
         "native GROK_HOME, isolated additional skill directory, disabled foreign compatibility sources; default OS-home skill discovery and Windows unverified",
       interface:
-        "default native search_tool/use_tool with a complete explicit inventory query; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
+        "default native search_tool/use_tool with bounded keyword queries checked against the complete catalog; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
+      discoveryQueries: discoveryPages.map((page) => page.query),
       schemasChecked,
       skillLoaded,
       diagnosticsRequested,
