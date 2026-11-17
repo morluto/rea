@@ -190,10 +190,19 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
       {
         alternateSetting: 0,
         name: "Internal Flash",
-        elements: [{ address: 0x0800_0000, data: [1, 2, 3, 4] }],
+        elements: [
+          { address: 0x0800_0000, data: [1, 2, 3, 4] },
+          { address: 0x0800_4000, data: [5, 6] },
+        ],
+      },
+      {
+        alternateSetting: 1,
+        elements: [{ address: 0x1fff_c000, data: [0xaa, 0x55] }],
       },
     ],
   });
+  const computedCrc = valid.readUInt32LE(valid.length - 4);
+  const computedHex = computedCrc.toString(16).padStart(8, "0");
   const corrupt = Buffer.from(valid);
   corrupt.writeUInt32LE(0, corrupt.length - 4);
   await writeFile(path, corrupt);
@@ -207,10 +216,7 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
       logical_path: ".",
       algorithm: "dfu-crc32",
       declared_crc32: "00000000",
-      calculated_crc32: valid
-        .readUInt32LE(valid.length - 4)
-        .toString(16)
-        .padStart(8, "0"),
+      calculated_crc32: computedHex,
     },
   });
   const recorded = await call("inspect_artifact", {
@@ -229,8 +235,32 @@ it("delivers a DfuSe CRC contradiction under both integrity policies through MCP
   const graph = artifactInventoryResultSchema.parse(
     inspection.substeps[0]?.evidence.normalized_result,
   );
-  expect(
-    graph.occurrences.find((row) => row.logical_path === ".")?.hash_status,
-  ).toBe("mismatched");
+  const rootOccurrence = graph.occurrences.find(
+    (row) => row.logical_path === ".",
+  );
+  expect(rootOccurrence).toMatchObject({
+    hash_status: "mismatched",
+    limitations: ["Declared integrity metadata contradicts observed bytes."],
+    format_metadata: { suffix_crc: 0, computed_crc: computedCrc },
+  });
+  expect(graph.integrity_contradictions).toEqual([
+    expect.objectContaining({
+      occurrence_id: rootOccurrence?.occurrence_id,
+      logical_path: ".",
+      algorithm: "dfu-crc32",
+      declared_crc32: "00000000",
+      observed_crc32: computedHex,
+      trust: "observed-untrusted",
+    }),
+  ]);
+  expect(graph.limitations).toContainEqual(
+    expect.stringMatching(/1.*integrity.*observed-untrusted/iu),
+  );
+  expect(graph.occurrences.map(({ logical_path }) => logical_path)).toEqual([
+    ".",
+    "target-0/element-0-0x08000000-0x08000003.bin",
+    "target-0/element-1-0x08004000-0x08004001.bin",
+    "target-1/element-0-0x1fffc000-0x1fffc001.bin",
+  ]);
   await call("close_binary", {});
 });
