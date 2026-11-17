@@ -55,13 +55,13 @@ let diagnosticsVerified = false;
 let lastTool;
 let catalogChecked = false;
 let catalogSize = null;
-// Native search_tool takes a uint8 limit, so one query cannot list a catalog
-// larger than 255 tools. Discovery pages by querying each name the earlier
-// pages did not return, until the union covers the catalog.
+// The native keyword search limit is uint8. Keep each query through partial
+// replies, then query missing canonical names and verify the complete union.
 const searchLimit = 255;
 const discovered = new Map();
-const searchedNames = new Set();
+const searchedQueries = new Set();
 const discoveryPages = [];
+let pendingQuery = "rea";
 let schemasChecked = 0;
 let analysisRequested = false;
 let evidenceSeen = false;
@@ -256,19 +256,30 @@ await withVerifierCleanup(async () => {
             diagnosticsVerified = true;
           }
           if (discovery?.status !== "ready")
-            return call("search_tool", { query: "rea", limit: searchLimit });
-          discoveryPages.push(discovery);
+            return call("search_tool", {
+              query: pendingQuery,
+              limit: searchLimit,
+            });
+          discoveryPages.push({ query: pendingQuery, response: discovery });
+          searchedQueries.add(pendingQuery);
           for (const tool of discovery.results
             .filter((result) => result.server === "rea")
-            .flatMap((result) => result.tools))
+            .flatMap((result) => result.tools)) {
+            const previous = discovered.get(tool.tool_name);
+            if (previous !== undefined)
+              assert.deepEqual(
+                previous.input_schema,
+                tool.input_schema,
+                `${tool.tool_name}: native input schema changed between queries`,
+              );
             discovered.set(tool.tool_name, tool);
-          const missing = expectedNames.filter(
-            (name) => !discovered.has(name) && !searchedNames.has(name),
-          );
-          if (missing.length > 0) {
-            searchedNames.add(missing[0]);
+          }
+          const missing = expectedNames.filter((name) => !discovered.has(name));
+          const nextQuery = missing.find((name) => !searchedQueries.has(name));
+          if (nextQuery !== undefined) {
+            pendingQuery = nextQuery;
             return call("search_tool", {
-              query: missing[0],
+              query: pendingQuery,
               limit: searchLimit,
             });
           }
@@ -543,9 +554,10 @@ enabled = false
       discovery:
         "native GROK_HOME, isolated additional skill directory, disabled foreign compatibility sources; default OS-home skill discovery and Windows unverified",
       interface:
-        "default native search_tool/use_tool with a complete explicit inventory query; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
+        "default native search_tool/use_tool with bounded keyword queries checked against the complete catalog; asynchronous partial discovery may trigger native REA diagnosis; large MCP outputs are queried via native terminal",
       catalogChecked,
       catalogSize,
+      discoveryQueries: discoveryPages.map((page) => page.query),
       schemasChecked,
       skillLoaded,
       diagnosticsRequested,

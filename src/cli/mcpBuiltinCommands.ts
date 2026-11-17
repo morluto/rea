@@ -1,17 +1,11 @@
 import { mcpRegistrationOptionsSchema } from "../contracts/mcpRegistration.js";
 
-import {
-  adaptCliOutputArgumentsForIncur,
-  declaredSensitiveValues,
-  parseCliGlobalArguments,
-  type CliGlobalArguments,
-} from "../cliBuiltinArguments.js";
-import {
-  readCliOutputArguments,
-  renderCliDocument,
-  type CliOutputFormat,
-} from "../cliOutput.js";
-import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
+import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
+import { readCliOutputArguments, renderCliDocument } from "../cliOutput.js";
+import { jsonLinesErrorRecord } from "./jsonLines.js";
+import { renderFailure } from "./outputEnvelope.js";
+import { suggestCommand } from "./commandSuggestion.js";
+import { unknownCommandReply } from "./unknownCommandReply.js";
 import type { CliInstance } from "./types.js";
 
 type ServeOptions = NonNullable<Parameters<CliInstance["serve"]>[1]>;
@@ -29,7 +23,7 @@ export const MCP_SUBCOMMANDS = new Map([
   ["doctor", { description: "Validate MCP server startup and tool listing" }],
 ]);
 
-/** Incur 0.6.1 builtins that it serves before its `mcp` subcommand branch. */
+/** Global documents take precedence over an unknown MCP subcommand. */
 const PRECEDING_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--incur-update-check",
   "--update",
@@ -38,92 +32,80 @@ const PRECEDING_BUILTIN_FLAGS: ReadonlySet<string> = new Set([
   "--mcp",
 ]);
 
-// zsh expands a word that starts with `=` to an executable path.
-const PLAIN_SHELL_WORD = /^(?!=)[\w./+=:,-]+$/u;
-
 /**
- * Incur 0.6.1 rejects an unknown `mcp` subcommand in TOON regardless of the
- * selected format. Report the same envelope in the explicitly selected format;
- * without one, Incur's TOON or human rendering is already the selected output.
- * The caller's arguments are read before REA adapts output flags for Incur,
- * so the suggested command keeps the caller's selection.
+ * Report an unknown MCP subcommand through REA's diagnostic renderer, retaining
+ * caller arguments for suggestions and explicit sensitive-value declarations.
  */
 export const reportUnknownMcpSubcommand = (
   name: string,
   global: CliGlobalArguments,
   options: ServeOptions,
 ): boolean => {
-  const { arguments: arguments_, command, commandIndices } = global;
+  const started = performance.now();
+  const { arguments: arguments_, command } = global;
   const [entry, subcommand] = command;
-  // Incur receives JSON for REA's delimited formats and no `--columns`.
-  const incur = parseCliGlobalArguments(
-    adaptCliOutputArgumentsForIncur(arguments_),
-  );
-  const incurArguments = incur.arguments;
-  const incurOutputValues = new Set(
-    incur.outputValues.map(({ index }) => index),
-  );
+  const outputValues = new Set(global.outputValues.map(({ index }) => index));
   if (
     entry !== "mcp" ||
-    // Incur shows group help for an empty token and owns flag-shaped globals.
+    // An empty token shows group help.
     !subcommand ||
-    subcommand.startsWith("-") ||
     MCP_SUBCOMMANDS.has(subcommand) ||
-    // Incur serves these builtins before its `mcp` subcommand branch. An
+    // Global documents precede the MCP subcommand branch. An
     // output flag's value is data, even when it is spelled like a builtin.
-    incurArguments.some(
+    arguments_.some(
       (token, index) =>
-        !incurOutputValues.has(index) && PRECEDING_BUILTIN_FLAGS.has(token),
+        !outputValues.has(index) && PRECEDING_BUILTIN_FLAGS.has(token),
     )
   )
     return false;
-  const output = readCliOutputArguments(incur);
-  // Invalid output controls keep Incur's own parse diagnostic.
-  if (!output.formatExplicit || !output.validation.ok) return false;
-  const sensitive = declaredSensitiveValues(command);
-  const text = (value: string): string => redactExplicitText(value, sensitive);
-  const suggestion = [...MCP_SUBCOMMANDS.keys()].find((candidate) =>
-    candidate.startsWith(subcommand.toLowerCase()),
-  );
-  const corrected = arguments_.map((token, index) =>
-    index === commandIndices[1] ? suggestion : token,
-  );
-  // Joined tokens replay only when each one is a plain word in every shell;
-  // quoting is shell-specific, and a redacted value cannot be replayed.
-  const replayable =
-    suggestion !== undefined &&
-    corrected.every(
-      (token) =>
-        token !== undefined &&
-        PLAIN_SHELL_WORD.test(token) &&
-        text(token) === token,
-    );
-  const commands = [
-    ...(replayable ? [{ command: `${name} ${corrected.join(" ")}` }] : []),
-    {
-      command: text(`${name} mcp --help`),
-      description: text("see all available commands"),
-    },
-  ];
-  const document = {
-    code: "COMMAND_NOT_FOUND",
-    message: text(
-      `'${subcommand}' is not a command for '${name} mcp'.${suggestion === undefined ? "" : ` Did you mean '${suggestion}'?`}`,
-    ),
-    cta: {
-      description: text(
-        commands.length === 1 ? "Suggested command:" : "Suggested commands:",
-      ),
-      commands,
-    },
-  };
+  const output = readCliOutputArguments(global);
+  // The invocation boundary owns invalid output controls.
+  if (!output.validation.ok) return false;
+  // Preserve the existing explicit-format prefix policy and the default
+  // dispatcher's edit-distance ranking while moving both replies to one owner.
+  const suggestion = output.formatExplicit
+    ? [...MCP_SUBCOMMANDS.keys()].find((candidate) =>
+        candidate.startsWith(subcommand.toLowerCase()),
+      )
+    : suggestCommand(subcommand, MCP_SUBCOMMANDS.keys());
+  const {
+    command: displayCommand,
+    cta,
+    failure,
+  } = unknownCommandReply({
+    name,
+    scope: ["mcp"],
+    global,
+    commandIndex: 1,
+    suggestion,
+  });
+  const diagnostic = { ...failure, cta };
+  const format =
+    output.format === "csv" || output.format === "tsv" ? "json" : output.format;
   (options.stdout ?? ((value: string) => process.stdout.write(value)))(
     // REA's document renderer owns JSON layout and Markdown escaping.
-    renderCliDocument(
-      document,
-      output.format as CliOutputFormat,
-      process.stdout.isTTY === true,
-    ),
+    output.formatExplicit
+      ? renderCliDocument(
+          format === "jsonl" ? jsonLinesErrorRecord(diagnostic) : diagnostic,
+          format,
+          process.stdout.isTTY === true,
+        )
+      : renderFailure(
+          failure,
+          {
+            command: displayCommand,
+            duration: `${Math.round(performance.now() - started)}ms`,
+          },
+          cta,
+          {
+            format: "toon",
+            human: process.stdout.isTTY === true,
+            fullOutput: false,
+            tokenCount: false,
+            tokenLimit: undefined,
+            tokenOffset: undefined,
+          },
+        ),
   );
   (options.exit ?? ((code: number) => process.exit(code)))(1);
   return true;

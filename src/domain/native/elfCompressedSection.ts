@@ -27,6 +27,43 @@ export type ElfCompressedSectionResult =
       readonly maximumBytes: number;
     };
 
+/** Compression framing, read without inflating or allocating the declared output. */
+export type ElfCompressedSectionHeader =
+  | { readonly state: "uncompressed" }
+  | {
+      readonly state: "compressed";
+      readonly compressionType:
+        | typeof ELFCOMPRESS_ZLIB
+        | typeof ELFCOMPRESS_ZSTD;
+      readonly declaredSize: bigint;
+      readonly headerBytes: number;
+    }
+  | { readonly state: "unsupported"; readonly compressionType: number }
+  | { readonly state: "malformed"; readonly message: string };
+
+/** The decoder and preflight admission use the same accepted framing. */
+export const readElfCompressedSectionHeader = (
+  bytes: Buffer,
+  flags: bigint,
+  bits: 32 | 64,
+  little: boolean,
+  subject: string,
+): ElfCompressedSectionHeader => {
+  if ((flags & SHF_COMPRESSED) === 0n) return { state: "uncompressed" };
+  const headerBytes = bits === 64 ? 24 : 12;
+  if (bytes.length < headerBytes)
+    return { state: "malformed", message: `${subject} header is truncated` };
+  const reader = new BinaryReader(bytes, little, "elf");
+  const compressionType = reader.u32(0);
+  if (
+    compressionType !== ELFCOMPRESS_ZLIB &&
+    compressionType !== ELFCOMPRESS_ZSTD
+  )
+    return { state: "unsupported", compressionType };
+  const declaredSize = reader.word(bits === 64 ? 8 : 4, bits);
+  return { state: "compressed", compressionType, declaredSize, headerBytes };
+};
+
 /**
  * Decode one ELF section payload. `subject` is the noun phrase used in
  * failure text so existing section-name messages stay stable.
@@ -39,7 +76,14 @@ export const decodeElfCompressedSection = (
   maximumDecodedBytes: number,
   subject: string,
 ): ElfCompressedSectionResult => {
-  if ((flags & SHF_COMPRESSED) === 0n)
+  const header = readElfCompressedSectionHeader(
+    bytes,
+    flags,
+    bits,
+    little,
+    subject,
+  );
+  if (header.state === "uncompressed")
     return {
       state: "available",
       bytes,
@@ -47,24 +91,9 @@ export const decodeElfCompressedSection = (
       compression: "none",
       inflatedBytes: 0,
     };
-
-  const headerBytes = bits === 64 ? 24 : 12;
-  if (bytes.length < headerBytes)
-    return {
-      state: "malformed",
-      message: `${subject} header is truncated`,
-      inflatedBytes: 0,
-    };
-  const reader = new BinaryReader(bytes, little, "elf");
-  const compressionType = reader.u32(0);
-  if (
-    compressionType !== ELFCOMPRESS_ZLIB &&
-    compressionType !== ELFCOMPRESS_ZSTD
-  )
-    return { state: "unsupported", compressionType };
-
-  // Elf64_Chdr pads ch_type to eight bytes; Elf32_Chdr does not.
-  const declaredSize = reader.word(bits === 64 ? 8 : 4, bits);
+  if (header.state === "malformed") return { ...header, inflatedBytes: 0 };
+  if (header.state === "unsupported") return header;
+  const { compressionType, declaredSize, headerBytes } = header;
   if (declaredSize > BigInt(maximumDecodedBytes))
     return {
       state: "limit",

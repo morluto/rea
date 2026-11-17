@@ -65,7 +65,19 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   electronFuses: { cases: ["tests/acceptance/electronFusesCli.test.ts"] },
   electronObservation: { cases: ["tests/boundary/cli/electronCli.test.ts"] },
+  elfDebugLink: {
+    cases: [
+      "tests/acceptance/elfDebugLinkCli.test.ts",
+      "tests/boundary/mcp/elfDebugLinkMcp.test.ts",
+    ],
+  },
   elfNotes: { cases: ["tests/acceptance/elfNotesCli.test.ts"] },
+  elfDependencies: {
+    cases: [
+      "tests/acceptance/elfDependenciesCli.test.ts",
+      "tests/boundary/mcp/elfDependenciesMcp.test.ts",
+    ],
+  },
   elfUnwindRanges: { cases: ["tests/acceptance/elfUnwindRangesCli.test.ts"] },
   erlangBeam: { cases: ["tests/acceptance/erlangBeamCli.test.ts"] },
   evmInterface: { cases: ["tests/boundary/mcp/evmInterfaceMcp.test.ts"] },
