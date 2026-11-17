@@ -34,13 +34,15 @@ spawn(process.execPath, [new URL("./fixture.mjs", import.meta.url).pathname], {
   detached: true,
   stdio: ["ignore", openSync(coordinates, "a"), "ignore"],
 }).once("exit", () => process.exit(0));
+if (process.env.NATIVE_UI_EXIT_LAUNCHER === "1") process.exit(0);
 `;
 
 const fixtureSource = `
 import { writeSync } from "node:fs";
 ${standInPrelude}
 record("fixture");
-writeSync(1, JSON.stringify({ pid: process.pid, window_id: 7 }) + "\\n");
+if (process.env.NATIVE_UI_NO_HANDSHAKE !== "1")
+  writeSync(1, JSON.stringify({ pid: process.pid, window_id: 7 }) + "\\n");
 `;
 
 // Runs the actual verifier and observation mapping. Only the compiler and launcher
@@ -98,7 +100,14 @@ const standInSchema = z.object({
   pid: z.number().int().positive(),
 });
 
-const runVerifier = async (helper: string, flags: readonly string[]) => {
+const runVerifier = async (
+  helper: string,
+  flags: readonly string[],
+  options: {
+    readonly noHandshake?: boolean;
+    readonly exitLauncher?: boolean;
+  } = {},
+) => {
   const workspace = await createTestTempDirectory("rea-native-ui-lane-");
   const paths = {
     events: join(workspace, "events.jsonl"),
@@ -122,7 +131,12 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
       ...flags,
     ],
     {
-      env: { ...process.env, TMPDIR: workspace },
+      env: {
+        ...process.env,
+        TMPDIR: workspace,
+        ...(options.noHandshake ? { NATIVE_UI_NO_HANDSHAKE: "1" } : {}),
+        ...(options.exitLauncher ? { NATIVE_UI_EXIT_LAUNCHER: "1" } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -174,6 +188,24 @@ const runVerifier = async (helper: string, flags: readonly string[]) => {
 
 // The verifier refuses other hosts before any fixture is created.
 const macosIt = it.skipIf(process.platform !== "darwin");
+
+macosIt(
+  "retains the fixture root when the launcher exits before the ready handshake",
+  { timeout: 45_000 },
+  async () => {
+    const result = await runVerifier(
+      answersChangedBytes,
+      ["--allow-permission-denial"],
+      { noHandshake: true, exitLauncher: true },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "Source-owned UI fixture exit was not observed; retained",
+    );
+    expect(result.fixtureLive).toBe(true);
+    expect(result.roots).toHaveLength(1);
+  },
+);
 
 macosIt(
   "completes at the permission boundary when the helper refuses changed target bytes",

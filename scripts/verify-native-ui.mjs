@@ -26,8 +26,9 @@ let childExit;
 let fixturePid;
 let fixtureIdentity;
 let report;
-// `open -W` exits only after the app exits, so its own exit is the proof that
-// the fixture no longer runs from the root. Without it the root is retained.
+// `open -W` normally exits only after the app exits, but a launcher can detach
+// and outlive its child. Its exit is proof only after the fixture's PID and
+// start identity were captured; without that handshake the root is retained.
 let retainedRoot;
 const FIXTURE_EXIT_GRACE_MS = 10_000;
 try {
@@ -298,10 +299,13 @@ try {
     }
   }
   const fixtureExited =
-    child === undefined || (await openExitedWithFixture(child, childExit));
+    child === undefined ||
+    (fixtureIdentity?.state === "readable" &&
+      (await openExitedWithFixture(child, childExit)));
   if (fixtureExited) await rootFixture.release();
   else {
-    // The app may have been reparented away from `open`; stopping `open`
+    // The app may have been reparented away from `open`, or its ready
+    // handshake may never have established a PID identity. Stopping `open`
     // does not prove the fixture exited, so its root stays in place.
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
