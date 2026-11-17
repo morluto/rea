@@ -1,0 +1,57 @@
+name: Real radare2 provider
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/real-radare2.yml"
+      - "src/radare2/**"
+      - "src/domain/reverseEngineering.ts"
+      - "src/application/reverse/**"
+      - "src/contracts/radare2SessionToolContracts.ts"
+      - "src/contracts/reverseEngineeringToolContracts.ts"
+      - "src/contracts/toolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "src/composition/reverseEngineering.ts"
+      - "src/server/registerRadare2SessionTools.ts"
+      - "src/server/registerReverseEngineeringTools.ts"
+      - "src/server/createServer.ts"
+      - "src/cliCommandNames.ts"
+      - "tests/boundary/providers/realRadare2Provider.test.ts"
+      - "tests/support/reverseEngineeringService.ts"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-radare2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: --max-old-space-size=768
+  HUSKY: "0"
+  REA_R2_REQUIRED: "1"
+
+jobs:
+  real-radare2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - name: Build radare2 from source (BYO engine; REA never installs it for users)
+        run: |
+          git clone --depth 1 https://github.com/radareorg/radare2 /tmp/radare2-src
+          cd /tmp/radare2-src && sys/install.sh
+          radare2 -version
+      - run: npm ci
+      - name: Verify one-shot and r2pipe2 session workflows against the real engine
+        run: npm run verify:radare2
