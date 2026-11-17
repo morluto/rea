@@ -15,6 +15,10 @@ import {
   webBundleScriptAnalysisSchema,
   type WebBundleScriptAnalysis,
 } from "./webBundleScriptAnalysis.js";
+import {
+  webBundleEndpointLiteralRecord,
+  type WebBundleEndpointLiteralAdmission,
+} from "./webBundleEndpointLiteralBudget.js";
 
 /**
  * Analyze one selected captured script without executing its source. A script
@@ -25,8 +29,9 @@ export const analyzeCapturedWebScript = (
   script: IncludedScript,
   precision?: JavaScriptSemanticPrecisionInput,
   memberMutationAllowance?: JavaScriptMemberMutationAllowance,
+  endpointLiterals?: WebBundleEndpointLiteralAdmission,
 ): WebBundleScriptAnalysis => {
-  const accumulator = createWebBundleAnalysisAccumulator();
+  const accumulator = createWebBundleAnalysisAccumulator(endpointLiterals);
   let analysis: ReturnType<typeof analyzeScript>;
   try {
     analysis = analyzeScript(
@@ -53,6 +58,14 @@ export const analyzeCapturedWebScript = (
   }
   const failed = accumulator.failedScripts.length > 0;
   const recovered = accumulator.recoveredScripts.length > 0;
+  const literalCandidates = webBundleEndpointLiteralRecord(
+    accumulator.endpointLiterals,
+    accumulator.endpointLiteralAdmitted,
+    {
+      byCount: accumulator.endpointLiteralOmitted,
+      byCountExact: accumulator.endpointLiteralOmittedExact,
+    },
+  );
   return webBundleScriptAnalysisSchema.parse({
     status: "analyzed",
     script_key: script.script_key,
@@ -71,5 +84,8 @@ export const analyzeCapturedWebScript = (
       unresolved_endpoints: accumulator.unresolvedEndpoints,
     },
     inferences: accumulator.inferences,
+    ...(literalCandidates === undefined
+      ? {}
+      : { endpoint_literal_candidates: literalCandidates }),
   });
 };

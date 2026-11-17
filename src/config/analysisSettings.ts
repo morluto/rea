@@ -34,6 +34,7 @@ import {
   windowsChangeTimeSettlePollMsSchema,
 } from "./windowsChangeTimeSettle.js";
 import { pwntoolsInputBytesSchema } from "./pwntoolsInputLimit.js";
+import { webBundleEndpointLiteralCandidatesSchema } from "./webBundleEndpointLiteralCandidates.js";
 const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
   {
     REA_ASAR_MAX_HEADER_BYTES: asarMaxHeaderBytesSchema,
@@ -54,6 +55,8 @@ const environmentSchemas: Readonly<Record<string, z.ZodType<number, string>>> =
       capturePacketJsonExpansionBytesSchema,
     REA_JAVASCRIPT_MEMBER_MUTATION_ALIAS_STATES:
       javaScriptMemberMutationAliasStatesSchema,
+    REA_WEB_BUNDLE_ENDPOINT_LITERAL_CANDIDATES:
+      webBundleEndpointLiteralCandidatesSchema,
     REA_BRIDGE_MAX_REQUEST_BYTES: bridgeMaxRequestBytesSchema,
     REA_BRIDGE_MAX_REPLY_BYTES: bridgeMaxReplyBytesSchema,
     REA_DEBUGGER_COMMAND_DEADLINE_MS: debuggerCommandDeadlineMsSchema,

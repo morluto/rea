@@ -2,6 +2,7 @@ import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js"
 import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
 import type { WebBundleAnalysisAdmission } from "../browser/IsolatedWebBundleAnalyzer.js";
 import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";
+import { runtimeWebBundleEndpointLiteralAdmission } from "../config/webBundleEndpointLiteralCandidates.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 
 /**
@@ -14,9 +15,16 @@ export const createBrowserObservationProvider = (
   environment?: Readonly<Record<string, string | undefined>>,
   settings?: AnalysisSettingsReader,
 ): BrowserObservationPort =>
-  new CdpBrowserProvider(admission, () =>
-    resolveJavaScriptMemberMutationAllowance(
-      environment,
-      settings?.().overrides,
-    ),
+  new CdpBrowserProvider(
+    admission,
+    () =>
+      resolveJavaScriptMemberMutationAllowance(
+        environment,
+        settings?.().overrides,
+      ),
+    () =>
+      runtimeWebBundleEndpointLiteralAdmission(
+        environment ?? process.env,
+        settings,
+      ),
   );

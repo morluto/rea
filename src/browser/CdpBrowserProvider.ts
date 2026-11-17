@@ -24,6 +24,10 @@ import {
   type WebBundleAnalysisAdmission,
 } from "./IsolatedWebBundleAnalyzer.js";
 import { sourceMapsWithCaptureExclusions } from "../domain/webSourceMapCoverage.js";
+import {
+  DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION,
+  type WebBundleEndpointLiteralAdmission,
+} from "../domain/webBundleEndpointLiteralBudget.js";
 import type {
   AnalyzeWebBundleInput,
   WebBundleAnalysis,
@@ -121,9 +125,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     ConfigurationError
   >;
 
+  readonly #endpointLiterals: () => WebBundleEndpointLiteralAdmission;
+
   /**
-   * `memberMutationAllowance` resolves the accepted operation's allowance at
-   * each bundle analysis; the default applies when the host selects none.
+   * `memberMutationAllowance` and `endpointLiterals` resolve the accepted
+   * operation's limits at each bundle analysis; the defaults apply when the
+   * host selects none.
    */
   constructor(
     admission?: WebBundleAnalysisAdmission,
@@ -131,9 +138,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       JavaScriptMemberMutationAllowance,
       ConfigurationError
     > = () => ok(DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE),
+    endpointLiterals: () => WebBundleEndpointLiteralAdmission = () =>
+      DEFAULT_WEB_BUNDLE_ENDPOINT_LITERAL_ADMISSION,
   ) {
     this.#bundleAnalyzer = new IsolatedWebBundleAnalyzer(undefined, admission);
     this.#memberMutationAllowance = memberMutationAllowance;
+    this.#endpointLiterals = endpointLiterals;
   }
 
   async close(): Promise<void> {
@@ -356,6 +366,7 @@ export class CdpBrowserProvider implements BrowserObservationPort {
         input,
         options.signal,
         memberMutationAllowance.value,
+        this.#endpointLiterals(),
       );
     } catch (cause: unknown) {
       // Capture and analyzer work can still throw the exact caller reason.

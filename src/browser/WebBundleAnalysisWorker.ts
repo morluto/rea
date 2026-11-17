@@ -20,6 +20,7 @@ import {
 import type { JavaScriptSemanticPrecisionInput } from "../domain/javascript/javascriptSemanticPrecision.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { WorkerFrameSignal } from "../process/WorkerFrameSignal.js";
+import type { WebBundleEndpointLiteralAdmission } from "../domain/webBundleEndpointLiteralBudget.js";
 import { createHash, randomUUID } from "node:crypto";
 import { open, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -335,6 +336,7 @@ export class WebBundleAnalysisWorker {
     signal?: AbortSignal,
     precision?: JavaScriptSemanticPrecisionInput,
     memberMutationAllowance: JavaScriptMemberMutationAllowance = DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+    endpointLiterals?: WebBundleEndpointLiteralAdmission,
   ): Promise<Result<WebBundleScriptAnalysis, WebBundleScriptAnalysisFailure>> {
     let deadline: ProviderStartupDeadline | undefined;
     const id = randomUUID();
@@ -412,6 +414,14 @@ export class WebBundleAnalysisWorker {
         member_mutation_allowance: javaScriptMemberMutationAllowanceField(
           memberMutationAllowance,
         ),
+        ...(endpointLiterals === undefined
+          ? {}
+          : {
+              endpoint_literal_candidates: {
+                maximum_count: endpointLiterals.maximumCount,
+                source: endpointLiterals.source,
+              },
+            }),
         id,
         source,
         result_budget_bytes: resultBudget,

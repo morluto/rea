@@ -1,3 +1,4 @@
+import { webBundleEndpointLiteralRecordSchema } from "./webBundleEndpointLiteralBudget.js";
 import {
   MAX_NODE_TIMER_DELAY_MS,
   deadlineParameterLimit,
@@ -559,6 +560,9 @@ export const webBundleAnalysisSchema = z.object({
       basis: z.array(basisSchema).min(1),
     }),
   ),
+  /** Structured omission when literal path/URL candidates did not all fit. */
+  endpoint_literal_candidates:
+    webBundleEndpointLiteralRecordSchema.exactOptional(),
   unknowns: z.array(
     z.object({
       dimension: z.string(),

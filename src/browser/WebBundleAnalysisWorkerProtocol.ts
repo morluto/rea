@@ -6,6 +6,7 @@ import { digestSchema } from "../domain/digests.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
+import { webBundleEndpointLiteralAdmissionSchema } from "../domain/webBundleEndpointLiteralBudget.js";
 import { webTextArtifactSchema } from "../domain/webContentArtifact.js";
 import {
   DEFAULT_WEB_BUNDLE_HEAP_MB,
@@ -40,6 +41,9 @@ export const webBundleWorkerRequestSchema = z.strictObject({
   kind: z.literal("analyze"),
   semantic_precision: javaScriptSemanticPrecisionSchema.exactOptional(),
   member_mutation_allowance: javaScriptMemberMutationAllowanceSchema,
+  /** Per-script ceiling for literal path/URL candidates. */
+  endpoint_literal_candidates:
+    webBundleEndpointLiteralAdmissionSchema.exactOptional(),
   id: z.uuid(),
   source: z.strictObject({
     bytes: z.number().int().min(0).max(WEB_BUNDLE_WORKER_LIMITS.sourceBytes),
