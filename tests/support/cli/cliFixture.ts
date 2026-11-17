@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   productionMcpDoctorArguments,
-  splitIncurBuiltinArguments,
+  parseCliGlobalArguments,
 } from "../../../src/cliBuiltinArguments.js";
 import { DEFAULT_INFO_LOGGING_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
 import { parseLogLevel } from "../../../src/config/processStart.js";
@@ -306,7 +306,7 @@ const logsByDefault = (
 ): boolean =>
   level === undefined &&
   DEFAULT_INFO_LOGGING_COMMANDS.has(
-    splitIncurBuiltinArguments([...arguments_]).command[0] ?? "",
+    parseCliGlobalArguments(arguments_).command[0] ?? "",
   );
 
 /** A valid level other than silent; an invalid level is a captured refusal. */

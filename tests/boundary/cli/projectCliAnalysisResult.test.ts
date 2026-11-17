@@ -11,8 +11,13 @@ import { freezeJsonSnapshot } from "../../../src/domain/immutableJson.js";
 import { ownedJsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { createCli } from "../../../src/cli.js";
+import { cliCommand, cliCommands } from "../../../src/cli/commandRegistry.js";
+import { BinaryTargetError } from "../../../src/domain/configurationErrors.js";
+import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import {
   projectCliAnalysisResult,
+  projectCliCommandOutput,
   projectCliInputFields,
 } from "../../../src/cli/projectCliAnalysisResult.js";
 
@@ -182,4 +187,150 @@ it("names related fields and operations by contract identity and renders only th
   expect(
     projectAnalysisError(new AnalysisInputError("inspect_plist")).details ?? {},
   ).not.toHaveProperty("related_parameters");
+});
+
+it("renders related_cli_flags and related_cli_commands from the CLI command registry across command shapes", () => {
+  const cli = createCli();
+  const entries = cliCommands(cli);
+  const inspectEntry = cliCommand(cli, "inspect");
+  const compareEntry = cliCommand(cli, "compare");
+  const inspectArtifactEntry = cliCommand(cli, "inspect-artifact");
+  if (
+    inspectEntry === undefined ||
+    compareEntry === undefined ||
+    inspectArtifactEntry === undefined
+  )
+    throw new Error("Expected registered CLI commands");
+
+  // Open-path BinaryTargetError has no details.operation; flags come from the
+  // running command's open_binary bindings, while MCP projection stays flag-free.
+  const loadRejected = projectAnalysisError(
+    new BinaryTargetError("/tmp/image.bin", "unaligned entry", {
+      constraint: "load_selection_rejected",
+    }),
+  );
+  expect(loadRejected.details).toMatchObject({
+    related_parameters: ["format", "architecture", "entry_point"],
+  });
+  expect(loadRejected.details).not.toHaveProperty("related_cli_flags");
+  expect(JSON.stringify(loadRejected)).not.toContain("--target-format");
+
+  const cliLoadRejected = projectCliCommandOutput(
+    { error: "Analysis failed", ...loadRejected },
+    { operations: inspectEntry.operations, commands: entries },
+  );
+  expect(cliLoadRejected).toMatchObject({
+    error: "Analysis failed",
+    details: {
+      related_parameters: ["format", "architecture", "entry_point"],
+      related_cli_flags: {
+        format: "--target-format",
+        architecture: "--architecture",
+        entry_point: "--entry-point",
+      },
+    },
+  });
+
+  // Artifact integrity errors omit details.operation when artifactDetails are present.
+  const integrityFailure = projectAnalysisError(
+    new ArtifactOperationError("inspect_artifact", "integrity", {
+      logicalPath: "main.js",
+      unpacked: false,
+      declaredSha256: "a".repeat(64),
+      calculatedSha256: "b".repeat(64),
+    }),
+  );
+  expect(integrityFailure.details).toMatchObject({
+    related_parameters: ["integrity_policy"],
+  });
+  expect(JSON.stringify(integrityFailure)).not.toContain("--integrity-policy");
+  expect(
+    projectCliCommandOutput(integrityFailure, {
+      operations: inspectArtifactEntry.operations,
+      commands: entries,
+    }),
+  ).toMatchObject({
+    details: {
+      related_cli_flags: { integrity_policy: "--integrity-policy" },
+    },
+  });
+
+  // Operation references resolve canonical contract commands and aliased direct
+  // commands while omitting MCP-only operations such as list_procedures and open_binary.
+  const operationRefs = projectAnalysisError(
+    new AnalysisInputError("procedure_pseudo_code", {
+      related: {
+        operations: [
+          "analyze_function",
+          "procedure_pseudo_code",
+          "search_procedures",
+          "inspect_plist",
+          "inspect_wasm_artifact",
+          "inspect_native_load_image",
+          "analyze_javascript_application",
+          "list_procedures",
+          "open_binary",
+        ],
+      },
+    }),
+  );
+  expect(
+    projectCliCommandOutput(operationRefs, {
+      operations: inspectEntry.operations,
+      commands: entries,
+    }),
+  ).toMatchObject({
+    details: {
+      related_cli_commands: {
+        analyze_function: "rea function",
+        procedure_pseudo_code: "rea decompile",
+        search_procedures: "rea search --kind procedures",
+        inspect_plist: "rea inspect-plist",
+        inspect_wasm_artifact: "rea inspect-wasm-artifact",
+        inspect_native_load_image: "rea inspect-native-load-image",
+        analyze_javascript_application: "rea analyze-javascript-application",
+      },
+    },
+  });
+
+  // In one-shot mode where only the running registrar was loaded, recorded
+  // canonical commands from other registrars still resolve.
+  expect(
+    projectCliCommandOutput(
+      projectAnalysisError(
+        new BinaryTargetError("/tmp/module.wasm", "wasm module", {
+          constraint: "wasm_requires_static_inspection",
+        }),
+      ),
+      {
+        operations: inspectEntry.operations,
+        commands: [inspectEntry],
+        recordedCommands: { "inspect-wasm-artifact": "wasm" },
+      },
+    ),
+  ).toMatchObject({
+    details: {
+      related_operations: ["inspect_wasm_artifact"],
+      related_cli_commands: {
+        inspect_wasm_artifact: "rea inspect-wasm-artifact",
+      },
+    },
+  });
+
+  // Non-contract host commands that bind contract operations render flags too.
+  const compareFailure = projectAnalysisError(
+    new AnalysisInputError("compare_bundles", {
+      related: { parameters: ["record_pairs"] },
+    }),
+  );
+  expect(
+    projectCliCommandOutput(
+      { error: compareFailure },
+      { operations: compareEntry.operations, commands: entries },
+    ),
+  ).toMatchObject({
+    error: {
+      details: { related_cli_flags: { record_pairs: "--record_pairs" } },
+    },
+  });
 });

@@ -1130,7 +1130,7 @@ it("reports the exceeded native-link maximum in the public refusal", async () =>
       resource: "capacity",
       reportedLimits: {
         boundary: "native-index-capacity",
-        maximum_entries: 64,
+        maximum: 64,
       },
       fixedAllowance: { limit: 64, unit: "entries" },
     });

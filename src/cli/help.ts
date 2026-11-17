@@ -3,20 +3,39 @@ import { z } from "zod";
 import { declaredOptionType, optionFlagName } from "./optionFields.js";
 
 /**
- * REA's command help text. The layout is the one the CLI has always printed:
- * a `name — description` title, a usage line, aligned option rows with type
- * placeholders and shown defaults, an optional hint, then the global options the
- * entry accepts.
+ * REA's help text. The layout is the one the CLI has always printed: a
+ * `name — description` title, a usage line, aligned argument and option rows
+ * with type placeholders and shown defaults, an optional hint, then the global
+ * options the entry accepts.
  */
+
+/** A named entry in a command list. */
+export interface HelpCommandRow {
+  readonly name: string;
+  readonly description?: string | undefined;
+}
 
 /** The global options block of an entry that accepts them. */
 export interface GlobalOptionsHelp {
   /** The `--format` values this entry accepts, in display order. */
   readonly formats: readonly string[];
+  /** Global options REA defines beyond the standard ones, such as `--timings`. */
+  readonly custom?: z.ZodObject | undefined;
+  /**
+   * The root page also lists the integration commands and the flags that
+   * apply only before a command (`--mcp`, `--update`, `--version`).
+   */
+  readonly root?:
+    | { readonly integrations: readonly HelpCommandRow[] }
+    | undefined;
 }
 
 export interface CommandHelp {
   readonly description?: string | undefined;
+  /** Printed as `name@version` in the title. */
+  readonly version?: string | undefined;
+  /** Positionals, in argv order. */
+  readonly args?: z.ZodObject | undefined;
   readonly options?: z.ZodObject | undefined;
   /** Short alias by option key, such as `{ help: "h" }`. */
   readonly alias?: Readonly<Record<string, string>> | undefined;
@@ -92,8 +111,32 @@ const optionRows = (
     },
   );
 
-/** The global options every command entry accepts, sorted by flag. */
-const globalOptionRows = ({ formats }: GlobalOptionsHelp): Row[] =>
+/** A command list's rows, in the order given. */
+const commandRows = (commands: readonly HelpCommandRow[]): string[] => {
+  const width = Math.max(...commands.map((command) => command.name.length));
+  return commands.map((command) =>
+    command.description === undefined || command.description === ""
+      ? `  ${command.name}`
+      : `  ${command.name}${" ".repeat(width - command.name.length)}  ${command.description}`,
+  );
+};
+
+/** `<required>`, `[optional]` and `<variadic...>` placeholders, in argv order. */
+const synopsis = (name: string, args: z.ZodObject | undefined): string =>
+  [
+    name,
+    ...Object.entries(
+      (args?.shape ?? {}) as Readonly<Record<string, z.ZodType>>,
+    ).map(([key, field]) => {
+      const type = typeName(field);
+      const label =
+        (type.includes("|") ? type : key) + (type === "array" ? "..." : "");
+      return field._zod.optout === "optional" ? `[${label}]` : `<${label}>`;
+    }),
+  ].join(" ");
+
+/** The global options an entry accepts, sorted by flag. */
+const globalOptionRows = ({ formats, root }: GlobalOptionsHelp): Row[] =>
   [
     {
       label: "--filter-output <keys>",
@@ -116,24 +159,68 @@ const globalOptionRows = ({ formats }: GlobalOptionsHelp): Row[] =>
       description: "Skip first n tokens of output",
     },
     { label: "--full-output", description: "Show full output envelope" },
+    ...(root === undefined
+      ? []
+      : [
+          { label: "--mcp", description: "Start as MCP stdio server" },
+          { label: "--update", description: "Update to latest version" },
+          { label: "--version", description: "Show version" },
+        ]),
   ].sort((left, right) => left.label.localeCompare(right.label));
+
+/** Integrations, custom global options and global options, in that order. */
+const globalOptionsLines = (help: GlobalOptionsHelp | undefined): string[] => {
+  if (help === undefined) return [];
+  const lines: string[] = [];
+  if (help.root !== undefined)
+    lines.push("", "Integrations:", ...commandRows(help.root.integrations));
+  const custom =
+    help.custom === undefined ? [] : optionRows(help.custom, undefined);
+  if (custom.length > 0)
+    lines.push("", "Custom Global Options:", ...alignedRows(custom));
+  lines.push("", "Global Options:", ...alignedRows(globalOptionRows(help)));
+  return lines;
+};
+
+const title = (name: string, help: CommandHelp): string => {
+  const heading = help.version === undefined ? name : `${name}@${help.version}`;
+  return help.description === undefined
+    ? heading
+    : `${heading} — ${help.description}`;
+};
 
 /** Render one command's help, without a trailing newline. */
 export const formatCommandHelp = (name: string, help: CommandHelp): string => {
   const lines = [
-    help.description === undefined ? name : `${name} — ${help.description}`,
+    title(name, help),
     "",
-    `Usage: ${name}${help.options === undefined ? "" : " [options]"}`,
+    `Usage: ${synopsis(name, help.args)}${help.options === undefined ? "" : " [options]"}`,
   ];
+  const args = Object.entries(
+    (help.args?.shape ?? {}) as Readonly<Record<string, z.ZodType>>,
+  ).map(([key, field]) => ({
+    label: key,
+    description: field.description ?? "",
+  }));
+  if (args.length > 0) lines.push("", "Arguments:", ...alignedRows(args));
   const options =
     help.options === undefined ? [] : optionRows(help.options, help.alias);
   if (options.length > 0) lines.push("", "Options:", ...alignedRows(options));
   if (help.hint !== undefined) lines.push("", help.hint);
-  if (help.globalOptions !== undefined)
-    lines.push(
-      "",
-      "Global Options:",
-      ...alignedRows(globalOptionRows(help.globalOptions)),
-    );
+  lines.push(...globalOptionsLines(help.globalOptions));
+  return lines.join("\n");
+};
+
+/** Render a page that lists commands (the root or a group), without a trailing newline. */
+export const formatCommandListHelp = (
+  name: string,
+  help: Pick<CommandHelp, "description" | "version" | "globalOptions"> & {
+    readonly commands: readonly HelpCommandRow[];
+  },
+): string => {
+  const lines = [title(name, help), "", `Usage: ${name} <command>`];
+  if (help.commands.length > 0)
+    lines.push("", "Commands:", ...commandRows(help.commands));
+  lines.push(...globalOptionsLines(help.globalOptions));
   return lines.join("\n");
 };
