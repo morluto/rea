@@ -1076,6 +1076,7 @@ const parseExtraData = async (
 ): Promise<WindowsShortcut["extra_data"]> => {
   const blocks: WindowsShortcutExtraDataBlock[] = [];
   let terminalOffset: number | null = null;
+  let trailingBytes = 0;
   while (walk.offset < bytes.length) {
     if (blocks.length > 0 && blocks.length % ENTRIES_PER_YIELD === 0) {
       await setImmediate();
@@ -1096,6 +1097,10 @@ const parseExtraData = async (
     if (size < 4) {
       terminalOffset = walk.offset;
       walk.offset += 4;
+      // MS-SHLLINK ends ExtraData with the TerminalBlock, so anything past it is
+      // not part of the Shell Link. Keep the count: an appended payload is the
+      // part a reader most needs to see.
+      trailingBytes = bytes.length - walk.offset;
       break;
     }
     if (size < 8) {
@@ -1136,7 +1141,18 @@ const parseExtraData = async (
   }
   if (blocks.length > 0 && terminalOffset === null)
     note(walk, "truncated", walk.offset, "ExtraData TerminalBlock is absent");
-  return { blocks, terminal_offset: terminalOffset };
+  if (trailingBytes > 0)
+    note(
+      walk,
+      "trailing_bytes",
+      walk.offset,
+      `${String(trailingBytes)} byte(s) follow the ExtraData TerminalBlock`,
+    );
+  return {
+    blocks,
+    terminal_offset: terminalOffset,
+    trailing_bytes: trailingBytes,
+  };
 };
 
 /**
@@ -1228,7 +1244,7 @@ export const parseWindowsShortcut = async (
   }
   const extraData = !walk.stopped
     ? await parseExtraData(bytes, walk, input.max_extra_data_blocks, signal)
-    : { blocks: [], terminal_offset: null };
+    : { blocks: [], terminal_offset: null, trailing_bytes: 0 };
   const signatures = new Set(extraData.blocks.map((block) => block.signature));
   const unseenBlocks = EXPECTED_EXTRA_DATA_BLOCKS.filter(
     ({ flag, signature }) => (flags & flag) !== 0 && !signatures.has(signature),

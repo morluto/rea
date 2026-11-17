@@ -406,6 +406,42 @@ it("treats any TerminalSize below 4 as the ExtraData terminal", async () => {
   }
 });
 
+it("reports bytes appended after the ExtraData TerminalBlock", async () => {
+  const base = windowsShortcutBytes({ extraData: [] });
+  // Appending a payload after a complete Shell Link is how one hides it, so the
+  // TerminalBlock is the last thing a clean file contains.
+  const payload = Buffer.from("PK\u0003\u0004appended-payload", "latin1");
+  const report = await parse(Buffer.concat([base, payload]));
+  expect(report.extra_data.terminal_offset).toBe(base.length - 4);
+  expect(report.extra_data.trailing_bytes).toBe(payload.length);
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "trailing_bytes",
+      offset: base.length,
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.coverage.failing_offset).toBe(base.length);
+  expect(windowsShortcutSchema.safeParse(report).success).toBe(true);
+});
+
+it("reports no appended bytes when the TerminalBlock ends the file", async () => {
+  const report = await parse(windowsShortcutBytes({ extraData: [] }));
+  expect(report.extra_data.trailing_bytes).toBe(0);
+  expect(report.issues.some((issue) => issue.code === "trailing_bytes")).toBe(
+    false,
+  );
+  expect(report.coverage.status).toBe("complete");
+});
+
+it("keeps the appended-byte count out of a file whose ExtraData never terminates", async () => {
+  const report = await parse(
+    windowsShortcutBytes({ extraData: [], terminalBlock: false }),
+  );
+  expect(report.extra_data.terminal_offset).toBeNull();
+  expect(report.extra_data.trailing_bytes).toBe(0);
+});
+
 it("derives target facts from a stored environment target alone", async () => {
   const report = await parse(
     windowsShortcutBytes({

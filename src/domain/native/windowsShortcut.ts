@@ -286,6 +286,7 @@ const issueSchema = z.strictObject({
     "odd_unicode_length",
     "malformed_structure",
     "missing_extra_data_block",
+    "trailing_bytes",
   ]),
   offset: uint,
   message: z.string().min(1),
@@ -339,6 +340,8 @@ export const windowsShortcutSchema = z.strictObject({
   extra_data: z.strictObject({
     blocks: z.array(extraDataBlockSchema),
     terminal_offset: uint.nullable(),
+    /** Bytes past the ExtraData TerminalBlock; MS-SHLLINK ends the Shell Link there. */
+    trailing_bytes: uint,
   }),
   observations: fixedTupleSchema([
     argumentsPresentObservationSchema,

@@ -55,7 +55,12 @@ birth-droid GUIDs. Version-1 UUID MAC and timestamp values are labelled
 `evidence_kind: "derived"`. `KnownFolderDataBlock` and `SpecialFolderDataBlock`
 keep their folder identifiers. `ConsoleFEDataBlock` keeps the code page.
 `PropertyStoreDataBlock` and unrecognized signatures stay raw with SHA-256.
-Unknown signatures are listed and are not dropped.
+Unknown signatures are listed and are not dropped. `extra_data.terminal_offset`
+is where the `TerminalBlock` starts and `extra_data.trailing_bytes` counts the
+bytes after it. MS-SHLLINK ends the file at the `TerminalBlock`, so a non-zero
+count means something was appended to an otherwise complete Shell Link: it is
+reported as a `trailing_bytes` issue at the first appended byte, located as a
+file-offset range. The appended bytes stay raw and are not interpreted.
 
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
@@ -78,8 +83,9 @@ IDList items (4096 maximum) and 64 ExtraData blocks (1024 maximum) are
 examined by default. Retained string payload bytes across StringData,
 LinkInfo, and ExtraData are limited to 64 KiB by default (1 MiB maximum).
 Malformed `HeaderSize` or `LinkCLSID`, and exhausted budgets, fail without
-partial success. Truncation after a valid header, ExtraData size overruns, and
-odd Unicode lengths return partial coverage with `coverage.failing_offset`.
+partial success. Truncation after a valid header, ExtraData size overruns, odd
+Unicode lengths, and bytes appended after the `TerminalBlock` return partial
+coverage with `coverage.failing_offset`.
 A LinkInfo offset that points outside its structure is reported at the
 offset field itself, so every issue offset lies inside the file.
 Coverage is never `complete` when issues are present.

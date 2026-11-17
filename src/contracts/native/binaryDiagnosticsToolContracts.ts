@@ -337,7 +337,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_windows_shortcut", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect a local Windows Shell Link (.lnk) without resolving or executing its target, COM, or network access. Returns header/time/display facts, target-ID/link-info paths, arguments, working directory/icon and ExtraData observations, with raw hashes for unknown structures. Tracker and behavioral observations are derived. Malformed structures, odd Unicode lengths or exhausted budgets return typed failures or explicitly partial coverage with the failing offset. No Windows SDK required.",
+      "Inspect a local Windows Shell Link (.lnk) without resolving or executing its target, COM, or network access. Returns header/time/display facts, target-ID/link-info paths, arguments, working directory/icon and ExtraData observations, with raw hashes for unknown structures. Tracker and behavioral observations are derived. Malformed structures, odd Unicode lengths or exhausted budgets return typed failures or explicitly partial coverage with the failing offset. Byte counts follow the ExtraData TerminalBlock, so an appended payload is reported instead of looking clean. No Windows SDK required.",
     inputSchema: inspectWindowsShortcutInputSchema,
     outputSchema: evidenceResultOf(windowsShortcutSchema),
     examples: [

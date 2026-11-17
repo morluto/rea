@@ -38,7 +38,7 @@ const report = {
     arguments: null,
     icon_location: null,
   },
-  extra_data: { blocks: [], terminal_offset: null },
+  extra_data: { blocks: [], terminal_offset: null, trailing_bytes: 0 },
   observations: [
     {
       kind: "arguments_present" as const,

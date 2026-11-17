@@ -101,7 +101,43 @@ const locationsOf = (
       start: report.link_info.location.offset,
       end: report.link_info.location.offset + report.link_info.location.bytes,
     });
+  // Bytes appended after the TerminalBlock are the part a reader must inspect
+  // by hand, so point at them instead of leaving them unlocated.
+  if (
+    report.extra_data.trailing_bytes > 0 &&
+    report.extra_data.terminal_offset !== null
+  )
+    ranges.push({
+      kind: "file-offset-range",
+      start: report.extra_data.terminal_offset + 4,
+      end:
+        report.extra_data.terminal_offset +
+        4 +
+        report.extra_data.trailing_bytes,
+    });
   return [{ kind: "artifact-path", path: report.artifact.path }, ...ranges];
+};
+
+/**
+ * Appended bytes run from just past the TerminalBlock to the end of the file, so
+ * a terminal that does not end the file is a contradiction whether the count is
+ * positive or zero. Nothing can follow an absent TerminalBlock, and a positive
+ * count is only meaningful with the issue that records it.
+ */
+const appendedBytesAgreeWithTerminal = (report: WindowsShortcut): boolean => {
+  const { terminal_offset: terminalOffset, trailing_bytes: trailingBytes } =
+    report.extra_data;
+  const trailingIssues = report.issues.filter(
+    (issue) => issue.code === "trailing_bytes",
+  );
+  if (terminalOffset === null)
+    return trailingBytes === 0 && trailingIssues.length === 0;
+  if (terminalOffset + 4 + trailingBytes !== report.artifact.bytes)
+    return false;
+  return trailingBytes > 0
+    ? trailingIssues.length === 1 &&
+        trailingIssues[0]?.offset === terminalOffset + 4
+    : trailingIssues.length === 0;
 };
 
 const validReport = (
@@ -127,6 +163,7 @@ const validReport = (
   if (report.id_list !== null && !inside(report.id_list.location)) return false;
   if (report.link_info !== null && !inside(report.link_info.location))
     return false;
+  if (!appendedBytesAgreeWithTerminal(report)) return false;
   return report.extra_data.blocks.every((block) =>
     inside({ offset: block.offset, bytes: block.size }),
   );

@@ -102,6 +102,80 @@ it("rejects complete coverage that still lists issues", async () => {
   if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
+const payload = Buffer.from("PK\u0003\u0004appended-payload", "latin1");
+const appendedBytes = Buffer.concat([bytes, payload]);
+const appended = await parseWindowsShortcut(
+  appendedBytes,
+  {
+    path,
+    sha256: createHash("sha256").update(appendedBytes).digest("hex"),
+    bytes: appendedBytes.length,
+  },
+  inspectWindowsShortcutInputSchema.parse({ path }),
+);
+
+it("locates the bytes appended after the ExtraData TerminalBlock", async () => {
+  const result = await new WindowsShortcutService({
+    identity,
+    inspect: () => Promise.resolve(ok(appended)),
+  }).inspect({ path: report.artifact.path });
+  if (!result.ok) throw result.error;
+  expect(appended.extra_data.trailing_bytes).toBeGreaterThan(0);
+  expect(result.value.locations).toContainEqual({
+    kind: "file-offset-range",
+    start: (appended.extra_data.terminal_offset ?? 0) + 4,
+    end: appended.artifact.bytes,
+  });
+});
+
+it("rejects an appended-byte count that does not reach the end of the file", async () => {
+  const result = await new WindowsShortcutService({
+    identity,
+    inspect: () =>
+      Promise.resolve(
+        ok({
+          ...appended,
+          extra_data: { ...appended.extra_data, trailing_bytes: 1 },
+        }),
+      ),
+  }).inspect({ path: report.artifact.path });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it("rejects a zero appended-byte count when the TerminalBlock does not end the file", async () => {
+  const result = await new WindowsShortcutService({
+    identity,
+    inspect: () =>
+      Promise.resolve(
+        ok({
+          ...appended,
+          extra_data: { ...appended.extra_data, trailing_bytes: 0 },
+        }),
+      ),
+  }).inspect({ path: report.artifact.path });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
+it("rejects an appended-byte count whose issue is not recorded", async () => {
+  const result = await new WindowsShortcutService({
+    identity,
+    inspect: () =>
+      Promise.resolve(
+        ok({
+          ...appended,
+          issues: appended.issues.map((issue) => ({
+            ...issue,
+            code: "malformed_structure" as const,
+          })),
+        }),
+      ),
+  }).inspect({ path: report.artifact.path });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
+});
+
 it("retains a completed observation when the caller cancels as the provider completes", async () => {
   const controller = new AbortController();
   const reason = { request: "late WindowsShortcut cancellation" };
