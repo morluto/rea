@@ -103,7 +103,7 @@ it("attributes file-I/O cancellation to the comparison and preserves its exact c
 });
 
 it.each(["validation", "comparison"] as const)(
-  "preserves the right evidence when cancellation arrives during %s",
+  "dispatches cancellation during %s before committing session facts",
   async (stage) => {
     const { client, session, path } = await connectedComparison();
     const controller = new AbortController();
@@ -154,23 +154,6 @@ it.each(["validation", "comparison"] as const)(
         settle?.();
       return result;
     });
-    let partialError: AnalysisCancelledError | undefined;
-    const partialDelivery =
-      ToolResultDelivery.prototype.toPartialErrorToolResult;
-    vi.spyOn(
-      ToolResultDelivery.prototype,
-      "toPartialErrorToolResult",
-    ).mockImplementation(function (this: ToolResultDelivery, ...args) {
-      const result = partialDelivery.apply(this, args);
-      if (
-        args[0] instanceof AnalysisCancelledError &&
-        args[0].operation === "compare_source_to_bundle"
-      ) {
-        partialError = args[0];
-        settle?.();
-      }
-      return result;
-    });
     const evidenceDelivery = ToolResultDelivery.prototype.toEvidenceToolResult;
     vi.spyOn(
       ToolResultDelivery.prototype,
@@ -198,25 +181,7 @@ it.each(["validation", "comparison"] as const)(
       );
     expect(await pending).toBeInstanceOf(Error);
     await settled;
-    const after = session.exportEvidenceBundle();
-    if (stage === "validation") expect(after).toEqual(before);
-    else {
-      expect(partialError).toBeInstanceOf(AnalysisCancelledError);
-      expect(after.records).toHaveLength(2);
-      const source = after.records.find(
-        ({ operation }) => operation === "analyze_javascript_application",
-      );
-      const comparison = after.records.find(
-        ({ operation }) => operation === "compare_source_to_bundle",
-      );
-      expect(source).toBeDefined();
-      expect(comparison?.parameters).toMatchObject({
-        application_evidence_id: source?.evidence_id,
-      });
-      expect(partialError?.partialObservation).toMatchObject({
-        evidence_id: comparison?.evidence_id,
-      });
-    }
+    expect(session.exportEvidenceBundle()).toEqual(before);
     await expect(client.ping()).resolves.toEqual({});
   },
 );
