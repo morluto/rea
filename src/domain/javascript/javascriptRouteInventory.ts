@@ -24,7 +24,7 @@ import {
   type NextAppSourceContext,
 } from "./javascriptRoutePaths.js";
 
-const sourceStatus = z.enum(["complete", "partial", "unavailable", "unknown"]);
+const sourceStatus = z.enum([...coverageStatusSchema.options, "unavailable"]);
 const confidence = javaScriptRouteCandidateSchema.shape.confidence;
 const sourceShape = {
   id: z.string().regex(/^jss:[a-f0-9]{32}$/u),

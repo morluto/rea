@@ -121,7 +121,11 @@ it("tells a finished CLI invocation to rerun with the launch setting, not to reu
     details: {
       diagnostics: { remote_code: "decompile_timed_out" },
       limit: invocationLimit,
+      related_operations: ["analyze_function"],
     },
+  });
+  expect(projected.remediation).toMatchObject({
+    action: expect.not.stringContaining("rea function"),
   });
   const { message } = cliFailure.parse(projected);
   expect(message.startsWith(BRIDGE_MESSAGE)).toBe(true);
@@ -155,6 +159,7 @@ it("keeps same-session and runtime-update guidance for a continuing MCP connecti
           .continuingRemediationAction,
       },
       details: {
+        related_operations: ["analyze_function"],
         limit: {
           ...enforcedLimit,
           applies_at: "next_operation",
@@ -162,6 +167,7 @@ it("keeps same-session and runtime-update guidance for a continuing MCP connecti
         },
       },
     });
+    expect(timedOut.remediation.action).not.toContain("rea function");
     expect(timedOut.details?.limit).not.toHaveProperty("environment");
     expect(timedOut.message.startsWith(BRIDGE_MESSAGE)).toBe(true);
     expect(timedOut.message.endsWith(` ${GHIDRA_SESSION_RETAINED}`)).toBe(true);

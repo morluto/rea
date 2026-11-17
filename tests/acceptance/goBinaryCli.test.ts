@@ -166,7 +166,7 @@ cliTest(
                   resource: "memory",
                   reported_limits: {
                     boundary: "build-info",
-                    maximum_bytes: maximum,
+                    maximum,
                   },
                 }
               : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
@@ -181,7 +181,7 @@ cliTest(
                   resource: "memory",
                   reported_limits: {
                     boundary: "build-info",
-                    maximum_bytes: maximum,
+                    maximum,
                   },
                 }
               : { issues: [{ path: ["path"], reason: "invalid_format" }] }),
@@ -268,7 +268,7 @@ cliTest(
         resource: "cpu",
         reported_limits: {
           boundary: "search",
-          maximum_bytes: 256 * 1024 * 1024,
+          maximum: 256 * 1024 * 1024,
         },
       },
     };
