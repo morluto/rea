@@ -478,6 +478,16 @@ The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
+Inspect ELF needed libraries and required symbol versions without executing
+the image or invoking the dynamic loader:
+
+```bash
+rea inspect-elf-dependencies /absolute/path/to/program --json
+```
+
+The fields, coverage rules and delivery options are documented in
+[ELF dynamic dependencies](../elf-dependencies.md).
+
 List ELF and Mach-O initializer and finalizer functions without executing the
 image:
 
