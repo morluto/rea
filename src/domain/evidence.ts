@@ -356,7 +356,7 @@ export const evidenceSubjectDisplay = (evidence: {
     : undefined;
 };
 
-type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
+export type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
 
 export type EvidenceProvider = Readonly<z.output<typeof providerSchema>>;

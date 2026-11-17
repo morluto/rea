@@ -33,9 +33,16 @@ export class AdbDeviceAnalysisService {
       {
         execute: async (request, options) => {
           const result = await this.provider.execute(request, options);
-          return result.ok && request.operation === "list_adb_devices"
-            ? projectDeviceList(result.value)
-            : result;
+          if (!result.ok) return result;
+          // A device is a service REA attaches to and does not own, so what it
+          // reports is an external observation rather than a replay REA drives.
+          const observed = {
+            ...result.value,
+            authority: result.value.authority ?? "external-service",
+          } as const;
+          return request.operation === "list_adb_devices"
+            ? projectDeviceList(observed)
+            : ok(observed);
         },
       },
       "observed",
