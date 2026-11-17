@@ -275,6 +275,19 @@ The shared CLI/MCP workflow reports compiler version, modules, replacements,
 build settings, original bytes and SHA-256. See [Go binaries](../guides/native/go-binaries.md)
 for supported containers and absent or malformed metadata.
 
+Project that Evidence, or Rust dependency Evidence, as CycloneDX. The command
+prints JSON on stdout:
+
+```bash
+rea inspect-go-binary /absolute/path/to/program --json > go-evidence.json
+cat > cyclonedx-view.json <<'JSON'
+{"source":{"kind":"evidence-file","path":"go-evidence.json"},"view":{"kind":"cyclonedx"}}
+JSON
+rea inspect-analysis-view cyclonedx-view.json --json | jq '.normalized_result.document' > sbom.cdx.json
+```
+
+See [CycloneDX dependencies](../guides/native/cyclonedx-view.md).
+
 Inspect a Godot PCK without running the game:
 
 ```sh
@@ -390,6 +403,17 @@ rea extract-artifact ./boot.itb --json
 See [U-Boot FIT images](../fit-images.md) for recognition, data sources, hashes
 and limits.
 
+Inspect and extract an Android boot or vendor_boot image:
+
+```sh
+rea inspect-artifact ./boot.img --detail summary --evidence_output boot.json --json
+rea extract-artifact ./vendor_boot.img --json
+```
+
+See [Android boot images](../android-boot-image.md) for header versions 0 through
+4, vendor ramdisk table entries, stored compression, and the unverified AVB
+footer. `ANDROID!` does not record boot versus init_boot versus recovery.
+
 Inspect local model declarations without loading weights:
 
 ```bash
@@ -477,6 +501,20 @@ rea inspect-elf-notes /absolute/path/to/program --json
 The workflow reports note owners, types, descriptor hashes, and GNU build-id
 or ABI-tag fields when those descriptors match. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
+
+Inspect DWARF compile units without executing the image:
+
+```bash
+rea inspect-dwarf-units /absolute/path/to/program --json
+```
+
+The workflow reads DWARF 2 through 5 unit headers and the unit DIE from an
+ELF, Mach-O, or PE file, including compressed ELF debug sections. Rows report
+the source file, compilation directory, producer, language, and `dwo_name`.
+`offset` and `limit` page the units. Absent `.debug_info` describes this file
+only, and a declared section that could not be decoded is partial coverage. Pass `--architecture` for a universal Mach-O. A `.dSYM` bundle is not
+opened; pass the DWARF file inside it. See
+[DWARF compile units](../guides/native/dwarf-units.md).
 
 Inspect ELF separate debug-file linkage without executing the image:
 

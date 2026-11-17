@@ -539,6 +539,11 @@ export const documentationSections = [
         route: "/agent-environments",
       },
       {
+        text: "Android boot and vendor_boot images",
+        source: "android-boot-image.md",
+        route: "/android-boot-image",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",
@@ -562,6 +567,11 @@ export const documentationSections = [
         text: "Flattened devicetree inspection",
         source: "devicetree.md",
         route: "/devicetree",
+      },
+      {
+        text: "DWARF compile units",
+        source: "guides/native/dwarf-units.md",
+        route: "/dwarf-units",
       },
       {
         text: "Electron fuse state",
@@ -689,6 +699,11 @@ export const documentationSections = [
         text: "Rust binary dependency metadata",
         source: "rust-binaries.md",
         route: "/rust-binaries",
+      },
+      {
+        text: "CycloneDX dependencies",
+        source: "guides/native/cyclonedx-view.md",
+        route: "/cyclonedx-view",
       },
       {
         text: "U-Boot legacy uImage containers",

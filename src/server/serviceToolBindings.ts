@@ -1,4 +1,5 @@
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
+import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
@@ -861,6 +862,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<MavenGradleMetadataService>,
+  dwarfUnits: ((service) => ({
+    inspect_dwarf_units: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DwarfUnitsService>,
   elfDependencies: ((service) => ({
     inspect_elf_dependencies: {
       admission: "application",

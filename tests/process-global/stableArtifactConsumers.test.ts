@@ -114,6 +114,7 @@ import { inspectPythonPycInputSchema } from "../../src/domain/python/pythonPyc.j
 import { PeResourcesProvider } from "../../src/native/pe/PeResourcesProvider.js";
 import { Il2cppMetadataProvider } from "../../src/il2cpp/Il2cppMetadataProvider.js";
 import { ElfNotesProvider } from "../../src/native/elf/ElfNotesProvider.js";
+import { DwarfUnitsProvider } from "../../src/native/dwarf/DwarfUnitsProvider.js";
 import { NativeInitializersProvider } from "../../src/native/initializers/NativeInitializersProvider.js";
 import { ElfUnwindRangesProvider } from "../../src/native/elf/ElfUnwindRangesProvider.js";
 import { AppleIpsProvider } from "../../src/native/apple/AppleIpsProvider.js";
@@ -127,6 +128,7 @@ import { WindowsShortcutProvider } from "../../src/native/windows/WindowsShortcu
 import { NativeExportsProvider } from "../../src/native/exports/NativeExportsProvider.js";
 import { BeamProvider } from "../../src/erlang/BeamProvider.js";
 import { inspectElfNotesInputSchema } from "../../src/domain/native/elfNotes.js";
+import { inspectDwarfUnitsInputSchema } from "../../src/domain/native/dwarfUnits.js";
 import { inspectNativeInitializersInputSchema } from "../../src/domain/native/nativeInitializers.js";
 import { inspectElfUnwindRangesInputSchema } from "../../src/domain/native/elfUnwindRanges.js";
 import { inspectAppleIpsInputSchema } from "../../src/domain/native/appleIps.js";
@@ -1017,6 +1019,7 @@ it.each([
 const stableArtifactProviders = [
   ...staticProviders,
   ["ELF notes", () => new ElfNotesProvider()],
+  ["DWARF units", () => new DwarfUnitsProvider()],
   ["native initializers", () => new NativeInitializersProvider()],
   ["ELF unwind ranges", () => new ElfUnwindRangesProvider()],
   ["Apple IPS", () => new AppleIpsProvider()],
@@ -1053,6 +1056,11 @@ const inspectFileFailure = (
   if (provider instanceof ElfNotesProvider)
     return provider.inspect(
       inspectElfNotesInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof DwarfUnitsProvider)
+    return provider.inspect(
+      inspectDwarfUnitsInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof NativeInitializersProvider)
@@ -1163,6 +1171,7 @@ it.each(
       expect(result.error._tag).toBe(
         expectedTag ??
           (provider instanceof ElfNotesProvider ||
+          provider instanceof DwarfUnitsProvider ||
           provider instanceof ElfUnwindRangesProvider ||
           provider instanceof KernelModuleProvider ||
           provider instanceof ElfDebugLinkProvider ||
