@@ -54,7 +54,11 @@ import {
   DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
   reverseCommandOutputLimit,
   objdumpInputSchema,
+  radare2InputSchema,
+  radiff2InputSchema,
   rizinInputSchema,
+  type Radare2Input,
+  type Radiff2Input,
   type RizinInput,
 } from "../../domain/reverseEngineering.js";
 import type {
@@ -97,7 +101,9 @@ import { errorMessage } from "../../kernel/errorMessage.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
-  | "execute_rizin_command";
+  | "execute_rizin_command"
+  | "execute_radare2_command"
+  | "compare_with_radiff2";
 
 export interface CommandProviderLaunchFailure {
   readonly reason: string;
@@ -174,6 +180,40 @@ export const resolveRizinCommandRequest = (
     : err(
         analysisInputErrorFromIssues(
           "execute_rizin_command",
+          parsed.error.issues,
+          input,
+          { cause: parsed.error },
+        ),
+      );
+};
+
+/** Resolve one command for shared execution and adapter admission decisions. */
+export const resolveRadare2CommandRequest = (
+  input: unknown,
+): Result<Radare2Input, AnalysisInputError> => {
+  const parsed = radare2InputSchema.safeParse(input);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
+        analysisInputErrorFromIssues(
+          "execute_radare2_command",
+          parsed.error.issues,
+          input,
+          { cause: parsed.error },
+        ),
+      );
+};
+
+/** Resolve one comparison for shared execution and analysis admission. */
+export const resolveRadiff2ComparisonRequest = (
+  input: unknown,
+): Result<Radiff2Input, AnalysisInputError> => {
+  const parsed = radiff2InputSchema.safeParse(input);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
+        analysisInputErrorFromIssues(
+          "compare_with_radiff2",
           parsed.error.issues,
           input,
           { cause: parsed.error },
@@ -485,6 +525,68 @@ export class ReverseEngineeringService {
       operation: "execute_rizin_command",
       selection: this.#commands.rizin(input),
       path: input.path,
+      parameters: request,
+      signal: options.signal,
+      timeoutMs: commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+      outputBudgetBytes: maxOutputBytes ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+    });
+  }
+
+  executeRadare2Command(
+    rawInput: unknown,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const parsed = resolveRadare2CommandRequest(rawInput);
+    return parsed.ok
+      ? this.executeRadare2CommandValidated(parsed.value, options)
+      : Promise.resolve(parsed);
+  }
+
+  /** Execute owner-validated input after the adapter has admitted its target. */
+  executeRadare2CommandValidated(
+    request: Radare2Input,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const {
+      command_timeout_ms: commandTimeoutMs,
+      max_output_bytes: maxOutputBytes,
+      ...input
+    } = request;
+    return this.#observe({
+      operation: "execute_radare2_command",
+      selection: this.#commands.radare2(input),
+      path: input.path,
+      parameters: request,
+      signal: options.signal,
+      timeoutMs: commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
+      outputBudgetBytes: maxOutputBytes ?? DEFAULT_REVERSE_COMMAND_OUTPUT_BYTES,
+    });
+  }
+
+  compareWithRadiff2(
+    rawInput: unknown,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const parsed = resolveRadiff2ComparisonRequest(rawInput);
+    return parsed.ok
+      ? this.compareWithRadiff2Validated(parsed.value, options)
+      : Promise.resolve(parsed);
+  }
+
+  /** Execute owner-validated comparison input on the shared observation workflow. */
+  compareWithRadiff2Validated(
+    request: Radiff2Input,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<Evidence, AnalysisError>> {
+    const {
+      command_timeout_ms: commandTimeoutMs,
+      max_output_bytes: maxOutputBytes,
+      ...input
+    } = request;
+    return this.#observe({
+      operation: "compare_with_radiff2",
+      selection: this.#commands.radiff2(input),
+      path: input.path_a,
       parameters: request,
       signal: options.signal,
       timeoutMs: commandTimeoutMs ?? DEFAULT_REVERSE_COMMAND_TIMEOUT_MS,
