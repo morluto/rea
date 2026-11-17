@@ -219,6 +219,7 @@
 * **elf:** admit Xtensa through canonical target contracts ([#11178](https://github.com/morluto/rea/issues/11178)) ([1995ab7](https://github.com/morluto/rea/commit/1995ab7fcefbdb89459fb6bb7607c96b8c4ab93e))
 * **elf:** preserve compiler metadata after an empty kernel builder ([a7398cc](https://github.com/morluto/rea/commit/a7398cc9eb40ee89ae46d0f72b726fbd93fa4ea7)), closes [#9942](https://github.com/morluto/rea/issues/9942) [#9950](https://github.com/morluto/rea/issues/9950)
 * **environment:** admit the output root before creating its parents ([5e1d504](https://github.com/morluto/rea/commit/5e1d504664362649aec19c03f768d0bbf939b482))
+* **environment:** preserve HAR body source identity and scan coverage ([#11829](https://github.com/morluto/rea/issues/11829)) ([5ccb7c5](https://github.com/morluto/rea/commit/5ccb7c59c84e2297fd2c0ecb691154e410b285f2))
 * **errors:** name rea doctor only for providers it can check ([#10565](https://github.com/morluto/rea/issues/10565)) ([4aefe2d](https://github.com/morluto/rea/commit/4aefe2daec12bbf7e9e4ed7e994d92ac245dea28))
 * **errors:** rethrow internal invariant violations from plist consumers and the native output projection ([#11029](https://github.com/morluto/rea/issues/11029)) ([63b0426](https://github.com/morluto/rea/commit/63b0426e409339a5efbc8ea7bbdea0b4502ec935))
 * **evidence:** name the noncanonical bundle sections ([3ae21f9](https://github.com/morluto/rea/commit/3ae21f9ff8af38611adc796bd180c917f082ea42))
