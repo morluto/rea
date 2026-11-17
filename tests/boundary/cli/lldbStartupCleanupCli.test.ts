@@ -282,6 +282,10 @@ class FakeLldbBridge extends EventEmitter {
       status: string;
       target_state: string;
     } = { status: "closed", target_state: "terminated" },
+    private readonly options: {
+      readonly initializeError?: string;
+      readonly commandDelayMs?: number;
+    } = {},
   ) {
     super();
     this.stdin.on("data", (chunk) => {
@@ -292,12 +296,21 @@ class FakeLldbBridge extends EventEmitter {
         try {
           const req = JSON.parse(trimmed);
           if (req.method === "initialize") {
-            this.stdout.write(
-              JSON.stringify({
-                id: req.id,
-                result: { status: "ok", version: "lldb-1700" },
-              }) + "\n",
-            );
+            if (this.options.initializeError) {
+              this.stdout.write(
+                JSON.stringify({
+                  id: req.id,
+                  error: this.options.initializeError,
+                }) + "\n",
+              );
+            } else {
+              this.stdout.write(
+                JSON.stringify({
+                  id: req.id,
+                  result: { status: "ok", version: "lldb-1700" },
+                }) + "\n",
+              );
+            }
           } else if (req.method === "launch") {
             this.stdout.write(
               JSON.stringify({
@@ -317,18 +330,25 @@ class FakeLldbBridge extends EventEmitter {
               JSON.stringify({ id: req.id, result: this.closeResult }) + "\n",
             );
           } else if (req.method === "command") {
-            this.stdout.write(
-              JSON.stringify({
-                id: req.id,
-                result: {
-                  command: req.params.command,
-                  output: "mock command output",
-                  process_state: "stopped",
-                  output_truncated: false,
-                  completion_status: "complete",
-                },
-              }) + "\n",
-            );
+            const sendReply = () => {
+              this.stdout.write(
+                JSON.stringify({
+                  id: req.id,
+                  result: {
+                    command: req.params.command,
+                    output: "mock command output",
+                    process_state: "stopped",
+                    output_truncated: false,
+                    completion_status: "complete",
+                  },
+                }) + "\n",
+              );
+            };
+            if (this.options.commandDelayMs) {
+              setTimeout(sendReply, this.options.commandDelayMs);
+            } else {
+              sendReply();
+            }
           } else if (req.method === "attach") {
             this.stdout.write(
               JSON.stringify({
@@ -612,4 +632,59 @@ it("resolves symlinked traversal paths so evidence hash and launch binary match 
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
+});
+
+it("rejects session startup when LLDB bridge initialize handshake fails", async () => {
+  const fakeBridge = new FakeLldbBridge(undefined, {
+    initializeError: "debugger initialization handshake rejected",
+  });
+  const spawnProcess = vi.fn(async () => ({
+    process: fakeBridge as unknown as import("node:child_process").ChildProcess,
+    ownsProcessLifetime: true,
+  }));
+  const manager = new LldbSessionManager({
+    platform: "darwin",
+    spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
+  });
+
+  const started = await manager.start();
+  expect(started.ok).toBe(false);
+  if (started.ok) return;
+  expect(started.error._tag).toBe("AnalysisCapabilityUnavailableError");
+  expect(started.error.message).toContain(
+    "debugger initialization handshake rejected",
+  );
+});
+
+it("propagates cancellation and aborts an in-flight LLDB command", async () => {
+  const fakeBridge = new FakeLldbBridge(undefined, {
+    commandDelayMs: 200,
+  });
+  const spawnProcess = vi.fn(async () => ({
+    process: fakeBridge as unknown as import("node:child_process").ChildProcess,
+    ownsProcessLifetime: true,
+  }));
+  const manager = new LldbSessionManager({
+    platform: "darwin",
+    spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
+  });
+
+  const started = await manager.start();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const sessionId = started.value.session_id;
+
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 10);
+
+  const executed = await manager.execute(
+    sessionId,
+    "process status",
+    controller.signal,
+  );
+  expect(executed.ok).toBe(false);
+  if (executed.ok) return;
+  expect(executed.error._tag).toBe("AnalysisCancelledError");
+
+  await manager.close(sessionId);
 });

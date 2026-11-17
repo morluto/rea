@@ -451,7 +451,15 @@ export class LldbSessionManager {
           pending.delete(msg.id);
           clearTimeout(rpc.timer);
           if (msg.error) {
-            rpc.reject(new Error(msg.error.message ?? "RPC error"));
+            const errorMsg =
+              typeof msg.error === "string"
+                ? msg.error
+                : typeof msg.error === "object" &&
+                    msg.error !== null &&
+                    "message" in msg.error
+                  ? String(msg.error.message)
+                  : "RPC error";
+            rpc.reject(new Error(errorMsg));
           } else {
             rpc.resolve(msg.result);
           }
