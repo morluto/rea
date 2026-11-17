@@ -1,8 +1,5 @@
 #!/usr/bin/env node
-import {
-  closeVerifierResources,
-  withVerifierCleanup,
-} from "./lib/verifier-cleanup.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
 import {
   requireMcpOperationResult,
@@ -10,15 +7,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -35,6 +24,10 @@ import {
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "./lib/verifier-fixture.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
@@ -67,7 +60,11 @@ if (captureDirectory !== undefined) {
   await mkdir(captureDirectory, { recursive: true, mode: 0o700 });
 }
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-dos-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-dos-proof-",
+  private: false,
+});
+const workspace = workspaceFixture.path;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const fixture = buildDosMzFixture();
@@ -107,7 +104,31 @@ let stderr = "";
 let connected = false;
 let verifierRun;
 let report;
-await withVerifierCleanup(async () => {
+workspaceFixture.releaseAfter(async () => {
+  await closeVerifierResources([
+    async () => {
+      if (connected) await call("close_binary", {});
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+  assert.equal(
+    digest(await readFile(targetPath)),
+    sha256,
+    "Original changed during cleanup",
+  );
+  assert.deepEqual(
+    (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
+    [],
+    "Owned Ghidra runtime survived close",
+  );
+  verifierRun = await completeVerifierRun(run);
+  if (process.platform !== "win32") {
+    assert.equal(verifierRun.process_lineage.status, "verified");
+    assert.deepEqual(verifierRun.process_lineage.descendants, []);
+  }
+});
+await withVerifierFixture(workspaceFixture, async () => {
   try {
     await client.connect(transport);
     connected = true;
@@ -508,33 +529,7 @@ await withVerifierCleanup(async () => {
       process.stderr.write(`DOS verifier MCP diagnostics:\n${stderr}\n`);
     throw error;
   }
-}, [
-  async () => {
-    await closeVerifierResources([
-      async () => {
-        if (connected) await call("close_binary", {});
-      },
-      () => client.close(),
-      () => transport.close(),
-    ]);
-    assert.equal(
-      digest(await readFile(targetPath)),
-      sha256,
-      "Original changed during cleanup",
-    );
-    assert.deepEqual(
-      (await readdir(runtime)).filter((name) => name.startsWith("rea-ghidra-")),
-      [],
-      "Owned Ghidra runtime survived close",
-    );
-    verifierRun = await completeVerifierRun(run);
-    if (process.platform !== "win32") {
-      assert.equal(verifierRun.process_lineage.status, "verified");
-      assert.deepEqual(verifierRun.process_lineage.descendants, []);
-    }
-    await rm(workspace, { recursive: true, force: true });
-  },
-]);
+});
 assert.ok(report, "No DOS proof report was produced");
 verifierRun = await completeVerifierRun(run);
 // Windows provider jobs are verified by their native owners, as in the 6502 lane.
@@ -551,20 +546,13 @@ function hexBytes(bytes) {
   return bytes.replace(/\s/gu, "").toLowerCase();
 }
 function assertProfile(profile) {
-  assert.equal(
-    profile.parameters.load_image_evidence,
-    "independent-mz-mapping-relocations-v2",
-  );
-  assert.equal(
-    profile.parameters.function_body_evidence,
-    "complete-inclusive-ranges-v1",
-  );
+  assert.match(profile.parameters.producer.sources_sha256, /^[0-9a-f]{64}$/u);
   assert.equal(profile.provider.id, "ghidra");
   assert.equal(profile.parameters.target_format, "dos-mz");
   assert.equal(profile.parameters.import_mode, "ephemeral-source-immutable");
   assert.equal(
     profile.parameters.annotation_policy,
-    "atomic-function-entry-metadata-v1",
+    "atomic-function-entry-metadata",
   );
   assert.equal(profile.parameters.loader, "MzLoader");
   assert.equal(profile.parameters.language_id, "x86:LE:16:Real Mode");
@@ -616,7 +604,7 @@ async function evidenceCall(name, arguments_) {
     { timeout: 240000 },
   );
   const evidence = parseEvidence(requireMcpOutput(result, name));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);
   return evidence;
@@ -637,7 +625,7 @@ async function cliEvidence(command, procedure, options = []) {
     { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
   );
   const evidence = parseEvidence(JSON.parse(stdout));
-  assert.equal(evidence.subject.digest.sha256, sha256);
+  assert.equal(evidence.subject.identity.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);
   assert.equal(digest(await readFile(targetPath)), sha256);

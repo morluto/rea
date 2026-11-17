@@ -63,6 +63,7 @@ it.each([
   'let records = new Map(); records = client; records.get("/accounts")',
   'function inspect(Map) { new Map().get("/accounts"); }',
   'Map.prototype.get = request; const records = new Map(); records.get("/accounts")',
+  'Map.prototype.__proto__ = { get: fetch }; new Map().get("/accounts")',
   'const records = new Map(); records.__proto__ = { get: fetch }; records.get("/accounts")',
   'const records = new Map(); const alias = records; alias.__proto__ = { get: fetch }; records.get("/accounts")',
   'const records = new Map(); records["__proto__"] = { delete: fetch }; records.delete("/accounts")',

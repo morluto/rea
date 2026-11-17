@@ -1,6 +1,6 @@
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
-import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
+import { readBinaryContainer } from "../../../src/domain/native/readBinaryContainer.js";
 import {
   openImageSteps,
   readUInt32,
@@ -54,6 +54,7 @@ const expectedAddress = (value: bigint | "no-body" | "unknown") =>
       }
     : { state: value, address: null, rva: null };
 const expectedAddresses = FIXTURE_METHOD_ADDRESSES.map(expectedAddress);
+
 // The provider selects a universal slice before linking, as here.
 const link = (bytes: Buffer, architecture?: Il2cppBinaryArchitecture) =>
   linkIl2cppBinary(
@@ -66,6 +67,26 @@ const link = (bytes: Buffer, architecture?: Il2cppBinaryArchitecture) =>
     metadata,
     facts,
   );
+it.each([183, 62])(
+  "links past unrelated ABS64 and GLOB_DAT records on ELF machine %d",
+  (machine) => {
+    const bytes = createElfFixture(createIl2cppBinaryFixture(), {
+      machine,
+      symbolDefinition: { value: FIXTURE_BINARY_BASE + 0xe00n },
+      unresolvedRelocations: [
+        ...[0xe00, 0xe08, 0xe10].map((offset) => ({
+          offset,
+          kind: machine === 183 ? 257 : 1,
+        })),
+        ...[0xe20, 0xe28, 0xe30].map((offset) => ({
+          offset,
+          kind: machine === 183 ? 1025 : 6,
+        })),
+      ],
+    });
+    expect(link(bytes).method_addresses).toEqual(expectedAddresses);
+  },
+);
 // A type-table fallback needs the metadata to reference most of the table, as
 // real builds do; referencing type 3 requires all four fixture entries.
 const wholeTable = {
@@ -1977,6 +1998,7 @@ it("keeps a capacity refusal while naming a generic row a refusal", () => {
                 "native-type-text-capacity",
                 "budget",
                 1,
+                "bytes",
               );
             tableChecked = bytes === 3 * minimumGenericRow;
           },

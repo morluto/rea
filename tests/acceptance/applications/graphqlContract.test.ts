@@ -127,7 +127,7 @@ const checkAdvertisedSchema = async (
     client,
     "inspect_api_contract",
   );
-  expect(schemas.ajv.validate(schemas.inputSchema, input)).toBe(true);
+  expect(schemas.ajv.validate(schemas.canonicalInputSchema, input)).toBe(true);
   for (const invalid of [
     { ...input, format: "openapi-json" },
     { ...input, view: { kind: "api-contract", collection: "operations" } },
@@ -140,7 +140,9 @@ const checkAdvertisedSchema = async (
       },
     },
   ])
-    expect(schemas.ajv.validate(schemas.inputSchema, invalid)).toBe(false);
+    expect(schemas.ajv.validate(schemas.canonicalInputSchema, invalid)).toBe(
+      false,
+    );
 };
 
 cliTest(
@@ -156,7 +158,6 @@ cliTest(
     await writeFile(path, bytes);
     await writeFile(operationsPath, operations);
     const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "application,session",
     });
     const input = {

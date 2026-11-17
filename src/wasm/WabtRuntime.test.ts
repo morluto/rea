@@ -1,16 +1,23 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { expect, it, vi } from "vitest";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLeaseGroup } from "../resources/AnalysisCleanupLease.js";
 import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
+} from "../resources/ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { WabtRuntime } from "./WabtRuntime.js";
-import { wabtFailure } from "./WabtFailures.js";
+import { wabtFailureDialect } from "./WabtFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+
+/** Classify a raw failure the way the provider does, through WABT's dialect. */
+const wabtFailure = (
+  cause: unknown,
+  ...dialect: Parameters<typeof wabtFailureDialect>
+) => classifyProviderFailure(cause, wabtFailureDialect(...dialect));
 
 it("retries exact command owners before runtime removal and preserves mixed outcomes", async () => {
   const resources = new ArtifactResourceScope();

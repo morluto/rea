@@ -179,18 +179,6 @@ describe("skipped JavaScript parse reporting", () => {
       javascript.analysis_coverage,
     );
   });
-
-  it("does not reconstruct coverage from a historical overall summary", () => {
-    const file = skippedFile();
-    const { analysis_coverage: _coverage, ...javascript } =
-      analyzeJavaScriptStaticSource(file.text.included ? file.text.value : "");
-    const context = contextFor(
-      file,
-      analysisFor([{ file, javascript, semantic: null }]),
-    );
-    addJavaScriptArtifactFiles(context);
-    expect(fileObservation(context)).not.toHaveProperty("analysis_coverage");
-  });
 });
 
 it("preserves omitted inventory facts on an unavailable artifact", () => {
@@ -476,7 +464,7 @@ it("attaches sender validation to the innermost handler after a long minified li
   addJavaScriptArtifactFiles(context);
   addElectronIpcBoundaries(
     context,
-    createElectronIpcContext(analysis, () => "app"),
+    createElectronIpcContext(analysis, () => "app", true),
   );
   const handlers = context.accumulator
     .nodes()

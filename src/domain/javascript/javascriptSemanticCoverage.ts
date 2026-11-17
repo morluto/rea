@@ -78,6 +78,7 @@ export const semanticCoverage = (
 /** Read typed resource-limit classifications from any coverage state. */
 export const semanticCoverageResourceLimits = (
   coverage: JavaScriptSemanticCoverage,
+  // optional-fact-default: typed classifications only; the coverage state carries completeness.
 ): readonly JavaScriptSemanticResourceLimit[] => coverage.resourceLimits ?? [];
 
 /** Effective evaluator facts, rather than reconstructed default-only bounds. */

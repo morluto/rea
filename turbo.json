@@ -46,8 +46,10 @@
         "tests/**/package.json",
         "tsconfig.json",
         "tsconfig.build.json",
+        "tsconfig.scripts.json",
         "vitest.config.ts",
         "scripts/**/*.d.{cts,mts,ts}",
+        "scripts/**/*.mjs",
         "scripts/**/package.json",
         ".github/actions/**/*.{cts,mts,ts,tsx}",
         ".github/**/package.json",
@@ -86,6 +88,10 @@
         "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         ".github/actions/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "src/**/*.{json,md,py,yaml,yml}",
+        "tests/**/*.{json,md,py,yaml,yml}",
+        "scripts/**/*.{json,md,py,yaml,yml}",
+        ".agents/**/*.{js,json,md,mjs,py,ts,tsx,yaml,yml}",
         "!docs/.vitepress/cache/**",
         "!docs/.vitepress/dist/**",
         "!website/_site/**",
@@ -238,7 +244,10 @@
         "scripts/lib/format-generated-file.mjs",
         ".oxfmtrc.json"
       ],
-      "outputs": ["docs/error-contract.schema.json"]
+      "outputs": [
+        "docs/error-contract.schema.json",
+        "docs/user-visible-errors.csv"
+      ]
     },
     "mcp-catalog:check:built": {
       "dependsOn": ["artifacts:mcp-catalog"],

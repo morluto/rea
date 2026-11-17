@@ -86,19 +86,51 @@ describe("browser comparison JSON file inputs", () => {
       });
       expect(invalidArtifact.exitCode, invalidArtifact.stderr).toBe(1);
       expect(invalidArtifact.signal).toBeNull();
+      // The contract refuses the decoded artifact before analysis.
       expect(invalidArtifact.json).toMatchObject({
-        error: "Browser observation failed",
         code: "invalid_request",
         details: {
           operation: "compare_web_screenshots",
           issues: [
             {
-              path: ["before"],
+              path: ["beforeJson"],
               message: "Screenshot artifact digest or size mismatch",
             },
           ],
         },
       });
+    },
+  );
+
+  cliTest(
+    "refuses inline text that is not JSON under its CLI key and keeps a missing file's own failure",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-screenshot-json-");
+      const valid = JSON.stringify(createWebScreenshotArtifact(noisePng(2, 2)));
+      const malformed = await cli.run({
+        arguments: ["compare-web-screenshots", valid, "{", "--json"],
+        environment: process.env,
+      });
+      expect(malformed.exitCode, malformed.stderr).toBe(1);
+      expect(malformed.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_screenshots",
+          issues: [
+            expect.objectContaining({
+              path: ["afterJson"],
+              reason: "invalid_format",
+            }),
+          ],
+        },
+      });
+      const missing = join(root, "missing.json");
+      const absent = await cli.run({
+        arguments: ["compare-web-screenshots", missing, valid, "--json"],
+        environment: process.env,
+      });
+      expect(absent.exitCode, absent.stderr).toBe(1);
+      expect(absent.json).toMatchObject({ input_path: missing });
     },
   );
 

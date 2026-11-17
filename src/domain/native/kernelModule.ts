@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 
 import { digestSchema } from "../digests.js";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
@@ -20,6 +23,27 @@ export const MAX_INSPECT_KERNEL_MODULE_ENTRIES = 65536;
 /** Default per-field retention budgets; omission does not establish malformed syntax. */
 export const DEFAULT_KERNEL_MODULE_KEY_BYTES = 256;
 export const DEFAULT_KERNEL_MODULE_VALUE_BYTES = 4096;
+
+/**
+ * The per-call control that omitted .modinfo key or value text, named by its
+ * contract field; each adapter names the option that sets it.
+ */
+export const kernelModuleModinfoLimit = (
+  field: "key" | "value",
+  selectedBytes: number,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: `max_modinfo_${field}_bytes`,
+  effective_value: selectedBytes,
+  unit: "bytes",
+  minimum: 1,
+  maximum: MAX_INSPECT_KERNEL_MODULE_FILE_BYTES,
+  default_value:
+    field === "key"
+      ? DEFAULT_KERNEL_MODULE_KEY_BYTES
+      : DEFAULT_KERNEL_MODULE_VALUE_BYTES,
+  applies_at: "next_call",
+});
 /**
  * Retained __ksymtab* section-name length. Longer names stay listed with a
  * null name and are not copied into the result.
@@ -51,8 +75,6 @@ export const KERNEL_MODULE_MODINFO_ENTRY_REASONS = [
   "unterminated_modinfo_entry",
   "modinfo_missing_separator",
   "modinfo_empty_key",
-  // Accepted when decoding older Evidence; new observations separate omission from validity.
-  "modinfo_field_exceeds_limit",
 ] as const;
 
 export const KERNEL_MODULE_MODINFO_SECTION_REASONS = [
@@ -120,6 +142,12 @@ const modinfoSchema = z.strictObject({
   sha256: digestSchema.nullable(),
   entries: z.array(modinfoEntrySchema),
   reason: z.enum(KERNEL_MODULE_MODINFO_SECTION_REASONS).nullable(),
+  /** The request parameters that omitted key or value text, when any did. */
+  omission_limits: z
+    .array(analysisParameterLimitSchema)
+    .min(1)
+    .max(2)
+    .exactOptional(),
 });
 
 const versionEntrySchema = z.strictObject({
@@ -276,7 +304,11 @@ export const kernelModuleSchema = z.strictObject({
   signature: signatureSchema.nullable(),
   coverage: z.strictObject({
     status: z
-      .enum(["complete", "partial", "not_applicable", "unsupported"])
+      .enum([
+        ...knownCoverageStatusSchema.options,
+        "not_applicable",
+        "unsupported",
+      ])
       .describe(
         "Whether the supported inspection examined the declared facts; omitted or undecodable facts make coverage partial.",
       ),

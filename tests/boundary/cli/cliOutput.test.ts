@@ -7,10 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import {
-  normalizeCliArguments,
-  adaptCliOutputArgumentsForIncur,
-} from "../../../src/cliBuiltinArguments.js";
+import { parseCliGlobalArguments } from "../../../src/cliBuiltinArguments.js";
 import {
   renderCliOutputArgumentError,
   renderCliDocument,
@@ -76,26 +73,6 @@ describe("CLI output argument boundary", () => {
         "--token-count",
       ]).validation,
     ).toMatchObject({ ok: false, code: "UNSUPPORTED_OUTPUT_COMBINATION" });
-  });
-
-  it("adapts REA-owned delimited options only at the Incur boundary", () => {
-    expect(
-      adaptCliOutputArgumentsForIncur([
-        "inspect-analysis-view",
-        "--format",
-        "csv",
-        "--columns",
-        "name,version",
-        "--filter-output",
-        "normalized_result.items",
-      ]),
-    ).toEqual([
-      "inspect-analysis-view",
-      "--format",
-      "json",
-      "--filter-output",
-      "normalized_result.items",
-    ]);
   });
 
   it("uses the shared Markdown table formatter for standalone reports", () => {
@@ -179,12 +156,12 @@ it("formats arrays of empty objects without column keys as JSON in Markdown", ()
 
 it("preserves flag-shaped values consumed by valued output options", () => {
   expect(
-    adaptCliOutputArgumentsForIncur([
+    parseCliGlobalArguments([
       "--filter-output",
       "--columns",
       "providers",
       "--json",
-    ]),
+    ]).arguments,
   ).toEqual(["--filter-output", "--columns", "providers", "--json"]);
 });
 
@@ -279,7 +256,8 @@ describe("CLI output flag value forms", () => {
     "preserves a flag-shaped spaced value owned by %s",
     (flag) => {
       expect(
-        normalizeCliArguments([flag, "--format=json", "providers", "--json"]),
+        parseCliGlobalArguments([flag, "--format=json", "providers", "--json"])
+          .arguments,
       ).toEqual([flag, "--format=json", "providers", "--json"]);
     },
   );
@@ -303,7 +281,7 @@ describe("CLI output flag value forms", () => {
 
   it("splits only the equals forms of valued output flags", () => {
     expect(
-      normalizeCliArguments([
+      parseCliGlobalArguments([
         "inspect-sqlite-database",
         "--table=a=b",
         "--format=json",
@@ -312,7 +290,7 @@ describe("CLI output flag value forms", () => {
         "--token-offset=",
         "--json",
         "--format-hint=x",
-      ]),
+      ]).arguments,
     ).toEqual([
       "inspect-sqlite-database",
       "--table=a=b",
@@ -804,8 +782,8 @@ describe("CLI update root alias", () => {
   ])(
     "routes only an unambiguous root update while retaining option data: %j",
     (input, expected) => {
-      expect(normalizeCliArguments(input)).toEqual(expected);
-      expect(normalizeCliArguments(expected)).toEqual(expected);
+      expect(parseCliGlobalArguments(input).arguments).toEqual(expected);
+      expect(parseCliGlobalArguments(expected).arguments).toEqual(expected);
     },
   );
 });
@@ -815,7 +793,7 @@ describe("version report requests", () => {
     [["--version", "--json"], "json"],
     [["--json", "--version"], "json"],
     [["--version", "--format", "yaml"], "yaml"],
-    [normalizeCliArguments(["--version", "--format=toon"]), "toon"],
+    [parseCliGlobalArguments(["--version", "--format=toon"]).arguments, "toon"],
     // Without an explicit format, Incur prints the bare version.
     [["--version"], undefined],
     // Help keeps precedence over --version.

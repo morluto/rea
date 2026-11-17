@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -298,16 +299,20 @@ cliTest(
     );
     expect(JSON.stringify(report)).not.toMatch(/kept-source-only|fragment|KEY/);
     const { client, call } = await connectLocalToolsMcp({
-      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
       REA_MCP_TOOL_FAMILIES: "application,session",
     });
     const schemas = await advertisedMcpToolSchemas(
       client,
       "compare_static_and_observed_endpoints",
     );
-    expect(schemas.ajv.validate(schemas.inputSchema, input)).toBe(true);
+    expect(schemas.ajv.validate(schemas.canonicalInputSchema, input)).toBe(
+      true,
+    );
     expect(
-      schemas.ajv.validate(schemas.inputSchema, { ...input, detail: "wrong" }),
+      schemas.ajv.validate(schemas.canonicalInputSchema, {
+        ...input,
+        detail: "wrong",
+      }),
     ).toBe(false);
     const retained = {
       application: {
@@ -364,7 +369,7 @@ cliTest(
       capture.normalized_result,
     );
     const replacement = (parameters: object, result: unknown) =>
-      createEvidence(undefined, capture.provider, {
+      createEvidence(unknownTarget("not-observed"), capture.provider, {
         operation: capture.operation,
         parameters,
         result,

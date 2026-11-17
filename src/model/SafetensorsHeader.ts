@@ -1,7 +1,8 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { parseJsonStringLiteral } from "../domain/jsonDuplicateMember.js";
 import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { TextDecoder } from "node:util";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type {
   ModelMetadata,
   ModelTensor,
@@ -50,7 +51,7 @@ class HeaderJson {
         const raw = this.text.slice(start, this.#position);
         this.budget.charge(6 * raw.length + 2);
         try {
-          const value: unknown = JSON.parse(raw);
+          const value: unknown = parseJsonStringLiteral(raw);
           if (typeof value !== "string")
             return rejectModel("Invalid JSON string");
           for (const unit of value) {
@@ -235,11 +236,7 @@ export const readSafetensorsHeader = async (
   budget.charge(2 * size);
   let text: string;
   try {
-    text =
-      "{" +
-      new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        await reader.take(size - 1),
-      );
+    text = "{" + decodeStrictUtf8(await reader.take(size - 1), "preserve");
   } catch (cause) {
     if (cause instanceof TypeError)
       rejectModel("Safetensors header is not valid UTF-8");

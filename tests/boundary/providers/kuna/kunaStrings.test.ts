@@ -209,7 +209,8 @@ it("stops Kuna at the first contradictory row instead of awaiting the rest", asy
   );
   const client = open();
   try {
-    const started = Date.now();
+    // Awaiting the hung scan would end at the 60 s project deadline with a
+    // deadline error; only a stop at the rejected row reports the output.
     expect(
       await client.execute("search_strings", { pattern: "fixture" }),
     ).toMatchObject({
@@ -220,7 +221,6 @@ it("stops Kuna at the first contradictory row instead of awaiting the rest", asy
         diagnostics: { producer_operation: "kuna:strings" },
       },
     });
-    expect(Date.now() - started).toBeLessThan(30_000);
     await setFakeKunaBehavior(kuna, {});
     expect((await run(client, "list_strings")).result).toHaveLength(2);
     expect(await scans(kuna)).toHaveLength(2);

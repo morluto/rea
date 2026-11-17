@@ -1,4 +1,5 @@
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { captureBudgets, withCaptureBudgets } from "./CaptureBudgets.js";
 import type { FileSnapshotPartialObservation } from "../../domain/fileSnapshotObservation.js";
 import {
@@ -27,18 +28,16 @@ import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAd
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../artifacts/StableArtifactObservation.js";
-import type { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactReaderFailure,
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
-import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -46,6 +45,8 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
+  cancelledBy,
+  fixedCeilingConstraint,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -74,6 +75,7 @@ import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js"
 
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { readHistoricalCaptureReply } from "./HistoricalCaptureReply.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_web_network_capture";
 
@@ -145,7 +147,10 @@ export class HistoricalCaptureDecoder {
     input: InspectWebNetworkCaptureInput,
     options?: ExecutionOptions,
   ): Promise<Result<WebNetworkCapture, AnalysisError>> {
-    const selectedEnvironment = snapshotEnvironment(this.environment);
+    const selectedEnvironment = snapshotEnvironment(
+      this.environment,
+      HOST_PLATFORM.platform,
+    );
     let runtime: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     const runtimeResources = new ArtifactResourceScope();
     let processLease: AnalysisCleanupLease | undefined;
@@ -219,6 +224,8 @@ export class HistoricalCaptureDecoder {
             input.capture_timeout_ms,
           ),
           diagnosticBytes: 1024 * 1024,
+          // Node adapters declare their V8 heap; the mitmproxy decoder is Python.
+          ...(adapter.heap === undefined ? {} : { runtime: "v8" as const }),
         },
         options?.signal === undefined ? {} : { signal: options.signal },
       );
@@ -250,6 +257,14 @@ export class HistoricalCaptureDecoder {
               message: reply.message,
             },
           ]);
+        // No capture budget raises a ceiling the decoder's reader named.
+        if (reply.reason === "fixed-limit")
+          throw fixedCeilingConstraint(
+            OPERATION,
+            reply.boundary,
+            reply.message,
+            reply.ceiling,
+          );
         const limit = captureLimitForReply(reply.reason);
         if (limit !== undefined) {
           const { parameter, expected } = CAPTURE_LIMITS[limit];
@@ -420,7 +435,14 @@ export class HistoricalCaptureDecoder {
       // historical error already follows the post-launch completion owner.
       const error = retainProcessInspectionCleanup(
         processInspectionFailure(cause),
-        historicalCaptureFailure(input, cause, phase, options, reportedHeap),
+        historicalCaptureFailure(
+          input,
+          cause,
+          phase,
+          options,
+          reportedHeap,
+          processLease,
+        ),
         runtimeResources,
         OPERATION,
       );
@@ -502,21 +524,14 @@ export class HistoricalCaptureDecoder {
       }
     }
     if (result.ok && options?.signal?.aborted)
-      result = err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      result = err(cancelledBy(OPERATION, options.signal));
     if (cleanupFailure !== undefined) {
       const cleanupError = new ProviderCleanupError(
         input.format,
         [cleanupFailure.owner.resource],
         {
           capture_path: input.capture_path,
-          reason:
-            cleanupFailure.cause instanceof Error
-              ? cleanupFailure.cause.message
-              : String(cleanupFailure.cause),
+          reason: errorMessage(cleanupFailure.cause),
         },
         {
           operation: OPERATION,

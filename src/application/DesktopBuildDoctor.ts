@@ -1,10 +1,12 @@
 import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
-import type { execFileOutput } from "../process/ExecFileOutput.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
-import type { DoctorCheck, DoctorHost, DoctorSkillState } from "./Doctor.js";
+import type { DoctorHost, DoctorSkillState } from "./Doctor.js";
+import type { DoctorCheck } from "../ports/DoctorProviderInspection.js";
+import type {
+  DesktopBuildCommand,
+  DesktopBuildFacts,
+} from "../ports/DesktopBuildHost.js";
 import { nodeCheck } from "./DoctorDiagnostics.js";
-import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "../domain/doctorProviderIds.js";
 import type { DoctorScopeReport } from "./DoctorScope.js";
 
 /** Free space agentenv's images need where Docker keeps them. */
@@ -12,77 +14,6 @@ export const DESKTOP_BUILD_MIN_FREE_BYTES = 20 * 1000 ** 3;
 
 /** The command that installs the agentenv-framework release bundles target. */
 export const AGENTENV_INSTALL_COMMAND = `uv tool install agentenv-framework==${DESKTOP_EXPORT_FRAMEWORK_VERSION}`;
-
-/** How a build setting's program was found: set in the environment, or on PATH. */
-export type DesktopBuildCommand =
-  | {
-      readonly status: "found";
-      readonly path: string;
-      readonly source: "environment" | "path";
-    }
-  | { readonly status: "missing" }
-  | { readonly status: "invalid"; readonly value: string };
-
-/** What a desktop build host has, read without changing anything. */
-export interface DesktopBuildFacts {
-  readonly ps: { readonly found: boolean; readonly detail: string };
-  readonly docker: DesktopBuildCommand;
-  readonly daemon:
-    | { readonly status: "reachable"; readonly rootDirectory: string }
-    | {
-        readonly status: "permission_denied" | "unreachable";
-        readonly detail: string;
-      }
-    | { readonly status: "unchecked" };
-  readonly disk:
-    | { readonly path: string; readonly freeBytes: number }
-    | { readonly path: string; readonly error: string };
-  readonly agentEnv: DesktopBuildCommand & {
-    readonly version?: string | undefined;
-  };
-  readonly archive: {
-    readonly path: string;
-    readonly source: "environment" | "cache";
-    readonly status: "current" | "missing" | "stale" | "unknown";
-    readonly detail?: string;
-  };
-  /** Each considered client's registration, by setting names only. */
-  readonly registrations: readonly {
-    readonly client: string;
-    readonly registered: boolean;
-    readonly unrecorded: readonly string[];
-    readonly unresolved: readonly string[];
-    readonly differing?: readonly string[];
-    readonly unchecked?: readonly string[];
-    /** Version check of this client's recorded runner, without the recorded path. */
-    readonly runner?: {
-      readonly status: "current" | "stale" | "invalid" | "unknown";
-      readonly version?: string;
-    };
-  }[];
-  /** Build settings this terminal's environment sets. */
-  readonly environmentSettings: readonly string[];
-  /** Where a solve endpoint is configured; null means its configuration is unknown. */
-  readonly solveEndpoint: string | null | undefined;
-  /** Names of agentenv sandbox containers; undefined when Docker was not reachable. */
-  readonly leftoverContainers: readonly string[] | undefined;
-}
-
-/** What a facts reader gets from doctor: its environment, bounded runner and registration reader. */
-export interface DesktopBuildFactsInput {
-  readonly signal: AbortSignal;
-  readonly resources: ArtifactResourceScope;
-  readonly environment: Readonly<NodeJS.ProcessEnv>;
-  readonly platform: NodeJS.Platform;
-  readonly run: typeof execFileOutput;
-  readonly clientIds: readonly string[];
-  readonly registrations: (
-    clientIds: readonly string[] | undefined,
-    settings: Readonly<Record<string, string>>,
-    owned?: undefined,
-    observe?: (client: string, name: string, value: string) => void,
-  ) => Promise<readonly ClientRegistrationStatus[]>;
-}
 
 /** What doctor already knows that the build checks reuse. */
 export interface DesktopBuildContext {
@@ -153,7 +84,7 @@ export const desktopBuildChecks = (
   result("ps", facts.ps.found, facts.ps.detail, {
     classification: "missing_dependency",
     remediation:
-      "Install procps, whose ps REA's process supervisor runs: sudo apt install procps.",
+      "Install procps, whose ps REA's process supervisor runs from /bin/ps or /usr/bin/ps: sudo apt install procps.",
   }),
   dockerCheck(facts.docker),
   daemonCheck(facts.daemon),

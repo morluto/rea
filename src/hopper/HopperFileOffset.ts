@@ -36,7 +36,12 @@ import {
   validateFatSliceIdentity,
 } from "../domain/apple/machoContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  classifyProviderFailure,
+  type ProviderFailureDialect,
+} from "../providers/classifyProviderFailure.js";
 import type { HopperReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "address_to_file_offset";
 const MAX_FAT_ARCHITECTURES = 128;
@@ -127,7 +132,9 @@ export async function mapHopperFileOffset(
         ),
       );
     }
-    return err(sourceAccessFailure(target.path, cause, partial));
+    return err(
+      classifyProviderFailure(cause, sourceAccessDialect(target.path, partial)),
+    );
   }
 }
 
@@ -179,37 +186,42 @@ const artifactChanged = (
     partialObservation,
   });
 
-/** Classify a failed read. A rejected close never reaches this helper. */
-const sourceAccessFailure = (
+/**
+ * How a failed original-source read is reported. A rejected close never
+ * reaches it; every report keeps the coordinate observation made so far.
+ */
+const sourceAccessDialect = (
   path: string,
-  cause: unknown,
   partial: (reason: string) => FileOffsetPartialObservation,
-): AnalysisError => {
-  if (cause instanceof RegularFileOperationCancelled)
-    return cancelled(partial, carriedReason(cause.reason));
-  const reason = `Cannot verify original source bytes: ${cause instanceof Error ? cause.message : String(cause)}`;
-  const code =
-    typeof cause === "object" && cause !== null && "code" in cause
-      ? cause.code
-      : undefined;
-  if (code === "EACCES" || code === "EPERM")
-    return new AnalysisAccessDeniedError(OPERATION, path, code, {
-      cause,
-      partialObservation: partial(reason),
-    });
-  return new BinaryTargetError(path, reason, {
-    cause,
-    partialObservation: partial(reason),
-  });
-};
+): ProviderFailureDialect => ({
+  providerId: "hopper",
+  operation: OPERATION,
+  recognise: (cause) =>
+    cause instanceof RegularFileOperationCancelled
+      ? cancelled(partial, carriedReason(cause.reason))
+      : undefined,
+  unclassified: (cause) => {
+    const reason = `Cannot verify original source bytes: ${errorMessage(cause)}`;
+    const code =
+      typeof cause === "object" && cause !== null && "code" in cause
+        ? cause.code
+        : undefined;
+    return code === "EACCES" || code === "EPERM"
+      ? new AnalysisAccessDeniedError(OPERATION, path, code, {
+          cause,
+          partialObservation: partial(reason),
+        })
+      : new BinaryTargetError(path, reason, {
+          cause,
+          partialObservation: partial(reason),
+        });
+  },
+});
 
 const descriptorCleanup = (
   failure: RegularFileCleanupFailure<unknown>,
 ): ProviderCleanupError => {
-  const reason =
-    failure.cleanupCause instanceof Error
-      ? failure.cleanupCause.message
-      : String(failure.cleanupCause);
+  const reason = errorMessage(failure.cleanupCause);
   return new ProviderCleanupError(
     "hopper",
     [failure.path],
@@ -239,7 +251,10 @@ const cleanupAfterSnapshot = (
   if (failure.outcome.kind === "failed")
     return err(
       withCleanup(
-        sourceAccessFailure(target.path, failure.outcome.cause, partial),
+        classifyProviderFailure(
+          failure.outcome.cause,
+          sourceAccessDialect(target.path, partial),
+        ),
         marker,
       ),
     );
