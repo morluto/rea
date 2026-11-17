@@ -248,10 +248,7 @@ export const hasSystemdJournalHeader = (prefix: Uint8Array): boolean => {
     true,
     "systemd-journal",
   );
-  return isUsableHeaderSize(
-    view.word(HEADER.headerSize, 64),
-    prefix.length,
-  );
+  return isUsableHeaderSize(view.word(HEADER.headerSize, 64), prefix.length);
 };
 
 /**
