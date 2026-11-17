@@ -78,6 +78,7 @@ import {
   pythonPycSummarySchema,
 } from "./pythonPycView.js";
 import { debPackageSummarySchema } from "./debPackageView.js";
+import { nugetNupkgSummarySchema } from "./nugetNupkgView.js";
 import {
   nativeExportsViewRequestSchema,
   nativeExportsViewItemsSchema,
@@ -377,6 +378,7 @@ const viewResultBase = {
     "trace_web_source_location",
     "inspect_python_pyc",
     "inspect_deb_package",
+    "inspect_nuget_nupkg",
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_byte_entropy",
@@ -595,6 +597,12 @@ export const debPackageSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_deb_package"),
   summary: debPackageSummarySchema,
+});
+
+export const nugetNupkgSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_nuget_nupkg"),
+  summary: nugetNupkgSummarySchema,
 });
 
 export const pythonPycCodeObjectsViewResultSchema = z.strictObject({
@@ -1452,6 +1460,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
+    nugetNupkgSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,

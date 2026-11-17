@@ -34,6 +34,7 @@ for new work, roadmap granularity and producer-owned contracts.
 - [Solidity terminal metadata inspection](solidity/cbor-metadata/spec.md) ([plan](solidity/cbor-metadata/plan.md), [tasks](solidity/cbor-metadata/tasks.md), [verification](solidity/cbor-metadata/verification.md))
 - [Inspect a V8 code cache container](v8/code-cache-inspection/spec.md) ([plan](v8/code-cache-inspection/plan.md), [tasks](v8/code-cache-inspection/tasks.md))
 - [Deno compile executable inventory and extraction](artifacts/deno-standalone/spec.md) ([plan](artifacts/deno-standalone/plan.md), [tasks](artifacts/deno-standalone/tasks.md))
+- [Inspect Maven POM and Gradle module metadata](artifacts/maven-gradle-metadata/spec.md) ([plan](artifacts/maven-gradle-metadata/plan.md), [tasks](artifacts/maven-gradle-metadata/tasks.md))
 - [ELF dynamic dependencies](native/elf-dependencies/spec.md) ([plan](native/elf-dependencies/plan.md), [tasks](native/elf-dependencies/tasks.md))
 - [ELF unwind function ranges](native/elf-unwind-ranges/spec.md) ([plan](native/elf-unwind-ranges/plan.md), [tasks](native/elf-unwind-ranges/tasks.md))
 - [Linux kernel build config](native/kernel-build-config/spec.md) ([plan](native/kernel-build-config/plan.md), [tasks](native/kernel-build-config/tasks.md))
@@ -41,3 +42,5 @@ for new work, roadmap granularity and producer-owned contracts.
 
 - [Release exposure audit](artifacts/release-exposure/spec.md) ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))
 - [CycloneDX dependency view](analysis-views/cyclonedx-dependencies/spec.md) ([plan](analysis-views/cyclonedx-dependencies/plan.md), [tasks](analysis-views/cyclonedx-dependencies/tasks.md))
+
+- [NuGet package inspection](artifacts/nuget-nupkg/spec.md) ([plan](artifacts/nuget-nupkg/plan.md), [tasks](artifacts/nuget-nupkg/tasks.md))
