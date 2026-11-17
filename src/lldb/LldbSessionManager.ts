@@ -31,8 +31,17 @@ import {
 } from "../process/ownedDebuggerSession.js";
 import {
   unknownTarget,
+  type FileTargetIdentity,
   type SessionTargetIdentity,
+  type UnknownTargetIdentity,
 } from "../domain/targetIdentity.js";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  observeDebuggerLaunchFile,
+  retryDebuggerStartupFileCleanup,
+  type DebuggerLaunchFileObservation,
+} from "../process/DebuggerLaunchFile.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
@@ -134,6 +143,19 @@ export interface LldbStatusResult {
   readonly target: string | null;
 }
 
+export interface LldbLaunchProvenance {
+  readonly caller_selected_path: string;
+  readonly resolved_path: string;
+  readonly args?: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}
+
+export interface LldbLaunchFile {
+  readonly identity: FileTargetIdentity | UnknownTargetIdentity;
+  readonly unobservedReason?: string;
+  readonly provenance?: LldbLaunchProvenance;
+}
+
 interface PendingRpc {
   readonly resolve: (value: any) => void;
   readonly reject: (error: Error) => void;
@@ -142,6 +164,7 @@ interface PendingRpc {
 
 interface ActiveSession {
   readonly id: string;
+  readonly launchFile: LldbLaunchFile;
   readonly launched: SpawnedOwnedProviderProcess;
   readonly supervisor: ProviderProcessSupervisor;
   readonly child: ProviderProcessHandle;
@@ -181,12 +204,12 @@ const waitForLldbCommandTurn = (
 };
 
 const lldbSessionSubject = (
-  session: Pick<ActiveSession, "id">,
+  session: Pick<ActiveSession, "id" | "launchFile">,
 ): SessionTargetIdentity => ({
   kind: "session",
   session_kind: "lldb",
   id: session.id,
-  target: unknownTarget("not-observed"),
+  target: session.launchFile.identity,
 });
 
 /**
@@ -194,6 +217,7 @@ const lldbSessionSubject = (
  * Contributed by Hardik Shah <hardik05@gmail.com> (https://fuzzing.in, @hardik05).
  */
 export class LldbSessionManager {
+  readonly #startupResources = new ArtifactResourceScope();
   readonly #sessions: OwnedDebuggerSessionRegistry<ActiveSession>;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #platform: NodeJS.Platform;
@@ -237,6 +261,14 @@ export class LldbSessionManager {
     });
   }
 
+  #retryStartupFileCleanup(): Promise<Result<null, AnalysisError>> {
+    return retryDebuggerStartupFileCleanup({
+      provider: "lldb",
+      operation: "start_lldb_session",
+      resources: this.#startupResources,
+    });
+  }
+
   async start(
     signal?: AbortSignal,
     options: LldbStartOptions = {},
@@ -251,6 +283,9 @@ export class LldbSessionManager {
         ),
       );
     }
+
+    const files = await this.#retryStartupFileCleanup();
+    if (!files.ok) return files;
 
     if (options.path !== undefined && options.pid !== undefined) {
       return err(
@@ -303,6 +338,32 @@ export class LldbSessionManager {
     signal: AbortSignal,
     options: LldbStartOptions = {},
   ): Promise<Result<LldbStartResult, AnalysisError>> {
+    if (signal?.aborted) return err(cancelledBy("start_lldb_session", signal));
+
+    let launchFile: LldbLaunchFile = {
+      identity: unknownTarget("not-observed"),
+    };
+    let launchPath: string | undefined = options.path;
+    if (options.path !== undefined) {
+      const resolved = absoluteCallerPath(options.path);
+      launchPath = resolved;
+      const observed = await observeDebuggerLaunchFile(resolved, {
+        provider: "lldb",
+        operation: "start_lldb_session",
+        resources: this.#startupResources,
+        signal,
+      });
+      if (!observed.ok) return observed;
+      launchFile = {
+        ...observed.value,
+        provenance: {
+          caller_selected_path: options.path,
+          resolved_path: resolved,
+          ...(options.args !== undefined ? { args: [...options.args] } : {}),
+          ...(options.env !== undefined ? { env: { ...options.env } } : {}),
+        },
+      };
+    }
     if (signal?.aborted) return err(cancelledBy("start_lldb_session", signal));
 
     const sessionId = randomUUID();
@@ -400,6 +461,7 @@ export class LldbSessionManager {
 
     const session: ActiveSession = {
       id: sessionId,
+      launchFile,
       launched,
       supervisor,
       child,
@@ -413,7 +475,7 @@ export class LldbSessionManager {
       state: "ready",
       processState: "no_process",
       pid: null,
-      target: options.path ?? null,
+      target: launchPath ?? null,
       commandTail: Promise.resolve(),
       pendingCommandCount: 0,
       targetStateUnknown: false,
@@ -493,13 +555,13 @@ export class LldbSessionManager {
 
       // 2. Launch target or attach
       let launchState: LldbStartResult["state"] = "ready";
-      if (options.path) {
+      if (launchPath) {
         const launchRes = await this.#sendSessionRpc(
           launchAttachResponseSchema,
           session,
           "launch",
           {
-            path: options.path,
+            path: launchPath,
             args: options.args,
             env: options.env,
             stop_at_entry: options.stop_at_entry ?? true,
@@ -749,13 +811,31 @@ export class LldbSessionManager {
       completion_status: res.completion_status ?? "complete",
     };
 
+    const { provenance, unobservedReason } = session.launchFile;
     const evidence = createEvidence(
       lldbSessionSubject(session),
       LLDB_PROVIDER_IDENTITY,
       {
         predicateType: "rea.debugger.console-observation",
         operation: "lldb_command",
-        parameters: { session_id: sessionId, command },
+        parameters: {
+          session_id: sessionId,
+          command,
+          ...(provenance === undefined
+            ? {}
+            : {
+                ...(provenance.caller_selected_path !== undefined
+                  ? { path: provenance.caller_selected_path }
+                  : {}),
+                ...(provenance.args !== undefined
+                  ? { args: [...provenance.args] }
+                  : {}),
+                ...(provenance.env !== undefined
+                  ? { env: { ...provenance.env } }
+                  : {}),
+                launch_provenance: { ...provenance },
+              }),
+        },
         result: {
           command: cmdResult.command,
           output: cmdResult.output,
@@ -776,6 +856,12 @@ export class LldbSessionManager {
         },
         limitations: [
           "LLDB commands run unrestricted against the local target inferior and host runtime.",
+          "The session target is the initial file selected and hashed before loading; later debugger commands do not rebind it or establish the current inferior's identity.",
+          ...(unobservedReason === undefined
+            ? []
+            : [
+                `The launch file could not be hashed at session start, so the session target is unknown: ${unobservedReason}`,
+              ]),
         ],
       },
     );
@@ -893,9 +979,12 @@ export class LldbSessionManager {
 
   async closeAll(): Promise<void> {
     await this.#sessions.closeAll();
+    await this.#startupResources.close();
   }
 
   async retryCleanupFailures(): Promise<Result<null, AnalysisError>> {
+    const files = await this.#retryStartupFileCleanup();
+    if (!files.ok) return files;
     return this.#sessions.retryCleanupFailures(
       (session) => !session.closeRequested,
     );

@@ -169,6 +169,21 @@ try {
   console.log("[+] Predicate:", evidence.predicate_type);
   assert.equal(evidence.provider.id, "apple.lldb");
   assert.equal(evidence.predicate_type, "rea.debugger.console-observation");
+  assert.equal(evidence.subject.identity.kind, "session");
+  assert.equal(evidence.subject.identity.session_kind, "lldb");
+  assert.equal(evidence.subject.identity.target.kind, "file");
+  assert.ok(
+    evidence.subject.identity.target.sha256,
+    "Target should have sha256",
+  );
+  assert.ok(
+    evidence.parameters.launch_provenance,
+    "Evidence should have launch_provenance",
+  );
+  assert.equal(
+    evidence.parameters.launch_provenance.caller_selected_path,
+    targetBinary,
+  );
 
   // 8. Close LLDB Session for exited target
   console.log("\n[8] Closing LLDB session for exited target...");

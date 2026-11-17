@@ -304,6 +304,30 @@ class FakeLldbBridge extends EventEmitter {
             this.stdout.write(
               JSON.stringify({ id: req.id, result: this.closeResult }) + "\n",
             );
+          } else if (req.method === "command") {
+            this.stdout.write(
+              JSON.stringify({
+                id: req.id,
+                result: {
+                  command: req.params.command,
+                  output: "mock command output",
+                  process_state: "stopped",
+                  output_truncated: false,
+                  completion_status: "complete",
+                },
+              }) + "\n",
+            );
+          } else if (req.method === "attach") {
+            this.stdout.write(
+              JSON.stringify({
+                id: req.id,
+                result: {
+                  status: "ok",
+                  state: "attached",
+                  pid: req.params.pid,
+                },
+              }) + "\n",
+            );
           }
         } catch {}
       }
@@ -396,4 +420,102 @@ it("releases session ownership in LldbSessionManager when target cleanup is conf
   // Released upon confirmed cleanup
   const finalStatus = await manager.status(sessionId);
   expect(finalStatus).toBeUndefined();
+});
+
+it("retains caller-selected launch facts, provenance, and hashes target file in command evidence", async () => {
+  const fakeBridge = new FakeLldbBridge();
+  const spawnProcess = vi.fn(async () => ({
+    process: fakeBridge as unknown as import("node:child_process").ChildProcess,
+    ownsProcessLifetime: true,
+  }));
+  const manager = new LldbSessionManager({
+    platform: "darwin",
+    spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
+  });
+
+  const started = await manager.start(undefined, {
+    path: "/bin/echo",
+    args: ["test-arg"],
+    env: { TEST_ENV: "val" },
+  });
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const sessionId = started.value.session_id;
+
+  const executed = await manager.execute(sessionId, "register read");
+  expect(executed.ok).toBe(true);
+  if (!executed.ok) return;
+
+  const { evidence } = executed.value;
+  expect(evidence.subject.identity).toMatchObject({
+    kind: "session",
+    session_kind: "lldb",
+    id: sessionId,
+    target: {
+      kind: "file",
+      sha256: expect.any(String),
+      format: "file",
+      architecture: null,
+      selection: null,
+    },
+  });
+
+  expect(evidence.parameters).toMatchObject({
+    session_id: sessionId,
+    command: "register read",
+    path: "/bin/echo",
+    args: ["test-arg"],
+    env: { TEST_ENV: "val" },
+    launch_provenance: {
+      caller_selected_path: "/bin/echo",
+      resolved_path: "/bin/echo",
+      args: ["test-arg"],
+      env: { TEST_ENV: "val" },
+    },
+  });
+
+  expect(evidence.limitations).toContainEqual(
+    expect.stringContaining(
+      "The session target is the initial file selected and hashed",
+    ),
+  );
+
+  await manager.close(sessionId);
+});
+
+it("preserves unknown target identity and omits launch provenance when started without path", async () => {
+  const fakeBridge = new FakeLldbBridge();
+  const spawnProcess = vi.fn(async () => ({
+    process: fakeBridge as unknown as import("node:child_process").ChildProcess,
+    ownsProcessLifetime: true,
+  }));
+  const manager = new LldbSessionManager({
+    platform: "darwin",
+    spawnProcess: spawnProcess as unknown as typeof spawnOwnedProviderProcess,
+  });
+
+  const started = await manager.start(undefined, { pid: 1234 });
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  const sessionId = started.value.session_id;
+
+  const executed = await manager.execute(sessionId, "process status");
+  expect(executed.ok).toBe(true);
+  if (!executed.ok) return;
+
+  const { evidence } = executed.value;
+  expect(evidence.subject.identity).toMatchObject({
+    kind: "session",
+    session_kind: "lldb",
+    id: sessionId,
+    target: {
+      kind: "unknown",
+      reason: "not-observed",
+    },
+  });
+
+  expect(evidence.parameters).not.toHaveProperty("launch_provenance");
+  expect(evidence.parameters).not.toHaveProperty("path");
+
+  await manager.close(sessionId);
 });

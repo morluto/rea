@@ -112,6 +112,20 @@ class ReaLldbSessionDaemonTests(unittest.TestCase):
         self.assertEqual(res["completion_status"], "complete")
         self.assertFalse(res["output_truncated"])
 
+    def test_daemon_execute_command_preserves_whitespace(self):
+        daemon = session_module.ReaLldbSessionDaemon()
+        orig_ci = daemon.debugger.GetCommandInterpreter()
+        class WhitespaceCI:
+            def HandleCommand(self, cmd, res):
+                res.SetOutput("   \n  0x1000: 90 90 \n\n  ")
+        daemon.debugger.GetCommandInterpreter = lambda: WhitespaceCI()
+        try:
+            res = daemon.execute_command("disassemble")
+            self.assertEqual(res["output"], "   \n  0x1000: 90 90 \n\n  ")
+            self.assertEqual(res["completion_status"], "complete")
+        finally:
+            daemon.debugger.GetCommandInterpreter = lambda: orig_ci
+
     def test_daemon_execute_command_truncation(self):
         daemon = session_module.ReaLldbSessionDaemon()
         daemon.MAX_OUTPUT_CHARS = 10

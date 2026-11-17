@@ -249,13 +249,13 @@ class ReaLldbSessionDaemon:
                 if len(raw_err) > self.MAX_OUTPUT_CHARS:
                     raw_err = raw_err[:self.MAX_OUTPUT_CHARS]
                     is_truncated = True
-                out = f"{raw_out}\n{raw_err}".strip() if (raw_err and raw_out) else (raw_out or raw_err).strip()
+                out = f"{raw_out}\n{raw_err}" if (raw_err and raw_out) else (raw_out or raw_err)
 
             if len(out) > self.MAX_OUTPUT_CHARS:
                 out = out[:self.MAX_OUTPUT_CHARS]
                 is_truncated = True
 
-            return out.strip(), is_truncated
+            return out, is_truncated
 
         try:
             t = threading.Thread(target=_run, daemon=True)
@@ -289,7 +289,7 @@ class ReaLldbSessionDaemon:
             live_pid, live_target = self._get_live_info()
             partial, truncated = _read_bounded_output()
             timeout_msg = f"[!] Command timed out after {timeout_sec}s; {self._process_state_report()}"
-            combined_timeout = f"{partial}\n{timeout_msg}".strip() if partial else timeout_msg
+            combined_timeout = f"{partial}\n{timeout_msg}" if partial else timeout_msg
             if len(combined_timeout) > self.MAX_OUTPUT_CHARS:
                 combined_timeout = combined_timeout[:self.MAX_OUTPUT_CHARS]
                 truncated = True
