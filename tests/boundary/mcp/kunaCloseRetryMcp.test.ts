@@ -77,9 +77,10 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     await expect.poll(() => exportsOf(fixture.kuna)).toHaveLength(1);
 
     const failed = parseMcpToolError(await call("close_binary"));
-    const deliveredError = delivery.mock.calls.at(-1)?.[0];
-    if (deliveredError === undefined)
+    const delivered = delivery.mock.calls.at(-1)?.[0];
+    if (delivered === undefined)
       throw new Error("Expected the typed close failure at delivery");
+    expect(delivered.cleanupIncomplete).toBe(true);
     expect(failed.error).toMatchObject({
       code: "cleanup_incomplete",
       retryable: false,
@@ -93,7 +94,7 @@ it("names the same-connection close_binary retry for an unproven Kuna export sto
     });
     // The owner's guidance stays first; the retry offer is appended once.
     expect(failed.error.remediation.action).toBe(
-      `${analysisErrorRemediationAction(deliveredError)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
+      `${analysisErrorRemediationAction(delivered)} ${cleanupRetryRemediation({ operation: "close_binary" })}`,
     );
     const pendingStatus = await sessionStatus(client);
     expect(pendingStatus).toMatchObject({

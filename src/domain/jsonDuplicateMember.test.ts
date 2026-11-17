@@ -1,6 +1,11 @@
 import { expect, it } from "vitest";
 
-import { findDuplicateJsonMember } from "./jsonDuplicateMember.js";
+import {
+  findDuplicateJsonMember,
+  parseJsonStringLiteral,
+  parseJsonWithDuplicatePolicy,
+  parseLastWinsJson,
+} from "./jsonDuplicateMember.js";
 
 it.each([
   ['{"a":1,"a":2}', { name: "a", offset: 7 }],
@@ -26,4 +31,21 @@ it("scans nesting deeper than the call stack allows", () => {
   const depth = 200_000;
   const text = `${'{"d":'.repeat(depth)}{"a":1,"a":2}${"}".repeat(depth)}`;
   expect(findDuplicateJsonMember(text)).toMatchObject({ name: "a" });
+});
+
+it("parses JSON with an explicit duplicate-member policy and string-literal helper", () => {
+  expect(parseJsonWithDuplicatePolicy('{"a":1,"a":2}', "reject")).toEqual({
+    ok: false,
+    duplicate: { name: "a", offset: 7 },
+  });
+  expect(parseJsonWithDuplicatePolicy('{"a":1,"a":2}', "last-wins")).toEqual({
+    ok: true,
+    value: { a: 2 },
+  });
+  expect(parseJsonWithDuplicatePolicy("{", "reject")).toMatchObject({
+    ok: false,
+    cause: expect.any(SyntaxError),
+  });
+  expect(parseLastWinsJson('{"a":1,"a":2}')).toEqual({ a: 2 });
+  expect(parseJsonStringLiteral('"\\u0061"')).toBe("a");
 });

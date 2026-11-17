@@ -1,8 +1,10 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import pino from "pino";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { inspectAnalysisView } from "../../../src/application/analysisView/AnalysisViewService.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
@@ -32,28 +34,31 @@ const harness = () => {
   const runDirectAnalysis = vi.fn<
     Parameters<typeof registerCoreBinaryCommands>[2]
   >(async () => ok(cannedCompleteEvidence()));
-  const cli = Cli.create("rea-fn-detail-test", { version: "1", sync: false });
+  const cli = createCommandCli();
   registerCoreBinaryCommands(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
     runDirectAnalysis,
     {},
   );
-  const command = Cli.toCommands.get(cli)?.get(CLI_COMMANDS.function);
+  const command = cliCommand(cli, CLI_COMMANDS.function)?.definition;
   if (command === undefined)
     throw new Error("function command was not registered");
-  const argsSchema = Reflect.get(command, "args");
-  const optionsSchema = Reflect.get(command, "options");
-  const execute = Reflect.get(command, "run");
-  if (typeof execute !== "function")
-    throw new Error("function command has no run callback");
-  const invoke = (options: Record<string, unknown>): Promise<unknown> =>
-    execute({
-      args: (argsSchema as { parse(v: unknown): unknown }).parse({
+  const argsSchema = command.args;
+  const optionsSchema = command.options;
+  if (
+    !(argsSchema instanceof z.ZodObject) ||
+    !(optionsSchema instanceof z.ZodObject)
+  )
+    throw new Error("function command has no input schemas");
+  const invoke = async (options: Record<string, unknown>): Promise<unknown> =>
+    command.run({
+      args: argsSchema.parse({
         path: "/fixtures/native.exe",
         address: "main",
       }),
-      options: (optionsSchema as { parse(v: unknown): unknown }).parse(options),
+      options: optionsSchema.parse(options),
+      formatExplicit: false,
     });
   return { runDirectAnalysis, invoke };
 };

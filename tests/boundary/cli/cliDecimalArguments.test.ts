@@ -1,10 +1,11 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { Parser, Schema } from "incur";
+import { parseCliArgv } from "../../../src/cli/argvParser.js";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
-import { visitRegisteredCommands } from "../../../src/cli/visitRegisteredCommands.js";
+import { cliCommands } from "../../../src/cli/commandRegistry.js";
+import { commandInputJsonSchema } from "../../../src/cli/commandManifests.js";
 
 const NON_DECIMAL = ["0x10", "1e3"] as const;
 
@@ -85,11 +86,11 @@ describe("decimal integer CLI admission", () => {
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     const failures: string[] = [];
     const checked: string[] = [];
-    visitRegisteredCommands(cli, (command, path) => {
+    cliCommands(cli).forEach(({ definition: command, name: path }) => {
       for (const group of ["args", "options"] as const) {
         const parser = command[group];
         if (!(parser instanceof z.ZodObject)) continue;
-        const advertised = Schema.toJsonSchema(parser);
+        const advertised = commandInputJsonSchema(parser);
         if (!isRecord(advertised) || !isRecord(advertised.properties)) continue;
         for (const [name, property] of Object.entries(advertised.properties)) {
           const field = parser.shape[name];
@@ -107,10 +108,13 @@ describe("decimal integer CLI admission", () => {
           const read = (token: string): unknown => {
             const parsed =
               group === "options"
-                ? Parser.parse([flagName(name), token], { options: isolated })
-                    .options[name]
-                : Parser.parse([token], { args: isolated }).args[name];
-            return repeated && Array.isArray(parsed) ? parsed[0] : parsed;
+                ? parseCliArgv([flagName(name), token], { options: isolated })
+                : parseCliArgv([token], { args: isolated });
+            if (!parsed.ok) throw new Error(parsed.error.message);
+            const value = (
+              group === "options" ? parsed.value.options : parsed.value.args
+            )[name];
+            return repeated && Array.isArray(value) ? value[0] : value;
           };
           const readsNumber = (token: string): boolean => {
             try {
@@ -138,7 +142,7 @@ describe("decimal integer CLI admission", () => {
           for (const token of NON_DECIMAL) {
             try {
               read(token);
-              failures.push(`${label}: Parser.parse accepts ${token}`);
+              failures.push(`${label}: CLI parser accepts ${token}`);
             } catch {
               // Decimal tokens are the only numeric spelling.
             }

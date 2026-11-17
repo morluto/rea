@@ -22,6 +22,7 @@ const GUARDED_WORKFLOWS = new Set([
   ".github/workflows/real-ghidra-windows.yml",
   ".github/workflows/sqlite-runtime.yml",
   ".github/workflows/ci-timings.yml",
+  ".github/workflows/cache-retention.yml",
   ".github/workflows/mutation.yml",
 ]);
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
@@ -189,6 +190,17 @@ export function planChanges(request, repository) {
         selected[owner] = true;
     // The documentation check scans living prose outside docs/ too.
     if (isLivingProsePath(file)) selected.docs = true;
+    if (file === ".git-blame-ignore-revs") return;
+    if (
+      file.startsWith("licenses/") ||
+      file === "THIRD_PARTY_NOTICES.md" ||
+      file === "DISCLAIMER.md" ||
+      file === "LICENSE"
+    ) {
+      selected.docs = true;
+      selected.code = true;
+      return;
+    }
     if (
       /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
         file,
