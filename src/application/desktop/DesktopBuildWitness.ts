@@ -39,6 +39,7 @@ import {
   silentProgressReporter,
   type ProgressReporter,
 } from "../../ports/ProgressReporter.js";
+import type { HostFileReader } from "../../ports/HostFileReader.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
@@ -203,6 +204,7 @@ export class DesktopBuildWitness {
 
   readonly #bundle: WitnessBundle | undefined;
   readonly #redact: (value: JsonValue) => JsonValue;
+  readonly #readHostFile: HostFileReader;
 
   /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. `redact` puts known secrets' handles in place of their values in the record. */
   constructor(
@@ -212,10 +214,12 @@ export class DesktopBuildWitness {
     options: {
       readonly bundle?: WitnessBundle | undefined;
       readonly redact?: (value: JsonValue) => JsonValue;
-    } = {},
+      readonly readHostFile: HostFileReader;
+    },
   ) {
     this.#bundle = options.bundle;
     this.#redact = options.redact ?? ((value) => value);
+    this.#readHostFile = options.readHostFile;
     this.readers = new DesktopRemoteTaskReaders(
       (argv, timeout, signal, requestId) =>
         this.computer.exec(argv, timeout, signal, requestId),
@@ -547,7 +551,12 @@ export class DesktopBuildWitness {
     let differs: string | undefined;
     if (this.#bundle !== undefined) {
       try {
-        differs = await bundleTaskDifference(this.#bundle.path, task, signal);
+        differs = await bundleTaskDifference(
+          this.#bundle.path,
+          task,
+          signal,
+          this.#readHostFile,
+        );
       } catch (cause: unknown) {
         // A cancelled read, an I/O failure, or a handle that would not close
         // stays a Result. A cleanup lease stays bound to that error.

@@ -32,6 +32,7 @@ import { z } from "zod";
 
 import { onTestFinished } from "vitest";
 
+import { readHostFile } from "../../src/desktop/HostFileRead.js";
 import { DesktopBuildComputers } from "../../src/application/desktop/DesktopBuildComputers.js";
 import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
@@ -824,6 +825,7 @@ export const fakeBuildComputers = async (
   const runner = await fakeAgentEnvRunner(computer);
   const computers = new DesktopBuildComputers(
     { ...process.env, ...runner.environment, ...environment },
+    readHostFile,
     undefined,
     await isolatedBuildDefaults(),
   );
