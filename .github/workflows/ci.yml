@@ -483,7 +483,6 @@ jobs:
           path: |
             dist/
             skills/
-            .cache/mcp-tool-catalog.json
             .cache/ci-test-history/test-results.json
             docs/public/product-catalog.json
             docs/verification/managed-conformance-*.json
