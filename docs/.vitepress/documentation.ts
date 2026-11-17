@@ -584,6 +584,11 @@ export const documentationSections = [
         route: "/dwarf-units",
       },
       {
+        text: "DWARF line-number programs",
+        source: "guides/native/dwarf-lines.md",
+        route: "/dwarf-lines",
+      },
+      {
         text: "Electron fuse state",
         source: "electron-fuses.md",
         route: "/electron-fuses",

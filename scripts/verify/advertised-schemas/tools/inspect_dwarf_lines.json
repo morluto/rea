@@ -1,0 +1,9 @@
+{
+  "schemas": {
+    "input compact": "1b151df4dcc3efb9",
+    "output compact": "4bda7c3651bfc579"
+  },
+  "patterns": {
+    "input": ["^0[Xx][0-9A-Fa-f]{1,16}$", "^[^\\x00]*$"]
+  }
+}

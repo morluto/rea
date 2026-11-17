@@ -18,6 +18,7 @@ import { projectPythonPycView } from "./pythonPycView.js";
 import { projectNugetNupkgView } from "./nugetNupkgView.js";
 import { projectNativeExportsView } from "./nativeExportsView.js";
 import { projectElfDependenciesView } from "./elfDependenciesView.js";
+import { projectDwarfLinesView } from "./dwarfLinesView.js";
 import { projectByteEntropyView } from "./byteEntropyView.js";
 import {
   parseAnalysisViewResult,
@@ -182,6 +183,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_devicetree", projectDevicetreeView),
   retain("inspect_native_exports", projectNativeExportsView),
   retain("inspect_elf_dependencies", projectElfDependenciesView),
+  retain("inspect_dwarf_lines", projectDwarfLinesView),
   retain("inspect_native_load_image", projectNativeLoadImageView),
   retain("inspect_python_pyc", projectPythonPycView),
   retain("inspect_nuget_nupkg", projectNugetNupkgView),

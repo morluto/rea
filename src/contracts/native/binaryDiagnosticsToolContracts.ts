@@ -7,6 +7,7 @@ import {
   binaryLayoutSummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
   elfDependenciesSummaryViewResultSchema,
+  dwarfLinesSummaryViewResultSchema,
 } from "../../domain/analysisView/analysisViewResult.js";
 import {
   inspectPeLoadConfigInputSchema,
@@ -86,6 +87,10 @@ import {
   elfDependenciesSchema,
 } from "../../domain/native/elfDependencies.js";
 import {
+  inspectDwarfLinesInputSchema,
+  dwarfLinesSchema,
+} from "../../domain/native/dwarfLines.js";
+import {
   inspectKernelBuildConfigInputSchema,
   kernelBuildConfigSchema,
 } from "../../domain/native/kernelBuildConfig.js";
@@ -103,6 +108,9 @@ export const inspectNativeExportsRequestSchema =
 
 export const inspectElfDependenciesRequestSchema =
   inspectElfDependenciesInputSchema.extend({ detail: analysisDetailSchema });
+
+export const inspectDwarfLinesRequestSchema =
+  inspectDwarfLinesInputSchema.extend({ detail: analysisDetailSchema });
 
 /** Public byte-entropy input retains the producer schema's closed-object policy. */
 export const inspectByteEntropyRequestSchema =
@@ -319,6 +327,26 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect ELF needed libraries and required symbol versions",
         input: { path: "/artifacts/program" },
+      },
+    ],
+  },
+  {
+    name: "inspect_dwarf_lines",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_dwarf_lines", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Decode DWARF 2–5 .debug_line line-number programs, directory and file tables (including DWARF 5 MD5 file digests), and line-matrix sequences offline from one explicit local ELF, thin Mach-O, selected universal Mach-O slice, or PE image without launching a disassembler or external tools, and optionally map virtual addresses back to file:line:column. Target-derived paths and filenames are untrusted. Does not open .debug_info DIE trees, separate .dwo/.gnu_debuglink files, or .dSYM bundles automatically. Supports SHF_COMPRESSED zlib/zstd and GNU .zdebug_* sections under the 256 MiB decompressed section allowance. Unapplied ELF ET_REL relocations keep address lookups as unapplied_relocation and relocated DWARF 5 strings unresolved. Set max_rows to 0 to retain programs, file tables, and address lookups with complete coverage while omitting row arrays. Select detail summary to retain complete Evidence and return counts and source coverage. Query inspect_analysis_view kind dwarf-lines, collections programs, directories, files, rows, address_matches, or issues with offset/limit pagination. Portable on supported Node hosts.",
+    inputSchema: inspectDwarfLinesRequestSchema,
+    outputSchema: analysisDetailOutputSchemaOf(
+      dwarfLinesSchema,
+      dwarfLinesSummaryViewResultSchema,
+    ),
+    examples: [
+      {
+        title: "Decode DWARF line programs and map virtual addresses to source",
+        input: { path: "/artifacts/program", addresses: ["0x401130"] },
       },
     ],
   },

@@ -67,6 +67,13 @@ export const DWARF_UNITS_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free DWARF line-program inspection. */
+export const DWARF_LINES_PROVIDER = Object.freeze({
+  id: "rea-dwarf-lines",
+  name: "REA DWARF line-program parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free ELF separate-debug linkage. */
 export const ELF_DEBUG_LINK_PROVIDER = Object.freeze({
   id: "rea-elf-debug-link",

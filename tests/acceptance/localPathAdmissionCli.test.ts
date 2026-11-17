@@ -17,6 +17,7 @@ const fileCommands = [
   "inspect-model-artifact",
   "inspect-elf-notes",
   "inspect-dwarf-units",
+  "inspect-dwarf-lines",
   "inspect-elf-debug-link",
   "inspect-native-initializers",
   "inspect-elf-unwind-ranges",

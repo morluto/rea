@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "63"
+  version: "64"
 ---
 
 # REA
@@ -335,6 +335,20 @@ explicit path or endpoint and do not need it.
   line tables, and location expressions are not read. Universal Mach-O
   requires `architecture`. See the
   [DWARF compile units guide](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
+
+- DWARF line-number programs and address attribution: `inspect_dwarf_lines`
+  with the explicit local ELF, Mach-O, or PE file (or the DWARF binary inside a
+  `.dSYM` bundle). This built-in target-free inspection requires no disassembler.
+  It decodes DWARF 2 through 5 `.debug_line` programs, directory/file tables
+  (including DWARF 5 MD5 file digests), and line-matrix sequences, including
+  compressed ELF/Mach-O sections, and optionally maps `addresses` (`0x...`) to
+  `file:line:column`. Unapplied ELF `ET_REL` relocations leave relocated strings
+  `unresolved` and address lookups as `unapplied_relocation`. Use `max_rows: 0`
+  to omit inline matrix rows while preserving complete header/address
+  inspection, or `detail: "summary"` with `inspect_analysis_view` kind
+  `dwarf-lines` (CLI requires `--evidence_output`). Universal Mach-O requires
+  `architecture`. See the
+  [DWARF line-number programs guide](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-lines.md).
 
 - Separate ELF debug files: `inspect_elf_debug_link` with the explicit local
   ELF32/ELF64 file. This built-in target-free inspection requires no

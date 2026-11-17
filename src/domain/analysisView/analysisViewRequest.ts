@@ -14,6 +14,7 @@ import { erlangBeamViewRequestSchema } from "./erlangBeamView.js";
 import { pythonPycViewRequestSchema } from "./pythonPycView.js";
 import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
 import { elfDependenciesViewRequestSchema } from "./elfDependenciesView.js";
+import { dwarfLinesViewRequestSchema } from "./dwarfLinesView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
@@ -89,6 +90,7 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   pythonPycViewRequestSchema,
   nativeExportsViewRequestSchema,
   elfDependenciesViewRequestSchema,
+  dwarfLinesViewRequestSchema,
   javaScriptRoutesViewRequestSchema,
   webBundleViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,

@@ -526,6 +526,20 @@ only, and a declared section that could not be decoded is partial coverage. Pass
 opened; pass the DWARF file inside it. See
 [DWARF compile units](../guides/native/dwarf-units.md).
 
+Inspect DWARF line-number programs and attribute virtual addresses offline
+without executing the image:
+
+```bash
+rea inspect-dwarf-lines /absolute/path/to/program --json
+rea inspect-dwarf-lines /absolute/path/to/program --addresses 0x401130 --json
+```
+
+The workflow executes DWARF 2 through 5 `.debug_line` programs (including
+DWARF 5 MD5 file digests, compressed sections, `op_index`, and unapplied `ET_REL`
+relocation handling), optionally resolves `addresses` to `file:line:column`, and
+supports `detail: "summary"` with `inspect-analysis-view` (`kind: "dwarf-lines"`).
+See [DWARF line-number programs](../guides/native/dwarf-lines.md).
+
 Inspect ELF separate debug-file linkage without executing the image:
 
 ```bash

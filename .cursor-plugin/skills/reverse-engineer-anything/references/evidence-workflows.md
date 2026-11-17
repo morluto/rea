@@ -191,3 +191,14 @@ tables, so an empty partial page does not prove absence. CLI
 `inspect-elf-dependencies --detail summary --evidence_output PATH` saves the
 complete bundle for later `inspect-analysis-view --evidence-bundle PATH`
 requests.
+
+For DWARF `.debug_line` tables or virtual-address-to-source attribution,
+`inspect_dwarf_lines` accepts `detail: "summary"` and retains the complete
+Evidence (or pass `max_rows: 0` when inline matrix rows are not needed). Query
+`inspect_analysis_view` with `view: {kind: "dwarf-lines", collection:
+"programs" | "directories" | "files" | "rows" | "address_matches" | "issues",
+offset: 0, limit: 64}` and the reported parent Evidence ID. Collections filter by
+exact `program_index`, `file`, `name`, `md5_hex`, `line`, `status`, or `code`,
+and preserve `source_index`. CLI `inspect-dwarf-lines --detail summary
+--evidence_output PATH` saves the bundle for offline `inspect-analysis-view
+--evidence-bundle PATH` queries.

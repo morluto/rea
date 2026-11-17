@@ -3,6 +3,7 @@ import type { MavenGradleMetadataService } from "../application/java/MavenGradle
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
+import type { DwarfLinesService } from "../application/binaryDiagnostics/DwarfLinesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
@@ -882,6 +883,12 @@ const SERVICE_TOOL_BINDINGS = {
       summary: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfDependenciesService>,
+  dwarfLines: ((service) => ({
+    inspect_dwarf_lines: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DwarfLinesService>,
   guidance: ((resources) => ({
     search_guidance: {
       admission: "application",

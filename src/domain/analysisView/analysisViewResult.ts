@@ -88,6 +88,11 @@ import {
   elfDependenciesViewItemsSchema,
   elfDependenciesSummarySchema,
 } from "./elfDependenciesView.js";
+import {
+  dwarfLinesViewRequestSchema,
+  dwarfLinesViewItemsSchema,
+  dwarfLinesSummarySchema,
+} from "./dwarfLinesView.js";
 import { procedurePseudocodeSummarySchema } from "./procedurePseudocodeSchemas.js";
 import { byteEntropySummarySchema } from "./byteEntropyView.js";
 import {
@@ -382,6 +387,7 @@ const viewResultBase = {
     "inspect_byte_entropy",
     "inspect_native_exports",
     "inspect_elf_dependencies",
+    "inspect_dwarf_lines",
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
@@ -557,6 +563,12 @@ export const elfDependenciesSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_elf_dependencies"),
   summary: elfDependenciesSummarySchema,
+});
+
+export const dwarfLinesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_dwarf_lines"),
+  summary: dwarfLinesSummarySchema,
 });
 
 export const nativeExportsSummaryViewResultSchema = z.strictObject({
@@ -1410,6 +1422,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
     elfDependenciesSummaryViewResultSchema,
+    dwarfLinesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
@@ -1480,6 +1493,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: elfDependenciesViewRequestSchema,
     dependencies: elfDependenciesSummarySchema,
     items: elfDependenciesViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("dwarf-lines"),
+    parent_operation: z.literal("inspect_dwarf_lines"),
+    view: dwarfLinesViewRequestSchema,
+    lines: dwarfLinesSummarySchema,
+    items: dwarfLinesViewItemsSchema,
   }),
   z.strictObject({
     ...viewResultBase,

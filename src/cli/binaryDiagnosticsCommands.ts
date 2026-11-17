@@ -19,6 +19,7 @@ import {
   createWindowsShortcutService,
   createNativeExportsService,
   createElfDependenciesService,
+  createDwarfLinesService,
 } from "../composition/binaryDiagnostics.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
@@ -352,6 +353,22 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     deliverWithService(createElfDependenciesService, "rea-elf-dependencies"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_dwarf_lines"),
+    {
+      description:
+        "Decode DWARF 2–5 .debug_line programs and map virtual addresses to source without executing the image",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      evidenceDelivery: true,
+      fields: {
+        path: { description: "Local ELF, Mach-O, or PE image" },
+      },
+    },
+    deliverWithService(createDwarfLinesService, "rea-dwarf-lines"),
   );
   const layout = createBinaryLayoutService(environment);
   registerContractCommand(

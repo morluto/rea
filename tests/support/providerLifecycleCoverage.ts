@@ -1296,6 +1296,19 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/dwarfUnits.test.ts"),
   ),
+  "rea-dwarf-lines": inProcess(
+    covered(
+      test(
+        "tests/acceptance/dwarfLinesCli.test.ts",
+        "decodes DWARF 5 line programs, MD5 digests, and address attributions through the public CLI",
+      ),
+      test(
+        "tests/boundary/mcp/dwarfLinesMcp.test.ts",
+        "advertises inspect_dwarf_lines and reads line programs",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/dwarfLines.test.ts"),
+  ),
   "rea-elf-debug-link": inProcess(
     covered(
       test(

@@ -31,6 +31,7 @@ import {
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
+  DWARF_LINES_PROVIDER,
   DWARF_UNITS_PROVIDER,
   ELF_DEBUG_LINK_PROVIDER,
   ELF_DEPENDENCIES_PROVIDER,
@@ -246,6 +247,9 @@ export const CAPABILITY_DECLARATIONS = {
   },
   dwarfUnits: {
     providers: [providerBinding(DWARF_UNITS_PROVIDER, ["inspect_dwarf_units"])],
+  },
+  dwarfLines: {
+    providers: [providerBinding(DWARF_LINES_PROVIDER, ["inspect_dwarf_lines"])],
   },
   electronActiveObservation: {
     providers: [

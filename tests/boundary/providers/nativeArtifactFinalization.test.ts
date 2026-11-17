@@ -10,6 +10,7 @@ import { inspectPeImportsInputSchema } from "../../../src/domain/native/peImport
 import { inspectElfNotesInputSchema } from "../../../src/domain/native/elfNotes.js";
 import { inspectKernelModuleInputSchema } from "../../../src/domain/native/kernelModule.js";
 import { inspectElfDependenciesInputSchema } from "../../../src/domain/native/elfDependencies.js";
+import { inspectDwarfLinesInputSchema } from "../../../src/domain/native/dwarfLines.js";
 import { inspectNativeExportsInputSchema } from "../../../src/domain/native/nativeExports.js";
 import { inspectAppleIpsInputSchema } from "../../../src/domain/native/appleIps.js";
 import { inspectWindowsShortcutInputSchema } from "../../../src/domain/native/windowsShortcut.js";
@@ -20,6 +21,7 @@ import { PeImportsProvider } from "../../../src/native/pe/PeImportsProvider.js";
 import { ElfNotesProvider } from "../../../src/native/elf/ElfNotesProvider.js";
 import { KernelModuleProvider } from "../../../src/native/elf/KernelModuleProvider.js";
 import { ElfDependenciesProvider } from "../../../src/native/elf/ElfDependenciesProvider.js";
+import { DwarfLinesProvider } from "../../../src/native/dwarf/DwarfLinesProvider.js";
 import { NativeExportsProvider } from "../../../src/native/exports/NativeExportsProvider.js";
 import { AppleIpsProvider } from "../../../src/native/apple/AppleIpsProvider.js";
 import { WindowsShortcutProvider } from "../../../src/native/windows/WindowsShortcutProvider.js";
@@ -100,6 +102,19 @@ const cases = [
       return {
         inspect: (path: string, signal: AbortSignal) =>
           provider.inspect(inspectElfDependenciesInputSchema.parse({ path }), {
+            signal,
+          }),
+        close: () => provider.close(),
+      };
+    },
+  },
+  {
+    name: "DWARF lines",
+    make: () => {
+      const provider = new DwarfLinesProvider();
+      return {
+        inspect: (path: string, signal: AbortSignal) =>
+          provider.inspect(inspectDwarfLinesInputSchema.parse({ path }), {
             signal,
           }),
         close: () => provider.close(),

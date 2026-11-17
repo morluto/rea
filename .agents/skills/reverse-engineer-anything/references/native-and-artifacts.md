@@ -243,6 +243,21 @@ such as an undecodable section or a `.dwo` object. A present `.gnu_debuglink` is
 types, line tables, and location expressions are not read. See
 [DWARF compile units](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
 
+## DWARF line-number programs
+
+Use `inspect_dwarf_lines` for an explicit local ELF, Mach-O, or PE image when
+the question concerns `.debug_line` source directories/files, DWARF 5 MD5 file
+digests, `DW_AT_stmt_list` programs, or mapping virtual addresses (`addresses`)
+back to `file:line:column`. No `open_binary` or target execution is required.
+The CLI equivalent is `inspect-dwarf-lines PATH`. Pass the DWARF file inside a
+`.dSYM` bundle; the bundle itself is not opened. Universal Mach-O requires
+`architecture`. Keep `max_rows: 0` for large binaries when only program headers,
+file tables, and `addresses` attribution are needed, or use `detail: "summary"`
+plus `inspect_analysis_view` kind `dwarf-lines`. Relocatable `ET_REL` objects
+with unapplied line relocations report `unapplied_relocation` rather than
+treating placeholder `0x0` addresses as resolved. See
+[DWARF line-number programs](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-lines.md).
+
 ## ELF debug files
 
 Use `inspect_elf_debug_link` for an explicit local ELF32/ELF64 image when the

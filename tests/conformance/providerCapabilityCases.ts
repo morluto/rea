@@ -60,6 +60,12 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
       "tests/boundary/mcp/dwarfUnitsMcp.test.ts",
     ],
   },
+  dwarfLines: {
+    cases: [
+      "tests/acceptance/dwarfLinesCli.test.ts",
+      "tests/boundary/mcp/dwarfLinesMcp.test.ts",
+    ],
+  },
   electronActiveObservation: {
     cases: ["tests/acceptance/applications/electronBlankPathCli.test.ts"],
   },

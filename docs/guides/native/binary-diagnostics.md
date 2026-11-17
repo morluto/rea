@@ -512,3 +512,16 @@ rea inspect-elf-dependencies ./program --json
 
 It reports needed libraries, search paths, symbol versions and versioned
 imports. See [ELF dynamic dependencies](../../elf-dependencies.md).
+
+## Portable DWARF line programs
+
+`inspect_dwarf_lines` / `inspect-dwarf-lines` decodes DWARF 2 through 5
+`.debug_line` programs, directory and file tables, DWARF 5 MD5 checksums, and
+line-matrix sequences on any supported host without opening a disassembler, and
+optionally maps virtual addresses back to `file:line:column`:
+
+```sh
+rea inspect-dwarf-lines ./program --addresses 0x401130 --json
+```
+
+See [DWARF line-number programs](dwarf-lines.md).

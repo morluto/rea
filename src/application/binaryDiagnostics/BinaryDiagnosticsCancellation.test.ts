@@ -1,11 +1,13 @@
 import { expect, it } from "vitest";
 import { ElfNotesService } from "./ElfNotesService.js";
+import { DwarfLinesService } from "./DwarfLinesService.js";
 import { KernelModuleService } from "./KernelModuleService.js";
 import { ElfDependenciesService } from "./ElfDependenciesService.js";
 import { PeCertificatesService } from "./PeCertificatesService.js";
 import { PeImportsService } from "./PeImportsService.js";
 import { WindowsShortcutService } from "./WindowsShortcutService.js";
 import {
+  DWARF_LINES_PROVIDER,
   ELF_NOTES_PROVIDER,
   KERNEL_MODULE_PROVIDER,
   ELF_DEPENDENCIES_PROVIDER,
@@ -19,6 +21,10 @@ const inspect = (): never => {
 };
 
 it.each([
+  [
+    "DWARF lines",
+    () => new DwarfLinesService({ identity: DWARF_LINES_PROVIDER, inspect }),
+  ],
   [
     "PE imports",
     () => new PeImportsService({ identity: PE_IMPORTS_PROVIDER, inspect }),
